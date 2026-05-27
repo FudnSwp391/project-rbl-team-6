@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>EduMarket - Unlock Your Potential</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;family=Geist:wght@400;500&amp;display=swap" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "error-container": "#ffdad6",
+                        "surface-container": "#e6eeff",
+                        "primary-fixed": "#eaddff",
+                        "on-secondary-container": "#64636d",
+                        "background": "#f8f9ff",
+                        "on-tertiary": "#ffffff",
+                        "primary-fixed-dim": "#d2bbff",
+                        "on-secondary": "#ffffff",
+                        "surface": "#f8f9ff",
+                        "on-background": "#121c2a",
+                        "on-surface-variant": "#4a4455",
+                        "on-tertiary-fixed-variant": "#62259b",
+                        "error": "#ba1a1a",
+                        "secondary-fixed-dim": "#c7c5d1",
+                        "on-error": "#ffffff",
+                        "on-tertiary-fixed": "#2c0051",
+                        "tertiary-fixed": "#f0dbff",
+                        "surface-variant": "#d9e3f6",
+                        "on-surface": "#121c2a",
+                        "surface-container-low": "#eff4ff",
+                        "secondary-container": "#e3e1ed",
+                        "on-secondary-fixed-variant": "#46464f",
+                        "secondary": "#5d5d67",
+                        "surface-dim": "#d0dbed",
+                        "secondary-fixed": "#e3e1ed",
+                        "on-error-container": "#93000a",
+                        "on-secondary-fixed": "#1a1b23",
+                        "surface-container-high": "#dee9fc",
+                        "primary-container": "#7c3aed",
+                        "surface-container-highest": "#d9e3f6",
+                        "tertiary-container": "#844abe",
+                        "on-primary-fixed": "#25005a",
+                        "on-primary-container": "#ede0ff",
+                        "tertiary-fixed-dim": "#ddb8ff",
+                        "on-tertiary-container": "#f2e0ff",
+                        "inverse-primary": "#d2bbff",
+                        "outline": "#7b7487",
+                        "surface-container-lowest": "#ffffff",
+                        "on-primary": "#ffffff",
+                        "surface-tint": "#732ee4",
+                        "inverse-on-surface": "#eaf1ff",
+                        "tertiary": "#6b2fa4",
+                        "outline-variant": "#ccc3d8",
+                        "inverse-surface": "#27313f",
+                        "surface-bright": "#f8f9ff",
+                        "on-primary-fixed-variant": "#5a00c6",
+                        "primary": "#630ed4"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-desktop": "48px",
+                        "unit": "8px",
+                        "margin-mobile": "16px",
+                        "gutter": "24px",
+                        "container-max": "1280px"
+                    },
+                    "fontFamily": {
+                        "headline-lg-mobile": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "display-xl": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "code-mono": ["Geist"],
+                        "label-sm": ["Geist"]
+                    },
+                    "fontSize": {
+                        "headline-lg-mobile": ["28px", {"lineHeight": "36px", "fontWeight": "600"}],
+                        "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                        "display-xl": ["60px", {"lineHeight": "72px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "headline-md": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                        "headline-lg": ["36px", {"lineHeight": "44px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                        "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "code-mono": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "label-sm": ["14px", {"lineHeight": "20px", "letterSpacing": "0.01em", "fontWeight": "500"}]
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #f8f9ff;
+            color: #121c2a;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined[data-weight="fill"] {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md antialiased min-h-screen flex flex-col">
+
+<!-- TopNavBar -->
+<header class="bg-surface-container-lowest text-primary font-body-md text-body-md shadow-sm border-b border-outline-variant sticky top-0 z-50 w-full">
+    <div class="flex justify-between items-center px-margin-mobile md:px-margin-desktop w-full max-w-container-max mx-auto h-20">
+        <!-- Brand -->
+        <div class="font-headline-md text-headline-md font-bold text-primary tracking-tight">
+            EduMarket
+        </div>
+        <!-- Search -->
+        <div class="hidden md:flex flex-1 mx-8 max-w-md">
+            <div class="relative w-full">
+                <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline" data-icon="search">search</span>
+                <input class="w-full pl-10 pr-4 py-2 bg-surface-container-low border border-outline-variant rounded-full focus:outline-none focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 transition-all font-body-md text-on-surface placeholder:text-outline text-sm" placeholder="Search for courses..." type="text"/>
+            </div>
+        </div>
+        <!-- Navigation Links -->
+        <nav class="hidden md:flex items-center gap-6">
+            <a class="text-secondary hover:text-primary transition-colors font-body-md" href="#">Categories</a>
+            <a class="text-secondary hover:text-primary transition-colors font-body-md" href="#">Become Instructor</a>
+        </nav>
+        <!-- Actions -->
+        <div class="flex items-center gap-4">
+            <button aria-label="shopping_cart" class="hidden md:flex items-center justify-center w-10 h-10 rounded-full hover:bg-surface-container-high transition-colors text-primary">
+                <span class="material-symbols-outlined" data-icon="shopping_cart">shopping_cart</span>
+            </button>
+            <button class="hidden md:block text-primary font-label-sm hover:text-primary-container transition-colors">Log In</button>
+            <button class="bg-primary-container text-on-primary rounded-lg px-4 py-2 font-label-sm hover:bg-primary transition-colors hover:opacity-80 duration-200">Sign Up</button>
+            <!-- Mobile Menu Toggle -->
+            <button aria-label="menu" class="md:hidden flex items-center justify-center w-10 h-10 rounded-full text-primary">
+                <span class="material-symbols-outlined" data-icon="menu">menu</span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<main class="flex-grow flex flex-col items-center w-full">
+    <!-- Hero Section -->
+    <section class="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-16 md:py-32 flex flex-col lg:flex-row items-center gap-12">
+        <div class="flex-1 flex flex-col gap-6 items-start">
+            <h1 class="font-headline-lg-mobile md:font-display-xl text-headline-lg-mobile md:text-display-xl text-on-surface">
+                Unlock Your Potential with Expert-Led Courses
+            </h1>
+            <p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">
+                Join thousands of learners worldwide. Master in-demand skills in programming, design, business, and more from industry professionals.
+            </p>
+            <div class="flex gap-4 mt-4 w-full sm:w-auto">
+                <button class="bg-primary-container text-on-primary rounded-lg px-8 py-4 font-label-sm hover:bg-primary transition-all shadow-md hover:shadow-lg w-full sm:w-auto">Explore Courses</button>
+                <button class="bg-transparent border border-primary-container text-primary-container rounded-lg px-8 py-4 font-label-sm hover:bg-surface-container-low transition-all w-full sm:w-auto hidden sm:block">Start Teaching</button>
+            </div>
+        </div>
+        <div class="flex-1 w-full relative">
+            <div class="aspect-[4/3] rounded-2xl overflow-hidden shadow-2xl border border-outline-variant bg-surface-container-highest relative">
+                <img alt="Students learning online" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDNVSwQy2vDhT7kPdUdV4XYoET-kIJtbxd1Nvwt7gYRq9ySAl32s38bY6OqAGtYvMSm-EdPZ_y8rlBQxKO_UghShSKPRJRAqRALlhxmSpyFQl9SMtxUd5taUGFT0dTHDe-qmUfoUEdgtdn_oGkudjumqV2TlEwv6rlnIWjghAIAVg1ZYP99PpOL3Vv3D_ezHF1dRzxGKYnBiwKBGMuXt1j51hhoMGf7nR_G3Fc8x-ai--w83bqlVi487wYnWGTyqttPFLWpf7z01co"/>
+                <div class="absolute inset-0 bg-gradient-to-t from-inverse-surface/40 to-transparent"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Categories -->
+    <section class="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-16">
+        <div class="flex justify-between items-end mb-8">
+            <h2 class="font-headline-md text-headline-md text-on-surface">Browse Categories</h2>
+            <a class="text-primary font-label-sm hover:underline flex items-center gap-1" href="#">View All <span class="material-symbols-outlined text-sm" data-icon="arrow_forward">arrow_forward</span></a>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            <a class="group bg-surface-container-lowest border border-outline-variant rounded-xl p-6 flex flex-col items-center justify-center gap-4 hover:border-primary-container hover:shadow-md transition-all h-40" href="#">
+                <div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                    <span class="material-symbols-outlined text-2xl" data-icon="code">code</span>
+                </div>
+                <span class="font-label-sm text-on-surface text-center">Programming</span>
+            </a>
+            <a class="group bg-surface-container-lowest border border-outline-variant rounded-xl p-6 flex flex-col items-center justify-center gap-4 hover:border-primary-container hover:shadow-md transition-all h-40" href="#">
+                <div class="w-12 h-12 rounded-full bg-tertiary-fixed flex items-center justify-center text-tertiary group-hover:scale-110 transition-transform">
+                    <span class="material-symbols-outlined text-2xl" data-icon="design_services">design_services</span>
+                </div>
+                <span class="font-label-sm text-on-surface text-center">Design</span>
+            </a>
+            <a class="group bg-surface-container-lowest border border-outline-variant rounded-xl p-6 flex flex-col items-center justify-center gap-4 hover:border-primary-container hover:shadow-md transition-all h-40" href="#">
+                <div class="w-12 h-12 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container group-hover:scale-110 transition-transform">
+                    <span class="material-symbols-outlined text-2xl" data-icon="campaign">campaign</span>
+                </div>
+                <span class="font-label-sm text-on-surface text-center">Marketing</span>
+            </a>
+            <a class="group bg-surface-container-lowest border border-outline-variant rounded-xl p-6 flex flex-col items-center justify-center gap-4 hover:border-primary-container hover:shadow-md transition-all h-40" href="#">
+                <div class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface group-hover:scale-110 transition-transform">
+                    <span class="material-symbols-outlined text-2xl" data-icon="storefront">storefront</span>
+                </div>
+                <span class="font-label-sm text-on-surface text-center">Business</span>
+            </a>
+            <a class="group col-span-2 md:col-span-4 lg:col-span-1 bg-surface-container-lowest border border-outline-variant rounded-xl p-6 flex flex-col items-center justify-center gap-4 hover:border-primary-container hover:shadow-md transition-all h-40 bg-gradient-to-br from-surface-container-lowest to-primary-fixed-dim/20" href="#">
+                <div class="w-12 h-12 rounded-full bg-primary-container flex items-center justify-center text-on-primary group-hover:scale-110 transition-transform">
+                    <span class="material-symbols-outlined text-2xl" data-icon="memory">memory</span>
+                </div>
+                <span class="font-label-sm text-on-surface text-center">AI</span>
+            </a>
+        </div>
+    </section>
+
+    <!-- Featured Courses -->
+    <section class="w-full bg-surface-container-low py-16 border-y border-outline-variant/50">
+        <div class="max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop">
+            <h2 class="font-headline-md text-headline-md text-on-surface mb-8">Featured Courses</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Course 1 -->
+                <div class="bg-surface-container-lowest rounded-xl border border-outline-variant overflow-hidden hover:shadow-lg transition-shadow flex flex-col">
+                    <div class="aspect-video bg-surface-container-high relative">
+                        <img alt="Python coding" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD0nMpJwRUMfp6yNZ5scwc4yacg1uOZ34GgNET3tIU3h4Ire2Wc6aW2Eh2Qu0bfy5bZJeuHk-LxJEWSyGgrlzhXH0GAB45gIYbYOCbH2x-4JTFp7fACYyAGRWQWBfXdXkBZKc1KPZeVIdpKVR9rECQa_DAoLoSRRe9cPLdamtHDZfg8C87epATlVKGDLL_xl3f_n39Pqzp1avZ6Zs8Uw4yCElNcvuzfWyZDAzZz-JlfSfKkHnEtKhyRodJxQs7ZTqJkn1dniqvH4yE"/>
+                    </div>
+                    <div class="p-6 flex flex-col flex-grow">
+                        <span class="font-label-sm text-code-mono text-primary-container uppercase tracking-wider mb-2">Programming</span>
+                        <h3 class="font-headline-md text-headline-md text-on-surface mb-2 text-xl line-clamp-2">Python Masterclass: From Beginner to Pro</h3>
+                        <p class="font-body-md text-body-md text-on-surface-variant mb-4 line-clamp-2 flex-grow">Master Python by building 100 projects in 100 days. Learn data science, automation, build websites, games and apps!</p>
+                        <div class="flex items-center gap-2 mb-4">
+                            <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                            <span class="font-label-sm text-on-surface font-bold">4.8</span>
+                            <span class="font-label-sm text-on-surface-variant">(12,450)</span>
+                        </div>
+                        <div class="flex items-center justify-between border-t border-outline-variant pt-4 mt-auto">
+                            <div class="flex items-center gap-2">
+                                <div class="w-8 h-8 rounded-full bg-surface-container-high overflow-hidden">
+                                    <img alt="Instructor" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7i9CS5ZG7WsHdFIBaAKV6GE5ewHaeRUO5VlbcrQpaCbBOJD4xS7ztkEZaXpte2il68LGKD3DAeRBiIm8-qWXi00F3ClCZkpLdXPMNPFbl8XFD7H-WhVtshqk3DmhbSI2zGqXdZHb8IxXizYWhruy1RY9gpqEANhZPXsUvqpTzWOOvhvVNGNZor-2rPXOPI2gtEZhpiu8AThIcJgmE2NT2KNhjyhXO_3Pgk8M854W6XCwg78HNUb3YV2yHC0G5XDoqJia0RYQAC2A"/>
+                                </div>
+                                <span class="font-label-sm text-on-surface">Dr. Angela Yu</span>
+                            </div>
+                            <span class="font-label-sm font-bold text-on-surface">$89.99</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Course 2 -->
+                <div class="bg-surface-container-lowest rounded-xl border border-outline-variant overflow-hidden hover:shadow-lg transition-shadow flex flex-col">
+                    <div class="aspect-video bg-surface-container-high relative">
+                        <img alt="UI/UX Design" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDaw3VGdagsarSf4Jsfz4D8eAw1kSLK1w4s_kx58epJEgjYX81Pe6DSThBo7nAVgbtx_iHKGs0EwYwJh3H_BSsZ3ys3x7sIZUheBOnQTeKmy89y0DDM4dhhmnMZQH1ZXDeAxANtg52J8Fh2vcLG2DsXB4ErzpC0nkE7ZBVbGDZyvhzwATj1E4US2EfW8S4dDmTm8ywmzkzf1m21Xw9sI34orBTzGJl6zzF2thghlZHP4lGc4M2VC3eruTJy42OFZYWMjYlUGmzT6Og"/>
+                    </div>
+                    <div class="p-6 flex flex-col flex-grow">
+                        <span class="font-label-sm text-code-mono text-tertiary-container uppercase tracking-wider mb-2">Design</span>
+                        <h3 class="font-headline-md text-headline-md text-on-surface mb-2 text-xl line-clamp-2">UI/UX Fundamentals: Design Thinking</h3>
+                        <p class="font-body-md text-body-md text-on-surface-variant mb-4 line-clamp-2 flex-grow">Learn how to design beautiful, functional interfaces. Master Figma, wireframing, and user testing methodologies.</p>
+                        <div class="flex items-center gap-2 mb-4">
+                            <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                            <span class="font-label-sm text-on-surface font-bold">4.9</span>
+                            <span class="font-label-sm text-on-surface-variant">(8,320)</span>
+                        </div>
+                        <div class="flex items-center justify-between border-t border-outline-variant pt-4 mt-auto">
+                            <div class="flex items-center gap-2">
+                                <div class="w-8 h-8 rounded-full bg-surface-container-high overflow-hidden">
+                                    <img alt="Instructor" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDJoZhp5QGMBzQlhHiQ5MOt4Un9NDQjbxfGH72oPDIPAMt9zpQNDfSrvbat3Gb_Lmql5USnt_QzlCpBQBJ49DnYjVB_9VK9P2dJAO8EajmOJdnh0vSxYThtDvwElErbKWQh5kGchKsfHGEj64WGi4sENyCqfvA5CqciGEVXE2nhmkdiJ32nYRL8O45l-ghTq4Zue9CeB-SmAspQIvtcaysTsnV-AZJo5ReTcu1jRgzDYH6_WjhQD9EmtBntoAGdP8uLPWpPCljTiGg"/>
+                                </div>
+                                <span class="font-label-sm text-on-surface">Sarah Connor</span>
+                            </div>
+                            <span class="font-label-sm font-bold text-on-surface">$79.99</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Course 3 -->
+                <div class="bg-surface-container-lowest rounded-xl border border-outline-variant overflow-hidden hover:shadow-lg transition-shadow flex flex-col hidden lg:flex">
+                    <div class="aspect-video bg-surface-container-high relative">
+                        <img alt="Digital Marketing" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAP1fM9ccFes3H5a3GpxaN8SjBd8gznGrdy5nyoNwlpbR7AHPWPgwnePKfUInIL0YpkM6EOO-ykFGMsVGPGry6OOyLhHr9Nb4s4HeQsT5hHB80XpHhNmkN3J3pbQ1ydEDxYme9YbdvixWFc0NzF88lfWmKHgBQdBfJ2rAsz5_Q9PeJOmnWeQ1-kaxFLlxQqoYu2d6JeEU50_6wR4hULWXmMufvcfrF1fQbNFt61V7IkTLvi3H5mhpUEBGaSz7POJ5C86bHG3Y6dXSk"/>
+                    </div>
+                    <div class="p-6 flex flex-col flex-grow">
+                        <span class="font-label-sm text-code-mono text-secondary uppercase tracking-wider mb-2">Marketing</span>
+                        <h3 class="font-headline-md text-headline-md text-on-surface mb-2 text-xl line-clamp-2">Digital Marketing 101: Growth Strategy</h3>
+                        <p class="font-body-md text-body-md text-on-surface-variant mb-4 line-clamp-2 flex-grow">Grow your business with SEO, SEM, social media, and email marketing. Data-driven strategies for modern markets.</p>
+                        <div class="flex items-center gap-2 mb-4">
+                            <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                            <span class="font-label-sm text-on-surface font-bold">4.7</span>
+                            <span class="font-label-sm text-on-surface-variant">(5,102)</span>
+                        </div>
+                        <div class="flex items-center justify-between border-t border-outline-variant pt-4 mt-auto">
+                            <div class="flex items-center gap-2">
+                                <div class="w-8 h-8 rounded-full bg-surface-container-high overflow-hidden">
+                                    <img alt="Instructor" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBvEadrKdgsau6-V5yvxf_doS3C1jpnTHAoK3ZiHv8v8DLRDNlEPLXhRQZGYhinZywJBTEkvG8MgohSiS7qTGAqhcGrE2tV9efpBJCDd_UNf0inGVwRbm1GUQKhPGuHOHwZYgxb1zHYdxGECOkAoydYf7YO2QUm2keNzBEMIUNsdIAuSBW4R4jUxHHUnfu9Rv4Yid3RWU65-w58aaCmS-_74Is5qEPEhbyzKWU72yHLAZaSxv9wXK8_jakDpm4mdqJynVFMmDyHOc4"/>
+                                </div>
+                                <span class="font-label-sm text-on-surface">Marcus Chen</span>
+                            </div>
+                            <span class="font-label-sm font-bold text-on-surface">$59.99</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Top Instructors Section -->
+    <section class="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-16">
+        <div class="flex justify-between items-end mb-8">
+            <h2 class="font-headline-md text-headline-md text-on-surface">Top Instructors</h2>
+            <a href="#" class="text-primary font-label-sm hover:underline flex items-center gap-1">View All <span class="material-symbols-outlined text-sm" data-icon="arrow_forward">arrow_forward</span></a>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
+            <!-- Instructor 1 -->
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 flex flex-col items-center text-center hover:shadow-lg hover:border-primary-container transition-all">
+                <div class="w-24 h-24 rounded-full overflow-hidden mb-4 border-4 border-surface-container-high">
+                    <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7i9CS5ZG7WsHdFIBaAKV6GE5ewHaeRUO5VlbcrQpaCbBOJD4xS7ztkEZaXpte2il68LGKD3DAeRBiIm8-qWXi00F3ClCZkpLdXPMNPFbl8XFD7H-WhVtshqk3DmhbSI2zGqXdZHb8IxXizYWhruy1RY9gpqEANhZPXsUvqpTzWOOvhvVNGNZor-2rPXOPI2gtEZhpiu8AThIcJgmE2NT2KNhjyhXO_3Pgk8M854W6XCwg78HNUb3YV2yHC0G5XDoqJia0RYQAC2A" alt="Dr. Angela Yu" class="w-full h-full object-cover">
+                </div>
+                <h3 class="font-headline-md text-xl text-on-surface mb-1">Dr. Angela Yu</h3>
+                <span class="font-body-md text-on-surface-variant text-sm mb-3">Lead Programming Instructor</span>
+                <div class="flex items-center gap-1 mb-2">
+                    <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                    <span class="font-label-sm text-on-surface font-bold">4.8</span>
+                </div>
+                <span class="font-label-sm text-primary-container bg-primary-fixed py-1 px-3 rounded-full mt-2">500k+ Students</span>
+            </div>
+            <!-- Instructor 2 -->
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 flex flex-col items-center text-center hover:shadow-lg hover:border-primary-container transition-all">
+                <div class="w-24 h-24 rounded-full overflow-hidden mb-4 border-4 border-surface-container-high">
+                    <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuDJoZhp5QGMBzQlhHiQ5MOt4Un9NDQjbxfGH72oPDIPAMt9zpQNDfSrvbat3Gb_Lmql5USnt_QzlCpBQBJ49DnYjVB_9VK9P2dJAO8EajmOJdnh0vSxYThtDvwElErbKWQh5kGchKsfHGEj64WGi4sENyCqfvA5CqciGEVXE2nhmkdiJ32nYRL8O45l-ghTq4Zue9CeB-SmAspQIvtcaysTsnV-AZJo5ReTcu1jRgzDYH6_WjhQD9EmtBntoAGdP8uLPWpPCljTiGg" alt="Sarah Connor" class="w-full h-full object-cover">
+                </div>
+                <h3 class="font-headline-md text-xl text-on-surface mb-1">Sarah Connor</h3>
+                <span class="font-body-md text-on-surface-variant text-sm mb-3">UI/UX Design Expert</span>
+                <div class="flex items-center gap-1 mb-2">
+                    <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                    <span class="font-label-sm text-on-surface font-bold">4.9</span>
+                </div>
+                <span class="font-label-sm text-primary-container bg-primary-fixed py-1 px-3 rounded-full mt-2">230k+ Students</span>
+            </div>
+            <!-- Instructor 3 -->
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 flex flex-col items-center text-center hover:shadow-lg hover:border-primary-container transition-all">
+                <div class="w-24 h-24 rounded-full overflow-hidden mb-4 border-4 border-surface-container-high">
+                    <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuBvEadrKdgsau6-V5yvxf_doS3C1jpnTHAoK3ZiHv8v8DLRDNlEPLXhRQZGYhinZywJBTEkvG8MgohSiS7qTGAqhcGrE2tV9efpBJCDd_UNf0inGVwRbm1GUQKhPGuHOHwZYgxb1zHYdxGECOkAoydYf7YO2QUm2keNzBEMIUNsdIAuSBW4R4jUxHHUnfu9Rv4Yid3RWU65-w58aaCmS-_74Is5qEPEhbyzKWU72yHLAZaSxv9wXK8_jakDpm4mdqJynVFMmDyHOc4" alt="Marcus Chen" class="w-full h-full object-cover">
+                </div>
+                <h3 class="font-headline-md text-xl text-on-surface mb-1">Marcus Chen</h3>
+                <span class="font-body-md text-on-surface-variant text-sm mb-3">Digital Marketing Guru</span>
+                <div class="flex items-center gap-1 mb-2">
+                    <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                    <span class="font-label-sm text-on-surface font-bold">4.7</span>
+                </div>
+                <span class="font-label-sm text-primary-container bg-primary-fixed py-1 px-3 rounded-full mt-2">150k+ Students</span>
+            </div>
+            <!-- Instructor 4 -->
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 flex flex-col items-center text-center hover:shadow-lg hover:border-primary-container transition-all">
+                <div class="w-24 h-24 rounded-full bg-surface-container-highest overflow-hidden mb-4 border-4 border-surface-container-high flex items-center justify-center">
+                    <span class="material-symbols-outlined text-4xl text-outline" data-icon="person">person</span>
+                </div>
+                <h3 class="font-headline-md text-xl text-on-surface mb-1">Elena Rostova</h3>
+                <span class="font-body-md text-on-surface-variant text-sm mb-3">Business Strategy</span>
+                <div class="flex items-center gap-1 mb-2">
+                    <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                    <span class="font-label-sm text-on-surface font-bold">4.8</span>
+                </div>
+                <span class="font-label-sm text-primary-container bg-primary-fixed py-1 px-3 rounded-full mt-2">110k+ Students</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Student Reviews Section -->
+    <section class="w-full bg-surface-container-highest py-16 border-t border-outline-variant/50">
+        <div class="max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop">
+            <h2 class="font-headline-md text-headline-md text-on-surface mb-8 text-center">What Our Students Say</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Review 1 -->
+                <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-8 hover:shadow-md transition-shadow relative">
+                    <span class="material-symbols-outlined absolute top-6 right-6 text-4xl text-outline-variant/30" data-icon="format_quote">format_quote</span>
+                    <div class="flex gap-1 mb-4">
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                    </div>
+                    <p class="font-body-md text-on-surface-variant italic mb-6">"EduMarket completely changed my career path. The Python course by Dr. Angela was incredibly thorough and practical. I landed my first developer job within 3 months of completing it!"</p>
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center text-primary-container font-bold text-lg">
+                            JD
+                        </div>
+                        <div>
+                            <div class="font-label-sm text-on-surface font-bold">James Doe</div>
+                            <div class="font-label-sm text-on-surface-variant text-xs">Software Engineer</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Review 2 -->
+                <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-8 hover:shadow-md transition-shadow relative">
+                    <span class="material-symbols-outlined absolute top-6 right-6 text-4xl text-outline-variant/30" data-icon="format_quote">format_quote</span>
+                    <div class="flex gap-1 mb-4">
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                    </div>
+                    <p class="font-body-md text-on-surface-variant italic mb-6">"As someone looking to transition into UX, the design thinking fundamentals course was exactly what I needed. Clear, concise, and full of real-world examples that I could apply immediately."</p>
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 rounded-full bg-tertiary-fixed flex items-center justify-center text-tertiary font-bold text-lg">
+                            MR
+                        </div>
+                        <div>
+                            <div class="font-label-sm text-on-surface font-bold">Maria Rodriguez</div>
+                            <div class="font-label-sm text-on-surface-variant text-xs">UX Designer</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Review 3 -->
+                <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-8 hover:shadow-md transition-shadow relative">
+                    <span class="material-symbols-outlined absolute top-6 right-6 text-4xl text-outline-variant/30" data-icon="format_quote">format_quote</span>
+                    <div class="flex gap-1 mb-4">
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-tertiary-container text-sm" data-icon="star" data-weight="fill">star</span>
+                        <span class="material-symbols-outlined text-outline-variant text-sm" data-icon="star" data-weight="fill">star</span>
+                    </div>
+                    <p class="font-body-md text-on-surface-variant italic mb-6">"The marketing growth strategy course helped me scale my small business effectively. Marcus breaks down complex metrics into understandable, actionable steps. Highly recommend for entrepreneurs."</p>
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 rounded-full bg-secondary-fixed flex items-center justify-center text-secondary font-bold text-lg">
+                            AK
+                        </div>
+                        <div>
+                            <div class="font-label-sm text-on-surface font-bold">Alex Kim</div>
+                            <div class="font-label-sm text-on-surface-variant text-xs">Small Business Owner</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<!-- Footer -->
+<footer class="bg-surface-container-highest text-primary font-body-md text-body-md border-t border-outline-variant mt-auto w-full">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-gutter px-margin-mobile md:px-margin-desktop py-16 w-full max-w-container-max mx-auto">
+        <div class="col-span-2 md:col-span-1 flex flex-col gap-4 mb-8 md:mb-0">
+            <div class="font-headline-md text-headline-md font-bold text-on-surface tracking-tight">
+                EduMarket
+            </div>
+            <p class="text-on-surface-variant font-body-md text-sm">Empowering learners globally through premium, expert-led education.</p>
+        </div>
+        <div class="flex flex-col gap-3">
+            <h4 class="font-label-sm text-on-surface font-bold uppercase tracking-wider mb-2">Platform</h4>
+            <a class="text-on-surface-variant hover:text-primary hover:underline transition-colors font-body-md text-sm" href="#">About Us</a>
+            <a class="text-on-surface-variant hover:text-primary hover:underline transition-colors font-body-md text-sm" href="#">Teach on EduMarket</a>
+            <a class="text-on-surface-variant hover:text-primary hover:underline transition-colors font-body-md text-sm" href="#">Sitemap</a>
+        </div>
+        <div class="flex flex-col gap-3">
+            <h4 class="font-label-sm text-on-surface font-bold uppercase tracking-wider mb-2">Legal</h4>
+            <a class="text-on-surface-variant hover:text-primary hover:underline transition-colors font-body-md text-sm" href="#">Terms of Service</a>
+            <a class="text-on-surface-variant hover:text-primary hover:underline transition-colors font-body-md text-sm" href="#">Privacy Policy</a>
+        </div>
+        <div class="flex flex-col gap-3">
+            <h4 class="font-label-sm text-on-surface font-bold uppercase tracking-wider mb-2">Support</h4>
+            <a class="text-on-surface-variant hover:text-primary hover:underline transition-colors font-body-md text-sm" href="#">Help and Support</a>
+        </div>
+    </div>
+    <div class="border-t border-outline-variant/50 py-6 px-margin-mobile md:px-margin-desktop text-center">
+        <p class="text-on-surface-variant font-label-sm text-xs">© 2024 EduMarket Inc. All rights reserved.</p>
+    </div>
+</footer>
+
+</body>
+</html>
