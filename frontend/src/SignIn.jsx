@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { useAuth } from './AuthContext'   // ← Global auth state
 import { GoogleLogin } from '@react-oauth/google'
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
 export default function SignIn({ onSwitchToSignUp, onGoHome }) {
+  const { login } = useAuth()   // ← login(token, user) saves to context + localStorage
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -61,9 +63,9 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         throw new Error(data?.message || 'Sign in failed.')
       }
 
-      localStorage.setItem('token', data.token)
-      localStorage.setItem('user', JSON.stringify(data.user))
-      if (onGoHome) onGoHome()
+      // login() tự động redirect theo role (admin→#/admin, tutor→#/tutor, v.v.)
+      login(data.token, data.user)
+      // KHÔNG gọi onGoHome() ở đây — login() đã xử lý redirect rồi
     } catch (error) {
       setErrors((prev) => ({
         ...prev,
@@ -96,9 +98,9 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         throw new Error(data?.message || 'Google sign in failed.')
       }
 
-      localStorage.setItem('token', data.token)
-      localStorage.setItem('user', JSON.stringify(data.user))
-      if (onGoHome) onGoHome()
+      // login() tự động redirect theo role (admin→#/admin, tutor→#/tutor, v.v.)
+      login(data.token, data.user)
+      // KHÔNG gọi onGoHome() ở đây — login() đã xử lý redirect rồi
     } catch (error) {
       setGoogleError(error.message || 'Google sign in failed.')
     } finally {

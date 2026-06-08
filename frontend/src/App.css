@@ -498,3 +498,64 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Logged-in user display in header ── */
+.header-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--primary);
+}
+
+.header-username {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--on-surface);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Access Denied page ── */
+.access-denied-wrap {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  text-align: center;
+  background: radial-gradient(at 0% 0%, hsl(228deg 100% 95%) 0px, transparent 50%),
+              radial-gradient(at 100% 100%, hsl(280deg 100% 95%) 0px, transparent 50%);
+}
+
+.access-denied-icon {
+  font-size: 72px;
+  color: #ef4444;
+}
+
+.access-denied-title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 900;
+  color: var(--on-surface);
+  letter-spacing: -0.02em;
+}
+
+.access-denied-msg {
+  margin: 0;
+  font-size: 16px;
+  color: var(--on-surface-variant);
+  max-width: 400px;
+  line-height: 1.6;
+}
+

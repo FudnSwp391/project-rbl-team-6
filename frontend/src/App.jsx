@@ -1,7 +1,17 @@
+/**
+ * App.jsx
+ * Main application shell — handles hash-based routing and renders the correct page.
+ * Routes: / (home)  #/signin  #/signup  #/admin
+ */
 import { useEffect, useState } from 'react'
 import './App.css'
 import SignIn from './SignIn'
 import SignUp from './SignUp'
+import AdminDashboard from './AdminDashboard'
+import StudentDashboard from './StudentDashboard'
+import TutorDashboard from './TutorDashboard'
+import ParentDashboard from './ParentDashboard'    // ← NEW
+import { useAuth } from './AuthContext'
 
 const subjects = [
   { name: 'Mathematics', icon: 'calculate' },
@@ -68,14 +78,48 @@ const footerLinks = {
   company: ['About Us', 'Support', 'Privacy Policy'],
 }
 
+// ─── Helper: parse the hash to get the current route ─────────────────────────
 const getRouteFromHash = () => {
   const normalized = window.location.hash.replace(/^#/, '') || '/'
-  if (normalized === '/signin') return 'signin'
-  if (normalized === '/signup') return 'signup'
+  if (normalized === '/signin')    return 'signin'
+  if (normalized === '/signup')    return 'signup'
+  if (normalized === '/admin')     return 'admin'
+  if (normalized === '/dashboard') return 'dashboard'   // Student Dashboard
+  if (normalized === '/tutor')     return 'tutor'       // Tutor Dashboard
+  if (normalized === '/parent')    return 'parent'      // Parent Dashboard
   return 'home'
 }
 
+// ─── Access Denied page (shown to non-admin users who visit #/admin) ──────────
+function AccessDenied({ isLoggedIn, onGoSignIn }) {
+  return (
+    <div className="academia-page">
+      <div className="access-denied-wrap">
+        <span className="material-symbols-outlined access-denied-icon">lock</span>
+        <h1 className="access-denied-title">Access Denied</h1>
+        {isLoggedIn ? (
+          <p className="access-denied-msg">
+            You do not have admin privileges to view this page.
+          </p>
+        ) : (
+          <p className="access-denied-msg">
+            Please sign in as an admin to access this page.
+          </p>
+        )}
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <a href="#/" className="btn btn-outline">← Back to Home</a>
+          {!isLoggedIn && (
+            <button className="btn btn-primary" onClick={onGoSignIn}>Sign In</button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Home Page ────────────────────────────────────────────────────────────────
 function HomePage({ onGoSignIn }) {
+  const { user, logout } = useAuth()
   const [topic, setTopic] = useState('')
   const [place, setPlace] = useState('')
 
@@ -92,11 +136,36 @@ function HomePage({ onGoSignIn }) {
             <a href="#">Find Tutors</a>
             <a href="#">Become a Tutor</a>
             <a href="#">Subjects</a>
+            {/* Show Admin link if user is admin */}
+            {user?.role === 'admin' && (
+              <a href="#/admin" style={{ color: 'var(--primary)', fontWeight: 700 }}>
+                Admin
+              </a>
+            )}
           </nav>
 
-          <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
-            Login
-          </button>
+          {/* Show user info + logout OR login button */}
+          {user ? (
+            <div className="header-user">
+              {user.picture ? (
+                <img
+                  src={user.picture}
+                  alt={user.name}
+                  className="header-avatar"
+                />
+              ) : (
+                <span className="material-symbols-outlined">account_circle</span>
+              )}
+              <span className="header-username">{user.name || user.email}</span>
+              <button type="button" className="btn btn-outline" onClick={logout}>
+                Logout
+              </button>
+            </div>
+          ) : (
+            <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
+              Login
+            </button>
+          )}
         </div>
       </header>
 
@@ -240,7 +309,9 @@ function HomePage({ onGoSignIn }) {
   )
 }
 
+// ─── Root App component ───────────────────────────────────────────────────────
 function App() {
+  const { user } = useAuth()
   const [route, setRoute] = useState(() => getRouteFromHash())
 
   useEffect(() => {
@@ -250,17 +321,16 @@ function App() {
   }, [])
 
   const navigateTo = (nextRoute) => {
-    if (nextRoute === 'signin') {
-      window.location.hash = '/signin'
-      return
-    }
-    if (nextRoute === 'signup') {
-      window.location.hash = '/signup'
-      return
-    }
+    if (nextRoute === 'signin')    { window.location.hash = '/signin';    return }
+    if (nextRoute === 'signup')    { window.location.hash = '/signup';    return }
+    if (nextRoute === 'admin')     { window.location.hash = '/admin';     return }
+    if (nextRoute === 'dashboard') { window.location.hash = '/dashboard'; return }
+    if (nextRoute === 'tutor')     { window.location.hash = '/tutor';     return }
+    if (nextRoute === 'parent')    { window.location.hash = '/parent';    return }
     window.location.hash = '/'
   }
 
+  // ── Route: Sign In ──
   if (route === 'signin') {
     return (
       <SignIn
@@ -270,6 +340,7 @@ function App() {
     )
   }
 
+  // ── Route: Sign Up ──
   if (route === 'signup') {
     return (
       <SignUp
@@ -279,6 +350,65 @@ function App() {
     )
   }
 
+  // ── Route: Admin Dashboard (protected) ──
+  if (route === 'admin') {
+    // Not logged in → guide to sign in
+    if (!user) {
+      return (
+        <AccessDenied
+          isLoggedIn={false}
+          onGoSignIn={() => navigateTo('signin')}
+        />
+      )
+    }
+    // Logged in but not admin → access denied
+    if (user.role !== 'admin') {
+      return <AccessDenied isLoggedIn={true} />
+    }
+    // Admin → show dashboard
+    return <AdminDashboard />
+  }
+
+  // ── Route: Student Dashboard (protected) ──
+  if (route === 'dashboard') {
+    if (!user) {
+      return (
+        <AccessDenied
+          isLoggedIn={false}
+          onGoSignIn={() => navigateTo('signin')}
+        />
+      )
+    }
+    return <StudentDashboard />
+  }
+
+  // ── Route: Tutor Dashboard (protected) ──
+  if (route === 'tutor') {
+    if (!user) {
+      return (
+        <AccessDenied
+          isLoggedIn={false}
+          onGoSignIn={() => navigateTo('signin')}
+        />
+      )
+    }
+    return <TutorDashboard />
+  }
+
+  // ── Route: Parent Dashboard (protected) ──
+  if (route === 'parent') {
+    if (!user) {
+      return (
+        <AccessDenied
+          isLoggedIn={false}
+          onGoSignIn={() => navigateTo('signin')}
+        />
+      )
+    }
+    return <ParentDashboard />
+  }
+
+  // ── Route: Home ──
   return <HomePage onGoSignIn={() => navigateTo('signin')} />
 }
 
