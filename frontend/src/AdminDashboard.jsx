@@ -1,8 +1,10 @@
 /**
  * AdminDashboard.jsx
  * ─────────────────────────────────────────────────────────────────────────────
- * Admin-only page for reviewing pending tutor applications.
- * Fetches data from:
+ * Admin-only page — Tutor Approval Workspace.
+ * UI design ported from Stitch (AcademiaFlow Admin | Tutor Approval Workspace).
+ *
+ * APIs used:
  *   GET  /api/admin/tutors/stats
  *   GET  /api/admin/tutors/pending
  *   PATCH /api/admin/tutors/:id/approve
@@ -13,13 +15,13 @@ import { useAuth } from './AuthContext'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
-// ─── Small helper: make authenticated fetch calls ──────────────────────────
+// ─── Authenticated fetch helper ───────────────────────────────────────────────
 async function authFetch(url, token, options = {}) {
   const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,   // JWT required by backend
+      Authorization: `Bearer ${token}`,
       ...(options.headers || {}),
     },
   })
@@ -28,21 +30,46 @@ async function authFetch(url, token, options = {}) {
   return data
 }
 
+// ─── Format date ──────────────────────────────────────────────────────────────
+function fmtDate(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  })
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function AdminDashboard() {
-  const { token, logout } = useAuth()
+  const { user, token, logout } = useAuth()
 
-  // ── State ──────────────────────────────────────────────────────────────────
-  const [stats, setStats]           = useState({ pending: 0, approved: 0, rejected: 0 })
-  const [tutors, setTutors]         = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState(null)
+  // ── Data state ──
+  const [stats,   setStats]   = useState({ pending: 0, approved: 0, rejected: 0, total: 0 })
+  const [tutors,  setTutors]  = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState(null)
+  const [toast,   setToast]   = useState(null)   // { msg, type: 'success'|'error' }
 
-  // Reject modal state
-  const [rejectTarget, setRejectTarget] = useState(null)   // tutor object
+  // ── Modal state ──
+  const [reviewTarget, setReviewTarget] = useState(null)   // tutor for detail modal
+  const [rejectTarget, setRejectTarget] = useState(null)   // tutor for reject modal
   const [rejectReason, setRejectReason] = useState('')
-  const [rejectLoading, setRejectLoading] = useState(false)
+  const [actionLoading, setActionLoading] = useState(false)
 
-  // ── Fetch stats + pending list ────────────────────────────────────────────
+  // ── Image preview modal ──
+  const [previewUrl, setPreviewUrl] = useState(null)
+
+  const handleViewDoc = async (path) => {
+    if (!path) return
+    try {
+      setToast({ msg: 'Loading secure document...', type: 'success' })
+      const data = await authFetch(`${API}/api/admin/document-url?path=${encodeURIComponent(path)}`, token)
+      setPreviewUrl(data.signedUrl)
+    } catch (err) {
+      setToast({ msg: `Failed to load document: ${err.message}`, type: 'error' })
+    }
+  }
+
+  // ── Fetch data ────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -60,838 +87,695 @@ export default function AdminDashboard() {
     }
   }, [token])
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  useEffect(() => { fetchData() }, [fetchData])
 
-  // ── Approve handler ───────────────────────────────────────────────────────
+  // Auto-dismiss toast after 3s
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  // ── Approve ───────────────────────────────────────────────────────────────
   const handleApprove = async (tutorId) => {
+    setActionLoading(true)
     try {
-      await authFetch(`${API}/api/admin/tutors/${tutorId}/approve`, token, {
-        method: 'PATCH',
-      })
-      // Remove from pending list and update stats
-      setTutors((prev) => prev.filter((t) => t.id !== tutorId))
-      setStats((prev) => ({
-        ...prev,
-        pending: Math.max(0, prev.pending - 1),
-        approved: prev.approved + 1,
-      }))
+      await authFetch(`${API}/api/admin/tutors/${tutorId}/approve`, token, { method: 'PATCH' })
+      setTutors(prev => prev.filter(t => t.id !== tutorId))
+      setStats(prev => ({ ...prev, pending: Math.max(0, prev.pending - 1), approved: prev.approved + 1 }))
+      setReviewTarget(null)
+      setToast({ msg: 'Tutor approved successfully!', type: 'success' })
     } catch (err) {
-      alert(`Approve failed: ${err.message}`)
+      setToast({ msg: `Approve failed: ${err.message}`, type: 'error' })
+    } finally {
+      setActionLoading(false)
     }
   }
 
-  // ── Reject handler (open modal first) ─────────────────────────────────────
+  // ── Reject ────────────────────────────────────────────────────────────────
   const openRejectModal = (tutor) => {
     setRejectTarget(tutor)
     setRejectReason('')
+    setReviewTarget(null)   // close review modal if open
   }
 
   const handleRejectConfirm = async () => {
     if (!rejectReason.trim()) {
-      alert('Please enter a reject reason.')
+      setToast({ msg: 'Please enter a rejection reason.', type: 'error' })
       return
     }
-    setRejectLoading(true)
+    setActionLoading(true)
     try {
       await authFetch(`${API}/api/admin/tutors/${rejectTarget.id}/reject`, token, {
         method: 'PATCH',
         body: JSON.stringify({ reason: rejectReason }),
       })
-      setTutors((prev) => prev.filter((t) => t.id !== rejectTarget.id))
-      setStats((prev) => ({
-        ...prev,
-        pending: Math.max(0, prev.pending - 1),
-        rejected: prev.rejected + 1,
-      }))
+      setTutors(prev => prev.filter(t => t.id !== rejectTarget.id))
+      setStats(prev => ({ ...prev, pending: Math.max(0, prev.pending - 1), rejected: prev.rejected + 1 }))
       setRejectTarget(null)
+      setToast({ msg: 'Tutor application rejected.', type: 'success' })
     } catch (err) {
-      alert(`Reject failed: ${err.message}`)
+      setToast({ msg: `Reject failed: ${err.message}`, type: 'error' })
     } finally {
-      setRejectLoading(false)
+      setActionLoading(false)
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────────
+  const displayName = user?.name || user?.email?.split('@')[0] || 'Admin'
+  const initials    = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+
   return (
-    <div className="admin-page">
-      {/* ── Top Bar ── */}
-      <header className="admin-header">
-        <div className="admin-header-inner">
-          <a href="#/" className="brand" style={{ color: 'var(--primary)' }}>
-            <span className="material-symbols-outlined icon-fill">school</span>
-            <span className="brand-name">EduX</span>
-          </a>
-          <span className="admin-badge">Admin Panel</span>
-          <button type="button" className="btn btn-outline admin-logout" onClick={logout}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>logout</span>
-            Logout
-          </button>
-        </div>
-      </header>
+    <div className="bg-background text-on-surface font-body-md min-h-screen overflow-x-hidden">
 
-      <main className="admin-main">
-        {/* ── Page title ── */}
-        <div className="admin-title-row">
-          <div>
-            <h1 className="admin-title">Admin Dashboard</h1>
-            <p className="admin-subtitle">Review pending tutor applications</p>
-          </div>
-          <button
-            type="button"
-            className="btn btn-outline"
-            onClick={fetchData}
-            disabled={loading}
-            title="Refresh data"
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
-            Refresh
-          </button>
-        </div>
-
-        {/* ── Summary Cards ── */}
-        <div className="admin-stats-grid">
-          <StatCard
-            icon="schedule"
-            label="Pending"
-            value={stats.pending}
-            color="#f59e0b"
-            bg="#fffbeb"
-          />
-          <StatCard
-            icon="check_circle"
-            label="Approved"
-            value={stats.approved}
-            color="#10b981"
-            bg="#ecfdf5"
-          />
-          <StatCard
-            icon="cancel"
-            label="Rejected"
-            value={stats.rejected}
-            color="#ef4444"
-            bg="#fef2f2"
-          />
-        </div>
-
-        {/* ── Content Area ── */}
-        {loading && (
-          <div className="admin-center-msg">
-            <span className="material-symbols-outlined spin-icon">progress_activity</span>
-            <p>Loading tutor applications…</p>
-          </div>
-        )}
-
-        {!loading && error && (
-          <div className="admin-center-msg admin-error">
-            <span className="material-symbols-outlined">error_outline</span>
-            <p>{error}</p>
-            <button className="btn btn-primary" onClick={fetchData}>Try Again</button>
-          </div>
-        )}
-
-        {!loading && !error && tutors.length === 0 && (
-          <div className="admin-center-msg">
-            <span className="material-symbols-outlined" style={{ fontSize: 56, color: '#10b981' }}>
-              task_alt
-            </span>
-            <p style={{ color: 'var(--on-surface-variant)' }}>
-              No pending tutor applications. All clear! 🎉
-            </p>
-          </div>
-        )}
-
-        {!loading && !error && tutors.length > 0 && (
-          <div className="admin-cards-list">
-            {tutors.map((tutor) => (
-              <TutorCard
-                key={tutor.id}
-                tutor={tutor}
-                onApprove={() => handleApprove(tutor.id)}
-                onReject={() => openRejectModal(tutor)}
-              />
-            ))}
-          </div>
-        )}
-      </main>
-
-      {/* ── Reject Reason Modal ── */}
-      {rejectTarget && (
-        <div className="modal-backdrop" onClick={() => setRejectTarget(null)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h2 className="modal-title">Reject Application</h2>
-            <p className="modal-desc">
-              Enter the reason for rejecting{' '}
-              <strong>{rejectTarget.full_name}</strong>'s application.
-              This will be emailed to them.
-            </p>
-            <textarea
-              className="modal-textarea"
-              rows={4}
-              placeholder="e.g. Incomplete certificate, insufficient experience..."
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-            />
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => setRejectTarget(null)}
-                disabled={rejectLoading}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={handleRejectConfirm}
-                disabled={rejectLoading}
-              >
-                {rejectLoading ? 'Rejecting…' : 'Confirm Reject'}
-              </button>
-            </div>
-          </div>
+      {/* ════════════════════════════════════════════
+          TOAST
+      ════════════════════════════════════════════ */}
+      {toast && (
+        <div
+          className={`fixed top-4 right-4 z-[999] flex items-center gap-sm px-md py-sm rounded-xl shadow-lg font-label-md text-label-md transition-all duration-300 ${
+            toast.type === 'success'
+              ? 'bg-green-600 text-white'
+              : 'bg-error text-on-error'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">
+            {toast.type === 'success' ? 'check_circle' : 'error'}
+          </span>
+          {toast.msg}
         </div>
       )}
 
-      <style>{adminStyles}</style>
+      {/* ════════════════════════════════════════════
+          SIDEBAR
+      ════════════════════════════════════════════ */}
+      <aside className="h-screen w-64 fixed left-0 top-0 bg-surface shadow-sm flex flex-col py-md px-sm z-50">
+        {/* Logo */}
+        <div className="mb-xl px-sm">
+          <h1 className="text-headline-md font-headline-md text-primary">AcademiaFlow</h1>
+          <p className="text-label-md font-label-md text-on-surface-variant">Admin Console</p>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 flex flex-col gap-xs">
+          <a href="#" className="flex items-center gap-sm px-sm py-md rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors">
+            <span className="material-symbols-outlined">dashboard</span>
+            <span className="text-label-md font-label-md">Overview</span>
+          </a>
+
+          {/* Active */}
+          <a href="#" className="flex items-center gap-sm px-sm py-md rounded-lg text-primary font-bold border-r-4 border-primary bg-surface-container-high transition-all">
+            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
+            <span className="text-label-md font-label-md">Tutor Approval</span>
+          </a>
+
+          <a href="#" className="flex items-center gap-sm px-sm py-md rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors">
+            <span className="material-symbols-outlined">group</span>
+            <span className="text-label-md font-label-md">User Management</span>
+          </a>
+          <a href="#" className="flex items-center gap-sm px-sm py-md rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors">
+            <span className="material-symbols-outlined">settings</span>
+            <span className="text-label-md font-label-md">System Settings</span>
+          </a>
+          <a href="#" className="flex items-center gap-sm px-sm py-md rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors">
+            <span className="material-symbols-outlined">assessment</span>
+            <span className="text-label-md font-label-md">Reports</span>
+          </a>
+        </nav>
+
+        {/* Bottom section */}
+        <div className="mt-auto px-sm">
+          <button className="w-full bg-primary-container text-on-primary-container py-md rounded-xl font-label-md hover:opacity-90 transition-opacity flex items-center justify-center gap-xs mb-sm">
+            <span className="material-symbols-outlined">add</span>
+            New Report
+          </button>
+
+          {/* Admin profile */}
+          <div className="flex items-center gap-sm pt-md border-t border-outline-variant">
+            {user?.picture ? (
+              <img src={user.picture} alt={displayName} className="w-10 h-10 rounded-full object-cover" />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-on-primary font-bold text-sm">
+                {initials}
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-label-md font-label-md truncate">{displayName}</p>
+              <p className="text-label-sm font-label-sm text-on-surface-variant">Head Moderator</p>
+            </div>
+            <button
+              title="Logout"
+              onClick={logout}
+              className="p-1 text-on-surface-variant hover:text-error transition-colors rounded-full"
+            >
+              <span className="material-symbols-outlined text-[20px]">logout</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* ════════════════════════════════════════════
+          TOP BAR
+      ════════════════════════════════════════════ */}
+      <header className="fixed top-0 right-0 h-16 w-[calc(100%-16rem)] ml-64 px-md bg-surface/70 backdrop-blur-md flex justify-between items-center z-40 shadow-sm">
+        <div className="flex-1 max-w-xl">
+          <div className="relative">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline">search</span>
+            <input
+              className="w-full pl-10 pr-md py-2 bg-surface-container-low border-none rounded-full focus:ring-2 focus:ring-primary/20 text-body-md outline-none"
+              placeholder="Search tutors, applications, or IDs..."
+              type="text"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-md">
+          <button
+            className="p-2 text-on-surface-variant hover:text-primary transition-colors rounded-full relative"
+            onClick={fetchData}
+            title="Refresh data"
+          >
+            <span className="material-symbols-outlined">refresh</span>
+          </button>
+          <button className="p-2 text-on-surface-variant hover:text-primary transition-colors rounded-full relative">
+            <span className="material-symbols-outlined">notifications</span>
+            <span className="absolute top-1 right-1 w-2 h-2 bg-error rounded-full" />
+          </button>
+          <button className="p-2 text-on-surface-variant hover:text-primary transition-colors rounded-full">
+            <span className="material-symbols-outlined">help_outline</span>
+          </button>
+          <div className="h-8 w-px bg-outline-variant mx-sm" />
+          {user?.picture ? (
+            <img src={user.picture} alt={displayName} className="w-8 h-8 rounded-full object-cover" />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary font-bold text-xs">
+              {initials}
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* ════════════════════════════════════════════
+          MAIN CONTENT
+      ════════════════════════════════════════════ */}
+      <main className="ml-64 pt-24 px-xl pb-xl max-w-container-max mx-auto">
+
+        {/* ── Admin Overview Header ── */}
+        <section className="mb-xl">
+          <div className="flex justify-between items-end mb-lg flex-wrap gap-md">
+            <div>
+              <h2 className="text-headline-lg font-headline-lg text-on-surface">Admin Overview</h2>
+              <p className="text-body-md text-on-surface-variant">Review and manage the educator pipeline</p>
+            </div>
+            <div className="flex gap-sm">
+              <button className="px-md py-2 border border-outline-variant rounded-xl text-label-md hover:bg-surface-container transition-colors">
+                Export CSV
+              </button>
+              <button className="px-md py-2 bg-primary text-on-primary rounded-xl text-label-md hover:opacity-90 transition-opacity">
+                Batch Action
+              </button>
+            </div>
+          </div>
+
+          {/* ── Stats Cards ── */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-md">
+            {/* Total Users (static) */}
+            <StatCard
+              icon="person"
+              iconBg="bg-primary-fixed"
+              iconColor="text-primary"
+              label="Total Users"
+              value="14,285"
+              badge="+12%"
+              badgeUp
+            />
+
+            {/* Pending Tutors (live from API) */}
+            <StatCard
+              icon="pending_actions"
+              iconBg="bg-primary-container"
+              iconColor="text-white"
+              label="Pending Tutors"
+              value={loading ? '…' : stats.pending}
+              badge="Action Needed"
+              highlight
+            />
+
+            {/* Monthly Revenue (static) */}
+            <StatCard
+              icon="payments"
+              iconBg="bg-tertiary-fixed"
+              iconColor="text-tertiary"
+              label="Monthly Revenue"
+              value="$42,850"
+              badge="+8.4%"
+              badgeUp
+            />
+          </div>
+        </section>
+
+        {/* ── Pending Applications Table ── */}
+        <section
+          className="rounded-xl shadow-sm border border-white/20 overflow-hidden"
+          style={{ background: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(12px)' }}
+        >
+          {/* Table Header */}
+          <div className="p-md border-b border-outline-variant flex flex-col md:flex-row md:items-center justify-between gap-md">
+            <div>
+              <h3 className="text-headline-md font-headline-md">Pending Tutor Applications</h3>
+              <div className="flex items-center gap-xs mt-1 text-error">
+                <span className="material-symbols-outlined text-[18px]">verified_user</span>
+                <p className="text-label-sm">
+                  Only administrators can view sensitive tutor documents such as certificates and ID cards.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-sm">
+              <div className="bg-surface-container-high px-3 py-1.5 rounded-lg flex items-center gap-xs">
+                <span className="text-label-md">Filter: All Subjects</span>
+                <span className="material-symbols-outlined text-[18px]">expand_more</span>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Loading ── */}
+          {loading && (
+            <div className="flex flex-col items-center justify-center gap-md py-16 text-on-surface-variant">
+              <span className="material-symbols-outlined text-[48px] animate-spin">progress_activity</span>
+              <p className="text-body-md">Loading tutor applications…</p>
+            </div>
+          )}
+
+          {/* ── Error ── */}
+          {!loading && error && (
+            <div className="flex flex-col items-center justify-center gap-md py-16 text-error">
+              <span className="material-symbols-outlined text-[48px]">error_outline</span>
+              <p className="text-body-md">{error}</p>
+              <button
+                onClick={fetchData}
+                className="px-md py-2 bg-primary text-on-primary rounded-xl text-label-md hover:opacity-90 transition-opacity"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
+
+          {/* ── Empty ── */}
+          {!loading && !error && tutors.length === 0 && (
+            <div className="flex flex-col items-center justify-center gap-md py-16 text-on-surface-variant">
+              <span className="material-symbols-outlined text-[56px] text-green-500">task_alt</span>
+              <p className="text-body-md">No pending tutor applications. All clear! 🎉</p>
+            </div>
+          )}
+
+          {/* ── Table ── */}
+          {!loading && !error && tutors.length > 0 && (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-surface-container-low">
+                      <th className="px-md py-4 text-label-md font-bold">Tutor &amp; Subject</th>
+                      <th className="px-md py-4 text-label-md font-bold">Applied Date</th>
+                      <th className="px-md py-4 text-label-md font-bold">Documents</th>
+                      <th className="px-md py-4 text-label-md font-bold text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-outline-variant">
+                    {tutors.map(tutor => (
+                      <TutorRow
+                        key={tutor.id}
+                        tutor={tutor}
+                        actionLoading={actionLoading}
+                        onReview={() => setReviewTarget(tutor)}
+                        onApprove={() => handleApprove(tutor.id)}
+                        onReject={() => openRejectModal(tutor)}
+                        onViewCert={() => handleViewDoc(tutor.certificate_url)}
+                        onViewId={() => handleViewDoc(tutor.cccd_url)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination bar */}
+              <div className="p-md flex justify-between items-center bg-surface-container-low/30">
+                <p className="text-label-sm text-on-surface-variant">
+                  Showing {tutors.length} pending application{tutors.length !== 1 ? 's' : ''}
+                </p>
+              </div>
+            </>
+          )}
+        </section>
+      </main>
+
+      {/* ════════════════════════════════════════════
+          REVIEW DETAIL MODAL
+      ════════════════════════════════════════════ */}
+      {reviewTarget && (
+        <ModalOverlay onClose={() => setReviewTarget(null)}>
+          <div
+            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-xl flex flex-col"
+            style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(16px)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="sticky top-0 bg-surface border-b border-outline-variant p-md flex justify-between items-center z-10 rounded-t-2xl">
+              <h3 className="text-headline-md font-headline-md">Tutor Application Detail</h3>
+              <button className="p-2 hover:bg-surface-container rounded-full transition-colors" onClick={() => setReviewTarget(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-xl">
+              <div className="flex flex-col md:flex-row gap-xl">
+                {/* Left: Info */}
+                <div className="flex-1 space-y-lg">
+                  <div className="flex items-center gap-md">
+                    <div className="w-20 h-20 rounded-2xl bg-primary-fixed flex items-center justify-center text-primary text-3xl font-bold shadow-sm flex-shrink-0">
+                      {(reviewTarget.full_name || '?').charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <h4 className="text-headline-md font-headline-md">{reviewTarget.full_name}</h4>
+                      <p className="text-body-md text-on-surface-variant">{reviewTarget.email}</p>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-label-sm font-medium bg-amber-100 text-amber-800 mt-2">
+                        Pending Review
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-md pt-md border-t border-outline-variant">
+                    <div>
+                      <p className="text-label-sm uppercase text-on-surface-variant tracking-wider">Subject Expertise</p>
+                      <p className="text-body-md font-bold">{reviewTarget.subjects || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-label-sm uppercase text-on-surface-variant tracking-wider">Experience</p>
+                      <p className="text-body-md font-bold">
+                        {reviewTarget.experience_years != null ? `${reviewTarget.experience_years} Years` : '—'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-label-sm uppercase text-on-surface-variant tracking-wider">Applied Date</p>
+                      <p className="text-body-md font-bold">{fmtDate(reviewTarget.created_at)}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-label-sm uppercase text-on-surface-variant tracking-wider mb-2">Professional Bio</p>
+                    <p className="text-body-md text-on-surface leading-relaxed bg-surface-container-low p-md rounded-xl">
+                      {reviewTarget.bio || 'No bio provided.'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Right: Document previews */}
+                <div className="flex-1 space-y-lg">
+                  <DocPreview
+                    label="Professional Certificate"
+                    path={reviewTarget.certificate_url}
+                    onExpand={() => handleViewDoc(reviewTarget.certificate_url)}
+                  />
+                  <DocPreview
+                    label="CCCD / ID Card"
+                    path={reviewTarget.cccd_url}
+                    onExpand={() => handleViewDoc(reviewTarget.cccd_url)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Footer actions */}
+            <div className="p-md bg-surface border-t border-outline-variant flex justify-between items-center rounded-b-2xl">
+              <button
+                className="px-xl py-3 text-label-md font-bold text-on-surface-variant hover:bg-surface-container rounded-xl transition-colors"
+                onClick={() => setReviewTarget(null)}
+              >
+                Cancel
+              </button>
+              <div className="flex gap-md">
+                <button
+                  className="px-xl py-3 bg-error text-on-error rounded-xl text-label-md font-bold hover:opacity-90 shadow-md disabled:opacity-50"
+                  onClick={() => openRejectModal(reviewTarget)}
+                  disabled={actionLoading}
+                >
+                  Reject Application
+                </button>
+                <button
+                  className="px-xl py-3 bg-green-600 text-white rounded-xl text-label-md font-bold hover:bg-green-700 shadow-md disabled:opacity-50"
+                  onClick={() => handleApprove(reviewTarget.id)}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? 'Processing…' : 'Approve Tutor'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
+
+      {/* ════════════════════════════════════════════
+          REJECT MODAL
+      ════════════════════════════════════════════ */}
+      {rejectTarget && (
+        <ModalOverlay onClose={() => !actionLoading && setRejectTarget(null)}>
+          <div
+            className="w-full max-w-md p-xl rounded-2xl shadow-2xl flex flex-col"
+            style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(16px)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-md text-error mb-md">
+              <div className="p-3 bg-red-100 rounded-full">
+                <span className="material-symbols-outlined text-[32px]">warning</span>
+              </div>
+              <h3 className="text-headline-md font-headline-md">Reject Tutor Application</h3>
+            </div>
+
+            <p className="text-body-md text-on-surface-variant mb-xl">
+              Please provide a clear reason for rejecting <strong>{rejectTarget.full_name}</strong>.
+              This message will be sent to the applicant.
+            </p>
+
+            <div className="mb-xl">
+              <label className="text-label-sm font-bold text-on-surface-variant uppercase mb-2 block">
+                Reason for Rejection
+              </label>
+              <textarea
+                className="w-full h-32 p-md rounded-xl border border-outline-variant focus:ring-2 focus:ring-error/20 focus:border-error transition-all resize-none text-body-md outline-none"
+                placeholder="e.g. Missing specialized certification, ID image too blurry..."
+                value={rejectReason}
+                onChange={e => setRejectReason(e.target.value)}
+                disabled={actionLoading}
+              />
+            </div>
+
+            <div className="flex flex-col gap-sm">
+              <button
+                className="w-full py-4 bg-error text-on-error rounded-xl text-label-md font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
+                onClick={handleRejectConfirm}
+                disabled={actionLoading || !rejectReason.trim()}
+              >
+                {actionLoading ? 'Rejecting…' : 'Confirm Reject'}
+              </button>
+              <button
+                className="w-full py-4 text-label-md font-bold text-on-surface-variant hover:bg-surface-container rounded-xl transition-colors disabled:opacity-50"
+                onClick={() => setRejectTarget(null)}
+                disabled={actionLoading}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
+
+      {/* ════════════════════════════════════════════
+          IMAGE FULL-SIZE PREVIEW MODAL
+      ════════════════════════════════════════════ */}
+      {previewUrl && (
+        <ModalOverlay onClose={() => setPreviewUrl(null)}>
+          <div className="relative max-w-3xl w-full" onClick={e => e.stopPropagation()}>
+            <button
+              className="absolute top-2 right-2 z-10 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-colors"
+              onClick={() => setPreviewUrl(null)}
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+            <img
+              src={previewUrl}
+              alt="Document preview"
+              className="w-full rounded-2xl shadow-2xl"
+            />
+          </div>
+        </ModalOverlay>
+      )}
+
+      {/* spin keyframe */}
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
+      `}</style>
     </div>
   )
 }
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
-function StatCard({ icon, label, value, color, bg }) {
+function StatCard({ icon, iconBg, iconColor, label, value, badge, badgeUp, highlight }) {
   return (
-    <div className="admin-stat-card" style={{ background: bg, borderColor: color + '33' }}>
-      <span
-        className="material-symbols-outlined admin-stat-icon"
-        style={{ color }}
-      >
-        {icon}
-      </span>
-      <div>
-        <p className="admin-stat-value" style={{ color }}>{value}</p>
-        <p className="admin-stat-label">{label} Tutors</p>
-      </div>
-    </div>
-  )
-}
-
-// ─── Tutor Application Card ───────────────────────────────────────────────────
-function TutorCard({ tutor, onApprove, onReject }) {
-  return (
-    <div className="tutor-app-card">
-      {/* Header row */}
-      <div className="tutor-app-header">
-        <div className="tutor-app-avatar">
-          <span className="material-symbols-outlined">person</span>
-        </div>
-        <div className="tutor-app-info">
-          <h3 className="tutor-app-name">{tutor.full_name}</h3>
-          <p className="tutor-app-email">{tutor.email}</p>
-        </div>
-        {/* Status badge */}
-        <span className="status-badge status-pending">
-          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>schedule</span>
-          Pending
-        </span>
-      </div>
-
-      {/* Details grid */}
-      <div className="tutor-app-details">
-        <DetailRow icon="menu_book" label="Subjects" value={tutor.subjects || '—'} />
-        <DetailRow icon="work_history" label="Experience" value={tutor.experience_years != null ? `${tutor.experience_years} year(s)` : '—'} />
-        <DetailRow icon="format_quote" label="Bio" value={tutor.bio || '—'} multiline />
-      </div>
-
-      {/* File links */}
-      <div className="tutor-app-files">
-        <FileLink
-          label="Certificate"
-          url={tutor.certificate_url}
-          icon="workspace_premium"
-        />
-        <FileLink
-          label="CCCD / ID Card"
-          url={tutor.cccd_url}
-          icon="badge"
-        />
-      </div>
-
-      {/* Applied at */}
-      <p className="tutor-app-date">
-        Applied: {tutor.created_at ? new Date(tutor.created_at).toLocaleDateString() : '—'}
-      </p>
-
-      {/* Action buttons */}
-      <div className="tutor-app-actions">
-        <button
-          type="button"
-          className="btn btn-approve"
-          onClick={onApprove}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
-          Approve
-        </button>
-        <button
-          type="button"
-          className="btn btn-reject"
-          onClick={onReject}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>cancel</span>
-          Reject
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function DetailRow({ icon, label, value, multiline }) {
-  return (
-    <div className="detail-row">
-      <span className="material-symbols-outlined detail-icon">{icon}</span>
-      <div>
-        <span className="detail-label">{label}: </span>
-        {multiline ? <p className="detail-value-block">{value}</p> : <span className="detail-value">{value}</span>}
-      </div>
-    </div>
-  )
-}
-
-function FileLink({ label, url, icon }) {
-  return (
-    <div className="file-link-wrap">
-      <span className="material-symbols-outlined file-link-icon">{icon}</span>
-      <span className="file-link-label">{label}:</span>
-      {url ? (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="file-link-anchor"
-        >
-          View File ↗
-        </a>
-      ) : (
-        <span className="file-link-none">Not provided</span>
+    <div
+      className={`p-md rounded-xl shadow-sm transition-transform duration-300 hover:-translate-y-1 relative overflow-hidden ${
+        highlight
+          ? 'border-2 border-primary/20'
+          : 'border border-white/20'
+      }`}
+      style={{ background: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(12px)' }}
+    >
+      {highlight && (
+        <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full -mr-12 -mt-12 pointer-events-none" />
       )}
+      <div className="flex justify-between items-start mb-sm">
+        <div className={`p-2 ${iconBg} rounded-lg ${iconColor}`}>
+          <span className="material-symbols-outlined">{icon}</span>
+        </div>
+        {badge && (
+          highlight ? (
+            <span className="bg-primary text-white px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider">
+              {badge}
+            </span>
+          ) : (
+            <span className="text-label-sm text-on-surface-variant flex items-center gap-xs">
+              {badgeUp && <span className="material-symbols-outlined text-[16px]">trending_up</span>}
+              {badge}
+            </span>
+          )
+        )}
+      </div>
+      <p className="text-label-md text-on-surface-variant">{label}</p>
+      <h3 className={`text-headline-md font-headline-md ${highlight ? 'text-primary' : ''}`}>{value}</h3>
     </div>
   )
 }
 
-// ─── Inline styles (scoped to admin page) ─────────────────────────────────────
-const adminStyles = `
-  .admin-page {
-    min-height: 100vh;
-    background: linear-gradient(135deg, #f0f4ff 0%, #f8f9fb 50%, #f5f3ff 100%);
-    font-family: 'Inter', 'Outfit', system-ui, sans-serif;
-  }
-
-  .admin-header {
-    position: sticky;
-    top: 0;
-    z-index: 50;
-    background: rgba(248, 249, 251, 0.9);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid rgba(196, 197, 213, 0.4);
-  }
-
-  .admin-header-inner {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 0 24px;
-    height: 72px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }
-
-  .admin-badge {
-    margin-left: 8px;
-    background: rgba(0, 40, 142, 0.1);
-    color: #00288e;
-    font-size: 12px;
-    font-weight: 700;
-    padding: 4px 12px;
-    border-radius: 999px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
-  .admin-logout {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-  }
-
-  .admin-main {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 36px 24px 80px;
-  }
-
-  .admin-title-row {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
-    margin-bottom: 32px;
-  }
-
-  .admin-title {
-    margin: 0;
-    font-size: clamp(1.6rem, 3.5vw, 2.2rem);
-    font-weight: 900;
-    color: var(--on-surface, #1a1c1e);
-    letter-spacing: -0.03em;
-  }
-
-  .admin-subtitle {
-    margin: 6px 0 0;
-    color: var(--on-surface-variant, #44474f);
-    font-size: 16px;
-  }
-
-  /* ── Stats grid ── */
-  .admin-stats-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
-    margin-bottom: 36px;
-  }
-
-  .admin-stat-card {
-    border-radius: 20px;
-    border: 1px solid;
-    padding: 24px;
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.04);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  .admin-stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-  }
-
-  .admin-stat-icon {
-    font-size: 40px;
-  }
-
-  .admin-stat-value {
-    margin: 0;
-    font-size: 36px;
-    font-weight: 900;
-    line-height: 1;
-  }
-
-  .admin-stat-label {
-    margin: 4px 0 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--on-surface-variant, #44474f);
-  }
-
-  /* ── Loading / Error / Empty ── */
-  .admin-center-msg {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    padding: 80px 24px;
-    text-align: center;
-    color: var(--on-surface-variant, #44474f);
-    font-size: 16px;
-  }
-
-  .admin-error {
-    color: #dc2626;
-  }
-
-  .spin-icon {
-    font-size: 48px;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-  }
-
-  /* ── Tutor cards list ── */
-  .admin-cards-list {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-  }
-
-  .tutor-app-card {
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(196, 197, 213, 0.4);
-    border-radius: 24px;
-    padding: 28px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
-    transition: box-shadow 0.2s ease;
-  }
-
-  .tutor-app-card:hover {
-    box-shadow: 0 8px 32px rgba(0, 40, 142, 0.1);
-  }
-
-  .tutor-app-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-  }
-
-  .tutor-app-avatar {
-    width: 56px;
-    height: 56px;
-    border-radius: 14px;
-    background: rgba(0, 40, 142, 0.08);
-    display: grid;
-    place-items: center;
-    color: #00288e;
-    font-size: 28px;
-    flex-shrink: 0;
-  }
-
-  .tutor-app-name {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--on-surface, #1a1c1e);
-  }
-
-  .tutor-app-email {
-    margin: 2px 0 0;
-    font-size: 14px;
-    color: var(--on-surface-variant, #44474f);
-  }
-
-  .status-badge {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 14px;
-    border-radius: 999px;
-    font-size: 13px;
-    font-weight: 700;
-  }
-
-  .status-pending {
-    background: #fffbeb;
-    color: #92400e;
-    border: 1px solid #fde68a;
-  }
-
-  /* ── Details ── */
-  .tutor-app-details {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: 16px;
-    padding: 16px;
-    background: rgba(248, 249, 251, 0.8);
-    border-radius: 14px;
-  }
-
-  .detail-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    font-size: 14px;
-  }
-
-  .detail-icon {
-    font-size: 18px;
-    color: #00288e;
-    flex-shrink: 0;
-    margin-top: 1px;
-  }
-
-  .detail-label {
-    font-weight: 600;
-    color: var(--on-surface, #1a1c1e);
-  }
-
-  .detail-value {
-    color: var(--on-surface-variant, #44474f);
-  }
-
-  .detail-value-block {
-    margin: 4px 0 0;
-    color: var(--on-surface-variant, #44474f);
-    line-height: 1.6;
-  }
-
-  /* ── File links ── */
-  .tutor-app-files {
-    display: flex;
-    gap: 20px;
-    flex-wrap: wrap;
-    margin-bottom: 12px;
-  }
-
-  .file-link-wrap {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-  }
-
-  .file-link-icon {
-    font-size: 18px;
-    color: #00288e;
-  }
-
-  .file-link-label {
-    font-weight: 600;
-    color: var(--on-surface, #1a1c1e);
-  }
-
-  .file-link-anchor {
-    color: #00288e;
-    text-decoration: none;
-    font-weight: 600;
-  }
-
-  .file-link-anchor:hover {
-    text-decoration: underline;
-  }
-
-  .file-link-none {
-    color: var(--outline, #74777f);
-    font-style: italic;
-  }
-
-  .tutor-app-date {
-    margin: 0 0 16px;
-    font-size: 13px;
-    color: var(--outline, #74777f);
-  }
-
-  /* ── Action buttons ── */
-  .tutor-app-actions {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .btn-approve {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: #10b981;
-    color: white;
-    border: none;
-    padding: 0 24px;
-    min-height: 44px;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.2s ease, transform 0.15s ease;
-  }
-
-  .btn-approve:hover {
-    background: #059669;
-    transform: translateY(-1px);
-  }
-
-  .btn-reject {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: white;
-    color: #dc2626;
-    border: 1.5px solid #fca5a5;
-    padding: 0 24px;
-    min-height: 44px;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-reject:hover {
-    background: #fef2f2;
-    border-color: #ef4444;
-    transform: translateY(-1px);
-  }
-
-  /* ── Modal ── */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(4px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 200;
-    padding: 24px;
-  }
-
-  .modal-box {
-    background: white;
-    border-radius: 24px;
-    padding: 32px;
-    max-width: 500px;
-    width: 100%;
-    box-shadow: 0 25px 60px rgba(0,0,0,0.2);
-    animation: slideUp 0.2s ease;
-  }
-
-  @keyframes slideUp {
-    from { opacity: 0; transform: translateY(20px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-
-  .modal-title {
-    margin: 0 0 10px;
-    font-size: 20px;
-    font-weight: 800;
-    color: var(--on-surface, #1a1c1e);
-  }
-
-  .modal-desc {
-    margin: 0 0 20px;
-    font-size: 15px;
-    color: var(--on-surface-variant, #44474f);
-    line-height: 1.6;
-  }
-
-  .modal-textarea {
-    width: 100%;
-    box-sizing: border-box;
-    border: 1.5px solid #d1d5db;
-    border-radius: 12px;
-    padding: 12px 16px;
-    font-size: 14px;
-    font-family: inherit;
-    resize: vertical;
-    outline: none;
-    transition: border-color 0.2s ease;
-  }
-
-  .modal-textarea:focus {
-    border-color: #ef4444;
-    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-    margin-top: 20px;
-    flex-wrap: wrap;
-  }
-
-  .btn-danger {
-    background: #dc2626;
-    color: white;
-    border: none;
-    padding: 0 24px;
-    min-height: 44px;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.2s ease;
-  }
-
-  .btn-danger:hover {
-    background: #b91c1c;
-  }
-
-  .btn-danger:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  /* ── Access Denied (reused in App.jsx) ── */
-  .access-denied-wrap {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    padding: 24px;
-    text-align: center;
-    background: linear-gradient(135deg, #f0f4ff 0%, #f8f9fb 60%, #f5f3ff 100%);
-  }
-
-  .access-denied-icon {
-    font-size: 72px;
-    color: #ef4444;
-  }
-
-  .access-denied-title {
-    margin: 0;
-    font-size: 2rem;
-    font-weight: 900;
-    color: var(--on-surface, #1a1c1e);
-  }
-
-  .access-denied-msg {
-    margin: 0;
-    font-size: 16px;
-    color: var(--on-surface-variant, #44474f);
-    max-width: 400px;
-  }
-
-  /* ── Responsive ── */
-  @media (max-width: 768px) {
-    .admin-stats-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .admin-title-row {
-      flex-direction: column;
-    }
-
-    .tutor-app-header {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .status-badge {
-      margin-left: 0;
-    }
-
-    .tutor-app-files {
-      flex-direction: column;
-      gap: 10px;
-    }
-  }
-
-  @media (max-width: 480px) {
-    .admin-main {
-      padding: 24px 16px 60px;
-    }
-
-    .tutor-app-card {
-      padding: 20px 16px;
-    }
-
-    .modal-box {
-      padding: 24px 20px;
-    }
-  }
-`
+// ─── Tutor Table Row ──────────────────────────────────────────────────────────
+function TutorRow({ tutor, actionLoading, onReview, onApprove, onReject, onViewCert, onViewId }) {
+  return (
+    <tr className="hover:bg-surface-container-low/50 transition-colors">
+      {/* Name & Subject */}
+      <td className="px-md py-4">
+        <div className="flex items-center gap-md">
+          <div className="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center text-primary font-bold text-sm flex-shrink-0">
+            {(tutor.full_name || '?').charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <p className="text-label-md font-bold">{tutor.full_name}</p>
+            <p className="text-label-sm text-on-surface-variant">{tutor.subjects || 'No subject listed'}</p>
+          </div>
+        </div>
+      </td>
+
+      {/* Applied date */}
+      <td className="px-md py-4 text-body-md text-on-surface-variant">
+        {fmtDate(tutor.created_at)}
+      </td>
+
+      {/* Documents */}
+      <td className="px-md py-4">
+        <div className="flex gap-xs flex-wrap">
+          <button
+            className="px-sm py-1.5 bg-secondary-container text-on-secondary-container rounded-lg text-label-sm flex items-center gap-xs hover:bg-secondary-fixed transition-colors disabled:opacity-40"
+            onClick={onViewCert}
+            disabled={!tutor.certificate_url}
+            title={tutor.certificate_url ? 'View certificate' : 'No certificate uploaded'}
+          >
+            <span className="material-symbols-outlined text-[16px]">description</span>
+            View Certificate
+          </button>
+          <button
+            className="px-sm py-1.5 bg-secondary-container text-on-secondary-container rounded-lg text-label-sm flex items-center gap-xs hover:bg-secondary-fixed transition-colors disabled:opacity-40"
+            onClick={onViewId}
+            disabled={!tutor.cccd_url}
+            title={tutor.cccd_url ? 'View ID card' : 'No ID card uploaded'}
+          >
+            <span className="material-symbols-outlined text-[16px]">badge</span>
+            View ID Card
+          </button>
+        </div>
+      </td>
+
+      {/* Actions */}
+      <td className="px-md py-4 text-right">
+        <div className="flex justify-end gap-xs items-center">
+          <button
+            className="px-md py-2 bg-primary text-on-primary rounded-xl text-label-sm font-bold hover:opacity-90 disabled:opacity-50"
+            onClick={onReview}
+            disabled={actionLoading}
+          >
+            Review
+          </button>
+          <button
+            className="p-2 hover:bg-green-50 rounded-lg transition-colors disabled:opacity-50"
+            title="Approve"
+            onClick={onApprove}
+            disabled={actionLoading}
+          >
+            <span className="material-symbols-outlined text-green-600">check_circle</span>
+          </button>
+          <button
+            className="p-2 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+            title="Reject"
+            onClick={onReject}
+            disabled={actionLoading}
+          >
+            <span className="material-symbols-outlined text-error">cancel</span>
+          </button>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+// ─── Document Preview Card ────────────────────────────────────────────────────
+function DocPreview({ label, path, onExpand }) {
+  return (
+    <div>
+      <p className="text-label-md font-bold mb-sm">{label}</p>
+      <div className="relative group rounded-xl overflow-hidden shadow-sm border border-outline-variant aspect-[4/3] bg-surface-container-high flex items-center justify-center">
+        {path ? (
+          <button
+            className="bg-primary text-white px-md py-3 rounded-xl font-label-md flex items-center gap-sm hover:bg-primary/90 transition-colors shadow-md"
+            onClick={onExpand}
+          >
+            <span className="material-symbols-outlined">lock_open</span>
+            View Secure Document
+          </button>
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-sm text-on-surface-variant">
+            <span className="material-symbols-outlined text-[40px]">hide_image</span>
+            <p className="text-label-sm">Not uploaded</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Modal Overlay ─────────────────────────────────────────────────────────────
+function ModalOverlay({ children, onClose }) {
+  // Close on Escape key
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  return (
+    <div
+      className="fixed inset-0 bg-inverse-surface/40 backdrop-blur-sm z-[60] flex items-center justify-center p-md"
+      onClick={onClose}
+    >
+      {children}
+    </div>
+  )
+}

@@ -60,10 +60,11 @@ const SCHEDULE_TODAY = [
 ]
 
 const NAV_ITEMS = [
-  { icon: 'dashboard', label: 'Overview', active: true },
-  { icon: 'calendar_today', label: 'My Schedule' },
-  { icon: 'group', label: 'Students' },
-  { icon: 'payments', label: 'Earnings' },
+  { icon: 'dashboard', label: 'Overview', active: true, href: '#' },
+  { icon: 'calendar_today', label: 'My Schedule', href: '#' },
+  { icon: 'group', label: 'Students', href: '#' },
+  { icon: 'payments', label: 'Earnings', href: '#' },
+  { icon: 'badge', label: 'My Profile', href: '#/tutor-profile' },
 ]
 
 export default function TutorDashboard() {
@@ -134,7 +135,7 @@ export default function TutorDashboard() {
           {NAV_ITEMS.map((item) => (
             <a
               key={item.label}
-              href="#"
+              href={item.href || '#'}
               className={`
                 flex items-center gap-sm px-md py-sm rounded-lg
                 transition-all duration-200 active:scale-95

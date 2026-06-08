@@ -10,7 +10,8 @@ import SignUp from './SignUp'
 import AdminDashboard from './AdminDashboard'
 import StudentDashboard from './StudentDashboard'
 import TutorDashboard from './TutorDashboard'
-import ParentDashboard from './ParentDashboard'    // ← NEW
+import ParentDashboard from './ParentDashboard'
+import TutorProfileForm from './TutorProfileForm'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -86,6 +87,7 @@ const getRouteFromHash = () => {
   if (normalized === '/admin')     return 'admin'
   if (normalized === '/dashboard') return 'dashboard'   // Student Dashboard
   if (normalized === '/tutor')     return 'tutor'       // Tutor Dashboard
+  if (normalized === '/tutor-profile') return 'tutor-profile' // Tutor Profile Form
   if (normalized === '/parent')    return 'parent'      // Parent Dashboard
   return 'home'
 }
@@ -326,6 +328,7 @@ function App() {
     if (nextRoute === 'admin')     { window.location.hash = '/admin';     return }
     if (nextRoute === 'dashboard') { window.location.hash = '/dashboard'; return }
     if (nextRoute === 'tutor')     { window.location.hash = '/tutor';     return }
+    if (nextRoute === 'tutor-profile') { window.location.hash = '/tutor-profile'; return }
     if (nextRoute === 'parent')    { window.location.hash = '/parent';    return }
     window.location.hash = '/'
   }
@@ -393,6 +396,27 @@ function App() {
       )
     }
     return <TutorDashboard />
+  }
+
+  // ── Route: Tutor Profile (protected) ──
+  if (route === 'tutor-profile') {
+    if (!user) {
+      return (
+        <AccessDenied
+          isLoggedIn={false}
+          onGoSignIn={() => navigateTo('signin')}
+        />
+      )
+    }
+    return (
+      <div className="bg-surface min-h-screen">
+        <header className="p-md bg-surface shadow-sm mb-lg flex justify-between items-center">
+          <h1 className="text-xl font-bold">EduX</h1>
+          <button onClick={() => window.location.hash = '/tutor'} className="text-primary font-bold">← Back to Dashboard</button>
+        </header>
+        <TutorProfileForm />
+      </div>
+    )
   }
 
   // ── Route: Parent Dashboard (protected) ──
