@@ -3,7 +3,8 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const nodemailer = require("nodemailer");          // NEW: email notifications
+const nodemailer = require("nodemailer");          // email notifications
+const multer = require("multer");                  // NEW: file uploads
 const { OAuth2Client } = require("google-auth-library");
 const pool = require("./db");
 
@@ -107,6 +108,58 @@ async function sendTutorReviewEmail(to, status, reason) {
     // Log the error but do NOT crash the server
     console.error(`[Email] Failed to send email to ${to}:`, err.message);
   }
+}
+
+// ─── Multer Configuration ─────────────────────────────────────────────────────
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files are allowed!"), false);
+    }
+  },
+});
+
+// ─── Supabase Storage Helpers ─────────────────────────────────────────────────
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
+
+async function uploadFileToStorage(file, path) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    throw new Error("Supabase Storage credentials missing in backend.");
+  }
+  const url = `${SUPABASE_URL}/storage/v1/object/tutor-documents/${path}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+      "Content-Type": file.mimetype,
+    },
+    body: file.buffer,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Failed to upload file to Supabase.");
+  return path; // Return the path within the bucket
+}
+
+async function createSignedUrl(path) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return null;
+  const url = `${SUPABASE_URL}/storage/v1/object/sign/tutor-documents/${path}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ expiresIn: 3600 }), // 1 hour
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Failed to create signed URL.");
+  // Sometimes Supabase returns signedURL, sometimes signedUrl
+  return data.signedURL || data.signedUrl || (data.data && data.data.signedUrl);
 }
 
 // ─── GET / ────────────────────────────────────────────────────────────────────
@@ -309,6 +362,78 @@ app.post("/api/auth/google", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ── TUTOR APIs ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.get("/api/tutor/profile", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM tutor_profiles WHERE user_id = $1",
+      [req.user.userId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ message: "Profile not found." });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Get tutor profile error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// Upload profile data along with images
+app.post("/api/tutor/profile", verifyToken, upload.fields([{ name: "certificate", maxCount: 1 }, { name: "cccd", maxCount: 1 }]), async (req, res) => {
+  try {
+    const { bio, subjects, experience_years } = req.body;
+    const userId = req.user.userId;
+
+    const files = req.files || {};
+    const certFile = files["certificate"] ? files["certificate"][0] : null;
+    const cccdFile = files["cccd"] ? files["cccd"][0] : null;
+
+    let certPath = null;
+    let cccdPath = null;
+
+    // We don't enforce mandatory upload here to allow updating text fields,
+    // but a real app might require them on first creation.
+    if (certFile) {
+      const ext = certFile.originalname.split('.').pop();
+      certPath = await uploadFileToStorage(certFile, `certificates/${userId}_${Date.now()}.${ext}`);
+    }
+    if (cccdFile) {
+      const ext = cccdFile.originalname.split('.').pop();
+      cccdPath = await uploadFileToStorage(cccdFile, `cccds/${userId}_${Date.now()}.${ext}`);
+    }
+
+    const existing = await pool.query("SELECT id FROM tutor_profiles WHERE user_id = $1", [userId]);
+
+    let result;
+    if (existing.rows.length > 0) {
+      // Update existing
+      let values = [bio, subjects, parseInt(experience_years) || 0, "pending", userId];
+      let query = "UPDATE tutor_profiles SET bio = $1, subjects = $2, experience_years = $3, status = $4, reject_reason = NULL";
+      
+      let valIdx = 6;
+      if (certPath) { query += `, certificate_url = $${valIdx}`; values.push(certPath); valIdx++; }
+      if (cccdPath) { query += `, cccd_url = $${valIdx}`; values.push(cccdPath); valIdx++; }
+      
+      query += ` WHERE user_id = $5 RETURNING *`;
+      result = await pool.query(query, values);
+    } else {
+      // Insert new
+      result = await pool.query(
+        `INSERT INTO tutor_profiles (user_id, bio, subjects, experience_years, certificate_url, cccd_url, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING *`,
+        [userId, bio, subjects, parseInt(experience_years) || 0, certPath, cccdPath]
+      );
+    }
+    return res.status(200).json(result.rows[0]);
+  } catch (error) {
+    console.error("Tutor profile upload error:", error);
+    // If multer throws file type error
+    return res.status(500).json({ message: error.message || "Server error." });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ── ADMIN APIs (all protected by verifyToken + requireAdmin) ──────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -331,6 +456,24 @@ app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) =
     });
   } catch (error) {
     console.error("Stats error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── GET /api/admin/document-url ──────────────────────────────────────────────
+// Generates a signed URL for a given storage path so admins can view documents
+app.get("/api/admin/document-url", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { path } = req.query;
+    if (!path) return res.status(400).json({ message: "Path is required." });
+    
+    // Convert path to signed URL via Supabase Storage REST API
+    const signedUrl = await createSignedUrl(path);
+    if (!signedUrl) return res.status(500).json({ message: "Failed to generate URL. Check Supabase config." });
+    
+    return res.json({ signedUrl });
+  } catch (error) {
+    console.error("Document URL error:", error);
     return res.status(500).json({ message: "Server error." });
   }
 });
