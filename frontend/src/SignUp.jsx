@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAuth } from './AuthContext'   // ← Global auth state
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
@@ -9,6 +10,7 @@ const ROLE_OPTIONS = [
 ]
 
 export default function SignUp({ onSwitchToSignIn, onGoHome }) {
+  const { login } = useAuth()   // ← login(token, user) saves to context + localStorage
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
   const [role, setRole] = useState('student')
   const [formData, setFormData] = useState({
@@ -79,9 +81,9 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         throw new Error(data?.message || 'Registration failed.')
       }
 
-      localStorage.setItem('token', data.token)
-      localStorage.setItem('user', JSON.stringify(data.user))
-      if (onGoHome) onGoHome()
+      // login() tự động redirect theo role (admin→#/admin, tutor→#/tutor, v.v.)
+      login(data.token, data.user)
+      // KHÔNG gọi onGoHome() ở đây — login() đã xử lý redirect rồi
     } catch (submitError) {
       setErrors((prev) => ({
         ...prev,
