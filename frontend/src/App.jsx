@@ -543,6 +543,7 @@ function App() {
   if (routeName === 'exam-result') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     return <QuizResult isExamPaper={true} attemptId={route.id} token={token} />
+  }
 
   // ── Route: Tutor Profile (protected) ──
   if (routeName === 'tutor-profile') {
@@ -600,8 +601,6 @@ function App() {
   // ── Route: Tutor Detail Page ──
   if (routeName === 'tutor-detail') {
     return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
-  }
-
   }
 
   // ── Route: Home ──
