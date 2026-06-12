@@ -388,18 +388,6 @@ export default function TutorDashboard() {
               </a>
             );
           })}
-
-              >
-                <span
-                  className="material-symbols-outlined"
-                  style={isActive ? { fontVariationSettings: "'FILL' 1" } : {}}
-                >
-                  {item.icon}
-                </span>
-                <span className="font-label-md text-label-md">{item.label}</span>
-              </a>
-            );
-          })}
         </div>
 
         {/* Bottom */}
