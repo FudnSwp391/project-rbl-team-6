@@ -5,8 +5,10 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const nodemailer = require("nodemailer");          // email notifications
 const multer = require("multer");                  // NEW: file uploads
+const { GoogleAuth } = require("google-auth-library");
 const { OAuth2Client } = require("google-auth-library");
 const pool = require("./db");
+const { generateQuizQuestions, chatWithAI } = require("./gemini");
 
 dotenv.config();
 
