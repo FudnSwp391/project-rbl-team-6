@@ -10,6 +10,7 @@
  */
 import { useState, useEffect } from 'react'
 import { useAuth } from './AuthContext'
+import MessagesSection from './components/MessagesSection'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -66,11 +67,14 @@ const SCHEDULE_TODAY = [
 ]
 
 const NAV_ITEMS = [
-  { icon: 'dashboard', label: 'Overview', active: true, href: '#' },
-  { icon: 'calendar_today', label: 'My Schedule', href: '#' },
-  { icon: 'group', label: 'Students', href: '#' },
-  { icon: 'payments', label: 'Earnings', href: '#' },
-  { icon: 'badge', label: 'My Profile', href: '#/tutor-profile' },
+
+  { id: 'overview', icon: 'dashboard', label: 'Overview' },
+  { id: 'schedule', icon: 'calendar_today', label: 'My Schedule' },
+  { id: 'students', icon: 'group', label: 'Students' },
+  { id: 'earnings', icon: 'payments', label: 'Earnings' },
+  { id: 'messages', icon: 'chat', label: 'Messages' },
+  { id: 'tutor-profile', icon: 'badge', label: 'My Profile' },
+
 ]
 
 // ─── Màn chờ duyệt ────────────────────────────────────────────────────────────
@@ -238,6 +242,7 @@ function LoadingScreen() {
 export default function TutorDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [activeSection, setActiveSection] = useState('overview')
   const [requests, setRequests] = useState(PENDING_REQUESTS)
 
   // ── Kiểm tra trạng thái hồ sơ ─────────────────────────────────────────────
@@ -347,29 +352,42 @@ export default function TutorDashboard() {
 
         {/* Nav items */}
         <div className="flex flex-col gap-2 px-sm flex-1 mt-4">
-          {NAV_ITEMS.map((item) => (
-            <a
-              key={item.label}
-              href={item.href || '#'}
-              className={`
-                flex items-center gap-sm px-md py-sm rounded-lg
-                transition-all duration-200 active:scale-95
-                ${
-                  item.active
-                    ? 'text-primary font-bold bg-secondary-container'
-                    : 'text-on-surface-variant hover:bg-surface-container-high'
-                }
-              `}
-            >
-              <span
-                className="material-symbols-outlined"
-                style={item.active ? { fontVariationSettings: "'FILL' 1" } : {}}
+
+          {NAV_ITEMS.map((item) => {
+            const isActive = activeSection === item.id;
+            return (
+              <a
+                key={item.id}
+                href="#"
+                onClick={(e) => { 
+                  e.preventDefault(); 
+                  if (item.id === 'tutor-profile') {
+                    window.location.hash = '/tutor-profile';
+                  } else {
+                    setActiveSection(item.id); 
+                  }
+                  setSidebarOpen(false); 
+                }}
+                className={`
+                  flex items-center gap-sm px-md py-sm rounded-lg
+                  transition-all duration-200 active:scale-95
+                  ${
+                    isActive
+                      ? 'text-primary font-bold bg-secondary-container'
+                      : 'text-on-surface-variant hover:bg-surface-container-high'
+                  }
+                `}
               >
-                {item.icon}
-              </span>
-              <span className="font-label-md text-label-md">{item.label}</span>
-            </a>
-          ))}
+                <span
+                  className="material-symbols-outlined"
+                  style={isActive ? { fontVariationSettings: "'FILL' 1" } : {}}
+                >
+                  {item.icon}
+                </span>
+                <span className="font-label-md text-label-md">{item.label}</span>
+              </a>
+            );
+          })}
         </div>
 
         {/* Bottom */}
@@ -454,9 +472,14 @@ export default function TutorDashboard() {
           {/* Decorative background glow */}
           <div className="fixed top-0 right-0 w-1/2 h-1/2 bg-gradient-to-bl from-primary-fixed-dim/20 to-transparent pointer-events-none -z-10 blur-3xl rounded-full" />
 
-          {/* ── Welcome ── */}
-          <div className="space-y-1">
-            <h2 className="font-headline-lg text-headline-lg text-on-surface">
+          {/* ── Messages ── */}
+          {activeSection === 'messages' && <MessagesSection token={token} user={user} />}
+
+          {/* ── Welcome (Overview) ── */}
+          {activeSection === 'overview' && (
+            <>
+              <div className="space-y-1">
+                <h2 className="font-headline-lg text-headline-lg text-on-surface">
               Good Morning, {displayName} 👋
             </h2>
             <p className="font-body-lg text-body-lg text-on-surface-variant">
@@ -575,8 +598,9 @@ export default function TutorDashboard() {
                 </button>
               </div>
             </div>
-
           </div>
+            </>
+          )}
         </main>
       </div>
     </div>

@@ -1,7 +1,6 @@
 /**
  * App.jsx
  * Main application shell — handles hash-based routing and renders the correct page.
- * Routes: / (home)  #/signin  #/signup  #/admin
  */
 import { useEffect, useState } from 'react'
 import './App.css'
@@ -11,11 +10,14 @@ import AdminDashboard from './AdminDashboard'
 import StudentDashboard from './StudentDashboard'
 import TutorDashboard from './TutorDashboard'
 import ParentDashboard from './ParentDashboard'
+import QuizTaking from './QuizTaking'
+import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorDetailPage from './TutorDetailPage'
+
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -85,20 +87,47 @@ const footerLinks = {
 
 // ─── Helper: parse the hash to get the current route ─────────────────────────
 const getRouteFromHash = () => {
+
   let normalized = window.location.hash.replace(/^#/, '') || '/'
   normalized = normalized.split('?')[0] // remove query params for matching
-  if (normalized === '/signin')    return 'signin'
-  if (normalized === '/signup')    return 'signup'
-  if (normalized === '/admin')     return 'admin'
-  if (normalized === '/dashboard') return 'dashboard'   // Student Dashboard
-  if (normalized === '/tutor')     return 'tutor'       // Tutor Dashboard
-  if (normalized === '/tutor-profile') return 'tutor-profile' // Tutor Profile Form
-  if (normalized === '/tutor-detail') return 'tutor-detail'
-  if (normalized === '/parent')    return 'parent'      // Parent Dashboard
-  if (normalized === '/find-tutors') return 'find-tutors'
-  if (normalized === '/subjects')  return 'subjects'
-  if (normalized === '/become-tutor') return 'become-tutor'
-  return 'home'
+  if (normalized === '/signin')    return { name: 'signin' }
+  if (normalized === '/signup')    return { name: 'signup' }
+  if (normalized === '/admin')     return { name: 'admin' }
+  if (normalized === '/dashboard') return { name: 'dashboard' }   // Student Dashboard
+  if (normalized === '/tutor')     return { name: 'tutor' }       // Tutor Dashboard
+  if (normalized === '/tutor-profile') return { name: 'tutor-profile' } // Tutor Profile Form
+  if (normalized === '/tutor-detail') return { name: 'tutor-detail' }
+  if (normalized === '/parent')    return { name: 'parent' }      // Parent Dashboard
+  if (normalized === '/find-tutors') return { name: 'find-tutors' }
+  if (normalized === '/subjects')  return { name: 'subjects' }
+  if (normalized === '/become-tutor') return { name: 'become-tutor' }
+
+  // Quiz routes: #/quiz/<id>
+  const quizMatch = normalized.match(/^\/quiz\/([^/]+)$/)
+  if (quizMatch) return { name: 'quiz', id: quizMatch[1] }
+
+  // Quiz result routes: #/quiz-result/<attemptId>
+  const resultMatch = normalized.match(/^\/quiz-result\/([^/]+)$/)
+  if (resultMatch) return { name: 'quiz-result', id: resultMatch[1] }
+
+  // Practice quiz: #/practice-quiz/<sessionId>
+  const practiceQuizMatch = normalized.match(/^\/practice-quiz\/([^/]+)$/)
+  if (practiceQuizMatch) return { name: 'practice-quiz', id: practiceQuizMatch[1] }
+
+  // Practice result: #/practice-result/<sessionId>
+  const practiceResultMatch = normalized.match(/^\/practice-result\/([^/]+)$/)
+  if (practiceResultMatch) return { name: 'practice-result', id: practiceResultMatch[1] }
+
+  // Exam routes: #/exam-quiz/<id>
+  const examMatch = normalized.match(/^\/exam-quiz\/([^/]+)$/)
+  if (examMatch) return { name: 'exam-quiz', id: examMatch[1] }
+
+  // Exam result routes: #/exam-result/<attemptId>
+  const examResultMatch = normalized.match(/^\/exam-result\/([^/]+)$/)
+  if (examResultMatch) return { name: 'exam-result', id: examResultMatch[1] }
+
+  return { name: 'home' }
+
 }
 
 // ─── Access Denied page (shown to non-admin users who visit #/admin) ──────────
@@ -414,7 +443,7 @@ function HomePage({ onGoSignIn }) {
 
 // ─── Root App component ───────────────────────────────────────────────────────
 function App() {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [route, setRoute] = useState(() => getRouteFromHash())
 
   useEffect(() => {
@@ -435,73 +464,88 @@ function App() {
     window.location.hash = '/'
   }
 
+  const routeName = route.name || route   // backward compat
+
   // ── Route: Sign In ──
-  if (route === 'signin') {
-    return (
-      <SignIn
-        onSwitchToSignUp={() => navigateTo('signup')}
-        onGoHome={() => navigateTo('home')}
-      />
-    )
+  if (routeName === 'signin') {
+    return <SignIn onSwitchToSignUp={() => navigateTo('signup')} onGoHome={() => navigateTo('home')} />
   }
 
   // ── Route: Sign Up ──
-  if (route === 'signup') {
-    return (
-      <SignUp
-        onSwitchToSignIn={() => navigateTo('signin')}
-        onGoHome={() => navigateTo('home')}
-      />
-    )
+  if (routeName === 'signup') {
+    return <SignUp onSwitchToSignIn={() => navigateTo('signin')} onGoHome={() => navigateTo('home')} />
   }
 
-  // ── Route: Admin Dashboard (protected) ──
-  if (route === 'admin') {
-    // Not logged in → guide to sign in
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
-    // Logged in but not admin → access denied
-    if (user.role !== 'admin') {
-      return <AccessDenied isLoggedIn={true} />
-    }
-    // Admin → show dashboard
+  // ── Route: Admin Dashboard ──
+  if (routeName === 'admin') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    if (user.role !== 'admin') return <AccessDenied isLoggedIn={true} />
     return <AdminDashboard />
   }
 
-  // ── Route: Student Dashboard (protected) ──
-  if (route === 'dashboard') {
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
+  // ── Route: Student Dashboard ──
+  if (routeName === 'dashboard') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     return <StudentDashboard />
   }
 
-  // ── Route: Tutor Dashboard (protected) ──
-  if (route === 'tutor') {
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
+  // ── Route: Tutor Dashboard ──
+  if (routeName === 'tutor') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     return <TutorDashboard />
   }
 
+  // ── Route: Parent Dashboard ──
+  if (routeName === 'parent') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <ParentDashboard />
+  }
+
+  // ── Route: Quiz Taking (formal quiz) ──
+  if (routeName === 'quiz') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizTaking quizId={route.id} token={token} isPractice={false} />
+  }
+
+  // ── Route: Practice Quiz Taking ──
+  if (routeName === 'practice-quiz') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizTaking
+      isPractice={true}
+      practiceSessionId={route.id}
+      token={token}
+    />
+  }
+
+  // ── Route: Quiz Result (formal) ──
+  if (routeName === 'quiz-result') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizResult attemptId={route.id} token={token} isPractice={false} />
+  }
+
+  // ── Route: Practice Result ──
+  if (routeName === 'practice-result') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizResult isPractice={true} sessionId={route.id} token={token} />
+  }
+
+  // ── Route: Exam Paper Taking ──
+  if (routeName === 'exam-quiz') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizTaking
+      isExamPaper={true}
+      examPaperId={route.id}
+      token={token}
+    />
+  }
+
+  // ── Route: Exam Paper Result ──
+  if (routeName === 'exam-result') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizResult isExamPaper={true} attemptId={route.id} token={token} />
+
   // ── Route: Tutor Profile (protected) ──
-  if (route === 'tutor-profile') {
+  if (routeName === 'tutor-profile') {
     const hasPendingReg = !!sessionStorage.getItem('pendingTutorReg')
     // Cho phép truy cập nếu: đã đăng nhập (tutor cũ) HOẶC đang trong luồng đăng ký mới
     if (!user && !hasPendingReg) {
@@ -514,11 +558,9 @@ function App() {
     }
     return (
       <div className="bg-background min-h-screen flex flex-col">
-        {/* Header matching design system */}
         <header className="bg-surface-container-lowest shadow-sm sticky top-0 z-50">
           <div className="flex justify-between items-center w-full px-6 md:px-10 max-w-[1280px] mx-auto h-16">
             <div className="font-bold text-2xl text-primary tracking-tight">EduX</div>
-            {/* Chỉ hiện nút Back nếu là tutor đã đăng nhập (không phải đăng ký mới) */}
             {user && !hasPendingReg && (
               <button
                 onClick={() => window.location.hash = '/tutor'}
@@ -530,7 +572,6 @@ function App() {
           </div>
         </header>
         <TutorProfileForm />
-        {/* Footer */}
         <footer className="bg-surface-container-lowest border-t border-outline-variant mt-auto">
           <div className="w-full py-6 px-10 flex flex-col md:flex-row justify-between items-center max-w-[1280px] mx-auto gap-4">
             <span className="text-xs text-on-secondary-container">© 2024 EduX. Professional Academic Support.</span>
@@ -545,34 +586,22 @@ function App() {
     )
   }
 
-
-  // ── Route: Parent Dashboard (protected) ──
-  if (route === 'parent') {
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
-    return <ParentDashboard />
-  }
-
   // ── Route: Public Pages ──
-  if (route === 'find-tutors') {
+  if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
-  if (route === 'subjects') {
+  if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
-  if (route === 'become-tutor') {
+  if (routeName === 'become-tutor') {
     return <BecomeTutorPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
 
   // ── Route: Tutor Detail Page ──
-  if (route === 'tutor-detail') {
+  if (routeName === 'tutor-detail') {
     return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+
   }
 
   // ── Route: Home ──
@@ -580,3 +609,4 @@ function App() {
 }
 
 export default App
+

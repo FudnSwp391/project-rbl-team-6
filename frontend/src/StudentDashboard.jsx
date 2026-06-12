@@ -4,9 +4,12 @@
  * Dashboard dành cho học sinh (role: student / parent / tutor).
  * Hiện thị: khóa học đang học, bài tập, giờ học, gia sư hiện tại.
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from './AuthContext'
-
+import QuizList from './QuizList'
+import PracticeMode from './PracticeMode'
+import ExamPapers from './ExamPapers'
+import MessagesSection from './components/MessagesSection'
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
 const MY_TUTORS = [
   {
@@ -33,15 +36,41 @@ const MY_TUTORS = [
 ]
 
 const NAV_ITEMS = [
-  { icon: 'dashboard', label: 'Dashboard', active: true },
-  { icon: 'school', label: 'My Courses' },
-  { icon: 'calendar_today', label: 'Schedule' },
-  { icon: 'chat', label: 'Messages' },
+  { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
+  { id: 'courses', icon: 'school', label: 'My Courses' },
+  { id: 'schedule', icon: 'calendar_today', label: 'Schedule' },
+  { id: 'messages', icon: 'chat', label: 'Messages' },
+  { id: 'assessments', icon: 'quiz', label: 'Assessments' },
+  { id: 'practice', icon: 'psychology', label: 'AI Practice' },
+  { id: 'exam-papers', icon: 'description', label: 'Đề thi' },
+  { id: 'parent-link', icon: 'family_restroom', label: 'Mã chia sẻ' },
 ]
 
 export default function StudentDashboard() {
-  const { user, logout } = useAuth()
+  const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  
+  const getSectionFromHash = () => {
+    const parts = window.location.hash.split('/')
+    return parts.length > 2 ? parts[2] : 'dashboard'
+  }
+  const [activeSection, setActiveSection] = useState(getSectionFromHash())
+
+  useEffect(() => {
+    const handleHash = () => setActiveSection(getSectionFromHash())
+    window.addEventListener('hashchange', handleHash)
+    return () => window.removeEventListener('hashchange', handleHash)
+  }, [])
+
+  // Listen for cross-component navigation events (e.g. from quota error banner)
+  useEffect(() => {
+    const handler = (e) => {
+      setActiveSection(e.detail)
+      window.location.hash = `/dashboard/${e.detail}`
+    }
+    window.addEventListener('navigate-section', handler)
+    return () => window.removeEventListener('navigate-section', handler)
+  }, [])
 
   // Lấy tên hiển thị: ưu tiên name, rồi email
   const displayName = user?.name || user?.email?.split('@')[0] || 'Student'
@@ -84,30 +113,33 @@ export default function StudentDashboard() {
 
         {/* Nav items */}
         <ul className="flex-1 flex flex-col gap-xs px-sm">
-          {NAV_ITEMS.map((item) => (
-            <li key={item.label}>
-              <a
-                href="#"
-                className={`
-                  flex items-center gap-sm px-md py-sm rounded-lg
-                  transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2
-                  ${
-                    item.active
-                      ? 'text-primary font-bold bg-secondary-container'
-                      : 'text-on-surface-variant hover:bg-surface-container-high'
-                  }
-                `}
-              >
-                <span
-                  className="material-symbols-outlined"
-                  style={item.active ? { fontVariationSettings: "'FILL' 1" } : {}}
+          {NAV_ITEMS.map((item) => {
+            const isActive = activeSection === item.id
+            return (
+              <li key={item.id}>
+                <button
+                  onClick={() => { window.location.hash = `/dashboard/${item.id}`; setSidebarOpen(false) }}
+                  className={`
+                    w-full flex items-center gap-sm px-md py-sm rounded-lg
+                    transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2
+                    ${
+                      isActive
+                        ? 'text-primary font-bold bg-secondary-container'
+                        : 'text-on-surface-variant hover:bg-surface-container-high'
+                    }
+                  `}
                 >
-                  {item.icon}
-                </span>
-                <span className="font-label-md text-label-md">{item.label}</span>
-              </a>
-            </li>
-          ))}
+                  <span
+                    className="material-symbols-outlined"
+                    style={isActive ? { fontVariationSettings: "'FILL' 1" } : {}}
+                  >
+                    {item.icon}
+                  </span>
+                  <span className="font-label-md text-label-md">{item.label}</span>
+                </button>
+              </li>
+            )
+          })}
         </ul>
 
         {/* Bottom actions */}
@@ -206,6 +238,34 @@ export default function StudentDashboard() {
         {/* ── Main canvas ── */}
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-md lg:p-lg">
           <div className="max-w-container-max mx-auto flex flex-col gap-xl pb-xl">
+
+            {/* ── Assessments Section ── */}
+            {activeSection === 'assessments' && (
+              <QuizList token={token} />
+            )}
+
+            {/* ── AI Practice Section ── */}
+            {activeSection === 'practice' && (
+              <PracticeMode token={token} />
+            )}
+
+            {/* ── Đề thi Section ── */}
+            {activeSection === 'exam-papers' && (
+              <ExamPapers token={token} />
+            )}
+
+            {/* ── Parent Link Section ── */}
+            {activeSection === 'parent-link' && (
+              <ParentLinkSection token={token} />
+            )}
+
+            {activeSection === 'messages' && (
+              <MessagesSection token={token} user={user} />
+            )}
+
+            {/* ── Dashboard Home ── */}
+            {(activeSection === 'dashboard' || activeSection === 'courses' || activeSection === 'schedule') && (
+              <>
 
             {/* ── Welcome Header ── */}
             <div className="flex justify-between items-end flex-wrap gap-md">
@@ -312,6 +372,9 @@ export default function StudentDashboard() {
               </div>
             </div>
 
+              </>
+            )}
+
           </div>
         </main>
       </div>
@@ -353,6 +416,111 @@ function TutorCard({ tutor }) {
       <button className="w-full h-10 border border-outline-variant text-on-surface font-label-sm text-label-sm rounded-lg hover:bg-surface-container hover:text-primary transition-colors">
         Message
       </button>
+    </div>
+  )
+}
+
+// ─── Parent Link Section ──────────────────────────────────────────────────────
+function ParentLinkSection({ token }) {
+  const [code, setCode] = useState(null)
+  const [parents, setParents] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    // Lấy mã chia sẻ
+    fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/link-code`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => setCode(d.code))
+      .catch(console.error)
+
+    // Lấy danh sách phụ huynh
+    fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/parents`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => { setParents(d.parents || []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <div className="text-center py-xl"><span className="material-symbols-outlined animate-spin text-primary text-[40px]">sync</span></div>
+
+  return (
+    <div className="max-w-3xl mx-auto flex flex-col gap-lg animate-in fade-in slide-in-from-bottom-4 duration-500">
+      
+      {/* Code card */}
+      <div className="bg-surface rounded-3xl border border-outline-variant/30 shadow-md p-lg flex flex-col md:flex-row gap-xl items-center relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-2 h-full bg-primary" />
+        
+        <div className="flex-1 space-y-4">
+          <div>
+            <h2 className="font-headline-md text-headline-md font-bold text-on-surface">Mã chia sẻ phụ huynh</h2>
+            <p className="font-body-md text-body-md text-on-surface-variant mt-1">
+              Đưa mã này cho phụ huynh của bạn. Phụ huynh sẽ dùng mã này trong "EduX Phụ huynh" để theo dõi quá trình học tập, bài tập, đề thi của bạn.
+            </p>
+          </div>
+
+          <div className="bg-surface-container-low rounded-2xl border border-outline-variant/30 p-md flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-widest text-on-surface-variant mb-1">Mã của bạn</p>
+              <p className="font-mono text-3xl font-black text-primary tracking-[0.2em]">{code || '--------'}</p>
+            </div>
+            <button 
+              onClick={() => {
+                navigator.clipboard.writeText(code)
+                alert('Đã sao chép mã!')
+              }}
+              className="w-12 h-12 flex items-center justify-center bg-primary/10 text-primary hover:bg-primary/20 rounded-xl transition-colors"
+              title="Sao chép"
+            >
+              <span className="material-symbols-outlined text-[24px]">content_copy</span>
+            </button>
+          </div>
+          
+          <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200/50">
+            <span className="material-symbols-outlined text-[20px]">info</span>
+            <p>Mã này là cố định và không thay đổi. Bạn không thể tự hủy liên kết.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Connected parents list */}
+      <div>
+        <h3 className="font-headline-sm text-headline-sm font-semibold text-on-surface mb-md">Phụ huynh đang theo dõi ({parents.length})</h3>
+        
+        {parents.length === 0 ? (
+          <div className="bg-surface-container-low border border-outline-variant/30 rounded-3xl p-xl flex flex-col items-center justify-center text-center">
+            <div className="w-16 h-16 bg-surface-container border border-outline-variant/50 rounded-full flex items-center justify-center mb-md">
+              <span className="material-symbols-outlined text-[32px] text-on-surface-variant">family_history</span>
+            </div>
+            <p className="font-label-lg text-on-surface font-medium">Chưa có phụ huynh nào</p>
+            <p className="font-body-sm text-on-surface-variant mt-1 max-w-sm">Chia sẻ mã phía trên cho phụ huynh của bạn để họ có thể theo dõi tiến độ học tập.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+            {parents.map(p => (
+              <div key={p.id} className="bg-surface rounded-2xl border border-outline-variant/30 p-md flex gap-4 items-center hover:shadow-sm transition-shadow">
+                {p.parent_picture ? (
+                  <img src={p.parent_picture} alt={p.parent_name} className="w-14 h-14 rounded-full object-cover border border-outline-variant/30" />
+                ) : (
+                  <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-lg">
+                    {p.parent_name.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex-1">
+                  <p className="font-label-lg text-on-surface font-semibold">{p.nickname ? `${p.nickname} (${p.parent_name})` : p.parent_name}</p>
+                  <p className="font-body-sm text-on-surface-variant">{p.parent_email}</p>
+                  <p className="text-xs text-on-surface-variant mt-1 border-t border-outline-variant/20 pt-1">
+                    Liên kết ngày: {new Date(p.linked_at).toLocaleDateString('vi-VN')}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }
