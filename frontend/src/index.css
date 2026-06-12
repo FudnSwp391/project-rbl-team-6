@@ -11,6 +11,10 @@
   --primary: #00288e;
   --on-primary: #ffffff;
   --outline: #757684;
+  /* ── Tông phụ: GOLD (thay cho tím) — phối navy + gold sang trọng ── */
+  --gold: #e0a82e;
+  --gold-deep: #b7831b;
+  --gold-soft: #f6d98c;
 }
 
 *,
@@ -38,4 +42,10 @@ h3,
 h4,
 p {
   margin: 0;
+}
+
+/* Keyframe cho danh sách lịch học vừa đặt (dùng trong StudentDashboard) */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

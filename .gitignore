@@ -1,0 +1,19 @@
+# ─── Dependencies ───
+node_modules/
+
+# ─── Biến môi trường (BÍ MẬT — không đẩy lên git) ───
+.env
+.env.local
+.env.*.local
+
+# ─── Build output ───
+dist/
+build/
+
+# ─── Log ───
+*.log
+npm-debug.log*
+
+# ─── Hệ điều hành / IDE ───
+.DS_Store
+Thumbs.db
