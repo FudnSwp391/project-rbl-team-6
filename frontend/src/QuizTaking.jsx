@@ -4,6 +4,11 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 function CountdownTimer({ seconds, totalSeconds, onExpire }) {
   const [remaining, setRemaining] = useState(seconds)
   const intervalRef = useRef(null)
+  const onExpireRef = useRef(onExpire)
+
+  useEffect(() => {
+    onExpireRef.current = onExpire
+  }, [onExpire])
 
   useEffect(() => {
     setRemaining(seconds)
@@ -11,14 +16,14 @@ function CountdownTimer({ seconds, totalSeconds, onExpire }) {
 
   useEffect(() => {
     if (remaining <= 0) {
-      onExpire?.()
+      onExpireRef.current?.()
       return
     }
     intervalRef.current = setInterval(() => {
       setRemaining(prev => {
         if (prev <= 1) {
           clearInterval(intervalRef.current)
-          onExpire?.()
+          onExpireRef.current?.()
           return 0
         }
         return prev - 1
@@ -225,16 +230,16 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
       if (!res.ok) throw new Error('Failed to load exam paper')
       const data = await res.json()
       setQuiz({
-        title: data.exam_paper.title,
-        subject: `${data.exam_paper.subject} • Lớp ${data.exam_paper.grade}`,
+        title: data.paper.title,
+        subject: `${data.paper.subject} • Lớp ${data.paper.grade}`,
         total_questions: data.questions.length,
-        duration_minutes: data.exam_paper.duration_minutes,
+        duration_minutes: data.paper.duration_minutes,
       })
       setQuestions(data.questions || [])
       setAttemptId(data.attempt_id)
       // Set countdown timer from exam paper duration
-      if (data.exam_paper.duration_minutes) {
-        const secs = data.exam_paper.duration_minutes * 60
+      if (data.paper.duration_minutes) {
+        const secs = data.paper.duration_minutes * 60
         setTimeRemaining(secs)
         setTotalSeconds(secs)
       }
@@ -292,10 +297,15 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
   async function saveDraft() {
     if (!attemptId) return
     try {
+      const quizAnswers = {}
+      questions.forEach((q, idx) => {
+        const ans = answers[String(idx)]
+        if (ans) quizAnswers[q.id] = ans
+      })
       await fetch(`${apiBaseUrl}/api/quizzes/${quizId}/save-draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ answers, time_remaining_seconds: timeRemaining }),
+        body: JSON.stringify({ attemptId, answers: quizAnswers, timeRemainingSeconds: timeRemaining }),
       })
     } catch (_) { /* silent */ }
   }
@@ -328,10 +338,15 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         window.location.hash = `/practice-result/${sessionId}`
       } else {
         await saveDraft()
+        const quizAnswers = {}
+        questions.forEach((q, idx) => {
+          const ans = answers[String(idx)]
+          if (ans) quizAnswers[q.id] = ans
+        })
         const res = await fetch(`${apiBaseUrl}/api/quizzes/${quizId}/submit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ answers }),
+          body: JSON.stringify({ attemptId, answers: quizAnswers }),
         })
         if (!res.ok) throw new Error('Submit failed')
         const data = await res.json()

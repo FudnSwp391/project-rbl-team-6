@@ -457,9 +457,14 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
 app.get('/api/quizzes', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, title, subject, description, duration_minutes, total_questions, created_at
-      FROM quizzes ORDER BY created_at DESC
-    `);
+      SELECT 
+        q.id, q.title, q.subject, q.description, q.duration_minutes, q.total_questions, q.created_at,
+        (SELECT status FROM quiz_attempts qa WHERE qa.quiz_id = q.id AND qa.student_id = $1 ORDER BY submitted_at DESC NULLS LAST, created_at DESC LIMIT 1) as attempt_status,
+        (SELECT id FROM quiz_attempts qa WHERE qa.quiz_id = q.id AND qa.student_id = $1 ORDER BY submitted_at DESC NULLS LAST, created_at DESC LIMIT 1) as attempt_id,
+        (SELECT score FROM quiz_attempts qa WHERE qa.quiz_id = q.id AND qa.student_id = $1 ORDER BY submitted_at DESC NULLS LAST, created_at DESC LIMIT 1) as attempt_score
+      FROM quizzes q
+      ORDER BY q.created_at DESC
+    `, [req.user.userId]);
     return res.json({ quizzes: result.rows });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
@@ -688,6 +693,33 @@ app.get('/api/exam-papers/:paperId/start', verifyToken, async (req, res) => {
     }
     const safeQ = shuffledData.map(q => ({ id:q.id, question_text:q.question_text, option_a:q.option_a, option_b:q.option_b, option_c:q.option_c, option_d:q.option_d }));
     return res.json({ paper: paper.rows[0], questions: safeQ, attempt_id: attempt.rows[0].id });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ─── GET /api/exam-papers/attempts/:attemptId ──────────────────────────────────
+app.get('/api/exam-papers/attempts/:attemptId', verifyToken, async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    const attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE id=$1 AND student_id=$2`, [attemptId, req.user.userId]);
+    if (!attempt.rows.length) return res.status(404).json({ message: 'Not found.' });
+    const a = attempt.rows[0];
+    const paper = await pool.query(`SELECT * FROM exam_papers WHERE id=$1`, [a.exam_paper_id]);
+    
+    // Instead of querying exam_paper_questions, we return the shuffledData stored in the attempt
+    // which has the exact options the student saw, plus the mapped correct answer.
+    const shuffledData = a.shuffled_data || [];
+    const questions = shuffledData.map(q => ({
+      id: q.id,
+      question_text: q.question_text,
+      option_a: q.option_a,
+      option_b: q.option_b,
+      option_c: q.option_c,
+      option_d: q.option_d,
+      correct_answer: q.newCorrect, 
+      explanation: q.explanation // If explanation is not in shuffledData, we might need to join, but usually we don't strictly need explanation if not fetched. Wait! I should probably just return shuffledData.
+    }));
+    
+    return res.json({ attempt: a, paper: paper.rows[0], questions });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 

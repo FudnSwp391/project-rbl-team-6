@@ -68,7 +68,7 @@ function AnswerIndicator({ letter, text, status }) {
   )
 }
 
-export default function QuizResult({ attemptId, token, isPractice = false, sessionId = null }) {
+export default function QuizResult({ attemptId, token, isPractice = false, sessionId = null, isExamPaper = false }) {
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -90,13 +90,13 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
         if (!res.ok) throw new Error('Failed to load practice results')
         const json = await res.json()
 
-        const questions = (json.questions || []).map(q => ({
+        const questions = (json.session?.questions || []).map((q, i) => ({
           id: q.index,
           text: q.question,
           options: { A: q.optionA, B: q.optionB, C: q.optionC, D: q.optionD },
           correctAnswer: q.correctAnswer,
           explanation: q.explanation,
-          studentAnswer: q.studentAnswer,
+          studentAnswer: json.session?.answers ? json.session.answers[i] : null,
         }))
 
         setData({
@@ -109,6 +109,35 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
           submitted_at: json.session.submitted_at,
           questions,
           isPractice: true,
+        })
+      } else if (isExamPaper) {
+        // Fetch exam paper result
+        const res = await fetch(`${apiBaseUrl}/api/exam-papers/attempts/${attemptId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) throw new Error('Failed to load exam results')
+        const json = await res.json()
+
+        const questions = (json.questions || []).map(q => ({
+          id: q.id,
+          text: q.question_text,
+          options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
+          correctAnswer: q.correct_answer,
+          explanation: q.explanation,
+          studentAnswer: (json.attempt?.answers || {})[q.id] || null,
+        }))
+
+        setData({
+          title: json.paper?.title,
+          subject: json.paper?.subject,
+          score: json.attempt?.score,
+          total_correct: json.attempt?.total_correct,
+          total_questions: json.paper?.total_questions || questions.length,
+          started_at: json.attempt?.started_at,
+          submitted_at: json.attempt?.submitted_at,
+          questions,
+          isPractice: false,
+          isExamPaper: true,
         })
       } else {
         // Fetch formal quiz attempt result
@@ -137,6 +166,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
           submitted_at: json.attempt?.submitted_at,
           questions,
           isPractice: false,
+          isExamPaper: false,
         })
       }
     } catch (err) {
@@ -184,7 +214,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
       {/* ── Header bar ── */}
       <header className="sticky top-0 z-10 h-14 bg-surface/90 backdrop-blur-sm border-b border-outline-variant/20 flex items-center px-md gap-md">
         <button
-          onClick={() => window.location.hash = '/dashboard'}
+          onClick={() => window.location.hash = data.isPractice ? '/dashboard/practice' : data.isExamPaper ? '/dashboard/exam-papers' : '/dashboard/assessments'}
           className="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md"
         >
           <span className="material-symbols-outlined text-[20px]">arrow_back</span>
@@ -313,9 +343,17 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
               <span className="material-symbols-outlined text-[18px]">refresh</span>
               New Practice
             </button>
+          ) : isExamPaper ? (
+            <button
+              onClick={() => window.location.hash = '/dashboard/exam-papers'}
+              className="flex-1 sm:flex-none h-11 px-xl bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:opacity-90 transition-opacity flex items-center justify-center gap-sm"
+            >
+              <span className="material-symbols-outlined text-[18px]">article</span>
+              More Exams
+            </button>
           ) : (
             <button
-              onClick={() => window.location.hash = '/dashboard'}
+              onClick={() => window.location.hash = '/dashboard/assessments'}
               className="flex-1 sm:flex-none h-11 px-xl bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:opacity-90 transition-opacity flex items-center justify-center gap-sm"
             >
               <span className="material-symbols-outlined text-[18px]">quiz</span>

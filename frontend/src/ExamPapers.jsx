@@ -70,6 +70,15 @@ function ExamCardSkeleton() {
 // ─── Status badge ──────────────────────────────────────────────────────────────
 function StatusBadge({ status, score }) {
   if (status === 'submitted') {
+    const isFailed = score != null && score < 50;
+    if (isFailed) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 border border-red-200 text-red-700 font-label-sm text-label-sm">
+          <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>warning</span>
+          Chưa đạt{score != null ? ` · ${score}%` : ''}
+        </span>
+      )
+    }
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-50 border border-green-200 text-green-700 font-label-sm text-label-sm">
         <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>task_alt</span>
@@ -96,12 +105,13 @@ function StatusBadge({ status, score }) {
 // ─── Exam card ─────────────────────────────────────────────────────────────────
 function ExamCard({ paper }) {
   const cfg = getSubjectConfig(paper.subject)
-  const isSubmitted = paper.attempt_status === 'submitted'
-  const isInProgress = paper.attempt_status === 'in_progress'
   const score = paper.attempt_score != null ? Math.round(paper.attempt_score) : null
+  const isSubmitted = paper.attempt_status === 'submitted'
+  const isFailed = isSubmitted && score != null && score < 50
+  const isInProgress = paper.attempt_status === 'in_progress'
 
   const handleAction = () => {
-    if (isSubmitted) {
+    if (isSubmitted && !isFailed) {
       window.location.hash = `/exam-result/${paper.attempt_id}`
     } else {
       window.location.hash = `/exam-quiz/${paper.id}`
@@ -144,7 +154,7 @@ function ExamCard({ paper }) {
       {/* Badges row */}
       <div className="flex flex-wrap gap-xs pl-1">
         {/* Grade */}
-        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary-container/40 text-on-primary-container font-label-sm text-label-sm border border-primary/10">
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary font-label-sm text-label-sm border border-primary/20">
           <span className="material-symbols-outlined text-[13px]">school</span>
           Lớp {paper.grade}
         </span>
@@ -206,7 +216,7 @@ function ExamCard({ paper }) {
 
       {/* Action button */}
       <div className="mt-auto pl-1">
-        {isSubmitted ? (
+        {isSubmitted && !isFailed ? (
           <button
             onClick={handleAction}
             className="w-full h-10 border border-outline-variant text-on-surface font-label-md text-label-md rounded-xl hover:bg-surface-container hover:text-primary hover:border-primary/30 transition-all duration-200 flex items-center justify-center gap-sm"
@@ -221,6 +231,14 @@ function ExamCard({ paper }) {
           >
             <span className="material-symbols-outlined text-[18px]">play_circle</span>
             Tiếp tục làm
+          </button>
+        ) : isFailed ? (
+          <button
+            onClick={handleAction}
+            className="w-full h-10 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:opacity-90 hover:shadow-md hover:shadow-primary/20 transition-all duration-200 flex items-center justify-center gap-sm"
+          >
+            <span className="material-symbols-outlined text-[18px]">replay</span>
+            Làm lại
           </button>
         ) : (
           <button

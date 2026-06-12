@@ -79,7 +79,7 @@ export default function QuizList({ token }) {
       })
       if (!res.ok) throw new Error('Failed to load quizzes')
       const data = await res.json()
-      setQuizzes(data)
+      setQuizzes(data.quizzes || [])
     } catch (err) {
       setError(err.message)
     } finally {
@@ -87,8 +87,9 @@ export default function QuizList({ token }) {
     }
   }
 
-  const available = quizzes.filter(q => q.attempt_status !== 'submitted')
-  const completed = quizzes.filter(q => q.attempt_status === 'submitted')
+  const isPassed = (q) => q.attempt_status === 'submitted' && (q.attempt_score ?? 0) >= 50
+  const available = quizzes.filter(q => !isPassed(q))
+  const completed = quizzes.filter(q => isPassed(q))
   const displayed = activeTab === 'available' ? available : completed
 
   return (
@@ -183,7 +184,8 @@ export default function QuizList({ token }) {
 }
 
 function QuizCard({ quiz }) {
-  const isCompleted = quiz.attempt_status === 'submitted'
+  const isFailed = quiz.attempt_status === 'submitted' && (quiz.attempt_score ?? 0) < 50
+  const isCompleted = quiz.attempt_status === 'submitted' && !isFailed
   const isInProgress = quiz.attempt_status === 'in_progress'
   const icon = getSubjectIcon(quiz.subject)
 
@@ -194,6 +196,8 @@ function QuizCard({ quiz }) {
         <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-colors duration-300 ${
           isCompleted
             ? 'bg-green-50 text-green-600 group-hover:bg-green-100'
+            : isFailed
+            ? 'bg-red-50 text-red-600 group-hover:bg-red-100'
             : 'bg-primary-container/30 text-on-primary-container group-hover:bg-primary-container/50'
         }`}>
           <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>
@@ -205,7 +209,7 @@ function QuizCard({ quiz }) {
             <h3 className="font-label-md text-label-md text-on-surface leading-snug line-clamp-2">
               {quiz.title}
             </h3>
-            {isCompleted && <ScoreBadge score={quiz.attempt_score} />}
+            {(isCompleted || isFailed) && <ScoreBadge score={quiz.attempt_score} />}
           </div>
           <p className="font-label-sm text-label-sm text-primary mt-0.5">{quiz.subject}</p>
         </div>
@@ -234,6 +238,12 @@ function QuizCard({ quiz }) {
             In progress
           </span>
         )}
+        {isFailed && (
+          <span className="inline-flex items-center gap-xs px-2 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 font-label-sm text-label-sm">
+            <span className="material-symbols-outlined text-[14px]">warning</span>
+            Failed (Retake Required)
+          </span>
+        )}
       </div>
 
       {/* Action button */}
@@ -251,9 +261,9 @@ function QuizCard({ quiz }) {
           className="w-full h-10 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 hover:shadow-md transition-all flex items-center justify-center gap-sm"
         >
           <span className="material-symbols-outlined text-[18px]">
-            {isInProgress ? 'play_circle' : 'play_arrow'}
+            {isInProgress ? 'play_circle' : isFailed ? 'replay' : 'play_arrow'}
           </span>
-          {isInProgress ? 'Continue Quiz' : 'Start Quiz'}
+          {isInProgress ? 'Continue Quiz' : isFailed ? 'Retake Quiz' : 'Start Quiz'}
         </button>
       )}
     </div>

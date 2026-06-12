@@ -49,11 +49,25 @@ const NAV_ITEMS = [
 export default function StudentDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeSection, setActiveSection] = useState('dashboard')
+  
+  const getSectionFromHash = () => {
+    const parts = window.location.hash.split('/')
+    return parts.length > 2 ? parts[2] : 'dashboard'
+  }
+  const [activeSection, setActiveSection] = useState(getSectionFromHash())
+
+  useEffect(() => {
+    const handleHash = () => setActiveSection(getSectionFromHash())
+    window.addEventListener('hashchange', handleHash)
+    return () => window.removeEventListener('hashchange', handleHash)
+  }, [])
 
   // Listen for cross-component navigation events (e.g. from quota error banner)
   useEffect(() => {
-    const handler = (e) => setActiveSection(e.detail)
+    const handler = (e) => {
+      setActiveSection(e.detail)
+      window.location.hash = `/dashboard/${e.detail}`
+    }
     window.addEventListener('navigate-section', handler)
     return () => window.removeEventListener('navigate-section', handler)
   }, [])
@@ -104,7 +118,7 @@ export default function StudentDashboard() {
             return (
               <li key={item.id}>
                 <button
-                  onClick={() => { setActiveSection(item.id); setSidebarOpen(false) }}
+                  onClick={() => { window.location.hash = `/dashboard/${item.id}`; setSidebarOpen(false) }}
                   className={`
                     w-full flex items-center gap-sm px-md py-sm rounded-lg
                     transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2

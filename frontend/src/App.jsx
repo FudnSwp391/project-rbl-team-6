@@ -85,7 +85,7 @@ const getRouteFromHash = () => {
   if (normalized === '/signin')    return { name: 'signin' }
   if (normalized === '/signup')    return { name: 'signup' }
   if (normalized === '/admin')     return { name: 'admin' }
-  if (normalized === '/dashboard') return { name: 'dashboard' }
+  if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }
   if (normalized === '/tutor')     return { name: 'tutor' }
   if (normalized === '/parent')    return { name: 'parent' }
 
@@ -104,6 +104,14 @@ const getRouteFromHash = () => {
   // Practice result: #/practice-result/<sessionId>
   const practiceResultMatch = normalized.match(/^\/practice-result\/([^/]+)$/)
   if (practiceResultMatch) return { name: 'practice-result', id: practiceResultMatch[1] }
+
+  // Exam routes: #/exam-quiz/<id>
+  const examMatch = normalized.match(/^\/exam-quiz\/([^/]+)$/)
+  if (examMatch) return { name: 'exam-quiz', id: examMatch[1] }
+
+  // Exam result routes: #/exam-result/<attemptId>
+  const examResultMatch = normalized.match(/^\/exam-result\/([^/]+)$/)
+  if (examResultMatch) return { name: 'exam-result', id: examResultMatch[1] }
 
   return { name: 'home' }
 }
