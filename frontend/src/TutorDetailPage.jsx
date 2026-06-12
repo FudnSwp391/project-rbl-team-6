@@ -34,7 +34,16 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
           {/* Auth Buttons */}
           <div className="flex items-center gap-4 z-10">
             {user ? (
-               <button onClick={() => window.location.hash = '/'} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Dashboard</button>
+               <button
+                 onClick={() => {
+                   if (user.role === 'admin') window.location.hash = '/admin';
+                   else if (user.role === 'tutor') window.location.hash = '/tutor';
+                   else window.location.hash = '/dashboard';
+                 }}
+                 className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm"
+               >
+                 Dashboard
+               </button>
             ) : (
               <>
                 <button onClick={onGoSignIn} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Sign In</button>

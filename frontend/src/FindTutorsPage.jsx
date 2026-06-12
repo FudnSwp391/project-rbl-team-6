@@ -90,9 +90,18 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
 
           {/* Auth Buttons */}
           <div className="flex items-center gap-4 z-10">
-            {user ? (
-               <button onClick={() => window.location.hash = '/'} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Dashboard</button>
-            ) : (
+             {user ? (
+               <button
+                 onClick={() => {
+                   if (user.role === 'admin') window.location.hash = '/admin';
+                   else if (user.role === 'tutor') window.location.hash = '/tutor';
+                   else window.location.hash = '/dashboard';
+                 }}
+                 className="hidden sm:block text-sm font-semibold text-[#00288e] hover:opacity-80"
+               >
+                 Dashboard
+               </button>
+             ) : (
               <>
                 <button onClick={onGoSignIn} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Sign In</button>
                 <button onClick={onGoSignUp} className="bg-[#00288e] text-white px-6 py-2.5 rounded-lg font-semibold text-sm hover:bg-[#1e40af] transition-all active:scale-95 shadow-sm">

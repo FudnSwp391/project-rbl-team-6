@@ -81,8 +81,16 @@ const tutors = [
 ]
 
 const footerLinks = {
-  platform: ['Find Tutors', 'Become a Tutor', 'Subjects'],
-  company: ['About Us', 'Support', 'Privacy Policy'],
+  platform: [
+    { label: 'Find Tutors', href: '#/find-tutors' },
+    { label: 'Become a Tutor', href: '#/become-tutor' },
+    { label: 'Subjects', href: '#/subjects' }
+  ],
+  company: [
+    { label: 'About Us', href: '#' },
+    { label: 'Support', href: '#' },
+    { label: 'Privacy Policy', href: '#' }
+  ],
 }
 
 // ─── Helper: parse the hash to get the current route ─────────────────────────
@@ -93,7 +101,7 @@ const getRouteFromHash = () => {
   if (normalized === '/signin')    return { name: 'signin' }
   if (normalized === '/signup')    return { name: 'signup' }
   if (normalized === '/admin')     return { name: 'admin' }
-  if (normalized === '/dashboard') return { name: 'dashboard' }   // Student Dashboard
+  if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }   // Student Dashboard
   if (normalized === '/tutor')     return { name: 'tutor' }       // Tutor Dashboard
   if (normalized === '/tutor-profile') return { name: 'tutor-profile' } // Tutor Profile Form
   if (normalized === '/tutor-detail') return { name: 'tutor-detail' }
@@ -229,7 +237,19 @@ function HomePage({ onGoSignIn }) {
                 <span className="material-symbols-outlined">account_circle</span>
               )}
               <span className="header-username">{user.name || user.email}</span>
-              <button type="button" className="btn btn-outline" onClick={logout}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  if (user.role === 'admin') window.location.hash = '/admin';
+                  else if (user.role === 'tutor') window.location.hash = '/tutor';
+                  else window.location.hash = '/dashboard';
+                }}
+                style={{ marginLeft: '12px' }}
+              >
+                Dashboard
+              </button>
+              <button type="button" className="btn btn-outline" onClick={logout} style={{ marginLeft: '8px' }}>
                 Logout
               </button>
             </div>
@@ -419,8 +439,8 @@ function HomePage({ onGoSignIn }) {
             <h4>Platform</h4>
             <ul>
               {footerLinks.platform.map((item) => (
-                <li key={item}>
-                  <a href="#">{item}</a>
+                <li key={item.label}>
+                  <a href={item.href}>{item.label}</a>
                 </li>
               ))}
             </ul>
@@ -429,8 +449,8 @@ function HomePage({ onGoSignIn }) {
             <h4>Company</h4>
             <ul>
               {footerLinks.company.map((item) => (
-                <li key={item}>
-                  <a href="#">{item}</a>
+                <li key={item.label}>
+                  <a href={item.href}>{item.label}</a>
                 </li>
               ))}
             </ul>
