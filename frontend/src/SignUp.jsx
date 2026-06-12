@@ -10,9 +10,10 @@ const ROLE_OPTIONS = [
 ]
 
 export default function SignUp({ onSwitchToSignIn, onGoHome }) {
-  const { login } = useAuth()   // ← login(token, user) saves to context + localStorage
+  const { loginAfterRegister } = useAuth()
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
-  const [role, setRole] = useState('student')
+  const initialRole = window.location.hash.includes('role=tutor') ? 'tutor' : 'student'
+  const [role, setRole] = useState(initialRole)
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -65,6 +66,20 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
 
     setIsSubmitting(true)
     try {
+      // ── Tutor: không tạo tài khoản ngay, lưu tạm vào sessionStorage ──────
+      // Tài khoản chỉ được tạo sau khi hoàn thành form onboarding (bước 4).
+      if (role === 'tutor') {
+        sessionStorage.setItem('pendingTutorReg', JSON.stringify({
+          fullName: formData.fullName.trim(),
+          email: formData.email.trim(),
+          password: formData.password,
+          role: 'tutor',
+        }))
+        window.location.hash = '/tutor-profile'
+        return
+      }
+
+      // ── Các role khác (student, parent): đăng ký API ngay ────────────────
       const response = await fetch(`${apiBaseUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -81,9 +96,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         throw new Error(data?.message || 'Registration failed.')
       }
 
-      // login() tự động redirect theo role (admin→#/admin, tutor→#/tutor, v.v.)
-      login(data.token, data.user)
-      // KHÔNG gọi onGoHome() ở đây — login() đã xử lý redirect rồi
+      loginAfterRegister(data.token, data.user)
     } catch (submitError) {
       setErrors((prev) => ({
         ...prev,
