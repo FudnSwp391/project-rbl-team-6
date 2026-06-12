@@ -1993,7 +1993,12 @@ app.post('/api/chat', verifyToken, async (req, res) => {
 });
 
 // POST /api/chat/upload — upload file (ảnh/video/tệp) lên Supabase Storage
-app.post('/api/chat/upload', verifyToken, upload.single('file'), async (req, res) => {
+app.post('/api/chat/upload', verifyToken, (req, res, next) => {
+  chatUpload.single('file')(req, res, function (err) {
+    if (err) return res.status(400).json({ message: err.message || 'File upload error.' });
+    next();
+  });
+}, async (req, res) => {
   try {
     const senderId = req.user.userId;
     const { receiver_id } = req.body;
