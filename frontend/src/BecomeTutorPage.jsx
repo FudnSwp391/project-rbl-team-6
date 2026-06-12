@@ -40,7 +40,16 @@ export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
           {/* Auth Buttons */}
           <div className="flex items-center gap-4 z-10">
              {user ? (
-               <button onClick={() => window.location.hash = '/'} className="hidden sm:block text-sm font-semibold text-[#00288e] hover:opacity-80">Dashboard</button>
+               <button
+                 onClick={() => {
+                   if (user.role === 'admin') window.location.hash = '/admin';
+                   else if (user.role === 'tutor') window.location.hash = '/tutor';
+                   else window.location.hash = '/dashboard';
+                 }}
+                 className="hidden sm:block text-sm font-semibold text-[#00288e] hover:opacity-80"
+               >
+                 Dashboard
+               </button>
              ) : (
                <>
                  <button onClick={onGoSignIn} className="hidden sm:block text-sm font-semibold text-[#00288e] hover:opacity-80">Sign In</button>
