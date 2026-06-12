@@ -2,10 +2,16 @@
  * TutorDashboard.jsx
  * ─────────────────────────────────────────────────────────────────────────────
  * Dashboard dành cho gia sư (role: tutor).
- * Hiển thị: thu nhập, giờ dạy, học sinh, yêu cầu chờ duyệt, lịch hôm nay.
+ * Hiển thị tuỳ theo trạng thái duyệt hồ sơ:
+ *   no_profile → redirect sang onboarding
+ *   pending    → màn chờ admin kiểm duyệt
+ *   rejected   → màn bị từ chối + lý do
+ *   approved   → dashboard đầy đủ
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from './AuthContext'
+
+const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
 const PENDING_REQUESTS = [
@@ -67,29 +73,238 @@ const NAV_ITEMS = [
   { icon: 'badge', label: 'My Profile', href: '#/tutor-profile' },
 ]
 
+// ─── Màn chờ duyệt ────────────────────────────────────────────────────────────
+function PendingScreen({ displayName, email, onLogout }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-[#e0e7ff] via-[#f8f9fb] to-[#e0f2fe] flex flex-col items-center justify-center px-4 py-16">
+      {/* Header */}
+      <div className="w-full max-w-2xl mb-8 flex items-center justify-between">
+        <div className="font-bold text-2xl text-primary tracking-tight">EduX</div>
+        <button
+          onClick={onLogout}
+          className="text-on-surface-variant text-sm font-semibold hover:bg-white/60 px-3 py-1.5 rounded-lg transition-all"
+        >
+          Đăng xuất
+        </button>
+      </div>
+
+      {/* Card */}
+      <div className="bg-white/80 backdrop-blur-md border border-white/40 shadow-2xl rounded-3xl p-10 w-full max-w-2xl text-center">
+        {/* Animated icon */}
+        <div className="relative w-24 h-24 mx-auto mb-6">
+          <div className="absolute inset-0 rounded-full bg-amber-100 animate-ping opacity-40" />
+          <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-amber-400 to-orange-400 flex items-center justify-center shadow-lg">
+            <span className="material-symbols-outlined text-white text-[44px]">pending_actions</span>
+          </div>
+        </div>
+
+        <h1 className="text-2xl font-bold text-on-surface mb-2">
+          Hồ sơ đang chờ kiểm duyệt
+        </h1>
+        <p className="text-on-surface-variant text-base mb-6 leading-relaxed">
+          Xin chào <strong>{displayName}</strong>! Hồ sơ đăng ký gia sư của bạn đã được gửi thành công.
+          <br />Chúng tôi sẽ xem xét và gửi kết quả về email <strong>{email}</strong>.
+        </p>
+
+        {/* Steps */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+          {[
+            { icon: 'task_alt', label: 'Đã nộp hồ sơ', done: true },
+            { icon: 'manage_search', label: 'Admin kiểm duyệt', done: false, active: true },
+            { icon: 'mark_email_read', label: 'Nhận email kết quả', done: false },
+          ].map((s, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <div className={`flex flex-col items-center gap-1`}>
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                  s.done
+                    ? 'bg-green-500 text-white'
+                    : s.active
+                    ? 'bg-amber-400 text-white animate-pulse'
+                    : 'bg-surface-container text-on-surface-variant'
+                }`}>
+                  <span className="material-symbols-outlined text-[20px]">{s.icon}</span>
+                </div>
+                <span className={`text-xs font-medium whitespace-nowrap ${
+                  s.done ? 'text-green-600' : s.active ? 'text-amber-600' : 'text-on-surface-variant'
+                }`}>{s.label}</span>
+              </div>
+              {i < 2 && (
+                <div className="hidden sm:block w-8 h-[2px] bg-outline-variant -mt-5" />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Info box */}
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-left flex gap-3">
+          <span className="material-symbols-outlined text-amber-500 flex-shrink-0 mt-0.5">info</span>
+          <div>
+            <p className="text-sm font-semibold text-amber-800 mb-1">Thời gian xét duyệt</p>
+            <p className="text-sm text-amber-700">
+              Thông thường từ <strong>1–3 ngày làm việc</strong>. Sau khi được duyệt, tài khoản gia sư của bạn sẽ được kích hoạt và bạn sẽ nhận được email thông báo.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <p className="mt-6 text-sm text-on-surface-variant text-center">
+        Cần hỗ trợ? Liên hệ{' '}
+        <a href="mailto:support@academiaflow.com" className="text-primary hover:underline">
+          support@academiaflow.com
+        </a>
+      </p>
+    </div>
+  )
+}
+
+// ─── Màn bị từ chối ───────────────────────────────────────────────────────────
+function RejectedScreen({ displayName, rejectReason, onLogout }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-[#ffe4e6] via-[#f8f9fb] to-[#fce7f3] flex flex-col items-center justify-center px-4 py-16">
+      {/* Header */}
+      <div className="w-full max-w-2xl mb-8 flex items-center justify-between">
+        <div className="font-bold text-2xl text-primary tracking-tight">EduX</div>
+        <button
+          onClick={onLogout}
+          className="text-on-surface-variant text-sm font-semibold hover:bg-white/60 px-3 py-1.5 rounded-lg transition-all"
+        >
+          Đăng xuất
+        </button>
+      </div>
+
+      {/* Card */}
+      <div className="bg-white/80 backdrop-blur-md border border-white/40 shadow-2xl rounded-3xl p-10 w-full max-w-2xl text-center">
+        <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-red-400 to-rose-500 flex items-center justify-center shadow-lg">
+          <span className="material-symbols-outlined text-white text-[44px]">cancel</span>
+        </div>
+
+        <h1 className="text-2xl font-bold text-on-surface mb-2">
+          Hồ sơ chưa được chấp thuận
+        </h1>
+        <p className="text-on-surface-variant text-base mb-6">
+          Xin chào <strong>{displayName}</strong>! Hồ sơ của bạn đã được xem xét nhưng chưa đáp ứng đủ điều kiện.
+        </p>
+
+        {/* Reject reason */}
+        {rejectReason && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-left mb-6 flex gap-3">
+            <span className="material-symbols-outlined text-red-500 flex-shrink-0 mt-0.5">error</span>
+            <div>
+              <p className="text-sm font-semibold text-red-800 mb-1">Lý do từ chối</p>
+              <p className="text-sm text-red-700">{rejectReason}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Re-apply CTA */}
+        <div className="bg-surface-container-low rounded-xl p-4 text-left mb-6 flex gap-3">
+          <span className="material-symbols-outlined text-primary flex-shrink-0 mt-0.5">lightbulb</span>
+          <p className="text-sm text-on-surface-variant">
+            Bạn có thể chỉnh sửa lại hồ sơ và nộp lại để được xem xét lần tiếp theo.
+          </p>
+        </div>
+
+        <a
+          href="#/tutor-profile"
+          className="inline-flex items-center gap-2 px-8 py-3 bg-primary text-white font-semibold rounded-xl hover:brightness-110 active:scale-95 transition-all duration-200 shadow-md"
+        >
+          <span className="material-symbols-outlined text-[20px]">edit_document</span>
+          Chỉnh sửa & Nộp lại hồ sơ
+        </a>
+      </div>
+
+      <p className="mt-6 text-sm text-on-surface-variant text-center">
+        Cần hỗ trợ? Liên hệ{' '}
+        <a href="mailto:support@academiaflow.com" className="text-primary hover:underline">
+          support@academiaflow.com
+        </a>
+      </p>
+    </div>
+  )
+}
+
+// ─── Loading screen ───────────────────────────────────────────────────────────
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4 text-on-surface-variant">
+        <span className="material-symbols-outlined text-[48px] text-primary animate-spin">progress_activity</span>
+        <p className="font-label-md text-label-md">Đang tải thông tin...</p>
+      </div>
+    </div>
+  )
+}
+
 export default function TutorDashboard() {
-  const { user, logout } = useAuth()
+  const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [requests, setRequests] = useState(PENDING_REQUESTS)
 
-  // Tên hiển thị
-  const displayName = user?.name || user?.email?.split('@')[0] || 'Tutor'
-  // Chữ viết tắt làm avatar
-  const initials = displayName
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
+  // ── Kiểm tra trạng thái hồ sơ ─────────────────────────────────────────────
+  const [profileStatus, setProfileStatus] = useState(null) // null = loading
+  const [rejectReason, setRejectReason] = useState('')
 
+  useEffect(() => {
+    const checkProfile = async () => {
+      if (!token) { setProfileStatus('no_profile'); return }
+      try {
+        const res = await fetch(`${API}/api/tutor/profile`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.status === 404) {
+          setProfileStatus('no_profile')
+        } else if (res.ok) {
+          const data = await res.json()
+          setProfileStatus(data.status || 'pending')
+          setRejectReason(data.reject_reason || '')
+        } else {
+          setProfileStatus('error')
+        }
+      } catch {
+        setProfileStatus('error')
+      }
+    }
+    checkProfile()
+  }, [token])
+
+  const displayName = user?.name || user?.email?.split('@')[0] || 'Tutor'
+  const initials = displayName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+
+  // ── Status gates ──────────────────────────────────────────────────────────
+  if (profileStatus === null) return <LoadingScreen />
+
+  if (profileStatus === 'no_profile') {
+    // Chưa có hồ sơ → về trang onboarding
+    window.location.hash = '/tutor-profile'
+    return null
+  }
+
+  if (profileStatus === 'pending') {
+    return <PendingScreen displayName={displayName} email={user?.email} onLogout={logout} />
+  }
+
+  if (profileStatus === 'rejected') {
+    return <RejectedScreen displayName={displayName} rejectReason={rejectReason} onLogout={logout} />
+  }
+
+  if (profileStatus === 'error') {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center text-on-surface-variant">
+          <span className="material-symbols-outlined text-[48px] text-error block mb-2">cloud_off</span>
+          <p>Không thể kết nối. Vui lòng thử lại sau.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── profileStatus === 'approved' → hiện dashboard đầy đủ ─────────────────
   // Xử lý Accept / Decline request
   const handleAccept = (id) => {
     setRequests((prev) => prev.filter((r) => r.id !== id))
-    // TODO: gọi API PATCH /api/tutor/requests/:id/accept
   }
   const handleDecline = (id) => {
     setRequests((prev) => prev.filter((r) => r.id !== id))
-    // TODO: gọi API PATCH /api/tutor/requests/:id/decline
   }
 
   return (

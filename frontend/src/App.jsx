@@ -12,6 +12,10 @@ import StudentDashboard from './StudentDashboard'
 import TutorDashboard from './TutorDashboard'
 import ParentDashboard from './ParentDashboard'
 import TutorProfileForm from './TutorProfileForm'
+import FindTutorsPage from './FindTutorsPage'
+import SubjectsPage from './SubjectsPage'
+import BecomeTutorPage from './BecomeTutorPage'
+import TutorDetailPage from './TutorDetailPage'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -81,14 +85,19 @@ const footerLinks = {
 
 // ─── Helper: parse the hash to get the current route ─────────────────────────
 const getRouteFromHash = () => {
-  const normalized = window.location.hash.replace(/^#/, '') || '/'
+  let normalized = window.location.hash.replace(/^#/, '') || '/'
+  normalized = normalized.split('?')[0] // remove query params for matching
   if (normalized === '/signin')    return 'signin'
   if (normalized === '/signup')    return 'signup'
   if (normalized === '/admin')     return 'admin'
   if (normalized === '/dashboard') return 'dashboard'   // Student Dashboard
   if (normalized === '/tutor')     return 'tutor'       // Tutor Dashboard
   if (normalized === '/tutor-profile') return 'tutor-profile' // Tutor Profile Form
+  if (normalized === '/tutor-detail') return 'tutor-detail'
   if (normalized === '/parent')    return 'parent'      // Parent Dashboard
+  if (normalized === '/find-tutors') return 'find-tutors'
+  if (normalized === '/subjects')  return 'subjects'
+  if (normalized === '/become-tutor') return 'become-tutor'
   return 'home'
 }
 
@@ -119,6 +128,38 @@ function AccessDenied({ isLoggedIn, onGoSignIn }) {
   )
 }
 
+const feedbackData = [
+  {
+    id: 1,
+    initials: 'LM', bgColor: 'bg-[#d4e3ff]', textColor: 'text-[#003564]',
+    name: 'Liam Miller', role: 'Student', time: '2m ago', pulse: true,
+    subject: 'Calculus II',
+    content: `"Sarah is a lifesaver! I was struggling with integration methods, but her step-by-step approach made everything click. Highly recommend!"`
+  },
+  {
+    id: 2,
+    initials: 'AP', bgColor: 'bg-[#e2e2e2]', textColor: 'text-[#5d5f5f]',
+    name: 'Alice Porter', role: 'Parent', time: '15m ago', pulse: false,
+    subject: 'SAT Prep',
+    content: `"My daughter's score increased by 200 points in just two months. David was professional, encouraging, and very knowledgeable."`
+  },
+  {
+    id: 3,
+    initials: 'JK', bgColor: 'bg-[#dde1ff]', textColor: 'text-[#00288e]',
+    name: 'Julian Kim', role: 'Student', time: 'Now', pulse: true,
+    subject: 'Python Basics',
+    content: `"The coding challenges were great. I went from zero to building my first web scraper in 4 weeks. Best investment for my career!"`
+  },
+  {
+    id: 4,
+    initials: 'SB', bgColor: 'bg-[#a4c9ff]', textColor: 'text-[#003564]',
+    name: 'Sonia Brown', role: 'Student', time: '1h ago', pulse: false,
+    subject: 'Spanish B1',
+    content: `"Elena is a fantastic conversationalist. My speaking confidence has skyrocketed. ¡Muchas gracias!"`
+  }
+];
+const displayFeedback = [...feedbackData, ...feedbackData];
+
 // ─── Home Page ────────────────────────────────────────────────────────────────
 function HomePage({ onGoSignIn }) {
   const { user, logout } = useAuth()
@@ -135,9 +176,9 @@ function HomePage({ onGoSignIn }) {
           </a>
 
           <nav className="header-nav">
-            <a href="#">Find Tutors</a>
-            <a href="#">Become a Tutor</a>
-            <a href="#">Subjects</a>
+            <a href="#/find-tutors">Find Tutors</a>
+            <a href="#/become-tutor">Become a Tutor</a>
+            <a href="#/subjects">Subjects</a>
             {/* Show Admin link if user is admin */}
             {user?.role === 'admin' && (
               <a href="#/admin" style={{ color: 'var(--primary)', fontWeight: 700 }}>
@@ -272,6 +313,66 @@ function HomePage({ onGoSignIn }) {
             </div>
           </div>
         </section>
+
+        {/* Feedback Section */}
+        <section className="py-20 mt-10 bg-[#f8f9fb] relative overflow-hidden">
+          <style>{`
+            .shadow-level-2 { box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08); }
+            .glass-card {
+                background: rgba(255, 255, 255, 0.7);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border: 1px solid rgba(255, 255, 255, 0.4);
+            }
+            @keyframes scroll {
+                0% { transform: translateX(0); }
+                100% { transform: translateX(calc(-380px * 4 - 24px * 4)); }
+            }
+            .scroll-container {
+                display: flex;
+                width: max-content;
+                animation: scroll 40s linear infinite;
+            }
+            .scroll-container:hover {
+                animation-play-state: paused;
+            }
+          `}</style>
+          <div className="max-w-[1280px] mx-auto px-6 mb-10">
+            <h2 className="text-3xl font-bold text-[#191c1e]">What our community says</h2>
+            <p className="text-[#444653] mt-2">Real experiences from students and parents worldwide.</p>
+          </div>
+          <div className="relative w-full overflow-hidden h-64 flex items-center">
+            {/* Scroller Content */}
+            <div className="scroll-container gap-6 px-6">
+              {displayFeedback.map((fb, idx) => (
+                <div key={`${fb.id}-${idx}`} className="glass-card w-[380px] p-6 rounded-xl shadow-level-2 flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-full ${fb.bgColor} ${fb.textColor} flex items-center justify-center font-bold`}>
+                        {fb.initials}
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-[#191c1e] leading-tight">{fb.name}</h4>
+                        <span className="text-xs font-medium text-[#444653]">{fb.role}</span>
+                      </div>
+                    </div>
+                    <span className={`text-[11px] font-medium px-2 py-1 ${fb.pulse ? 'bg-[#00288e]/10 text-[#00288e]' : 'bg-[#c4c5d5]/30 text-[#444653]'} rounded-full flex items-center gap-1`}>
+                      {fb.pulse && <span className="w-1.5 h-1.5 bg-[#00288e] rounded-full animate-pulse"></span>}
+                      {fb.time}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#00288e]">Verified feedback for {fb.subject}</span>
+                    <div className="flex mt-1">
+                      {[1,2,3,4,5].map(i => <span key={i} className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
+                    </div>
+                  </div>
+                  <p className="text-[#444653] text-sm line-clamp-3">{fb.content}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
 
       <footer className="site-footer">
@@ -329,6 +430,7 @@ function App() {
     if (nextRoute === 'dashboard') { window.location.hash = '/dashboard'; return }
     if (nextRoute === 'tutor')     { window.location.hash = '/tutor';     return }
     if (nextRoute === 'tutor-profile') { window.location.hash = '/tutor-profile'; return }
+    if (nextRoute === 'tutor-detail') { window.location.hash = '/tutor-detail'; return }
     if (nextRoute === 'parent')    { window.location.hash = '/parent';    return }
     window.location.hash = '/'
   }
@@ -400,7 +502,9 @@ function App() {
 
   // ── Route: Tutor Profile (protected) ──
   if (route === 'tutor-profile') {
-    if (!user) {
+    const hasPendingReg = !!sessionStorage.getItem('pendingTutorReg')
+    // Cho phép truy cập nếu: đã đăng nhập (tutor cũ) HOẶC đang trong luồng đăng ký mới
+    if (!user && !hasPendingReg) {
       return (
         <AccessDenied
           isLoggedIn={false}
@@ -409,15 +513,38 @@ function App() {
       )
     }
     return (
-      <div className="bg-surface min-h-screen">
-        <header className="p-md bg-surface shadow-sm mb-lg flex justify-between items-center">
-          <h1 className="text-xl font-bold">EduX</h1>
-          <button onClick={() => window.location.hash = '/tutor'} className="text-primary font-bold">← Back to Dashboard</button>
+      <div className="bg-background min-h-screen flex flex-col">
+        {/* Header matching design system */}
+        <header className="bg-surface-container-lowest shadow-sm sticky top-0 z-50">
+          <div className="flex justify-between items-center w-full px-6 md:px-10 max-w-[1280px] mx-auto h-16">
+            <div className="font-bold text-2xl text-primary tracking-tight">EduX</div>
+            {/* Chỉ hiện nút Back nếu là tutor đã đăng nhập (không phải đăng ký mới) */}
+            {user && !hasPendingReg && (
+              <button
+                onClick={() => window.location.hash = '/tutor'}
+                className="text-on-surface-variant font-semibold text-sm hover:bg-surface-container px-3 py-2 rounded-lg transition-all duration-200"
+              >
+                ← Back to Dashboard
+              </button>
+            )}
+          </div>
         </header>
         <TutorProfileForm />
+        {/* Footer */}
+        <footer className="bg-surface-container-lowest border-t border-outline-variant mt-auto">
+          <div className="w-full py-6 px-10 flex flex-col md:flex-row justify-between items-center max-w-[1280px] mx-auto gap-4">
+            <span className="text-xs text-on-secondary-container">© 2024 EduX. Professional Academic Support.</span>
+            <div className="flex gap-6">
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Support</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Privacy Policy</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Contact</a>
+            </div>
+          </div>
+        </footer>
       </div>
     )
   }
+
 
   // ── Route: Parent Dashboard (protected) ──
   if (route === 'parent') {
@@ -430,6 +557,22 @@ function App() {
       )
     }
     return <ParentDashboard />
+  }
+
+  // ── Route: Public Pages ──
+  if (route === 'find-tutors') {
+    return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (route === 'subjects') {
+    return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (route === 'become-tutor') {
+    return <BecomeTutorPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+
+  // ── Route: Tutor Detail Page ──
+  if (route === 'tutor-detail') {
+    return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
 
   // ── Route: Home ──
