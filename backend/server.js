@@ -1230,8 +1230,8 @@ app.get('/api/quizzes/:id/start', verifyToken, async (req, res) => {
 app.post('/api/quizzes/:id/save-draft', verifyToken, async (req, res) => {
   try {
     const { attemptId, answers, timeRemainingSeconds } = req.body;
-    await pool.query(`UPDATE quiz_attempts SET answers=$1, time_remaining_seconds=$2 WHERE id=$3 AND student_id=$4`,
-      [JSON.stringify(answers), timeRemainingSeconds, attemptId, req.user.userId]);
+    await pool.query(`UPDATE quiz_attempts SET answers=$1, time_remaining_seconds=COALESCE($2, time_remaining_seconds) WHERE id=$3 AND student_id=$4`,
+      [JSON.stringify(answers), timeRemainingSeconds !== undefined ? timeRemainingSeconds : null, attemptId, req.user.userId]);
     return res.json({ message: 'Draft saved.' });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
@@ -1429,7 +1429,7 @@ app.get('/api/exam-papers/:paperId/start', verifyToken, async (req, res) => {
       attempt = await pool.query(`INSERT INTO exam_paper_attempts (exam_paper_id,student_id,shuffled_data) VALUES ($1,$2,$3) RETURNING *`, [paperId, studentId, JSON.stringify(shuffledData)]);
     }
     const safeQ = shuffledData.map(q => ({ id:q.id, question_text:q.question_text, option_a:q.option_a, option_b:q.option_b, option_c:q.option_c, option_d:q.option_d }));
-    return res.json({ paper: paper.rows[0], questions: safeQ, attempt_id: attempt.rows[0].id });
+    return res.json({ paper: paper.rows[0], questions: safeQ, attempt: attempt.rows[0] });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
@@ -1457,6 +1457,15 @@ app.get('/api/exam-papers/attempts/:attemptId', verifyToken, async (req, res) =>
     }));
     
     return res.json({ attempt: a, paper: paper.rows[0], questions });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+// ─── POST /api/exam-papers/:paperId/save-draft ──────────────────────────────────
+app.post('/api/exam-papers/:paperId/save-draft', verifyToken, async (req, res) => {
+  try {
+    const { attemptId, answers, timeRemainingSeconds } = req.body;
+    await pool.query(`UPDATE exam_paper_attempts SET answers=$1, time_remaining_seconds=COALESCE($2, time_remaining_seconds) WHERE id=$3 AND student_id=$4`,
+      [JSON.stringify(answers), timeRemainingSeconds !== undefined ? timeRemainingSeconds : null, attemptId, req.user.userId]);
+    return res.json({ message: 'Draft saved.' });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
