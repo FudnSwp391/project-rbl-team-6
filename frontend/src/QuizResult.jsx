@@ -91,12 +91,17 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
         const json = await res.json()
 
         const questions = (json.session?.questions || []).map((q, i) => ({
-          id: q.index,
+          id: q.index || i,
           text: q.question,
+          question_type: q.question_type || 'multiple_choice',
           options: { A: q.optionA, B: q.optionB, C: q.optionC, D: q.optionD },
           correctAnswer: q.correctAnswer,
           explanation: q.explanation,
           studentAnswer: json.session?.answers ? json.session.answers[i] : null,
+          ai_score: q.ai_score,
+          ai_feedback: q.ai_feedback,
+          tutor_score: q.tutor_score,
+          tutor_feedback: q.tutor_feedback,
         }))
 
         setData({
@@ -117,15 +122,26 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
         })
         if (!res.ok) throw new Error('Failed to load exam results')
         const json = await res.json()
+        
+        let feedbackMap = {}
+        try { feedbackMap = typeof json.attempt?.tutor_feedback === 'string' ? JSON.parse(json.attempt.tutor_feedback) : (json.attempt?.tutor_feedback || {}) } catch(e){}
 
-        const questions = (json.questions || []).map(q => ({
-          id: q.id,
-          text: q.question_text,
-          options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
-          correctAnswer: q.correct_answer,
-          explanation: q.explanation,
-          studentAnswer: (json.attempt?.answers || {})[q.id] || null,
-        }))
+        const questions = (json.questions || []).map(q => {
+           const fb = feedbackMap[q.id] || {}
+           return {
+            id: q.id,
+            text: q.question_text,
+            question_type: q.question_type || 'multiple_choice',
+            options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
+            correctAnswer: q.correct_answer,
+            explanation: q.explanation,
+            studentAnswer: (json.attempt?.answers || {})[q.id] || null,
+            ai_score: fb.score,
+            ai_feedback: fb.feedback,
+            tutor_score: q.tutor_score, // this is at attempt level for exam, we can just use fb
+            tutor_feedback: q.tutor_feedback
+          }
+        })
 
         setData({
           title: json.paper?.title,
@@ -147,14 +163,26 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
         if (!res.ok) throw new Error('Failed to load results')
         const json = await res.json()
 
-        const questions = (json.questions || []).map(q => ({
-          id: q.id,
-          text: q.question_text,
-          options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
-          correctAnswer: q.correct_answer,
-          explanation: q.explanation,
-          studentAnswer: (json.attempt?.answers || {})[q.id] || null,
-        }))
+        let feedbackMap = {}
+        try { feedbackMap = typeof json.attempt?.tutor_feedback === 'string' ? JSON.parse(json.attempt.tutor_feedback) : (json.attempt?.tutor_feedback || {}) } catch(e){}
+
+        const questions = (json.questions || []).map(q => {
+          const fb = feedbackMap[q.id] || {}
+          return {
+            id: q.id,
+            text: q.question_text,
+            question_type: q.question_type || 'multiple_choice',
+            options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
+            correctAnswer: q.correct_answer,
+            explanation: q.explanation,
+            studentAnswer: (json.attempt?.answers || {})[q.id] || null,
+            ai_score: fb.score,
+            ai_feedback: fb.feedback,
+            tutor_score: q.tutor_score,
+            tutor_feedback: q.tutor_feedback
+          }
+        })
+
 
         setData({
           title: json.quiz?.title,
@@ -271,41 +299,71 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
             </h2>
 
             {data.questions.map((q, idx) => {
-              const isCorrect = q.studentAnswer === q.correctAnswer
+              const isEssay = q.question_type === 'essay'
               const unanswered = !q.studentAnswer
+              const isCorrect = !isEssay && q.studentAnswer === q.correctAnswer
 
               return (
                 <div
                   key={q.id || idx}
                   className={`bg-surface-container-lowest/70 backdrop-blur-md border rounded-xl p-lg flex flex-col gap-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] ${
                     unanswered ? 'border-outline-variant/50' :
-                    isCorrect ? 'border-green-200' : 'border-red-200'
+                    (isEssay ? 'border-primary/50' : (isCorrect ? 'border-green-200' : 'border-red-200'))
                   }`}
                 >
                   {/* Question header */}
                   <div className="flex items-start gap-sm">
                     <span className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
                       unanswered ? 'bg-surface-container-high text-on-surface-variant' :
-                      isCorrect ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      isEssay ? 'bg-primary-container text-on-primary-container' : (isCorrect ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700')
                     }`}>
                       {unanswered ? idx + 1 : (
                         <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                          {isCorrect ? 'check' : 'close'}
+                          {isEssay ? 'edit_document' : (isCorrect ? 'check' : 'close')}
                         </span>
                       )}
                     </span>
                     <h3 className="font-label-md text-label-md text-on-surface flex-1 leading-snug">{q.text}</h3>
                   </div>
 
-                  {/* Options */}
-                  <div className="flex flex-col gap-xs ml-10">
-                    {Object.entries(q.options).map(([letter, text]) => {
-                      let status = 'neutral'
-                      if (letter === q.correctAnswer) status = 'correct'
-                      else if (letter === q.studentAnswer && !isCorrect) status = 'wrong'
-                      return <AnswerIndicator key={letter} letter={letter} text={text} status={status} />
-                    })}
-                  </div>
+                  {/* Options / Essay Answer */}
+                  {isEssay ? (
+                    <div className="ml-10 flex flex-col gap-sm">
+                      <div className="p-md rounded-xl border border-outline-variant/30 bg-surface-container-lowest">
+                        <p className="font-label-sm text-label-sm text-on-surface-variant mb-xs">Câu trả lời của bạn:</p>
+                        <p className="font-body-md text-body-md text-on-surface whitespace-pre-wrap">{q.studentAnswer || <span className="italic opacity-60">Không có câu trả lời</span>}</p>
+                      </div>
+                      
+                      {q.ai_feedback && (
+                        <div className="p-md rounded-xl border border-primary/20 bg-primary-container/20">
+                          <p className="font-label-sm text-label-sm text-primary mb-xs flex items-center gap-xs">
+                            <span className="material-symbols-outlined text-[16px]">smart_toy</span>
+                            AI Đánh giá (Điểm: {q.ai_score}/100)
+                          </p>
+                          <p className="font-body-md text-body-md text-on-surface whitespace-pre-wrap">{q.ai_feedback}</p>
+                        </div>
+                      )}
+
+                      {q.tutor_feedback && (
+                        <div className="p-md rounded-xl border border-purple-200 bg-purple-50">
+                          <p className="font-label-sm text-label-sm text-purple-700 mb-xs flex items-center gap-xs">
+                            <span className="material-symbols-outlined text-[16px]">school</span>
+                            Gia sư Nhận xét (Điểm: {q.tutor_score}/100)
+                          </p>
+                          <p className="font-body-md text-body-md text-on-surface whitespace-pre-wrap">{q.tutor_feedback}</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-xs ml-10">
+                      {Object.entries(q.options).map(([letter, text]) => {
+                        let status = 'neutral'
+                        if (letter === q.correctAnswer) status = 'correct'
+                        else if (letter === q.studentAnswer && !isCorrect) status = 'wrong'
+                        return <AnswerIndicator key={letter} letter={letter} text={text} status={status} />
+                      })}
+                    </div>
+                  )}
 
                   {/* Explanation */}
                   {q.explanation && (
@@ -317,8 +375,8 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
                     </div>
                   )}
 
-                  {unanswered && (
-                    <p className="ml-10 font-label-sm text-label-sm text-on-surface-variant italic">Chưa trả lời</p>
+                  {unanswered && !isEssay && (
+                    <p className="ml-10 font-label-sm text-label-sm text-on-surface-variant italic">Not answered</p>
                   )}
                 </div>
               )

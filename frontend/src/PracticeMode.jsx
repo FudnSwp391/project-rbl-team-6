@@ -178,6 +178,7 @@ export default function PracticeMode({ token }) {
   const [customCount, setCustomCount] = useState('')
   const [useCustomCount, setUseCustomCount] = useState(false)
   const [difficulty, setDifficulty] = useState('medium')
+  const [questionType, setQuestionType] = useState('multiple_choice')
   const [timeLimit, setTimeLimit] = useState(null)
   const [customTime, setCustomTime] = useState('')
   const [useCustomTime, setUseCustomTime] = useState(false)
@@ -247,7 +248,7 @@ export default function PracticeMode({ token }) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ topic: t, count: c, difficulty: d, timeLimitMins }),
+        body: JSON.stringify({ topic: t, count: c, difficulty: d, timeLimitMins, questionType }),
       })
 
       const data = await res.json()
@@ -271,7 +272,8 @@ export default function PracticeMode({ token }) {
   }
 
   const handleQuickGenerate = () => {
-    const count = useCustomCount ? parseInt(customCount) || 10 : questionCount
+    let count = useCustomCount ? parseInt(customCount) || 10 : questionCount
+    if (questionType === 'essay') count = 2 // Fixed 2 sections (e.g. Đọc hiểu + Viết) for 2018 curriculum
     const timeLimitMins = useCustomTime
       ? (parseInt(customTime) || null)
       : timeLimit
@@ -740,54 +742,104 @@ export default function PracticeMode({ token }) {
             </div>
 
             {/* Question Count */}
+            {questionType !== 'essay' ? (
+              <div className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md">
+                <label className="font-label-md text-label-md text-on-surface mb-sm block">
+                  <span className="flex items-center gap-xs">
+                    <span className="material-symbols-outlined text-[18px] text-primary">
+                      format_list_numbered
+                    </span>
+                    Number of questions
+                  </span>
+                </label>
+                <div className="flex flex-wrap gap-sm">
+                  {QUESTION_PRESETS.map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => {
+                        setQuestionCount(n)
+                        setUseCustomCount(false)
+                      }}
+                      className={`h-12 w-16 rounded-xl border-2 font-label-md text-label-md transition-all duration-200 ${
+                        !useCustomCount && questionCount === n
+                          ? 'bg-primary text-on-primary border-primary shadow-sm scale-105'
+                          : 'bg-surface-container border-outline-variant/30 text-on-surface hover:border-primary/50 hover:bg-surface-container-high'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                  <div className="flex items-center gap-sm">
+                    <span className="text-on-surface-variant font-label-sm text-label-sm">
+                      or
+                    </span>
+                    <input
+                      type="number"
+                      value={customCount}
+                      onChange={(e) => {
+                        setCustomCount(e.target.value)
+                        setUseCustomCount(true)
+                      }}
+                      onFocus={() => setUseCustomCount(true)}
+                      placeholder="Custom"
+                      min={1}
+                      max={50}
+                      className={`h-12 w-24 rounded-xl border-2 text-center font-label-md text-label-md text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none transition-all duration-200 ${
+                        useCustomCount
+                          ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
+                          : 'border-outline-variant/30 bg-surface-container hover:border-primary/50'
+                      }`}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-primary/5 border border-primary/20 rounded-xl p-md flex gap-sm">
+                <span className="material-symbols-outlined text-primary">info</span>
+                <p className="font-body-sm text-on-surface-variant">
+                  <strong>Cấu trúc chuẩn GDPT 2018:</strong> Đề kiểm tra Tự luận sẽ được AI sinh tự động dựa trên cấu trúc chương trình mới, thường bao gồm các phần cố định (Ví dụ với Ngữ văn là phần Đọc hiểu và Viết) thay vì số lượng câu hỏi cụ thể.
+                </p>
+              </div>
+            )}
+
+            {/* Question Type */}
             <div className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md">
               <label className="font-label-md text-label-md text-on-surface mb-sm block">
                 <span className="flex items-center gap-xs">
                   <span className="material-symbols-outlined text-[18px] text-primary">
-                    format_list_numbered
+                    quiz
                   </span>
-                  Số lượng câu hỏi
+                  Loại câu hỏi
                 </span>
               </label>
-              <div className="flex flex-wrap gap-sm">
-                {QUESTION_PRESETS.map((n) => (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-md">
+                {[
+                  { key: 'multiple_choice', label: 'Trắc nghiệm', icon: 'check_box', desc: 'Chỉ chọn đáp án ABCD' },
+                  { key: 'essay', label: 'Tự luận', icon: 'edit_document', desc: 'Viết câu trả lời tự luận' },
+                  { key: 'mixed', label: 'Trộn lẫn', icon: 'shuffle', desc: 'Kết hợp cả hai loại' }
+                ].map((qt) => (
                   <button
-                    key={n}
-                    onClick={() => {
-                      setQuestionCount(n)
-                      setUseCustomCount(false)
-                    }}
-                    className={`h-12 w-16 rounded-xl border-2 font-label-md text-label-md transition-all duration-200 ${
-                      !useCustomCount && questionCount === n
-                        ? 'bg-primary text-on-primary border-primary shadow-sm scale-105'
-                        : 'bg-surface-container border-outline-variant/30 text-on-surface hover:border-primary/50 hover:bg-surface-container-high'
+                    key={qt.key}
+                    onClick={() => setQuestionType(qt.key)}
+                    className={`flex flex-col items-center gap-sm p-md rounded-xl border-2 transition-all duration-300 cursor-pointer ${
+                      questionType === qt.key
+                        ? 'bg-primary-container/40 border-primary ring-2 ring-primary/20 scale-[1.02]'
+                        : 'bg-surface-container border-outline-variant/20 hover:border-primary/40 hover:bg-surface-container-high'
                     }`}
                   >
-                    {n}
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xl transition-colors duration-300 ${questionType === qt.key ? 'bg-primary text-on-primary' : 'bg-surface-variant text-on-surface-variant'}`}>
+                      <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>{qt.icon}</span>
+                    </div>
+                    <div className="text-center">
+                      <p className="font-label-md text-label-md text-on-surface">
+                        {qt.label}
+                      </p>
+                      <p className="font-label-sm text-label-sm text-on-surface-variant">
+                        {qt.desc}
+                      </p>
+                    </div>
                   </button>
                 ))}
-                <div className="flex items-center gap-sm">
-                  <span className="text-on-surface-variant font-label-sm text-label-sm">
-                    hoặc
-                  </span>
-                  <input
-                    type="number"
-                    value={customCount}
-                    onChange={(e) => {
-                      setCustomCount(e.target.value)
-                      setUseCustomCount(true)
-                    }}
-                    onFocus={() => setUseCustomCount(true)}
-                    placeholder="Tùy chỉnh"
-                    min={1}
-                    max={50}
-                    className={`h-12 w-24 rounded-xl border-2 text-center font-label-md text-label-md text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none transition-all duration-200 ${
-                      useCustomCount
-                        ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
-                        : 'border-outline-variant/30 bg-surface-container hover:border-primary/50'
-                    }`}
-                  />
-                </div>
               </div>
             </div>
 

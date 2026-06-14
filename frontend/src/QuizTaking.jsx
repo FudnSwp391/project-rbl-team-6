@@ -182,7 +182,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         const map = { '1': 'A', '2': 'B', '3': 'C', '4': 'D', a: 'A', b: 'B', c: 'C', d: 'D' }
         const answer = map[e.key.toLowerCase()] || e.key.toUpperCase()
         const q = questions[currentIndex]
-        if (q) {
+        if (q && q.question_type !== 'essay') {
           const key = (isPractice || isExamPaper) ? String(currentIndex) : (q.id || String(currentIndex))
           setAnswers(prev => ({ ...prev, [key]: answer }))
         }
@@ -206,18 +206,20 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
 
   // ── Auto-save draft every 10s + save on page hide / close / unmount ──
   useEffect(() => {
-    if (isExamPaper) return
-    if (!isPractice && !attemptId) return
+    if (!isPractice && !isExamPaper && !attemptId) return
     if (isPractice && !practiceSessionId) return
+    if (isExamPaper && !attemptId) return
 
     const doSave = () => {
       if (isPractice) {
         savePracticeDraft()
+      } else if (isExamPaper) {
+        saveExamPaperDraft()
       } else {
         saveDraft()
       }
     }
-    
+
     // Periodic auto-save every 10 seconds
     autoSaveRef.current = setInterval(doSave, 10000)
 
@@ -242,12 +244,12 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
       // Save one last time when unmounting (SPA navigation)
       doSave()
     }
-  }, [attemptId, practiceSessionId, isPractice, isExamPaper])
+  }, [attemptId, practiceSessionId, isPractice, isExamPaper, examPaperId])
 
   async function fetchExamPaper() {
     try {
       setLoading(true)
-      const res = await fetch(`${apiBaseUrl}/api/exam-papers/${examPaperId}/start`, {
+      const res = await fetch(`${apiBaseUrl}/api/exam-papers/${examPaperId}/start?_t=${Date.now()}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error('Failed to load exam paper')
@@ -259,12 +261,15 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         duration_minutes: data.paper.duration_minutes,
       })
       setQuestions(data.questions || [])
-      setAttemptId(data.attempt_id)
+      setAttemptId(data.attempt.id)
+      setAnswers(data.attempt.answers || {})
       // Set countdown timer from exam paper duration
       if (data.paper.duration_minutes) {
-        const secs = data.paper.duration_minutes * 60
+        const secs = (data.attempt.time_remaining_seconds !== null && data.attempt.time_remaining_seconds !== undefined)
+          ? data.attempt.time_remaining_seconds
+          : data.paper.duration_minutes * 60
         setTimeRemaining(secs)
-        setTotalSeconds(secs)
+        setTotalSeconds(data.paper.duration_minutes * 60)
       }
     } catch (err) {
       setError(err.message)
@@ -276,7 +281,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
   async function fetchQuizData() {
     try {
       setLoading(true)
-      const res = await fetch(`${apiBaseUrl}/api/quizzes/${quizId}/start`, {
+      const res = await fetch(`${apiBaseUrl}/api/quizzes/${quizId}/start?_t=${Date.now()}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error('Failed to load quiz')
@@ -285,7 +290,9 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
       setQuestions(data.questions || [])
       setAttemptId(data.attempt.id)
       setAnswers(data.attempt.answers || {})
-      const secs = data.attempt.time_remaining_seconds || data.quiz.duration_minutes * 60
+      const secs = (data.attempt.time_remaining_seconds !== null && data.attempt.time_remaining_seconds !== undefined)
+        ? data.attempt.time_remaining_seconds
+        : data.quiz.duration_minutes * 60
       setTimeRemaining(secs)
       setTotalSeconds(data.quiz.duration_minutes * 60)  // original cap for progress bar
     } catch (err) {
@@ -349,15 +356,30 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
   async function saveDraft() {
     if (!attemptId) return
     try {
-      const quizAnswers = {}
-      questions.forEach((q, idx) => {
-        const ans = answersRef.current[String(idx)]
-        if (ans) quizAnswers[q.id] = ans
-      })
+      const payload = { attemptId, answers: answersRef.current }
+      if (timeRemainingRef.current !== null) {
+        payload.timeRemainingSeconds = timeRemainingRef.current
+      }
       await fetch(`${apiBaseUrl}/api/quizzes/${quizId}/save-draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ attemptId, answers: quizAnswers, timeRemainingSeconds: timeRemainingRef.current }),
+        body: JSON.stringify(payload),
+        keepalive: true
+      })
+    } catch (_) { /* silent */ }
+  }
+
+  async function saveExamPaperDraft() {
+    if (!attemptId || !examPaperId) return
+    try {
+      const payload = { attemptId, answers: answersRef.current }
+      if (timeRemainingRef.current !== null) {
+        payload.timeRemainingSeconds = timeRemainingRef.current
+      }
+      await fetch(`${apiBaseUrl}/api/exam-papers/${examPaperId}/save-draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
         keepalive: true
       })
     } catch (_) { /* silent */ }
@@ -368,16 +390,10 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
     setShowConfirm(false)
     try {
       if (isExamPaper) {
-        // Build answers keyed by question id
-        const examAnswers = {}
-        questions.forEach((q, idx) => {
-          const ans = answers[String(idx)]
-          if (ans) examAnswers[q.id] = ans
-        })
         const res = await fetch(`${apiBaseUrl}/api/exam-papers/${examPaperId}/submit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ attemptId, answers: examAnswers }),
+          body: JSON.stringify({ attemptId, answers }),
         })
         if (!res.ok) throw new Error('Submit failed')
         window.location.hash = `/exam-result/${attemptId}`
@@ -391,15 +407,10 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         window.location.hash = `/practice-result/${sessionId}`
       } else {
         await saveDraft()
-        const quizAnswers = {}
-        questions.forEach((q, idx) => {
-          const ans = answers[String(idx)]
-          if (ans) quizAnswers[q.id] = ans
-        })
         const res = await fetch(`${apiBaseUrl}/api/quizzes/${quizId}/submit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ attemptId, answers: quizAnswers }),
+          body: JSON.stringify({ attemptId, answers }),
         })
         if (!res.ok) throw new Error('Submit failed')
         const data = await res.json()
@@ -411,9 +422,9 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
     }
   }, [answers, attemptId, quizId, sessionId, isPractice, isExamPaper, examPaperId, token, timeRemaining, questions])
 
-  // For practice/exam: key by index; for formal quiz: key by question id
+  // For practice: key by index; for formal quiz and exam paper: key by question id
   function getAnswerKey(q, idx) {
-    return (isPractice || isExamPaper) ? String(idx) : (q.id || String(idx))
+    return isPractice ? String(idx) : String(q.id)
   }
 
   function selectAnswer(key, value) {
@@ -617,41 +628,53 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
                   </h2>
                 </div>
 
-                {/* Options */}
+                {/* Options or Essay Answer */}
                 <div className="flex flex-col gap-sm">
-                  {OPTIONS.map((letter, optIdx) => {
-                    const optKey = OPTION_KEYS[optIdx]
-                    const optText = currentQ[optKey]
-                    const isSelected = answers[currentKey] === letter
+                  {currentQ.question_type === 'essay' ? (
+                    <textarea
+                      value={answers[currentKey] || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAnswers(prev => ({ ...prev, [currentKey]: val }))
+                      }}
+                      placeholder="Nhập câu trả lời tự luận của bạn vào đây..."
+                      className="w-full min-h-[200px] p-md rounded-xl border-2 border-outline-variant/50 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-surface-container-lowest font-body-md text-body-md text-on-surface resize-y transition-all duration-200 outline-none"
+                    />
+                  ) : (
+                    OPTIONS.map((letter, optIdx) => {
+                      const optKey = OPTION_KEYS[optIdx]
+                      const optText = currentQ[optKey]
+                      const isSelected = answers[currentKey] === letter
 
-                    return (
-                      <button
-                        key={letter}
-                        onClick={() => selectAnswer(currentKey, letter)}
-                        className={`w-full flex items-center gap-md p-md rounded-xl border-2 text-left transition-all duration-200 group ${
-                          isSelected
-                            ? 'border-primary bg-primary/5 shadow-sm'
-                            : 'border-outline-variant/50 hover:border-primary/40 hover:bg-surface-container-low'
-                        }`}
-                      >
-                        <span className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${
-                          isSelected
-                            ? 'border-primary bg-primary text-on-primary'
-                            : 'border-outline-variant text-on-surface-variant group-hover:border-primary group-hover:text-primary'
-                        }`}>
-                          {letter}
-                        </span>
-                        <span className={`font-body-md text-body-md ${isSelected ? 'text-on-surface font-medium' : 'text-on-surface'}`}>
-                          {optText}
-                        </span>
-                        {isSelected && (
-                          <span className="ml-auto material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                            check_circle
+                      return (
+                        <button
+                          key={letter}
+                          onClick={() => selectAnswer(currentKey, letter)}
+                          className={`w-full flex items-center gap-md p-md rounded-xl border-2 text-left transition-all duration-200 group ${
+                            isSelected
+                              ? 'border-primary bg-primary/5 shadow-sm'
+                              : 'border-outline-variant/50 hover:border-primary/40 hover:bg-surface-container-low'
+                          }`}
+                        >
+                          <span className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${
+                            isSelected
+                              ? 'border-primary bg-primary text-on-primary'
+                              : 'border-outline-variant text-on-surface-variant group-hover:border-primary group-hover:text-primary'
+                          }`}>
+                            {letter}
                           </span>
-                        )}
-                      </button>
-                    )
-                  })}
+                          <span className={`font-body-md text-body-md ${isSelected ? 'text-on-surface font-medium' : 'text-on-surface'}`}>
+                            {optText}
+                          </span>
+                          {isSelected && (
+                            <span className="ml-auto material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                              check_circle
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
               </div>
 
