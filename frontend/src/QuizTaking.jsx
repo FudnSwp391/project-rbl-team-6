@@ -297,6 +297,16 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
       if (data.session.answers) {
         setAnswers(data.session.answers)
       }
+      
+      // Handle time if available
+      if (data.session.time_limit_mins) {
+        setTotalSeconds(data.session.time_limit_mins * 60)
+        setTimeRemaining(
+          data.session.time_remaining_seconds !== null && data.session.time_remaining_seconds !== undefined
+            ? data.session.time_remaining_seconds
+            : data.session.time_limit_mins * 60
+        )
+      }
     } catch (err) {
       setError('Could not load practice session. Please go back and try again.')
     } finally {
@@ -310,7 +320,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
       await fetch(`${apiBaseUrl}/api/practice/${practiceSessionId}/save-progress`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ answers }),
+        body: JSON.stringify({ answers, timeRemaining }),
       })
     } catch (_) { /* silent */ }
   }

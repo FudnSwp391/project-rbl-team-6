@@ -1265,7 +1265,7 @@ app.post('/api/quizzes/:id/submit', verifyToken, async (req, res) => {
 app.post('/api/practice/generate', verifyToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { topic, count = 10, difficulty = 'medium' } = req.body;
+    const { topic, count = 10, difficulty = 'medium', timeLimitMins = null } = req.body;
     if (!topic?.trim()) return res.status(400).json({ message: 'Topic is required.' });
     const diff = ['easy','medium','hard'].includes(difficulty) ? difficulty : 'medium';
     const questionCount = Math.min(Math.max(Number(count)||10,1),30);
@@ -1274,9 +1274,10 @@ app.post('/api/practice/generate', verifyToken, async (req, res) => {
     if (questions.length > 0 && questions[0].question?.startsWith('⚠️')) {
       return res.status(503).json({ message: 'AI_QUOTA_EXCEEDED', detail: 'Gemini và Groq đều đạt giới hạn. Thử lại sau hoặc dùng Đề thi có sẵn.' });
     }
+    const timeRemainingSeconds = timeLimitMins ? timeLimitMins * 60 : null;
     const result = await pool.query(
-      `INSERT INTO practice_sessions (student_id, topic, difficulty, questions, total_questions) VALUES ($1,$2,$3,$4,$5) RETURNING id, topic, difficulty, total_questions, status, created_at`,
-      [userId, topic.trim(), diff, JSON.stringify(questions), questions.length]
+      `INSERT INTO practice_sessions (student_id, topic, difficulty, questions, total_questions, time_limit_mins, time_remaining_seconds) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, topic, difficulty, total_questions, status, created_at, time_limit_mins, time_remaining_seconds`,
+      [userId, topic.trim(), diff, JSON.stringify(questions), questions.length, timeLimitMins, timeRemainingSeconds]
     );
     const session = result.rows[0];
     const safeQ = questions.map((q,i) => ({ index:i, question:q.question, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
@@ -1303,7 +1304,7 @@ app.get('/api/practice/:sessionId/questions', verifyToken, async (req, res) => {
     if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
     const session = r.rows[0];
     const questions = (session.questions || []).map((q,i) => ({ index:i, question:q.question, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
-    return res.json({ session: { id:session.id, topic:session.topic, difficulty:session.difficulty, total_questions:session.total_questions, status:session.status, answers:session.answers }, questions });
+    return res.json({ session: { id:session.id, topic:session.topic, difficulty:session.difficulty, total_questions:session.total_questions, status:session.status, answers:session.answers, time_limit_mins:session.time_limit_mins, time_remaining_seconds:session.time_remaining_seconds }, questions });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
@@ -1321,14 +1322,14 @@ app.post('/api/practice/chat', verifyToken, async (req, res) => {
 app.post('/api/practice/:sessionId/save-progress', verifyToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { answers } = req.body;
+    const { answers, timeRemaining } = req.body;
     const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
     if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
     if (r.rows[0].status === 'submitted') return res.status(400).json({ message: 'Session already submitted.' });
     
     await pool.query(
-      `UPDATE practice_sessions SET answers=$1 WHERE id=$2`,
-      [JSON.stringify(answers || {}), sessionId]
+      `UPDATE practice_sessions SET answers=$1, time_remaining_seconds=$2 WHERE id=$3`,
+      [JSON.stringify(answers || {}), timeRemaining !== undefined ? timeRemaining : r.rows[0].time_remaining_seconds, sessionId]
     );
     return res.json({ message: 'Progress saved successfully.' });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
