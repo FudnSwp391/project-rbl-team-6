@@ -1317,6 +1317,23 @@ app.post('/api/practice/chat', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
+// ─── POST /api/practice/:sessionId/save-progress ────────────────────────────────
+app.post('/api/practice/:sessionId/save-progress', verifyToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { answers } = req.body;
+    const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
+    if (r.rows[0].status === 'submitted') return res.status(400).json({ message: 'Session already submitted.' });
+    
+    await pool.query(
+      `UPDATE practice_sessions SET answers=$1 WHERE id=$2`,
+      [JSON.stringify(answers || {}), sessionId]
+    );
+    return res.json({ message: 'Progress saved successfully.' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
 // ─── POST /api/practice/:sessionId/submit ─────────────────────────────────────
 app.post('/api/practice/:sessionId/submit', verifyToken, async (req, res) => {
   try {
