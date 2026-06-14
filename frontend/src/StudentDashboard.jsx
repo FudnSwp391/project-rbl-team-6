@@ -36,12 +36,12 @@ const MY_TUTORS = [
 ]
 
 const NAV_ITEMS = [
-  { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
-  { id: 'courses', icon: 'school', label: 'My Courses' },
-  { id: 'schedule', icon: 'calendar_today', label: 'Schedule' },
-  { id: 'messages', icon: 'chat', label: 'Messages' },
-  { id: 'assessments', icon: 'quiz', label: 'Assessments' },
-  { id: 'practice', icon: 'psychology', label: 'AI Practice' },
+  { id: 'dashboard', icon: 'dashboard', label: 'Bảng Điều Khiển' },
+  { id: 'courses', icon: 'school', label: 'Khóa Học Của Tôi' },
+  { id: 'schedule', icon: 'calendar_today', label: 'Lịch Học' },
+  { id: 'messages', icon: 'chat', label: 'Tin Nhắn' },
+  { id: 'assessments', icon: 'quiz', label: 'Bài Kiểm Tra' },
+  { id: 'practice', icon: 'psychology', label: 'Luyện Tập AI' },
   { id: 'exam-papers', icon: 'description', label: 'Đề thi' },
   { id: 'parent-link', icon: 'family_restroom', label: 'Mã chia sẻ' },
 ]
@@ -107,7 +107,7 @@ export default function StudentDashboard() {
             <h1 className="font-headline-md text-headline-md font-black text-primary leading-tight">
               EduX
             </h1>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Student Portal</p>
+            <p className="font-label-sm text-label-sm text-on-surface-variant">Cổng Học Sinh</p>
           </div>
         </div>
 
@@ -149,7 +149,7 @@ export default function StudentDashboard() {
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
           >
             <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Settings</span>
+            <span className="font-label-md text-label-md">Cài Đặt</span>
           </a>
           <a
             href="#"
@@ -157,12 +157,12 @@ export default function StudentDashboard() {
             onClick={(e) => { e.preventDefault(); logout() }}
           >
             <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Logout</span>
+            <span className="font-label-md text-label-md">Đăng Xuất</span>
           </a>
           <div className="mt-md px-xs">
             <button className="w-full bg-surface-container border border-outline-variant text-on-surface font-label-md text-label-md h-12 rounded-lg flex items-center justify-center gap-sm hover:bg-surface-container-highest transition-colors duration-200">
               <span className="material-symbols-outlined text-[18px]">help_center</span>
-              Get Support
+              Hỗ Trợ
             </button>
           </div>
         </div>
@@ -179,7 +179,7 @@ export default function StudentDashboard() {
             <button
               className="lg:hidden w-10 h-10 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high rounded-full transition-colors"
               onClick={() => setSidebarOpen(true)}
-              aria-label="Open menu"
+              aria-label="Mở menu"
             >
               <span className="material-symbols-outlined">menu</span>
             </button>
@@ -191,7 +191,7 @@ export default function StudentDashboard() {
               </span>
               <input
                 className="w-full h-10 pl-10 pr-sm bg-surface-container-low border border-outline-variant/50 rounded-lg font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant/70 focus:border-primary focus:ring-2 focus:ring-on-tertiary-container/30 focus:outline-none transition-all duration-200"
-                placeholder="Search courses, resources..."
+                placeholder="Tìm kiếm khóa học, tài nguyên..."
                 type="text"
               />
             </div>
@@ -199,14 +199,14 @@ export default function StudentDashboard() {
             <div className="flex items-center gap-sm lg:gap-md">
               {/* Notification */}
               <button
-                aria-label="Notifications"
+                aria-label="Thông báo"
                 className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
               >
                 <span className="material-symbols-outlined">notifications</span>
               </button>
 
               <button
-                aria-label="Help"
+                aria-label="Trợ giúp"
                 className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
               >
                 <span className="material-symbols-outlined">help</span>
@@ -271,15 +271,15 @@ export default function StudentDashboard() {
             <div className="flex justify-between items-end flex-wrap gap-md">
               <div>
                 <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs">
-                  Welcome back, {displayName} 👋
+                  Chào mừng trở lại, {displayName} 👋
                 </h2>
                 <p className="font-body-lg text-body-lg text-on-surface-variant">
-                  Here is your academic overview for today.
+                  Đây là tổng quan học tập của bạn hôm nay.
                 </p>
               </div>
               <button className="h-12 px-md bg-surface-container border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface flex items-center gap-sm hover:bg-surface-container-highest transition-colors">
                 <span className="material-symbols-outlined">tune</span>
-                Customize
+                Tùy Chỉnh
               </button>
             </div>
 
@@ -297,24 +297,24 @@ export default function StudentDashboard() {
                   <div className="flex-1">
                     <div className="flex items-center gap-sm mb-xs flex-wrap">
                       <span className="inline-flex items-center px-2 py-1 rounded bg-on-tertiary-container/20 text-primary font-label-sm text-label-sm">
-                        Next Upcoming
+                        Sắp Diễn Ra
                       </span>
                       <span className="font-label-sm text-label-sm text-error flex items-center gap-xs">
                         <span className="material-symbols-outlined text-[14px]">schedule</span>
-                        Starts in 15m
+                        Bắt đầu sau 15 phút
                       </span>
                     </div>
                     <h3 className="font-headline-md text-headline-md text-on-surface mb-xs">
-                      Advanced Mathematics
+                      Toán Học Nâng Cao
                     </h3>
                     <p className="font-body-md text-body-md text-on-surface-variant flex items-center gap-xs">
                       <span className="material-symbols-outlined text-[18px]">person</span>
-                      Dr. Sarah Wilson • Today, 2:00 PM
+                      Dr. Sarah Wilson • Hôm nay, 14:00
                     </p>
                   </div>
                 </div>
                 <button className="w-full lg:w-auto h-12 px-xl bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-surface-tint hover:shadow-md transition-all duration-200 whitespace-nowrap">
-                  Join Class
+                  Vào Lớp Học
                 </button>
               </div>
             </div>
@@ -323,30 +323,30 @@ export default function StudentDashboard() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-md lg:gap-gutter">
               <StatCard
                 icon="library_books"
-                label="Courses in Progress"
+                label="Khóa Học Đang Học"
                 value="4"
               />
               <StatCard
                 icon="assignment_late"
-                label="Assignments Due"
+                label="Bài Tập Sắp Hết Hạn"
                 value="2"
               />
               <StatCard
                 icon="timer"
-                label="Hours Studied"
-                value={<>28<span className="font-headline-md text-headline-md text-on-surface-variant">h</span></>}
+                label="Số Giờ Đã Học"
+                value={<>28<span className="font-headline-md text-headline-md text-on-surface-variant">giờ</span></>}
               />
             </div>
 
             {/* ── My Tutors ── */}
             <div>
               <div className="flex justify-between items-center mb-md">
-                <h3 className="font-headline-md text-headline-md text-on-surface">My Tutors</h3>
+                <h3 className="font-headline-md text-headline-md text-on-surface">Gia Sư Của Tôi</h3>
                 <a
                   href="#"
                   className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
                 >
-                  View All
+                  Xem Tất Cả
                 </a>
               </div>
 
@@ -364,9 +364,9 @@ export default function StudentDashboard() {
                   <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-sm group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors duration-300">
                     <span className="material-symbols-outlined text-[28px]">person_add</span>
                   </div>
-                  <h4 className="font-label-md text-label-md text-on-surface mb-xs">Find a Tutor</h4>
+                  <h4 className="font-label-md text-label-md text-on-surface mb-xs">Tìm Gia Sư</h4>
                   <p className="font-label-sm text-label-sm text-on-surface-variant">
-                    Browse available experts
+                    Khám phá các gia sư hiện có
                   </p>
                 </a>
               </div>
@@ -414,7 +414,7 @@ function TutorCard({ tutor }) {
         {tutor.subject}
       </span>
       <button className="w-full h-10 border border-outline-variant text-on-surface font-label-sm text-label-sm rounded-lg hover:bg-surface-container hover:text-primary transition-colors">
-        Message
+        Nhắn Tin
       </button>
     </div>
   )

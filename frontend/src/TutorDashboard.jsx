@@ -349,7 +349,7 @@ export default function TutorDashboard() {
               <h1 className="font-headline-md text-[20px] leading-tight font-black text-primary">
                 EduX
               </h1>
-              <p className="font-label-sm text-label-sm text-on-surface-variant">Tutor Portal</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant">Cổng Gia Sư</p>
             </div>
           </div>
         </div>
@@ -401,7 +401,7 @@ export default function TutorDashboard() {
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
           >
             <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Settings</span>
+            <span className="font-label-md text-label-md">Cài Đặt</span>
           </a>
           <a
             href="#"
@@ -409,11 +409,11 @@ export default function TutorDashboard() {
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
           >
             <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Logout</span>
+            <span className="font-label-md text-label-md">Đăng Xuất</span>
           </a>
           <button className="mt-2 w-full h-12 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
             <span className="material-symbols-outlined">support_agent</span>
-            Get Support
+            Hỗ Trợ
           </button>
         </div>
       </nav>
@@ -431,7 +431,7 @@ export default function TutorDashboard() {
             <button
               className="lg:hidden w-10 h-10 flex items-center justify-center text-on-surface-variant hover:text-primary rounded-full transition-colors"
               onClick={() => setSidebarOpen(true)}
-              aria-label="Open menu"
+              aria-label="Mở menu"
             >
               <span className="material-symbols-outlined">menu</span>
             </button>
@@ -444,7 +444,7 @@ export default function TutorDashboard() {
                 </span>
                 <input
                   className="w-full h-10 pl-10 pr-4 rounded-lg border border-outline-variant bg-surface-container-lowest focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all font-body-md text-body-md outline-none"
-                  placeholder="Search students, classes, or subjects..."
+                  placeholder="Tìm kiếm học sinh, lớp học hoặc môn học..."
                   type="text"
                 />
               </div>
@@ -490,10 +490,10 @@ export default function TutorDashboard() {
             <>
               <div className="space-y-1">
                 <h2 className="font-headline-lg text-headline-lg text-on-surface">
-              Good Morning, {displayName} 👋
+              Chào buổi sáng, {displayName} 👋
             </h2>
             <p className="font-body-lg text-body-lg text-on-surface-variant">
-              Here is your daily overview.
+              Đây là tổng quan hàng ngày của bạn.
             </p>
           </div>
 
@@ -512,7 +512,7 @@ export default function TutorDashboard() {
               </div>
               <div>
                 <p className="font-label-md text-label-md text-on-surface-variant mb-1">
-                  Total Earnings (This Month)
+                  Tổng Thu Nhập (Tháng Này)
                 </p>
                 <p className="text-[36px] leading-[44px] font-bold text-on-surface">$3,240</p>
               </div>
@@ -527,7 +527,7 @@ export default function TutorDashboard() {
               </div>
               <div>
                 <p className="font-label-md text-label-md text-on-surface-variant mb-1">
-                  Total Hours Taught
+                  Tổng Số Giờ Dạy
                 </p>
                 <p className="text-[36px] leading-[44px] font-bold text-on-surface">84.5</p>
               </div>
@@ -542,7 +542,7 @@ export default function TutorDashboard() {
               </div>
               <div>
                 <p className="font-label-md text-label-md text-on-surface-variant mb-1">
-                  Active Students
+                  Học Sinh Đang Hoạt Động
                 </p>
                 <p className="text-[36px] leading-[44px] font-bold text-on-surface">28</p>
               </div>
@@ -556,7 +556,7 @@ export default function TutorDashboard() {
             <div className="lg:col-span-2 space-y-md">
               <div className="flex items-center justify-between">
                 <h3 className="font-headline-md text-headline-md text-on-surface">
-                  Pending Requests
+                  Yêu Cầu Đang Chờ
                 </h3>
                 {requests.length > 0 && (
                   <span className="bg-error text-on-error text-xs font-bold px-2 py-0.5 rounded-full">
@@ -569,7 +569,7 @@ export default function TutorDashboard() {
                 {requests.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 gap-3 text-on-surface-variant">
                     <span className="material-symbols-outlined text-[48px]">task_alt</span>
-                    <p className="font-label-md text-label-md">No pending requests. All clear!</p>
+                    <p className="font-label-md text-label-md">Không có yêu cầu nào đang chờ. Mọi thứ đều ổn!</p>
                   </div>
                 ) : (
                   <div className="divide-y divide-surface-variant/50">
@@ -586,7 +586,7 @@ export default function TutorDashboard() {
 
                 <div className="p-4 bg-surface-container-lowest/30 border-t border-surface-variant/50 text-center">
                   <a href="#" className="text-primary font-label-md hover:underline">
-                    View all requests ({requests.length})
+                    Xem tất cả yêu cầu ({requests.length})
                   </a>
                 </div>
               </div>
@@ -595,7 +595,7 @@ export default function TutorDashboard() {
             {/* ── RIGHT: Today's Schedule ── */}
             <div className="space-y-md">
               <h3 className="font-headline-md text-headline-md text-on-surface">
-                Today's Schedule
+                Lịch Hôm Nay
               </h3>
               <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-[0_10px_15px_-3px_rgba(0,0,0,0.08)] rounded-[1rem] p-md flex flex-col">
                 <div className="relative border-l-2 border-surface-variant ml-3 space-y-6 flex-1">
@@ -604,7 +604,7 @@ export default function TutorDashboard() {
                   ))}
                 </div>
                 <button className="mt-6 w-full h-10 border border-outline-variant rounded-lg font-label-md text-on-surface-variant hover:bg-surface-container-high transition-colors">
-                  Open Full Calendar
+                  Mở Lịch Đầy Đủ
                 </button>
               </div>
             </div>
@@ -645,13 +645,13 @@ function RequestRow({ request, onAccept, onDecline }) {
           className="flex-1 sm:flex-none px-4 h-10 rounded-lg border border-outline-variant text-on-surface-variant font-label-md hover:bg-surface-container-high transition-colors"
           onClick={onDecline}
         >
-          Decline
+          Từ Chối
         </button>
         <button
           className="flex-1 sm:flex-none px-4 h-10 rounded-lg bg-primary text-on-primary font-label-md hover:bg-primary/90 transition-colors shadow-sm"
           onClick={onAccept}
         >
-          Accept
+          Chấp Nhận
         </button>
       </div>
     </div>
@@ -668,7 +668,7 @@ function ScheduleItem({ slot }) {
         <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">
           <p className="font-label-sm text-primary mb-2 flex items-center gap-1">
             <span className="material-symbols-outlined text-[14px]">schedule</span>
-            {slot.time} <span className="ml-1 font-bold">(Now)</span>
+            {slot.time} <span className="ml-1 font-bold">(Ngay Bây Giờ)</span>
           </p>
           <div className="flex items-center gap-3 mb-3">
             <div className="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-label-sm font-bold">
@@ -681,7 +681,7 @@ function ScheduleItem({ slot }) {
           </div>
           <button className="w-full h-10 bg-primary text-on-primary rounded-lg font-label-md hover:bg-primary/90 transition-colors shadow-md flex items-center justify-center gap-2">
             <span className="material-symbols-outlined text-[18px]">videocam</span>
-            Start Meeting
+            Bắt Đầu Cuộc Họp
           </button>
         </div>
       </div>

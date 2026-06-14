@@ -10,7 +10,7 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
 const INITIAL_GREETING = {
   role: 'model',
-  text: "Hi! 👋 Tell me what you'd like to practice. For example:\n\n• \"Give me 10 questions about quadratic equations\"\n• \"I want to review organic chemistry, medium difficulty\"\n• \"Help me practice English grammar, easy level\"\n\nJust describe what you need and I'll set it up for you!",
+  text: "Xin chào! 👋 Hãy cho tôi biết bạn muốn luyện tập gì. Ví dụ:\n\n• \"Cho tôi 10 câu hỏi về phương trình bậc hai\"\n• \"Tôi muốn ôn tập hóa hữu cơ, độ khó trung bình\"\n• \"Giúp tôi luyện tập ngữ pháp tiếng Anh, mức độ dễ\"\n\nChỉ cần mô tả những gì bạn cần và tôi sẽ thiết lập cho bạn!",
 }
 
 export default function AIChatBox({ token, onQuizReady }) {
@@ -91,7 +91,7 @@ export default function AIChatBox({ token, onQuizReady }) {
             ...prev,
             {
               role: 'model',
-              text: `Got it! 🎯 I'll create a **${localParams.count}-question ${localParams.difficulty}** quiz on **"${localParams.topic}"**.\n\nReview the details below and click Generate when you're ready!`,
+              text: `Đã hiểu! 🎯 Tôi sẽ tạo một bài kiểm tra **${localParams.difficulty} gồm ${localParams.count} câu hỏi** về **"${localParams.topic}"**.\n\nKiểm tra chi tiết bên dưới và nhấn Tạo Bài Kiểm Tra khi bạn đã sẵn sàng!`,
             },
           ])
           setConfirmedParams(localParams)
@@ -100,7 +100,7 @@ export default function AIChatBox({ token, onQuizReady }) {
             ...prev,
             {
               role: 'model',
-              text: "I couldn't quite understand that. Try something like:\n\n• \"10 questions about photosynthesis\"\n• \"Give me 5 hard questions on World War 2\"\n• \"Easy quiz on Python basics, 15 questions\"",
+              text: "Tôi chưa hiểu rõ lắm. Hãy thử một câu như:\n\n• \"10 câu hỏi về quang hợp\"\n• \"Cho tôi 5 câu khó về Thế chiến 2\"\n• \"Bài kiểm tra cơ bản về Python, 15 câu\"",
             },
           ])
         }
@@ -122,7 +122,7 @@ export default function AIChatBox({ token, onQuizReady }) {
       if (localParams) {
         const confirmMsg = {
           role: 'model',
-          text: `Got it! 🎯 I'll create a **${localParams.count}-question ${localParams.difficulty}** quiz on **"${localParams.topic}"**.\n\nReview the details below and click Generate when you're ready!`,
+          text: `Đã hiểu! 🎯 Tôi sẽ tạo một bài kiểm tra **${localParams.difficulty} gồm ${localParams.count} câu hỏi** về **"${localParams.topic}"**.\n\nKiểm tra chi tiết bên dưới và nhấn Tạo Bài Kiểm Tra khi bạn đã sẵn sàng!`,
         }
         setMessages((prev) => [...prev, confirmMsg])
         setConfirmedParams(localParams)
@@ -131,7 +131,7 @@ export default function AIChatBox({ token, onQuizReady }) {
           ...prev,
           {
             role: 'model',
-            text: "I couldn't quite understand that. Try something like:\n\n• \"10 questions about photosynthesis\"\n• \"Give me 5 hard questions on World War 2\"\n• \"Easy quiz on Python basics, 15 questions\"",
+            text: "Tôi chưa hiểu rõ lắm. Hãy thử một câu như:\n\n• \"10 câu hỏi về quang hợp\"\n• \"Cho tôi 5 câu khó về Thế chiến 2\"\n• \"Bài kiểm tra cơ bản về Python, 15 câu\"",
           },
         ])
       }
@@ -225,10 +225,10 @@ export default function AIChatBox({ token, onQuizReady }) {
                 </div>
                 <div>
                   <p className="font-label-md text-label-md text-on-surface">
-                    Quiz Ready to Generate
+                    Bài Kiểm Tra Đã Sẵn Sàng
                   </p>
                   <p className="font-label-sm text-label-sm text-on-surface-variant">
-                    Review the details below
+                    Kiểm tra chi tiết bên dưới
                   </p>
                 </div>
               </div>
@@ -244,7 +244,7 @@ export default function AIChatBox({ token, onQuizReady }) {
                   <span className="material-symbols-outlined text-[14px] text-primary">
                     tag
                   </span>
-                  {confirmedParams.count} questions
+                  {confirmedParams.count} câu hỏi
                 </span>
                 <span
                   className={`inline-flex items-center gap-xs px-3 py-1.5 rounded-lg font-label-sm text-label-sm ${
@@ -264,7 +264,7 @@ export default function AIChatBox({ token, onQuizReady }) {
                 <span className="material-symbols-outlined text-[18px]">
                   rocket_launch
                 </span>
-                Generate Quiz
+                Tạo Bài Kiểm Tra
               </button>
             </div>
           </div>
@@ -282,7 +282,7 @@ export default function AIChatBox({ token, onQuizReady }) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Describe what you want to practice..."
+              placeholder="Mô tả những gì bạn muốn luyện tập..."
               rows={1}
               className="w-full resize-none rounded-xl border border-outline-variant/50 bg-surface-container-low px-md py-sm pr-12 font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant/60 focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none transition-all duration-200 max-h-24 overflow-y-auto"
               style={{ minHeight: '44px' }}

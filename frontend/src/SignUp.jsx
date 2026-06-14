@@ -4,9 +4,9 @@ import { useAuth } from './AuthContext'   // ← Global auth state
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
 const ROLE_OPTIONS = [
-  { value: 'student', label: 'Student', icon: 'school' },
-  { value: 'parent', label: 'Parent', icon: 'family_home' },
-  { value: 'tutor', label: 'Tutor', icon: 'history_edu' },
+  { value: 'student', label: 'Học Sinh', icon: 'school' },
+  { value: 'parent', label: 'Phụ Huynh', icon: 'family_home' },
+  { value: 'tutor', label: 'Gia Sư', icon: 'history_edu' },
 ]
 
 export default function SignUp({ onSwitchToSignIn, onGoHome }) {
@@ -33,25 +33,25 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
     const nextErrors = {}
 
     if (!formData.fullName.trim()) {
-      nextErrors.fullName = 'Full name is required.'
+      nextErrors.fullName = 'Họ và tên là bắt buộc.'
     }
 
     if (!formData.email.trim()) {
-      nextErrors.email = 'Email is required.'
+      nextErrors.email = 'Email là bắt buộc.'
     } else if (!EMAIL_REGEX.test(formData.email)) {
-      nextErrors.email = 'Please enter a valid email address.'
+      nextErrors.email = 'Vui lòng nhập địa chỉ email hợp lệ.'
     }
 
     if (!formData.password) {
-      nextErrors.password = 'Password is required.'
+      nextErrors.password = 'Mật khẩu là bắt buộc.'
     } else if (formData.password.length < 8) {
-      nextErrors.password = 'Password must be at least 8 characters.'
+      nextErrors.password = 'Mật khẩu phải có ít nhất 8 ký tự.'
     }
 
     if (!formData.confirmPassword) {
-      nextErrors.confirmPassword = 'Please confirm your password.'
+      nextErrors.confirmPassword = 'Vui lòng xác nhận mật khẩu của bạn.'
     } else if (formData.password !== formData.confirmPassword) {
-      nextErrors.confirmPassword = 'Passwords do not match.'
+      nextErrors.confirmPassword = 'Mật khẩu không khớp.'
     }
 
     return nextErrors
@@ -93,14 +93,14 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
 
       const data = await response.json()
       if (!response.ok) {
-        throw new Error(data?.message || 'Registration failed.')
+        throw new Error(data?.message || 'Đăng ký thất bại.')
       }
 
       loginAfterRegister(data.token, data.user)
     } catch (submitError) {
       setErrors((prev) => ({
         ...prev,
-        submit: submitError.message || 'Something went wrong. Please try again.',
+        submit: submitError.message || 'Đã xảy ra lỗi. Vui lòng thử lại.',
       }))
     } finally {
       setIsSubmitting(false)
@@ -113,16 +113,16 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         <div className="bg-white/70 dark:bg-[#2e3132]/70 backdrop-blur-md border border-white/30 shadow-2xl rounded-[2rem] p-10 w-full max-w-lg">
           <div className="text-center mb-lg">
             <h1 className="font-headline-lg text-headline-lg text-primary mb-sm">
-              Create an Account
+              Tạo Tài Khoản
             </h1>
             <p className="font-body-md text-body-md text-on-surface-variant">
-              Join EduX and start your journey.
+              Tham gia EduX và bắt đầu hành trình của bạn.
             </p>
           </div>
 
           <div className="mb-md">
             <label className="block font-label-md text-label-md text-on-surface mb-sm">
-              I am a...
+              Tôi là...
             </label>
             <div className="grid grid-cols-3 gap-sm">
               {ROLE_OPTIONS.map((option) => {
@@ -168,7 +168,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                 className="block font-label-md text-label-md text-on-surface mb-xs"
                 htmlFor="fullName"
               >
-                Full Name
+                Họ và Tên
               </label>
               <input
                 className="input-field w-full bg-white border border-outline-variant rounded-lg px-md py-sm font-body-md text-body-md text-on-surface placeholder:text-outline h-12"
@@ -210,7 +210,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                 className="block font-label-md text-label-md text-on-surface mb-xs"
                 htmlFor="password"
               >
-                Password
+                Mật Khẩu
               </label>
               <input
                 className="input-field w-full bg-white border border-outline-variant rounded-lg px-md py-sm font-body-md text-body-md text-on-surface placeholder:text-outline h-12"
@@ -231,7 +231,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                 className="block font-label-md text-label-md text-on-surface mb-xs"
                 htmlFor="confirmPassword"
               >
-                Confirm Password
+                Xác Nhận Mật Khẩu
               </label>
               <input
                 className="input-field w-full bg-white border border-outline-variant rounded-lg px-md py-sm font-body-md text-body-md text-on-surface placeholder:text-outline h-12"
@@ -281,10 +281,10 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                       d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
                     />
                   </svg>
-                  Creating account...
+                  Đang tạo tài khoản...
                 </>
               ) : (
-                'Sign Up'
+                'Đăng Ký'
               )}
             </button>
           </form>
@@ -292,7 +292,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
           <div className="flex items-center my-md">
             <div className="flex-grow border-t border-outline-variant"></div>
             <span className="mx-sm font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">
-              Or
+              Hoặc
             </span>
             <div className="flex-grow border-t border-outline-variant"></div>
           </div>
@@ -324,12 +324,12 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                 fill="#EA4335"
               ></path>
             </svg>
-            Continue with Google
+            Tiếp tục với Google
           </button>
 
           <div className="mt-md text-center">
             <p className="font-body-md text-body-md text-on-surface-variant">
-              Already have an account?{' '}
+              Đã có tài khoản?{' '}
               <a
                 className="text-primary hover:underline font-medium"
                 href="#/signin"
@@ -340,7 +340,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                   }
                 }}
               >
-                Log In
+                Đăng Nhập
               </a>
             </p>
           </div>
@@ -363,7 +363,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
               EduX
             </a>
             <p className="text-on-secondary-container dark:text-surface-variant">
-              Copyright 2024 EduX. Empowering minds globally.
+              Bản quyền 2024 EduX. Trao quyền tri thức toàn cầu.
             </p>
           </div>
           <div className="md:col-span-3 flex flex-wrap gap-md justify-start md:justify-end">
@@ -371,37 +371,37 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
               href="#"
             >
-              Find Tutors
+              Tìm Gia Sư
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
               href="#"
             >
-              Become a Tutor
+              Trở Thành Gia Sư
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
               href="#"
             >
-              Subjects
+              Môn Học
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
               href="#"
             >
-              About Us
+              Về Chúng Tôi
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
               href="#"
             >
-              Support
+              Hỗ Trợ
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
               href="#"
             >
-              Privacy Policy
+              Chính Sách Bảo Mật
             </a>
           </div>
         </div>

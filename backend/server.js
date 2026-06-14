@@ -1175,6 +1175,116 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
   }
 });
 
+// ── GET /api/admin/users ──────────────────────────────────────────────────────
+// Returns all users with optional search and role filter. Supports pagination.
+// Query params: search, role, page (default 1), limit (default 20)
+app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
+  const { search = "", role = "all", page = "1", limit = "20" } = req.query;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  const conditions = [];
+  const values = [];
+  let idx = 1;
+
+  if (search.trim()) {
+    conditions.push(`(u.full_name ILIKE $${idx} OR u.email ILIKE $${idx})`);
+    values.push(`%${search.trim()}%`);
+    idx++;
+  }
+  if (role !== "all") {
+    conditions.push(`u.role = $${idx}`);
+    values.push(role);
+    idx++;
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  try {
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM users u ${where}`,
+      values
+    );
+    const total = parseInt(countResult.rows[0].count);
+
+    const result = await pool.query(
+      `SELECT u.id, u.full_name, u.email, u.role, u.picture,
+              COALESCE(u.is_banned, false) AS is_banned, u.created_at
+       FROM users u
+       ${where}
+       ORDER BY u.created_at DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, parseInt(limit), offset]
+    );
+
+    return res.json({ users: result.rows, total, page: parseInt(page), limit: parseInt(limit) });
+  } catch (err) {
+    console.error("GET /api/admin/users error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── PATCH /api/admin/users/:id/ban ───────────────────────────────────────────
+// Bans or unbans a user. Cannot ban admin accounts.
+// Body: { "banned": true | false }
+app.patch("/api/admin/users/:id/ban", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { banned } = req.body;
+
+  if (typeof banned !== "boolean") {
+    return res.status(400).json({ message: "'banned' must be a boolean." });
+  }
+
+  try {
+    // Prevent banning admin accounts
+    const check = await pool.query("SELECT role FROM users WHERE id = $1", [id]);
+    if (!check.rows.length) return res.status(404).json({ message: "User not found." });
+    if (check.rows[0].role === "admin") {
+      return res.status(403).json({ message: "Cannot ban an admin account." });
+    }
+
+    const result = await pool.query(
+      `UPDATE users SET is_banned = $1 WHERE id = $2
+       RETURNING id, full_name, email, role, is_banned, created_at`,
+      [banned, id]
+    );
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error("PATCH /api/admin/users/:id/ban error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── PATCH /api/admin/users/:id/role ──────────────────────────────────────────
+// Changes a user's role. Cannot change admin accounts.
+// Body: { "role": "student" | "tutor" | "parent" }
+app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body;
+  const allowed = ["student", "tutor", "parent"];
+
+  if (!allowed.includes(role)) {
+    return res.status(400).json({ message: `role must be one of: ${allowed.join(", ")}` });
+  }
+
+  try {
+    const check = await pool.query("SELECT role FROM users WHERE id = $1", [id]);
+    if (!check.rows.length) return res.status(404).json({ message: "User not found." });
+    if (check.rows[0].role === "admin") {
+      return res.status(403).json({ message: "Cannot change role of an admin account." });
+    }
+
+    const result = await pool.query(
+      `UPDATE users SET role = $1 WHERE id = $2
+       RETURNING id, full_name, email, role, is_banned, created_at`,
+      [role, id]
+    );
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error("PATCH /api/admin/users/:id/role error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  QUIZ APIs
 // ══════════════════════════════════════════════════════════════════════════════

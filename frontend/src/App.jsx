@@ -21,12 +21,12 @@ import TutorDetailPage from './TutorDetailPage'
 import { useAuth } from './AuthContext'
 
 const subjects = [
-  { name: 'Mathematics', icon: 'calculate' },
-  { name: 'Science', icon: 'science' },
-  { name: 'Languages', icon: 'translate' },
-  { name: 'Music', icon: 'music_note' },
-  { name: 'Art', icon: 'palette' },
-  { name: 'Coding', icon: 'code' },
+  { name: 'Toán Học', icon: 'calculate' },
+  { name: 'Khoa Học', icon: 'science' },
+  { name: 'Ngôn Ngữ', icon: 'translate' },
+  { name: 'Âm Nhạc', icon: 'music_note' },
+  { name: 'Nghệ Thuật', icon: 'palette' },
+  { name: 'Lập Trình', icon: 'code' },
 ]
 
 const tutors = [
@@ -82,14 +82,14 @@ const tutors = [
 
 const footerLinks = {
   platform: [
-    { label: 'Find Tutors', href: '#/find-tutors' },
-    { label: 'Become a Tutor', href: '#/become-tutor' },
-    { label: 'Subjects', href: '#/subjects' }
+    { label: 'Tìm Gia Sư', href: '#/find-tutors' },
+    { label: 'Trở Thành Gia Sư', href: '#/become-tutor' },
+    { label: 'Môn Học', href: '#/subjects' }
   ],
   company: [
-    { label: 'About Us', href: '#' },
-    { label: 'Support', href: '#' },
-    { label: 'Privacy Policy', href: '#' }
+    { label: 'Về Chúng Tôi', href: '#' },
+    { label: 'Hỗ Trợ', href: '#' },
+    { label: 'Chính Sách Bảo Mật', href: '#' }
   ],
 }
 
@@ -144,20 +144,20 @@ function AccessDenied({ isLoggedIn, onGoSignIn }) {
     <div className="academia-page">
       <div className="access-denied-wrap">
         <span className="material-symbols-outlined access-denied-icon">lock</span>
-        <h1 className="access-denied-title">Access Denied</h1>
+        <h1 className="access-denied-title">Truy Cập Bị Từ Chối</h1>
         {isLoggedIn ? (
           <p className="access-denied-msg">
-            You do not have admin privileges to view this page.
+            Bạn không có quyền quản trị viên để xem trang này.
           </p>
         ) : (
           <p className="access-denied-msg">
-            Please sign in as an admin to access this page.
+            Vui lòng đăng nhập với tư cách quản trị viên để truy cập trang này.
           </p>
         )}
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <a href="#/" className="btn btn-outline">← Back to Home</a>
+          <a href="#/" className="btn btn-outline">← Quay Lại Trang Chủ</a>
           {!isLoggedIn && (
-            <button className="btn btn-primary" onClick={onGoSignIn}>Sign In</button>
+            <button className="btn btn-primary" onClick={onGoSignIn}>Đăng Nhập</button>
           )}
         </div>
       </div>
@@ -169,30 +169,30 @@ const feedbackData = [
   {
     id: 1,
     initials: 'LM', bgColor: 'bg-[#d4e3ff]', textColor: 'text-[#003564]',
-    name: 'Liam Miller', role: 'Student', time: '2m ago', pulse: true,
+    name: 'Liam Miller', role: 'Học Sinh', time: '2 phút trước', pulse: true,
     subject: 'Calculus II',
-    content: `"Sarah is a lifesaver! I was struggling with integration methods, but her step-by-step approach made everything click. Highly recommend!"`
+    content: `"Sarah thật sự là cứu tinh! Tôi đã gặp khó khăn với các phương pháp tích phân, nhưng cách hướng dẫn từng bước của cô ấy đã giúp mọi thứ trở nên rõ ràng. Rất khuyến khích!"`
   },
   {
     id: 2,
     initials: 'AP', bgColor: 'bg-[#e2e2e2]', textColor: 'text-[#5d5f5f]',
-    name: 'Alice Porter', role: 'Parent', time: '15m ago', pulse: false,
-    subject: 'SAT Prep',
-    content: `"My daughter's score increased by 200 points in just two months. David was professional, encouraging, and very knowledgeable."`
+    name: 'Alice Porter', role: 'Phụ Huynh', time: '15 phút trước', pulse: false,
+    subject: 'Luyện Thi SAT',
+    content: `"Điểm số của con gái tôi đã tăng 200 điểm chỉ trong hai tháng. David rất chuyên nghiệp, nhiệt tình và am hiểu kiến thức."`
   },
   {
     id: 3,
     initials: 'JK', bgColor: 'bg-[#dde1ff]', textColor: 'text-[#00288e]',
-    name: 'Julian Kim', role: 'Student', time: 'Now', pulse: true,
-    subject: 'Python Basics',
-    content: `"The coding challenges were great. I went from zero to building my first web scraper in 4 weeks. Best investment for my career!"`
+    name: 'Julian Kim', role: 'Học Sinh', time: 'Vừa xong', pulse: true,
+    subject: 'Python Cơ Bản',
+    content: `"Các bài tập lập trình rất hay. Tôi đã đi từ con số không đến việc tự xây dựng web scraper đầu tiên trong 4 tuần. Đây là khoản đầu tư tốt nhất cho sự nghiệp của tôi!"`
   },
   {
     id: 4,
     initials: 'SB', bgColor: 'bg-[#a4c9ff]', textColor: 'text-[#003564]',
-    name: 'Sonia Brown', role: 'Student', time: '1h ago', pulse: false,
-    subject: 'Spanish B1',
-    content: `"Elena is a fantastic conversationalist. My speaking confidence has skyrocketed. ¡Muchas gracias!"`
+    name: 'Sonia Brown', role: 'Học Sinh', time: '1 giờ trước', pulse: false,
+    subject: 'Tiếng Tây Ban Nha B1',
+    content: `"Elena là một người nói chuyện tuyệt vời. Sự tự tin khi giao tiếp của tôi đã tăng vọt. ¡Muchas gracias!"`
   }
 ];
 const displayFeedback = [...feedbackData, ...feedbackData];
@@ -213,13 +213,13 @@ function HomePage({ onGoSignIn }) {
           </a>
 
           <nav className="header-nav">
-            <a href="#/find-tutors">Find Tutors</a>
-            <a href="#/become-tutor">Become a Tutor</a>
-            <a href="#/subjects">Subjects</a>
+            <a href="#/find-tutors">Tìm Gia Sư</a>
+            <a href="#/become-tutor">Trở Thành Gia Sư</a>
+            <a href="#/subjects">Môn Học</a>
             {/* Show Admin link if user is admin */}
             {user?.role === 'admin' && (
               <a href="#/admin" style={{ color: 'var(--primary)', fontWeight: 700 }}>
-                Admin
+                Quản Trị Viên
               </a>
             )}
           </nav>
@@ -247,15 +247,15 @@ function HomePage({ onGoSignIn }) {
                 }}
                 style={{ marginLeft: '12px' }}
               >
-                Dashboard
+                Bảng Điều Khiển
               </button>
               <button type="button" className="btn btn-outline" onClick={logout} style={{ marginLeft: '8px' }}>
-                Logout
+                Đăng Xuất
               </button>
             </div>
           ) : (
             <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
-              Login
+              Đăng Nhập
             </button>
           )}
         </div>
@@ -265,10 +265,10 @@ function HomePage({ onGoSignIn }) {
         <section className="hero">
           <div className="hero-overlay" />
           <div className="container hero-content">
-            <h1>Find the perfect tutor for your learning journey</h1>
+            <h1>Tìm gia sư hoàn hảo cho hành trình học tập của bạn</h1>
             <p>
-              Expert educators ready to help you master new subjects and achieve
-              your academic goals.
+              Các nhà giáo dục chuyên nghiệp sẵn sàng giúp bạn nắm vững các môn học mới
+              và đạt được mục tiêu học tập của bạn.
             </p>
             <div className="search-panel">
               <label className="search-field">
@@ -277,7 +277,7 @@ function HomePage({ onGoSignIn }) {
                   type="text"
                   value={topic}
                   onChange={(event) => setTopic(event.target.value)}
-                  placeholder="What do you want to learn?"
+                  placeholder="Bạn muốn học gì?"
                 />
               </label>
               <label className="search-field">
@@ -286,11 +286,11 @@ function HomePage({ onGoSignIn }) {
                   type="text"
                   value={place}
                   onChange={(event) => setPlace(event.target.value)}
-                  placeholder="Online or specific location?"
+                  placeholder="Học trực tuyến hay tại địa điểm cụ thể?"
                 />
               </label>
               <button type="button" className="btn btn-primary search-button">
-                Search
+                Tìm Kiếm
               </button>
             </div>
           </div>
@@ -298,7 +298,7 @@ function HomePage({ onGoSignIn }) {
 
         <section className="section section-subjects">
           <div className="container">
-            <h2>Popular Subjects</h2>
+            <h2>Môn Học Phổ Biến</h2>
             <div className="subject-grid">
               {subjects.map((item) => (
                 <a href="#" className="subject-card" key={item.name}>
@@ -315,9 +315,9 @@ function HomePage({ onGoSignIn }) {
         <section className="section section-tutors">
           <div className="container">
             <div className="section-head">
-              <h2>Featured Tutors</h2>
+              <h2>Gia Sư Nổi Bật</h2>
               <a href="#" className="see-all">
-                See all
+                Xem tất cả
                 <span className="material-symbols-outlined">arrow_forward</span>
               </a>
             </div>
@@ -334,7 +334,7 @@ function HomePage({ onGoSignIn }) {
                           star
                         </span>
                         <span>{tutor.rating}</span>
-                        <small>({tutor.reviews} reviews)</small>
+                        <small>({tutor.reviews} nhận xét)</small>
                       </p>
                     </div>
                   </div>
@@ -351,10 +351,10 @@ function HomePage({ onGoSignIn }) {
                   <div className="tutor-foot">
                     <p className="price">
                       <strong>${tutor.rate}</strong>
-                      <span>/hr</span>
+                      <span>/giờ</span>
                     </p>
                     <button type="button" className="btn btn-outline">
-                      View Profile
+                      Xem Hồ Sơ
                     </button>
                   </div>
                 </article>
@@ -387,8 +387,8 @@ function HomePage({ onGoSignIn }) {
             }
           `}</style>
           <div className="max-w-[1280px] mx-auto px-6 mb-10">
-            <h2 className="text-3xl font-bold text-[#191c1e]">What our community says</h2>
-            <p className="text-[#444653] mt-2">Real experiences from students and parents worldwide.</p>
+            <h2 className="text-3xl font-bold text-[#191c1e]">Cộng đồng chúng tôi nói gì</h2>
+            <p className="text-[#444653] mt-2">Trải nghiệm thực tế từ học sinh và phụ huynh trên toàn thế giới.</p>
           </div>
           <div className="relative w-full overflow-hidden h-64 flex items-center">
             {/* Scroller Content */}
@@ -411,7 +411,7 @@ function HomePage({ onGoSignIn }) {
                     </span>
                   </div>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-[#00288e]">Verified feedback for {fb.subject}</span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#00288e]">Phản hồi đã xác minh cho {fb.subject}</span>
                     <div className="flex mt-1">
                       {[1,2,3,4,5].map(i => <span key={i} className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
                     </div>
@@ -432,11 +432,11 @@ function HomePage({ onGoSignIn }) {
               <span className="brand-name">EduX</span>
             </a>
             <p className="footer-copy">
-              Copyright 2024 EduX. Empowering minds globally.
+              Bản quyền 2024 EduX. Nâng tầm tri thức toàn cầu.
             </p>
           </div>
           <div>
-            <h4>Platform</h4>
+            <h4>Nền Tảng</h4>
             <ul>
               {footerLinks.platform.map((item) => (
                 <li key={item.label}>
@@ -446,7 +446,7 @@ function HomePage({ onGoSignIn }) {
             </ul>
           </div>
           <div>
-            <h4>Company</h4>
+            <h4>Công Ty</h4>
             <ul>
               {footerLinks.company.map((item) => (
                 <li key={item.label}>
@@ -587,7 +587,7 @@ function App() {
                 onClick={() => window.location.hash = '/tutor'}
                 className="text-on-surface-variant font-semibold text-sm hover:bg-surface-container px-3 py-2 rounded-lg transition-all duration-200"
               >
-                ← Back to Dashboard
+                ← Quay Lại Bảng Điều Khiển
               </button>
             )}
           </div>
@@ -595,11 +595,11 @@ function App() {
         <TutorProfileForm />
         <footer className="bg-surface-container-lowest border-t border-outline-variant mt-auto">
           <div className="w-full py-6 px-10 flex flex-col md:flex-row justify-between items-center max-w-[1280px] mx-auto gap-4">
-            <span className="text-xs text-on-secondary-container">© 2024 EduX. Professional Academic Support.</span>
+            <span className="text-xs text-on-secondary-container">© 2024 EduX. Hỗ Trợ Học Thuật Chuyên Nghiệp.</span>
             <div className="flex gap-6">
-              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Support</a>
-              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Privacy Policy</a>
-              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Contact</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Hỗ Trợ</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Chính Sách Bảo Mật</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Liên Hệ</a>
             </div>
           </div>
         </footer>
