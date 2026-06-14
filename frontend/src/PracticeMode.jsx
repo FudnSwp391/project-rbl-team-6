@@ -185,6 +185,7 @@ export default function PracticeMode({ token }) {
   const [generateError, setGenerateError] = useState(null)  // { type: 'quota'|'generic', detail: string }
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(true)
+  const [resumeSession, setResumeSession] = useState(null) // For the continue popup
   const [availableSubjects, setAvailableSubjects] = useState([])
   const [selectedGrade, setSelectedGrade] = useState(null)   // null = show all grades
 
@@ -197,7 +198,13 @@ export default function PracticeMode({ token }) {
         })
         if (res.ok) {
           const data = await res.json()
-          setHistory(data)
+          const sessions = data.sessions || []
+          setHistory(sessions)
+          
+          // Check if the most recent session is in_progress to show the resume popup
+          if (sessions.length > 0 && sessions[0].status === 'in_progress') {
+            setResumeSession(sessions[0])
+          }
         }
       } catch (err) {
         console.error('Failed to fetch practice history:', err)
@@ -329,6 +336,37 @@ export default function PracticeMode({ token }) {
 
   return (
     <div className="flex flex-col gap-xl animate-[fadeIn_0.4s_ease-out]">
+      {/* ── Resume Popup ── */}
+      {resumeSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-md bg-black/50 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-surface rounded-2xl p-xl max-w-sm w-full shadow-2xl flex flex-col gap-md animate-[slideUp_0.2s_ease-out]">
+            <div className="flex items-center gap-sm text-primary">
+              <span className="material-symbols-outlined text-[32px]">history</span>
+              <h3 className="font-headline-sm text-headline-sm">Làm tiếp bài thi?</h3>
+            </div>
+            <p className="font-body-md text-body-md text-on-surface-variant">
+              Bạn chưa làm xong bài thi <strong>"{resumeSession.topic}"</strong>. Bạn có muốn tiếp tục làm không?
+            </p>
+            <div className="flex justify-end gap-sm mt-sm">
+              <button
+                onClick={() => setResumeSession(null)}
+                className="px-md py-2 rounded-full font-label-lg text-label-lg text-on-surface hover:bg-surface-container transition-colors"
+              >
+                Không
+              </button>
+              <button
+                onClick={() => {
+                  window.location.hash = '/practice-quiz/' + resumeSession.id
+                }}
+                className="px-md py-2 rounded-full font-label-lg text-label-lg bg-primary text-on-primary hover:bg-primary/90 transition-colors shadow-sm"
+              >
+                Có, làm tiếp
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Header ── */}
       <div>
         <div className="flex items-center gap-sm mb-xs">

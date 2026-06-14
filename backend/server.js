@@ -2059,6 +2059,25 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error: ' + e.message }); }
 });
 
+// ─── Background Job: Cleanup Abandoned Practice Sessions ─────────
+const cleanupAbandonedPracticeSessions = async () => {
+  try {
+    const res = await pool.query(`
+      UPDATE practice_sessions
+      SET status = 'submitted', score = 0, total_correct = 0, submitted_at = NOW()
+      WHERE status = 'in_progress' AND created_at < NOW() - INTERVAL '24 hours'
+    `);
+    if (res.rowCount > 0) {
+      console.log(`🧹 Cleaned up ${res.rowCount} abandoned practice sessions.`);
+    }
+  } catch (err) {
+    console.error('Error cleaning up practice sessions:', err);
+  }
+};
+// Run once on startup, then every hour
+cleanupAbandonedPracticeSessions();
+setInterval(cleanupAbandonedPracticeSessions, 60 * 60 * 1000);
+
 app.listen(port, () => {
   console.log(`🚀 Server is running on http://localhost:${port}`);
 });
