@@ -1223,6 +1223,49 @@ app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
+// ── GET /api/admin/users/:id ─────────────────────────────────────────────────
+// Returns full profile of one user. Includes tutor_profiles data if role = tutor.
+app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const userResult = await pool.query(
+      `SELECT id, full_name, email, role, picture,
+              COALESCE(is_banned, false) AS is_banned, created_at
+       FROM users WHERE id = $1`,
+      [id]
+    );
+    if (!userResult.rows.length) return res.status(404).json({ message: "User not found." });
+
+    const user = userResult.rows[0];
+
+    // Attach tutor profile if applicable
+    if (user.role === "tutor") {
+      const tpResult = await pool.query(
+        `SELECT bio, subjects, experience_years, hourly_rate,
+                certificate_url, cccd_url, status AS approval_status,
+                reject_reason, profile_photo_url, phone, city, country
+         FROM tutor_profiles WHERE user_id = $1 LIMIT 1`,
+        [id]
+      );
+      user.tutor_profile = tpResult.rows[0] || null;
+    }
+
+    // Count quiz attempts for students
+    if (user.role === "student") {
+      const attemptsResult = await pool.query(
+        `SELECT COUNT(*) FROM quiz_attempts WHERE student_id = $1`,
+        [id]
+      );
+      user.quiz_attempts = parseInt(attemptsResult.rows[0].count);
+    }
+
+    return res.json(user);
+  } catch (err) {
+    console.error("GET /api/admin/users/:id error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 // ── PATCH /api/admin/users/:id/ban ───────────────────────────────────────────
 // Bans or unbans a user. Cannot ban admin accounts.
 // Body: { "banned": true | false }
