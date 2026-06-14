@@ -478,10 +478,16 @@ app.post("/api/auth/register", async (req, res) => {
 
     // Kiß╗âm tra email ─æ├ú tß╗ôn tß║íi ch╞░a
     const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
+      "SELECT id, google_id FROM users WHERE email = $1",
       [email.toLowerCase().trim()]
     );
     if (existing.rows.length > 0) {
+      if (existing.rows[0].google_id) {
+        return res.status(409).json({
+          message: "Email này đã được đăng ký qua Google. Vui lòng đăng nhập bằng Google.",
+          isGoogleAccount: true,
+        });
+      }
       return res
         .status(409)
         .json({ message: "Email already registered. Please sign in." });
