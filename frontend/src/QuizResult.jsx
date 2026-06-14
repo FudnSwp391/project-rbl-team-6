@@ -97,17 +97,29 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
           options: { A: q.optionA, B: q.optionB, C: q.optionC, D: q.optionD },
           correctAnswer: q.correctAnswer,
           explanation: q.explanation,
-          studentAnswer: json.session?.answers ? json.session.answers[i] : null,
+          studentAnswer: json.session?.answers ? json.session.answers[String(i)] ?? json.session.answers[i] : null,
           ai_score: q.ai_score,
           ai_feedback: q.ai_feedback,
-          tutor_score: q.tutor_score,
-          tutor_feedback: q.tutor_feedback,
+          // tutor feedback is session-level for practice, not per-question
         }))
+
+        // Parse session-level tutor feedback (plain string stored as JSON string)
+        let sessionTutorFeedback = null
+        if (json.session?.tutor_feedback) {
+          try {
+            const parsed = JSON.parse(json.session.tutor_feedback)
+            sessionTutorFeedback = typeof parsed === 'string' ? parsed : JSON.stringify(parsed)
+          } catch {
+            sessionTutorFeedback = json.session.tutor_feedback
+          }
+        }
 
         setData({
           title: json.session.topic,
           subject: `${json.session.difficulty} difficulty`,
           score: json.session.score,
+          tutor_score: json.session.tutor_score,
+          tutor_feedback: sessionTutorFeedback,
           total_correct: json.session.total_correct,
           total_questions: json.session.total_questions,
           started_at: json.session.created_at,
@@ -233,9 +245,11 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
   }
 
   const percentage = data.score ?? 0
-  const color = percentage >= 70 ? 'text-green-600' : percentage >= 50 ? 'text-amber-600' : 'text-red-600'
-  const bgGrade = percentage >= 70 ? 'from-green-50 to-emerald-50' : percentage >= 50 ? 'from-amber-50 to-yellow-50' : 'from-red-50 to-rose-50'
-  const grade = percentage >= 90 ? 'Xuất sắc! 🎉' : percentage >= 70 ? 'Làm tốt lắm! 👍' : percentage >= 50 ? 'Cố lên! 💪' : 'Cần luyện tập thêm 📚'
+  // If tutor has overridden score, show that as the displayed score
+  const displayScore = data.tutor_score != null ? data.tutor_score : percentage
+  const color = displayScore >= 70 ? 'text-green-600' : displayScore >= 50 ? 'text-amber-600' : 'text-red-600'
+  const bgGrade = displayScore >= 70 ? 'from-green-50 to-emerald-50' : displayScore >= 50 ? 'from-amber-50 to-yellow-50' : 'from-red-50 to-rose-50'
+  const grade = displayScore >= 90 ? 'Xuất sắc! 🎉' : displayScore >= 70 ? 'Làm tốt lắm! 👍' : displayScore >= 50 ? 'Cố lên! 💪' : 'Cần luyện tập thêm 📚'
 
   return (
     <div className="min-h-screen bg-background font-body-md text-body-md text-on-surface">
@@ -259,16 +273,23 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
         {/* ── Score Overview Card ── */}
         <div className={`bg-gradient-to-br ${bgGrade} border border-outline-variant/30 rounded-2xl p-xl flex flex-col items-center gap-lg shadow-sm`}>
           <div className="relative">
-            <CircularProgress percentage={percentage} size={140} strokeWidth={12} />
+            <CircularProgress percentage={displayScore} size={140} strokeWidth={12} />
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className={`font-headline-lg text-headline-lg font-black ${color}`}>{percentage}%</span>
-              <span className="font-label-sm text-label-sm text-on-surface-variant">điểm số</span>
+              <span className={`font-headline-lg text-headline-lg font-black ${color}`}>{displayScore}%</span>
+              <span className="font-label-sm text-label-sm text-on-surface-variant">
+                {data.tutor_score != null ? 'điểm gia sư' : 'điểm số'}
+              </span>
             </div>
           </div>
 
           <div className="text-center">
             <h1 className="font-headline-md text-headline-md text-on-surface mb-xs">{grade}</h1>
             <p className="font-body-md text-body-md text-on-surface-variant">{data.title}</p>
+            {data.tutor_score != null && (
+              <p className="font-label-sm text-on-surface-variant mt-xs">
+                AI score: {percentage}% → Gia sư đã điều chỉnh: <span className="text-purple-600 font-bold">{data.tutor_score}%</span>
+              </p>
+            )}
           </div>
 
           {/* Stats row */}
@@ -289,6 +310,32 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
             ))}
           </div>
         </div>
+
+        {/* ── Tutor Feedback Block (practice session-level) ── */}
+        {data.tutor_feedback && (
+          <div className="bg-purple-50 border border-purple-200 rounded-2xl p-lg shadow-sm">
+            <div className="flex items-center gap-sm mb-md">
+              <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
+                <span className="material-symbols-outlined text-purple-600 text-[22px]" style={{ fontVariationSettings: "'FILL' 1" }}>school</span>
+              </div>
+              <div>
+                <h3 className="font-headline-sm text-purple-800">Nhận xét của Gia sư</h3>
+                {data.tutor_score != null && (
+                  <p className="font-label-sm text-purple-500">Điểm đã điều chỉnh: <span className="font-bold text-purple-700">{data.tutor_score}%</span></p>
+                )}
+              </div>
+            </div>
+            <p className="font-body-md text-on-surface whitespace-pre-wrap leading-relaxed">{data.tutor_feedback}</p>
+          </div>
+        )}
+
+        {/* Pending tutor review notice */}
+        {!data.tutor_feedback && data.isPractice && (
+          <div className="bg-surface-container-low border border-outline-variant/30 rounded-2xl p-md flex items-center gap-sm">
+            <span className="material-symbols-outlined text-on-surface-variant text-[22px]">pending</span>
+            <p className="font-body-sm text-on-surface-variant">Bài làm đang chờ gia sư xem xét và nhận xét.</p>
+          </div>
+        )}
 
         {/* ── Question Review ── */}
         {data.questions && data.questions.length > 0 && (
