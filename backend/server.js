@@ -1244,7 +1244,6 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
 
     const user = userResult.rows[0];
 
-    // Attach tutor profile if applicable
     if (user.role === "tutor") {
       const tpResult = await pool.query(
         `SELECT bio, subjects, experience_years, hourly_rate,
@@ -1256,7 +1255,6 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
       user.tutor_profile = tpResult.rows[0] || null;
     }
 
-    // Count quiz attempts for students
     if (user.role === "student") {
       const attemptsResult = await pool.query(
         `SELECT COUNT(*) FROM quiz_attempts WHERE student_id = $1`,
@@ -1464,7 +1462,7 @@ app.post('/api/practice/generate', verifyToken, async (req, res) => {
       [userId, topic.trim(), diff, JSON.stringify(questions), questions.length, timeLimitMins, timeRemainingSeconds]
     );
     const session = result.rows[0];
-    const safeQ = questions.map((q,i) => ({ index:i, question:q.question, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
+    const safeQ = questions.map((q,i) => ({ index:i, question:q.question, question_type:q.question_type, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
     return res.status(201).json({ session, questions: safeQ });
   } catch (e) { console.error('Practice generate:', e); res.status(500).json({ message: e.message||'Server error.' }); }
 });
@@ -1487,7 +1485,7 @@ app.get('/api/practice/:sessionId/questions', verifyToken, async (req, res) => {
     const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
     if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
     const session = r.rows[0];
-    const questions = (session.questions || []).map((q,i) => ({ index:i, question:q.question, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
+    const questions = (session.questions || []).map((q,i) => ({ index:i, question:q.question, question_type:q.question_type, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
     return res.json({ session: { id:session.id, topic:session.topic, difficulty:session.difficulty, total_questions:session.total_questions, status:session.status, answers:session.answers, time_limit_mins:session.time_limit_mins, time_remaining_seconds:session.time_remaining_seconds }, questions });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
@@ -1626,11 +1624,11 @@ app.get('/api/exam-papers/:paperId/start', verifyToken, async (req, res) => {
     let attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE exam_paper_id=$1 AND student_id=$2 AND status='in_progress' LIMIT 1`, [paperId, studentId]);
     const questions = await pool.query(`SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1 ORDER BY question_order`, [paperId]);
     const shuffledQs = shuffleArray(questions.rows);
-    const shuffledData = shuffledQs.map(q => { const {newOptions,newCorrect,optionMap}=shuffleQuestionOptions(q); return {id:q.id,...newOptions,question_text:q.question_text,newCorrect,optionMap}; });
+    const shuffledData = shuffledQs.map(q => { const {newOptions,newCorrect,optionMap}=shuffleQuestionOptions(q); return {id:q.id,...newOptions,question_type:q.question_type,question_text:q.question_text,newCorrect,optionMap}; });
     if (!attempt.rows.length) {
       attempt = await pool.query(`INSERT INTO exam_paper_attempts (exam_paper_id,student_id,shuffled_data) VALUES ($1,$2,$3) RETURNING *`, [paperId, studentId, JSON.stringify(shuffledData)]);
     }
-    const safeQ = shuffledData.map(q => ({ id:q.id, question_text:q.question_text, option_a:q.option_a, option_b:q.option_b, option_c:q.option_c, option_d:q.option_d }));
+    const safeQ = shuffledData.map(q => ({ id:q.id, question_type:q.question_type, question_text:q.question_text, option_a:q.option_a, option_b:q.option_b, option_c:q.option_c, option_d:q.option_d }));
     return res.json({ paper: paper.rows[0], questions: safeQ, attempt: attempt.rows[0] });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
@@ -2343,6 +2341,15 @@ app.post('/api/tutor/grade-attempt', verifyToken, requireTutor, async (req, res)
         [tutorScore, JSON.stringify(tutorFeedback), attemptId]
       );
       return res.json({ attempt: updated.rows[0] });
+    } else if (type === 'practice') {
+      const attempt = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1`, [attemptId]);
+      if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+
+      const updated = await pool.query(
+        `UPDATE practice_sessions SET tutor_score=$1, tutor_feedback=$2 WHERE id=$3 RETURNING *`,
+        [tutorScore, JSON.stringify(tutorFeedback), attemptId]
+      );
+      return res.json({ attempt: updated.rows[0] });
     } else {
       return res.status(400).json({ message: 'Invalid type.' });
     }
@@ -2459,9 +2466,22 @@ app.get('/api/tutor/grading-queue', verifyToken, requireTutor, async (req, res) 
       ORDER BY a.submitted_at DESC
     `, [req.user.userId]);
 
+    // Cũng lấy các practice sessions (AI generated, any tutor can grade)
+    const practiceAttempts = await pool.query(`
+      SELECT p.id as attempt_id, p.score, p.status, p.submitted_at,
+             p.tutor_score,
+             p.id as paper_id, p.topic as paper_title, p.difficulty as subject,
+             u.full_name as student_name, u.picture as student_picture
+      FROM practice_sessions p
+      JOIN users u ON p.student_id = u.id
+      WHERE p.status = 'submitted'
+      ORDER BY p.submitted_at DESC
+    `);
+
     const result = [
       ...attempts.rows.map(r => ({ ...r, type: 'exam' })),
-      ...quizAttempts.rows.map(r => ({ ...r, type: 'quiz' }))
+      ...quizAttempts.rows.map(r => ({ ...r, type: 'quiz' })),
+      ...practiceAttempts.rows.map(r => ({ ...r, type: 'practice' }))
     ].sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
 
     res.json(result);
@@ -2495,6 +2515,11 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
       if (paperRes.rows[0].created_by !== req.user.userId) return res.status(403).json({ message: 'Forbidden' });
 
       questionsRes = await pool.query('SELECT * FROM quiz_questions WHERE quiz_id=$1', [paperId]);
+    } else if (type === 'practice') {
+      attemptRes = await pool.query('SELECT * FROM practice_sessions WHERE id=$1', [attemptId]);
+      if (!attemptRes.rows.length) return res.status(404).json({ message: 'Not found' });
+      paperRes = { rows: [{ title: attemptRes.rows[0].topic, subject: attemptRes.rows[0].difficulty }] };
+      questionsRes = { rows: (attemptRes.rows[0].questions || []).map((q, i) => ({ id: i, question_type: q.question_type || 'multiple_choice', question_text: q.question, option_a: q.optionA, option_b: q.optionB, option_c: q.optionC, option_d: q.optionD, correct_answer: q.correctAnswer, suggested_answer: q.suggested_answer, explanation: q.explanation })) };
     } else {
       return res.status(400).json({ message: 'Invalid type' });
     }
@@ -2532,4 +2557,4 @@ async function startServer() {
 }
 
 startServer();
-
+
