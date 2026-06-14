@@ -478,10 +478,16 @@ app.post("/api/auth/register", async (req, res) => {
 
     // Kiß╗âm tra email ─æ├ú tß╗ôn tß║íi ch╞░a
     const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
+      "SELECT id, google_id FROM users WHERE email = $1",
       [email.toLowerCase().trim()]
     );
     if (existing.rows.length > 0) {
+      if (existing.rows[0].google_id) {
+        return res.status(409).json({
+          message: "Email này đã được đăng ký qua Google. Vui lòng đăng nhập bằng Google.",
+          isGoogleAccount: true,
+        });
+      }
       return res
         .status(409)
         .json({ message: "Email already registered. Please sign in." });
@@ -1219,6 +1225,47 @@ app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
     return res.json({ users: result.rows, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     console.error("GET /api/admin/users error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── GET /api/admin/users/:id ─────────────────────────────────────────────────
+// Returns full profile of one user. Includes tutor_profiles data if role = tutor.
+app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const userResult = await pool.query(
+      `SELECT id, full_name, email, role, picture,
+              COALESCE(is_banned, false) AS is_banned, created_at
+       FROM users WHERE id = $1`,
+      [id]
+    );
+    if (!userResult.rows.length) return res.status(404).json({ message: "User not found." });
+
+    const user = userResult.rows[0];
+
+    if (user.role === "tutor") {
+      const tpResult = await pool.query(
+        `SELECT bio, subjects, experience_years, hourly_rate,
+                certificate_url, cccd_url, status AS approval_status,
+                reject_reason, profile_photo_url, phone, city, country
+         FROM tutor_profiles WHERE user_id = $1 LIMIT 1`,
+        [id]
+      );
+      user.tutor_profile = tpResult.rows[0] || null;
+    }
+
+    if (user.role === "student") {
+      const attemptsResult = await pool.query(
+        `SELECT COUNT(*) FROM quiz_attempts WHERE student_id = $1`,
+        [id]
+      );
+      user.quiz_attempts = parseInt(attemptsResult.rows[0].count);
+    }
+
+    return res.json(user);
+  } catch (err) {
+    console.error("GET /api/admin/users/:id error:", err);
     return res.status(500).json({ message: "Server error." });
   }
 });
@@ -2493,7 +2540,21 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 });
 
 
-app.listen(port, () => {
-  console.log(`🚀 Server is running on http://localhost:${port}`);
-});
+async function startServer() {
+  // Auto-migrate: add is_banned column if it doesn't exist yet
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    console.log("✅ DB migration: users.is_banned ready");
+  } catch (err) {
+    console.error("⚠️  DB migration warning:", err.message);
+  }
+
+  app.listen(port, () => {
+    console.log(`🚀 Server is running on http://localhost:${port}`);
+  });
+}
+
+startServer();
 
