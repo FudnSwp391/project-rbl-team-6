@@ -212,14 +212,21 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
     }
   }, [quizId, isPractice, practiceSessionId, isExamPaper, examPaperId])
 
-  // ── Auto-save draft every 30s (formal quizzes only) ──
+  // ── Auto-save draft every 30s ──
   useEffect(() => {
-    if (isPractice || isExamPaper || !attemptId) return
+    if (isExamPaper) return
+    if (!isPractice && !attemptId) return
+    if (isPractice && !practiceSessionId) return
+    
     autoSaveRef.current = setInterval(() => {
-      saveDraft()
+      if (isPractice) {
+        savePracticeDraft()
+      } else {
+        saveDraft()
+      }
     }, 30000)
     return () => clearInterval(autoSaveRef.current)
-  }, [attemptId, answers, timeRemaining, isPractice, isExamPaper])
+  }, [attemptId, practiceSessionId, answers, timeRemaining, isPractice, isExamPaper])
 
   async function fetchExamPaper() {
     try {
@@ -287,11 +294,25 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         subject: `${data.session.difficulty || 'medium'} difficulty`,
         total_questions: (data.questions || []).length,
       })
+      if (data.session.answers) {
+        setAnswers(data.session.answers)
+      }
     } catch (err) {
       setError('Could not load practice session. Please go back and try again.')
     } finally {
       setLoading(false)
     }
+  }
+
+  async function savePracticeDraft() {
+    if (!practiceSessionId) return
+    try {
+      await fetch(`${apiBaseUrl}/api/practice/${practiceSessionId}/save-progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ answers }),
+      })
+    } catch (_) { /* silent */ }
   }
 
   async function saveDraft() {
