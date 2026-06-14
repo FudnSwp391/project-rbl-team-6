@@ -2410,9 +2410,22 @@ app.get('/api/tutor/grading-queue', verifyToken, requireTutor, async (req, res) 
       ORDER BY a.submitted_at DESC
     `, [req.user.userId]);
 
+    // Cũng lấy các practice sessions (AI generated, any tutor can grade)
+    const practiceAttempts = await pool.query(`
+      SELECT p.id as attempt_id, p.score, p.status, p.submitted_at,
+             p.tutor_score,
+             p.id as paper_id, p.topic as paper_title, p.difficulty as subject,
+             u.full_name as student_name, u.picture as student_picture
+      FROM practice_sessions p
+      JOIN users u ON p.student_id = u.id
+      WHERE p.status = 'submitted'
+      ORDER BY p.submitted_at DESC
+    `);
+
     const result = [
       ...attempts.rows.map(r => ({ ...r, type: 'exam' })),
-      ...quizAttempts.rows.map(r => ({ ...r, type: 'quiz' }))
+      ...quizAttempts.rows.map(r => ({ ...r, type: 'quiz' })),
+      ...practiceAttempts.rows.map(r => ({ ...r, type: 'practice' }))
     ].sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
 
     res.json(result);
@@ -2446,6 +2459,11 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
       if (paperRes.rows[0].created_by !== req.user.userId) return res.status(403).json({ message: 'Forbidden' });
 
       questionsRes = await pool.query('SELECT * FROM quiz_questions WHERE quiz_id=$1', [paperId]);
+    } else if (type === 'practice') {
+      attemptRes = await pool.query('SELECT * FROM practice_sessions WHERE id=$1', [attemptId]);
+      if (!attemptRes.rows.length) return res.status(404).json({ message: 'Not found' });
+      paperRes = { rows: [{ title: attemptRes.rows[0].topic, subject: attemptRes.rows[0].difficulty }] };
+      questionsRes = { rows: (attemptRes.rows[0].questions || []).map((q, i) => ({ id: i, question_type: q.question_type || 'multiple_choice', question_text: q.question, option_a: q.optionA, option_b: q.optionB, option_c: q.optionC, option_d: q.optionD, correct_answer: q.correctAnswer, suggested_answer: q.suggested_answer, explanation: q.explanation })) };
     } else {
       return res.status(400).json({ message: 'Invalid type' });
     }
