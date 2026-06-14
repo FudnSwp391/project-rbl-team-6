@@ -2466,7 +2466,21 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 });
 
 
-app.listen(port, () => {
-  console.log(`🚀 Server is running on http://localhost:${port}`);
-});
+async function startServer() {
+  // Auto-migrate: add is_banned column if it doesn't exist yet
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    console.log("✅ DB migration: users.is_banned ready");
+  } catch (err) {
+    console.error("⚠️  DB migration warning:", err.message);
+  }
+
+  app.listen(port, () => {
+    console.log(`🚀 Server is running on http://localhost:${port}`);
+  });
+}
+
+startServer();
 
