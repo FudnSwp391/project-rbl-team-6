@@ -1415,7 +1415,7 @@ app.post('/api/practice/generate', verifyToken, async (req, res) => {
       [userId, topic.trim(), diff, JSON.stringify(questions), questions.length, timeLimitMins, timeRemainingSeconds]
     );
     const session = result.rows[0];
-    const safeQ = questions.map((q,i) => ({ index:i, question:q.question, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
+    const safeQ = questions.map((q,i) => ({ index:i, question:q.question, question_type:q.question_type, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
     return res.status(201).json({ session, questions: safeQ });
   } catch (e) { console.error('Practice generate:', e); res.status(500).json({ message: e.message||'Server error.' }); }
 });
@@ -1438,7 +1438,7 @@ app.get('/api/practice/:sessionId/questions', verifyToken, async (req, res) => {
     const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
     if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
     const session = r.rows[0];
-    const questions = (session.questions || []).map((q,i) => ({ index:i, question:q.question, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
+    const questions = (session.questions || []).map((q,i) => ({ index:i, question:q.question, question_type:q.question_type, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
     return res.json({ session: { id:session.id, topic:session.topic, difficulty:session.difficulty, total_questions:session.total_questions, status:session.status, answers:session.answers, time_limit_mins:session.time_limit_mins, time_remaining_seconds:session.time_remaining_seconds }, questions });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
@@ -1577,11 +1577,11 @@ app.get('/api/exam-papers/:paperId/start', verifyToken, async (req, res) => {
     let attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE exam_paper_id=$1 AND student_id=$2 AND status='in_progress' LIMIT 1`, [paperId, studentId]);
     const questions = await pool.query(`SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1 ORDER BY question_order`, [paperId]);
     const shuffledQs = shuffleArray(questions.rows);
-    const shuffledData = shuffledQs.map(q => { const {newOptions,newCorrect,optionMap}=shuffleQuestionOptions(q); return {id:q.id,...newOptions,question_text:q.question_text,newCorrect,optionMap}; });
+    const shuffledData = shuffledQs.map(q => { const {newOptions,newCorrect,optionMap}=shuffleQuestionOptions(q); return {id:q.id,...newOptions,question_type:q.question_type,question_text:q.question_text,newCorrect,optionMap}; });
     if (!attempt.rows.length) {
       attempt = await pool.query(`INSERT INTO exam_paper_attempts (exam_paper_id,student_id,shuffled_data) VALUES ($1,$2,$3) RETURNING *`, [paperId, studentId, JSON.stringify(shuffledData)]);
     }
-    const safeQ = shuffledData.map(q => ({ id:q.id, question_text:q.question_text, option_a:q.option_a, option_b:q.option_b, option_c:q.option_c, option_d:q.option_d }));
+    const safeQ = shuffledData.map(q => ({ id:q.id, question_type:q.question_type, question_text:q.question_text, option_a:q.option_a, option_b:q.option_b, option_c:q.option_c, option_d:q.option_d }));
     return res.json({ paper: paper.rows[0], questions: safeQ, attempt: attempt.rows[0] });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
