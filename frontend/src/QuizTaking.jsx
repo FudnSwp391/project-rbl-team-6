@@ -1,14 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
 // ─── Timer component ──────────────────────────────────────────────────────────
-function CountdownTimer({ seconds, totalSeconds, onExpire }) {
+function CountdownTimer({ seconds, totalSeconds, onExpire, onTick }) {
   const [remaining, setRemaining] = useState(seconds)
   const intervalRef = useRef(null)
   const onExpireRef = useRef(onExpire)
+  const onTickRef = useRef(onTick)
 
   useEffect(() => {
     onExpireRef.current = onExpire
   }, [onExpire])
+
+  useEffect(() => {
+    onTickRef.current = onTick
+  }, [onTick])
 
   useEffect(() => {
     setRemaining(seconds)
@@ -21,12 +26,13 @@ function CountdownTimer({ seconds, totalSeconds, onExpire }) {
     }
     intervalRef.current = setInterval(() => {
       setRemaining(prev => {
-        if (prev <= 1) {
+        const next = prev <= 1 ? 0 : prev - 1
+        if (next <= 0) {
           clearInterval(intervalRef.current)
           onExpireRef.current?.()
-          return 0
         }
-        return prev - 1
+        onTickRef.current?.(next)
+        return next
       })
     }, 1000)
     return () => clearInterval(intervalRef.current)
@@ -510,6 +516,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
               seconds={timeRemaining}
               totalSeconds={totalSeconds}
               onExpire={() => handleSubmit()}
+              onTick={(s) => setTimeRemaining(s)}
             />
           ) : (
             // Show elapsed time for practice and exam paper (no-limit or no duration set)
