@@ -2294,6 +2294,15 @@ app.post('/api/tutor/grade-attempt', verifyToken, requireTutor, async (req, res)
         [tutorScore, JSON.stringify(tutorFeedback), attemptId]
       );
       return res.json({ attempt: updated.rows[0] });
+    } else if (type === 'practice') {
+      const attempt = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1`, [attemptId]);
+      if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+
+      const updated = await pool.query(
+        `UPDATE practice_sessions SET tutor_score=$1, tutor_feedback=$2 WHERE id=$3 RETURNING *`,
+        [tutorScore, JSON.stringify(tutorFeedback), attemptId]
+      );
+      return res.json({ attempt: updated.rows[0] });
     } else {
       return res.status(400).json({ message: 'Invalid type.' });
     }
@@ -2487,4 +2496,4 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 app.listen(port, () => {
   console.log(`🚀 Server is running on http://localhost:${port}`);
 });
-
+

@@ -13,31 +13,29 @@ export default function TutorGradingReview({ token, attemptInfo, onBack }) {
 
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true)
+      setError('')
       try {
-        const res = await fetch(`${API}/api/tutor/grading-queue/${attemptInfo.type}/${attemptInfo.attempt_id}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
+        const res = await fetch(
+          `${API}/api/tutor/grading-queue/${attemptInfo.type}/${attemptInfo.attempt_id}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
         const json = await res.json()
         if (!res.ok) throw new Error(json.message || 'Failed to fetch details')
-        
+
         setData(json)
-        
-        // Initialize form
         setTutorScore(json.attempt.tutor_score != null ? json.attempt.tutor_score : (json.attempt.score || 0))
-        
+
         let initialFeedback = ''
         if (json.attempt.tutor_feedback) {
           try {
             const parsed = JSON.parse(json.attempt.tutor_feedback)
-            if (typeof parsed === 'string') initialFeedback = parsed
-            // if it's an object (like from AI), we don't necessarily want to stringify the whole object as simple text, but let's just dump it if it's not a string.
-            else initialFeedback = JSON.stringify(parsed)
-          } catch(e) {
+            initialFeedback = typeof parsed === 'string' ? parsed : JSON.stringify(parsed)
+          } catch {
             initialFeedback = json.attempt.tutor_feedback
           }
         }
         setTutorFeedback(initialFeedback)
-
       } catch (err) {
         setError(err.message)
       } finally {
@@ -91,20 +89,34 @@ export default function TutorGradingReview({ token, attemptInfo, onBack }) {
   }
 
   const { attempt, paper, questions, student } = data
-  const parsedAnswers = typeof attempt.answers === 'string' ? JSON.parse(attempt.answers) : (attempt.answers || {})
-  
+  const parsedAnswers = typeof attempt.answers === 'string'
+    ? JSON.parse(attempt.answers)
+    : (attempt.answers || {})
+
   let parsedAiFeedback = {}
-  if (attempt.tutor_feedback) { // Ai feedback is currently stored in tutor_feedback by the submit endpoint if there is no tutor override. Wait, the backend actually stores AI feedback there.
+  if (attempt.tutor_feedback) {
     try {
-      parsedAiFeedback = JSON.parse(attempt.tutor_feedback)
-    } catch(e) {}
+      const p = JSON.parse(attempt.tutor_feedback)
+      if (typeof p === 'object' && p !== null) parsedAiFeedback = p
+    } catch { /* not JSON */ }
   }
+
+  // ── Stats for MC-only questions ──────────────────────────────
+  const mcQuestions = questions.filter(q => q.question_type !== 'essay')
+  const wrongQuestions = mcQuestions.filter(q => {
+    const ans = parsedAnswers[q.id]
+    return !ans || ans.toUpperCase() !== (q.correct_answer || '').toUpperCase()
+  })
+  const correctCount = mcQuestions.length - wrongQuestions.length
+  const hasEssay = questions.some(q => q.question_type === 'essay')
+  const isMCOnly = mcQuestions.length > 0 && !hasEssay
 
   return (
     <div className="flex flex-col gap-lg h-full pb-xl">
-      {/* Header */}
+
+      {/* ── Header ── */}
       <div className="flex items-center gap-4 bg-surface-container-lowest border border-outline-variant/30 p-4 rounded-2xl shadow-sm sticky top-0 z-10">
-        <button 
+        <button
           onClick={onBack}
           className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-high hover:bg-surface-variant transition-colors"
         >
@@ -112,10 +124,18 @@ export default function TutorGradingReview({ token, attemptInfo, onBack }) {
         </button>
         <div className="flex-1">
           <div className="flex items-center gap-3 mb-1">
-            <img src={student.picture || 'https://via.placeholder.com/40'} className="w-8 h-8 rounded-full" />
-            <h2 className="font-headline-sm text-headline-sm text-on-surface">{student.full_name}'s Submission</h2>
+            <img
+              src={student.picture || 'https://via.placeholder.com/40'}
+              className="w-8 h-8 rounded-full object-cover"
+              alt="avatar"
+            />
+            <h2 className="font-headline-sm text-headline-sm text-on-surface">
+              {student.full_name}'s Submission
+            </h2>
           </div>
-          <p className="font-body-sm text-body-sm text-on-surface-variant">{paper.title} • {paper.subject}</p>
+          <p className="font-body-sm text-body-sm text-on-surface-variant">
+            {paper.title} • {paper.subject}
+          </p>
         </div>
         <div className="text-right">
           <p className="font-label-sm text-on-surface-variant mb-1">AI Calculated Score</p>
@@ -123,46 +143,180 @@ export default function TutorGradingReview({ token, attemptInfo, onBack }) {
         </div>
       </div>
 
+      {/* ── MC Summary Banner ── */}
+      {mcQuestions.length > 0 && (
+        <div className="grid grid-cols-3 gap-md">
+          <div className="bg-green-50 border border-green-200 rounded-2xl p-4 flex flex-col items-center">
+            <span className="material-symbols-outlined text-green-600 text-3xl mb-1">check_circle</span>
+            <p className="font-headline-sm text-green-700 font-black">{correctCount}</p>
+            <p className="font-label-sm text-green-600">Correct</p>
+          </div>
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex flex-col items-center">
+            <span className="material-symbols-outlined text-red-500 text-3xl mb-1">cancel</span>
+            <p className="font-headline-sm text-red-600 font-black">{wrongQuestions.length}</p>
+            <p className="font-label-sm text-red-500">Incorrect</p>
+          </div>
+          <div className="bg-surface-container-low border border-outline-variant/30 rounded-2xl p-4 flex flex-col items-center">
+            <span className="material-symbols-outlined text-on-surface-variant text-3xl mb-1">quiz</span>
+            <p className="font-headline-sm text-on-surface font-black">{mcQuestions.length}</p>
+            <p className="font-label-sm text-on-surface-variant">Total MC</p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-lg">
-        
-        {/* Left Column: Student Answers */}
+
+        {/* ── Left: Question Review ── */}
         <div className="lg:col-span-2 space-y-md">
           <h3 className="font-headline-sm text-headline-sm flex items-center gap-2">
             <span className="material-symbols-outlined text-primary">grading</span>
             Question Review
           </h3>
-          
+
+          {/* Wrong-answers summary for MC exams */}
+          {isMCOnly && wrongQuestions.length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+              <p className="font-label-md text-red-700 flex items-center gap-2 mb-2">
+                <span className="material-symbols-outlined text-[18px]">warning</span>
+                {wrongQuestions.length} question{wrongQuestions.length > 1 ? 's' : ''} answered incorrectly
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {wrongQuestions.map((q, i) => {
+                  const globalIdx = questions.indexOf(q) + 1
+                  return (
+                    <a
+                      key={q.id}
+                      href={`#q-${q.id}`}
+                      className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-bold hover:bg-red-200 transition-colors"
+                    >
+                      Q{globalIdx}
+                    </a>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-md">
             {questions.map((q, idx) => {
               const studentAnswer = parsedAnswers[q.id]
               const isEssay = q.question_type === 'essay'
-              const aiData = parsedAiFeedback[q.id] // { score, feedback }
+              const aiData = parsedAiFeedback[q.id]
+
+              // MC correctness
+              const isCorrect = !isEssay
+                && studentAnswer
+                && studentAnswer.toUpperCase() === (q.correct_answer || '').toUpperCase()
+              const isWrong = !isEssay && !isCorrect
 
               return (
-                <div key={q.id} className="bg-surface-container-lowest border border-outline-variant/30 rounded-xl p-md shadow-sm">
-                  <div className="flex gap-2 mb-3">
-                    <span className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0">{idx + 1}</span>
-                    <h4 className="font-label-md text-on-surface leading-snug">{q.question_text}</h4>
+                <div
+                  id={`q-${q.id}`}
+                  key={q.id}
+                  className={`bg-surface-container-lowest border rounded-xl p-md shadow-sm scroll-mt-24 ${
+                    isWrong
+                      ? 'border-red-300'
+                      : isCorrect
+                        ? 'border-green-300'
+                        : 'border-outline-variant/30'
+                  }`}
+                >
+                  {/* Question header */}
+                  <div className="flex gap-2 mb-3 items-start">
+                    <span className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
+                      isWrong
+                        ? 'bg-red-100 text-red-600'
+                        : isCorrect
+                          ? 'bg-green-100 text-green-600'
+                          : 'bg-primary/10 text-primary'
+                    }`}>
+                      {idx + 1}
+                    </span>
+                    <h4 className="font-label-md text-on-surface leading-snug flex-1">{q.question_text}</h4>
+                    {!isEssay && (
+                      <span className={`ml-auto shrink-0 flex items-center gap-1 text-sm font-bold ${
+                        isCorrect ? 'text-green-600' : 'text-red-500'
+                      }`}>
+                        <span className="material-symbols-outlined text-[18px]">
+                          {isCorrect ? 'check_circle' : 'cancel'}
+                        </span>
+                        {isCorrect ? 'Correct' : 'Incorrect'}
+                      </span>
+                    )}
                   </div>
 
-                  <div className="ml-8 space-y-4">
-                    {/* Student Answer */}
-                    <div className="bg-surface-container-low rounded-lg p-3">
-                      <p className="font-label-sm text-on-surface-variant mb-1">Student's Answer:</p>
-                      {isEssay ? (
-                        <p className="font-body-md whitespace-pre-wrap">{studentAnswer || <span className="italic text-on-surface-variant/50">No answer provided</span>}</p>
-                      ) : (
-                        <p className="font-body-md font-bold text-primary">{studentAnswer || 'N/A'}</p>
-                      )}
-                    </div>
+                  <div className="ml-8 space-y-3">
+                    {/* MC: show all options with highlights */}
+                    {!isEssay && (
+                      <div className="grid grid-cols-1 gap-2">
+                        {['a','b','c','d'].map(opt => {
+                          const label = opt.toUpperCase()
+                          const text = q[`option_${opt}`]
+                          if (!text) return null
+                          const isStudentChoice = studentAnswer?.toUpperCase() === label
+                          const isCorrectOpt = (q.correct_answer || '').toUpperCase() === label
+                          return (
+                            <div
+                              key={opt}
+                              className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm ${
+                                isCorrectOpt
+                                  ? 'bg-green-50 border-green-300 text-green-800 font-semibold'
+                                  : isStudentChoice && !isCorrectOpt
+                                    ? 'bg-red-50 border-red-300 text-red-700'
+                                    : 'bg-surface-container-low border-outline-variant/20 text-on-surface-variant'
+                              }`}
+                            >
+                              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                                isCorrectOpt
+                                  ? 'bg-green-200 text-green-800'
+                                  : isStudentChoice && !isCorrectOpt
+                                    ? 'bg-red-200 text-red-700'
+                                    : 'bg-surface-variant text-on-surface-variant'
+                              }`}>
+                                {label}
+                              </span>
+                              <span className="flex-1">{text}</span>
+                              {isCorrectOpt && (
+                                <span className="material-symbols-outlined text-green-600 text-[16px]">check_circle</span>
+                              )}
+                              {isStudentChoice && !isCorrectOpt && (
+                                <span className="material-symbols-outlined text-red-500 text-[16px]">cancel</span>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
 
-                    {/* Reference / Rubric */}
-                    <div className="bg-green-50/50 border border-green-200 rounded-lg p-3">
-                      <p className="font-label-sm text-green-700 mb-1">{isEssay ? 'Suggested Rubric:' : 'Correct Answer:'}</p>
-                      <p className="font-body-sm text-green-800 whitespace-pre-wrap">{isEssay ? q.suggested_answer : q.correct_answer}</p>
-                    </div>
+                    {/* MC: student picked nothing */}
+                    {!isEssay && !studentAnswer && (
+                      <p className="italic text-on-surface-variant/60 text-sm">No answer selected</p>
+                    )}
 
-                    {/* AI Feedback for Essay */}
+                    {/* Essay: student answer */}
+                    {isEssay && (
+                      <div className="bg-surface-container-low rounded-lg p-3">
+                        <p className="font-label-sm text-on-surface-variant mb-1">Student's Answer:</p>
+                        {studentAnswer
+                          ? <p className="font-body-md whitespace-pre-wrap">{studentAnswer}</p>
+                          : <p className="italic text-on-surface-variant/50 text-sm">No answer provided</p>
+                        }
+                      </div>
+                    )}
+
+                    {/* MC: explanation / essay: rubric */}
+                    {(q.explanation || (isEssay && q.suggested_answer)) && (
+                      <div className="bg-blue-50/60 border border-blue-200 rounded-lg p-3">
+                        <p className="font-label-sm text-blue-700 mb-1">
+                          {isEssay ? 'Suggested Rubric:' : 'Explanation:'}
+                        </p>
+                        <p className="font-body-sm text-blue-800 whitespace-pre-wrap">
+                          {isEssay ? q.suggested_answer : q.explanation}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* AI Feedback for essay */}
                     {isEssay && aiData && (
                       <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
                         <div className="flex items-center justify-between mb-2">
@@ -182,18 +336,52 @@ export default function TutorGradingReview({ token, attemptInfo, onBack }) {
           </div>
         </div>
 
-        {/* Right Column: Grading Form */}
+        {/* ── Right: Grading Form ── */}
         <div className="lg:col-span-1">
-          <div className="bg-surface-container-lowest border border-purple-200 rounded-2xl p-md shadow-md sticky top-24">
-            <h3 className="font-headline-sm text-purple-700 flex items-center gap-2 mb-4 border-b border-purple-100 pb-3">
+          <div className="bg-surface-container-lowest border border-purple-200 rounded-2xl p-md shadow-md sticky top-24 flex flex-col gap-4">
+
+            <h3 className="font-headline-sm text-purple-700 flex items-center gap-2 pb-3 border-b border-purple-100">
               <span className="material-symbols-outlined">edit_note</span>
               Tutor Override
             </h3>
-            
+
+            {/* Quick stats recap */}
+            {mcQuestions.length > 0 && (
+              <div className="bg-purple-50 rounded-xl p-3 text-sm">
+                <p className="font-label-sm text-purple-700 mb-2 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[16px]">bar_chart</span>
+                  Performance Summary
+                </p>
+                <div className="flex justify-between text-purple-900">
+                  <span>Correct</span>
+                  <span className="font-bold text-green-700">{correctCount} / {mcQuestions.length}</span>
+                </div>
+                {wrongQuestions.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-purple-200">
+                    <p className="font-label-sm text-purple-600 mb-1">Missed questions:</p>
+                    <div className="flex flex-wrap gap-1">
+                      {wrongQuestions.map(q => {
+                        const idx = questions.indexOf(q) + 1
+                        return (
+                          <a
+                            key={q.id}
+                            href={`#q-${q.id}`}
+                            className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-bold hover:bg-red-200"
+                          >
+                            Q{idx}
+                          </a>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <div className="flex flex-col gap-1">
                 <label className="font-label-md text-on-surface">Final Score (0-100%)</label>
-                <input 
+                <input
                   type="number" min="0" max="100" required
                   value={tutorScore}
                   onChange={e => setTutorScore(e.target.value)}
@@ -202,19 +390,26 @@ export default function TutorGradingReview({ token, attemptInfo, onBack }) {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="font-label-md text-on-surface">Overall Feedback for Student</label>
-                <textarea 
-                  rows={6} required
+                <label className="font-label-md text-on-surface">Feedback &amp; Remarks for Student</label>
+                <textarea
+                  rows={7} required
                   value={tutorFeedback}
                   onChange={e => setTutorFeedback(e.target.value)}
-                  className="p-md rounded-xl border border-purple-300 bg-purple-50/30 focus:border-purple-500 outline-none resize-y"
-                  placeholder="Provide your manual evaluation and constructive feedback here..."
+                  className="p-md rounded-xl border border-purple-300 bg-purple-50/30 focus:border-purple-500 outline-none resize-y font-body-md"
+                  placeholder={
+                    mcQuestions.length > 0
+                      ? `e.g. You answered ${correctCount}/${mcQuestions.length} correctly. Review questions ${wrongQuestions.map((_,i)=>questions.indexOf(wrongQuestions[i])+1).join(', ')} — pay attention to...`
+                      : 'Provide your evaluation and constructive feedback here...'
+                  }
                 />
+                <p className="font-label-sm text-on-surface-variant">
+                  This message will be visible to the student.
+                </p>
               </div>
 
-              <button 
+              <button
                 type="submit" disabled={saving}
-                className="h-12 w-full mt-2 bg-purple-600 text-white rounded-xl font-label-lg shadow-sm hover:bg-purple-700 hover:shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                className="h-12 w-full bg-purple-600 text-white rounded-xl font-label-lg shadow-sm hover:bg-purple-700 hover:shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {saving && <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
                 {saving ? 'Saving...' : 'Submit Final Grade'}
