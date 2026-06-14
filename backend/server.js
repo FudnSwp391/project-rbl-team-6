@@ -8,7 +8,7 @@ const multer = require("multer");                  // NEW: file uploads
 const { GoogleAuth } = require("google-auth-library");
 const { OAuth2Client } = require("google-auth-library");
 const pool = require("./db");
-const { generateQuizQuestions, chatWithAI } = require("./gemini");
+const { generateQuizQuestions, chatWithAI, gradeEssayAnswer } = require("./gemini");
 
 dotenv.config();
 
@@ -38,7 +38,7 @@ function createToken(user) {
   );
 }
 
-// ΓöÇΓöÇΓöÇ Middleware: verifyToken ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// ΓöÇΓöÇΓöÇ Middleware: verifyToken ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Reads the Authorization header, verifies the JWT, and attaches decoded
 // user info to req.user. Returns 401 if the token is missing or invalid.
 function verifyToken(req, res, next) {
@@ -64,6 +64,13 @@ function verifyToken(req, res, next) {
 function requireAdmin(req, res, next) {
   if (req.user?.role !== "admin") {
     return res.status(403).json({ message: "Forbidden: admin access only." });
+  }
+  next();
+}
+
+function requireTutor(req, res, next) {
+  if (req.user?.role !== "tutor") {
+    return res.status(403).json({ message: "Forbidden: tutor access only." });
   }
   next();
 }
@@ -1244,17 +1251,35 @@ app.post('/api/quizzes/:id/submit', verifyToken, async (req, res) => {
     const studentId = req.user.userId;
     const attempt = await pool.query(`SELECT * FROM quiz_attempts WHERE id=$1 AND student_id=$2`, [attemptId, studentId]);
     if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
-    const questions = await pool.query(`SELECT id, correct_answer FROM quiz_questions WHERE quiz_id=$1`, [id]);
+    if (attempt.rows[0].status === 'submitted') return res.status(400).json({ message: 'Already submitted.' });
+
+    const questions = await pool.query(`SELECT * FROM quiz_questions WHERE quiz_id=$1`, [id]);
     let correct = 0;
-    questions.rows.forEach(q => { if ((answers[q.id] || '').toLowerCase() === q.correct_answer.toLowerCase()) correct++; });
+    let totalScore = 0;
+    const feedbackObj = {};
+
+    for (let q of questions.rows) {
+      const studentAnswer = answers[q.id] || '';
+      if (q.question_type === 'essay') {
+        const aiResult = await gradeEssayAnswer(q.question_text, q.suggested_answer, studentAnswer);
+        feedbackObj[q.id] = { score: aiResult.score, feedback: aiResult.feedback };
+        totalScore += aiResult.score;
+      } else {
+        if (studentAnswer.toLowerCase() === (q.correct_answer || 'a').toLowerCase()) {
+          correct++;
+          totalScore += 100;
+        }
+      }
+    }
+
     const total = questions.rows.length;
-    const score = total > 0 ? Math.round((correct / total) * 100) : 0;
+    const score = total > 0 ? Math.round(totalScore / total) : 0;
     const result = await pool.query(
-      `UPDATE quiz_attempts SET answers=$1, score=$2, total_correct=$3, status='submitted', submitted_at=NOW() WHERE id=$4 RETURNING *`,
-      [JSON.stringify(answers), score, correct, attemptId]
+      `UPDATE quiz_attempts SET answers=$1, score=$2, total_correct=$3, tutor_feedback=$4, status='submitted', submitted_at=NOW() WHERE id=$5 RETURNING *`,
+      [JSON.stringify(answers), score, correct, JSON.stringify(feedbackObj), attemptId]
     );
-    return res.json({ score, total_correct: correct, total_questions: total, attempt: result.rows[0] });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+    return res.json({ score, total_correct: correct, total_questions: total, attempt: result.rows[0], feedback: feedbackObj });
+  } catch (e) { console.error('Quiz submit:', e); res.status(500).json({ message: 'Server error.' }); }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1265,11 +1290,11 @@ app.post('/api/quizzes/:id/submit', verifyToken, async (req, res) => {
 app.post('/api/practice/generate', verifyToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { topic, count = 10, difficulty = 'medium', timeLimitMins = null } = req.body;
+    const { topic, count = 10, difficulty = 'medium', timeLimitMins = null, questionType = 'multiple_choice' } = req.body;
     if (!topic?.trim()) return res.status(400).json({ message: 'Topic is required.' });
     const diff = ['easy','medium','hard'].includes(difficulty) ? difficulty : 'medium';
     const questionCount = Math.min(Math.max(Number(count)||10,1),30);
-    const questions = await generateQuizQuestions(topic.trim(), questionCount, diff);
+    const questions = await generateQuizQuestions(topic.trim(), questionCount, diff, questionType);
     // Detect quota notice
     if (questions.length > 0 && questions[0].question?.startsWith('⚠️')) {
       return res.status(503).json({ message: 'AI_QUOTA_EXCEEDED', detail: 'Gemini và Groq đều đạt giới hạn. Thử lại sau hoặc dùng Đề thi có sẵn.' });
@@ -1342,18 +1367,36 @@ app.post('/api/practice/:sessionId/submit', verifyToken, async (req, res) => {
     const { answers } = req.body;
     const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
     if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
+    if (r.rows[0].status === 'submitted') return res.status(400).json({ message: 'Session already submitted.' });
     const session = r.rows[0];
     const questions = session.questions || [];
     let correct = 0;
-    questions.forEach((q,i) => { if ((answers[i]||'').toUpperCase() === (q.correctAnswer||'A').toUpperCase()) correct++; });
+    let totalScore = 0;
+
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      const studentAnswer = answers[i] || '';
+      if (q.question_type === 'essay') {
+        const aiResult = await gradeEssayAnswer(q.question, q.suggested_answer, studentAnswer);
+        q.ai_score = aiResult.score;
+        q.ai_feedback = aiResult.feedback;
+        totalScore += aiResult.score;
+      } else {
+        if (studentAnswer.toUpperCase() === (q.correctAnswer||'A').toUpperCase()) {
+          correct++;
+          totalScore += 100;
+        }
+      }
+    }
+
     const total = questions.length;
-    const score = total > 0 ? Math.round((correct/total)*100) : 0;
+    const score = total > 0 ? Math.round(totalScore / total) : 0;
     const updated = await pool.query(
-      `UPDATE practice_sessions SET answers=$1, score=$2, total_correct=$3, status='submitted', submitted_at=NOW() WHERE id=$4 RETURNING *`,
-      [JSON.stringify(answers), score, correct, sessionId]
+      `UPDATE practice_sessions SET answers=$1, questions=$2, score=$3, total_correct=$4, status='submitted', submitted_at=NOW() WHERE id=$5 RETURNING *`,
+      [JSON.stringify(answers), JSON.stringify(questions), score, correct, sessionId]
     );
     return res.json({ score, total_correct:correct, total_questions:total, session: updated.rows[0] });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error('Practice submit:', e); res.status(500).json({ message: 'Server error.' }); }
 });
 
 // ─── GET /api/practice/:sessionId/result ──────────────────────────────────────
@@ -1475,17 +1518,43 @@ app.post('/api/exam-papers/:paperId/submit', verifyToken, async (req, res) => {
     const studentId = req.user.userId;
     const attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE id=$1 AND student_id=$2`, [attemptId, studentId]);
     if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+    if (attempt.rows[0].status === 'submitted') return res.status(400).json({ message: 'Already submitted.' });
+
     const shuffledData = attempt.rows[0].shuffled_data || [];
     let correct = 0;
-    shuffledData.forEach(q => { if ((answers[q.id]||'').toUpperCase() === q.newCorrect.toUpperCase()) correct++; });
+    let totalScore = 0;
+    const feedbackObj = {};
+
+    const { paperId } = req.params;
+    const questionsRes = await pool.query(`SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1`, [paperId]);
+    const questionsMap = {};
+    questionsRes.rows.forEach(q => { questionsMap[q.id] = q; });
+
+    for (let sq of shuffledData) {
+      const q = questionsMap[sq.id];
+      if (!q) continue;
+      const studentAnswer = answers[q.id] || '';
+
+      if (q.question_type === 'essay') {
+        const aiResult = await gradeEssayAnswer(q.question_text, q.suggested_answer, studentAnswer);
+        feedbackObj[q.id] = { score: aiResult.score, feedback: aiResult.feedback };
+        totalScore += aiResult.score;
+      } else {
+        if (studentAnswer.toUpperCase() === (sq.newCorrect || 'A').toUpperCase()) {
+          correct++;
+          totalScore += 100;
+        }
+      }
+    }
+
     const total = shuffledData.length;
-    const score = total > 0 ? Math.round((correct/total)*100) : 0;
+    const score = total > 0 ? Math.round(totalScore / total) : 0;
     const updated = await pool.query(
-      `UPDATE exam_paper_attempts SET answers=$1,score=$2,total_correct=$3,status='submitted',submitted_at=NOW() WHERE id=$4 RETURNING *`,
-      [JSON.stringify(answers), score, correct, attemptId]
+      `UPDATE exam_paper_attempts SET answers=$1,score=$2,total_correct=$3,tutor_feedback=$4,status='submitted',submitted_at=NOW() WHERE id=$5 RETURNING *`,
+      [JSON.stringify(answers), score, correct, JSON.stringify(feedbackObj), attemptId]
     );
-    return res.json({ score, total_correct:correct, total_questions:total, attempt_id:attemptId, submitted_at:updated.rows[0].submitted_at });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+    return res.json({ score, total_correct:correct, total_questions:total, attempt_id:attemptId, submitted_at:updated.rows[0].submitted_at, feedback: feedbackObj });
+  } catch (e) { console.error('Exam submit error:', e); res.status(500).json({ message: 'Server error.' }); }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2087,6 +2156,205 @@ const cleanupAbandonedPracticeSessions = async () => {
 // Run once on startup, then every hour
 cleanupAbandonedPracticeSessions();
 setInterval(cleanupAbandonedPracticeSessions, 60 * 60 * 1000);
+
+app.post('/api/tutor/grade-attempt', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { attemptId, type, tutorScore, tutorFeedback } = req.body;
+    if (type === 'quiz') {
+      const attempt = await pool.query(`SELECT * FROM quiz_attempts WHERE id=$1`, [attemptId]);
+      if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+      
+      const quiz = await pool.query(`SELECT * FROM quizzes WHERE id=$1`, [attempt.rows[0].quiz_id]);
+      if (quiz.rows[0].created_by !== req.user.userId) return res.status(403).json({ message: 'Not authorized to grade this quiz.' });
+
+      const updated = await pool.query(
+        `UPDATE quiz_attempts SET tutor_score=$1, tutor_feedback=$2 WHERE id=$3 RETURNING *`,
+        [tutorScore, JSON.stringify(tutorFeedback), attemptId]
+      );
+      return res.json({ attempt: updated.rows[0] });
+    } else if (type === 'exam') {
+      const attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE id=$1`, [attemptId]);
+      if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+
+      const paper = await pool.query(`SELECT * FROM exam_papers WHERE id=$1`, [attempt.rows[0].exam_paper_id]);
+      if (paper.rows[0].uploaded_by !== req.user.userId) return res.status(403).json({ message: 'Not authorized to grade this exam paper.' });
+
+      const updated = await pool.query(
+        `UPDATE exam_paper_attempts SET tutor_score=$1, tutor_feedback=$2 WHERE id=$3 RETURNING *`,
+        [tutorScore, JSON.stringify(tutorFeedback), attemptId]
+      );
+      return res.json({ attempt: updated.rows[0] });
+    } else {
+      return res.status(400).json({ message: 'Invalid type.' });
+    }
+  } catch (e) {
+    console.error('Tutor grade error:', e);
+    return res.status(500).json({ message: 'Server error.' });
+  }
+});
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  TUTOR ASSESSMENT MANAGEMENT APIs
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/tutor/assessments
+app.get('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const exams = await pool.query(
+      `SELECT * FROM exam_papers WHERE uploaded_by=$1 ORDER BY created_at DESC`,
+      [req.user.userId]
+    );
+    // get question counts
+    const paperIds = exams.rows.map(e => e.id);
+    let counts = {};
+    if (paperIds.length > 0) {
+      const qRes = await pool.query(
+        `SELECT exam_paper_id, COUNT(*) as c FROM exam_paper_questions WHERE exam_paper_id = ANY($1) GROUP BY exam_paper_id`,
+        [paperIds]
+      );
+      qRes.rows.forEach(r => { counts[r.exam_paper_id] = parseInt(r.c); });
+    }
+    const result = exams.rows.map(e => ({ ...e, question_count: counts[e.id] || 0 }));
+    res.json(result);
+  } catch (e) {
+    console.error('Tutor GET assessments error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST /api/tutor/assessments
+app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { title, subject, grade, duration_minutes, description, questions } = req.body;
+    
+    // Create exam_paper
+    const insertPaperRes = await client.query(
+      `INSERT INTO exam_papers (title, subject, grade, duration_minutes, description, uploaded_by, total_questions)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [title, subject, grade, duration_minutes, description, req.user.userId, questions.length]
+    );
+    const paper = insertPaperRes.rows[0];
+
+    // Create questions
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      await client.query(
+        `INSERT INTO exam_paper_questions (exam_paper_id, question_text, option_a, option_b, option_c, option_d, correct_answer, explanation, question_order, question_type, suggested_answer)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          paper.id,
+          q.question_text,
+          q.option_a || '',
+          q.option_b || '',
+          q.option_c || '',
+          q.option_d || '',
+          q.correct_answer || 'A',
+          q.explanation || '',
+          i + 1,
+          q.question_type || 'multiple_choice',
+          q.suggested_answer || null
+        ]
+      );
+    }
+    
+    await client.query('COMMIT');
+    res.status(201).json({ message: 'Assessment created successfully', paper });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('Tutor POST assessments error:', e);
+    res.status(500).json({ message: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/tutor/grading-queue
+app.get('/api/tutor/grading-queue', verifyToken, requireTutor, async (req, res) => {
+  try {
+    // Lấy các exam_paper do tutor upload
+    const attempts = await pool.query(`
+      SELECT a.id as attempt_id, a.score, a.status, a.submitted_at,
+             a.tutor_score,
+             p.id as paper_id, p.title as paper_title, p.subject,
+             u.full_name as student_name, u.picture as student_picture
+      FROM exam_paper_attempts a
+      JOIN exam_papers p ON a.exam_paper_id = p.id
+      JOIN users u ON a.student_id = u.id
+      WHERE p.uploaded_by = $1 AND a.status = 'submitted'
+      ORDER BY a.submitted_at DESC
+    `, [req.user.userId]);
+
+    // Cũng lấy các quiz attempts nếu có
+    const quizAttempts = await pool.query(`
+      SELECT a.id as attempt_id, a.score, a.status, a.submitted_at,
+             a.tutor_score,
+             q.id as paper_id, q.title as paper_title, q.subject,
+             u.full_name as student_name, u.picture as student_picture
+      FROM quiz_attempts a
+      JOIN quizzes q ON a.quiz_id = q.id
+      JOIN users u ON a.student_id = u.id
+      WHERE q.created_by = $1 AND a.status = 'submitted'
+      ORDER BY a.submitted_at DESC
+    `, [req.user.userId]);
+
+    const result = [
+      ...attempts.rows.map(r => ({ ...r, type: 'exam' })),
+      ...quizAttempts.rows.map(r => ({ ...r, type: 'quiz' }))
+    ].sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+
+    res.json(result);
+  } catch (e) {
+    console.error('Tutor GET grading-queue error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET /api/tutor/grading-queue/:type/:attemptId
+app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { type, attemptId } = req.params;
+    let attemptRes, questionsRes, paperRes;
+
+    if (type === 'exam') {
+      attemptRes = await pool.query('SELECT * FROM exam_paper_attempts WHERE id=$1', [attemptId]);
+      if (!attemptRes.rows.length) return res.status(404).json({ message: 'Not found' });
+      
+      const paperId = attemptRes.rows[0].exam_paper_id;
+      paperRes = await pool.query('SELECT * FROM exam_papers WHERE id=$1', [paperId]);
+      if (paperRes.rows[0].uploaded_by !== req.user.userId) return res.status(403).json({ message: 'Forbidden' });
+
+      questionsRes = await pool.query('SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1 ORDER BY question_order', [paperId]);
+    } else if (type === 'quiz') {
+      attemptRes = await pool.query('SELECT * FROM quiz_attempts WHERE id=$1', [attemptId]);
+      if (!attemptRes.rows.length) return res.status(404).json({ message: 'Not found' });
+      
+      const paperId = attemptRes.rows[0].quiz_id;
+      paperRes = await pool.query('SELECT * FROM quizzes WHERE id=$1', [paperId]);
+      if (paperRes.rows[0].created_by !== req.user.userId) return res.status(403).json({ message: 'Forbidden' });
+
+      questionsRes = await pool.query('SELECT * FROM quiz_questions WHERE quiz_id=$1', [paperId]);
+    } else {
+      return res.status(400).json({ message: 'Invalid type' });
+    }
+
+    const studentRes = await pool.query('SELECT full_name, picture FROM users WHERE id=$1', [attemptRes.rows[0].student_id]);
+
+    res.json({
+      attempt: attemptRes.rows[0],
+      paper: paperRes.rows[0],
+      questions: questionsRes.rows,
+      student: studentRes.rows[0]
+    });
+
+  } catch (e) {
+    console.error('Tutor GET grading-attempt error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 
 app.listen(port, () => {
   console.log(`🚀 Server is running on http://localhost:${port}`);

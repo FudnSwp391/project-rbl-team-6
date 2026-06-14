@@ -182,7 +182,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         const map = { '1': 'A', '2': 'B', '3': 'C', '4': 'D', a: 'A', b: 'B', c: 'C', d: 'D' }
         const answer = map[e.key.toLowerCase()] || e.key.toUpperCase()
         const q = questions[currentIndex]
-        if (q) {
+        if (q && q.question_type !== 'essay') {
           const key = (isPractice || isExamPaper) ? String(currentIndex) : (q.id || String(currentIndex))
           setAnswers(prev => ({ ...prev, [key]: answer }))
         }
@@ -628,41 +628,53 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
                   </h2>
                 </div>
 
-                {/* Options */}
+                {/* Options or Essay Answer */}
                 <div className="flex flex-col gap-sm">
-                  {OPTIONS.map((letter, optIdx) => {
-                    const optKey = OPTION_KEYS[optIdx]
-                    const optText = currentQ[optKey]
-                    const isSelected = answers[currentKey] === letter
+                  {currentQ.question_type === 'essay' ? (
+                    <textarea
+                      value={answers[currentKey] || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAnswers(prev => ({ ...prev, [currentKey]: val }))
+                      }}
+                      placeholder="Nhập câu trả lời tự luận của bạn vào đây..."
+                      className="w-full min-h-[200px] p-md rounded-xl border-2 border-outline-variant/50 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-surface-container-lowest font-body-md text-body-md text-on-surface resize-y transition-all duration-200 outline-none"
+                    />
+                  ) : (
+                    OPTIONS.map((letter, optIdx) => {
+                      const optKey = OPTION_KEYS[optIdx]
+                      const optText = currentQ[optKey]
+                      const isSelected = answers[currentKey] === letter
 
-                    return (
-                      <button
-                        key={letter}
-                        onClick={() => selectAnswer(currentKey, letter)}
-                        className={`w-full flex items-center gap-md p-md rounded-xl border-2 text-left transition-all duration-200 group ${
-                          isSelected
-                            ? 'border-primary bg-primary/5 shadow-sm'
-                            : 'border-outline-variant/50 hover:border-primary/40 hover:bg-surface-container-low'
-                        }`}
-                      >
-                        <span className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${
-                          isSelected
-                            ? 'border-primary bg-primary text-on-primary'
-                            : 'border-outline-variant text-on-surface-variant group-hover:border-primary group-hover:text-primary'
-                        }`}>
-                          {letter}
-                        </span>
-                        <span className={`font-body-md text-body-md ${isSelected ? 'text-on-surface font-medium' : 'text-on-surface'}`}>
-                          {optText}
-                        </span>
-                        {isSelected && (
-                          <span className="ml-auto material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                            check_circle
+                      return (
+                        <button
+                          key={letter}
+                          onClick={() => selectAnswer(currentKey, letter)}
+                          className={`w-full flex items-center gap-md p-md rounded-xl border-2 text-left transition-all duration-200 group ${
+                            isSelected
+                              ? 'border-primary bg-primary/5 shadow-sm'
+                              : 'border-outline-variant/50 hover:border-primary/40 hover:bg-surface-container-low'
+                          }`}
+                        >
+                          <span className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${
+                            isSelected
+                              ? 'border-primary bg-primary text-on-primary'
+                              : 'border-outline-variant text-on-surface-variant group-hover:border-primary group-hover:text-primary'
+                          }`}>
+                            {letter}
                           </span>
-                        )}
-                      </button>
-                    )
-                  })}
+                          <span className={`font-body-md text-body-md ${isSelected ? 'text-on-surface font-medium' : 'text-on-surface'}`}>
+                            {optText}
+                          </span>
+                          {isSelected && (
+                            <span className="ml-auto material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                              check_circle
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
               </div>
 
