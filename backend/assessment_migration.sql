@@ -69,7 +69,9 @@ CREATE TABLE IF NOT EXISTS practice_sessions (
   status          TEXT NOT NULL DEFAULT 'in_progress'
                   CHECK (status IN ('in_progress','submitted')),
   created_at      TIMESTAMPTZ DEFAULT NOW(),
-  submitted_at    TIMESTAMPTZ
+  submitted_at    TIMESTAMPTZ,
+  tutor_score     INT,
+  tutor_feedback  JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_practice_sessions_student ON practice_sessions(student_id);

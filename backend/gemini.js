@@ -346,9 +346,10 @@ Student's Answer: ${studentAnswer}
 INSTRUCTIONS:
 1. Grade the student's answer based on the suggested criteria. Give a score from 0 to 100.
 2. Provide a constructive, encouraging feedback in Vietnamese explaining what the student did well and what needs improvement.
-3. CRITICAL - AI DETECTION: Evaluate the naturalness of the student's answer. Does it sound like it was written by an AI (ChatGPT/Gemini) instead of a student? (e.g., highly robotic structure, unnatural use of transition words like "Tóm lại", "Nhìn chung", extremely perfect vocabulary but lacking personal touch).
-   - If you strongly suspect AI usage, include a gentle, encouraging reminder in the feedback. For example: "Lưu ý: Bài viết của em rất tốt, tuy nhiên cách hành văn có vẻ giống với văn mẫu hoặc công cụ AI. Thầy cô khuyến khích em tự diễn đạt bằng lời văn của mình để hiểu bài sâu sắc hơn nhé!"
-   - DO NOT penalize the score heavily just because of AI suspicion, just provide the reminder.
+3. INAPPROPRIATE CONTENT: If the student's answer contains profanity, inappropriate language, or is completely disrespectful/nonsensical, give a score of 0 and provide a strict but professional reminder to maintain proper educational etiquette. DO NOT provide any AI detection warnings in this case.
+4. CRITICAL - AI DETECTION: Evaluate the naturalness of the student's answer. Does it sound like it was written by an AI (ChatGPT/Gemini)?
+   - ONLY IF you strongly suspect AI usage (highly robotic structure, unnatural transitions, excessively perfect but soulless vocabulary), append this EXACT reminder at the end of your feedback: "Lưu ý: Bài viết của em rất tốt, tuy nhiên cách hành văn có vẻ giống với văn mẫu hoặc công cụ AI. Thầy cô khuyến khích em tự diễn đạt bằng lời văn của mình để hiểu bài sâu sắc hơn nhé!"
+   - DO NOT use that phrase or mention "tự diễn đạt bằng lời văn của mình" if you do not suspect AI usage or if the answer is just short/poor.
 
 IMPORTANT: Return ONLY a valid JSON object. No markdown, no extra text.
 {
