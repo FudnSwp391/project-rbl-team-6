@@ -333,10 +333,14 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
   async function savePracticeDraft() {
     if (!practiceSessionId) return
     try {
+      const payload = { answers: answersRef.current }
+      if (timeRemainingRef.current !== null) {
+        payload.timeRemaining = timeRemainingRef.current
+      }
       await fetch(`${apiBaseUrl}/api/practice/${practiceSessionId}/save-progress`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ answers: answersRef.current, timeRemaining: timeRemainingRef.current }),
+        body: JSON.stringify(payload),
         keepalive: true
       })
     } catch (_) { /* silent */ }
