@@ -102,7 +102,7 @@ export default function QuizList({ token }) {
             Assessments
           </h2>
           <p className="font-body-lg text-body-lg text-on-surface-variant">
-            Test your knowledge with structured quizzes.
+            Đánh giá kiến thức của bạn qua các bài kiểm tra có cấu trúc.
           </p>
         </div>
         <button
@@ -110,15 +110,15 @@ export default function QuizList({ token }) {
           className="h-10 px-md bg-surface-container border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface flex items-center gap-sm hover:bg-surface-container-highest transition-colors"
         >
           <span className="material-symbols-outlined text-[18px]">refresh</span>
-          Refresh
+          Làm mới
         </button>
       </div>
 
       {/* Tabs */}
       <div className="flex bg-surface-container-low p-1 rounded-xl w-fit gap-1">
         {[
-          { key: 'available', label: 'Available', count: available.length, icon: 'pending' },
-          { key: 'completed', label: 'Completed', count: completed.length, icon: 'check_circle' },
+          { key: 'available', label: 'Có sẵn', count: available.length, icon: 'pending' },
+          { key: 'completed', label: 'Hoàn thành', count: completed.length, icon: 'check_circle' },
         ].map(tab => (
           <button
             key={tab.key}
@@ -164,12 +164,12 @@ export default function QuizList({ token }) {
             {activeTab === 'available' ? 'quiz' : 'task_alt'}
           </span>
           <p className="font-headline-md text-headline-md">
-            {activeTab === 'available' ? 'No quizzes available' : 'No completed quizzes yet'}
+            {activeTab === 'available' ? 'Không có bài kiểm tra nào' : 'Chưa hoàn thành bài kiểm tra nào'}
           </p>
           <p className="font-body-md text-body-md text-center max-w-sm">
             {activeTab === 'available'
-              ? 'Check back later — your tutors will assign quizzes for you.'
-              : 'Complete a quiz to see your results here.'}
+              ? 'Quay lại sau — gia sư sẽ giao bài kiểm tra cho bạn.'
+              : 'Hoàn thành một bài kiểm tra để xem kết quả tại đây.'}
           </p>
         </div>
       ) : (
@@ -226,22 +226,22 @@ function QuizCard({ quiz }) {
       <div className="flex flex-wrap gap-xs">
         <span className="inline-flex items-center gap-xs px-2 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">
           <span className="material-symbols-outlined text-[14px]">help</span>
-          {quiz.total_questions} questions
+          {quiz.total_questions} câu hỏi
         </span>
         <span className="inline-flex items-center gap-xs px-2 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">
           <span className="material-symbols-outlined text-[14px]">timer</span>
-          {quiz.duration_minutes} min
+          {quiz.duration_minutes} phút
         </span>
         {isInProgress && (
           <span className="inline-flex items-center gap-xs px-2 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-600 font-label-sm text-label-sm">
             <span className="material-symbols-outlined text-[14px]">pending</span>
-            In progress
+            Đang làm
           </span>
         )}
         {isFailed && (
           <span className="inline-flex items-center gap-xs px-2 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 font-label-sm text-label-sm">
             <span className="material-symbols-outlined text-[14px]">warning</span>
-            Failed (Retake Required)
+            Không đạt (Cần làm lại)
           </span>
         )}
       </div>
@@ -253,7 +253,7 @@ function QuizCard({ quiz }) {
           className="w-full h-10 border border-outline-variant text-on-surface font-label-md text-label-md rounded-lg hover:bg-surface-container hover:text-primary transition-colors flex items-center justify-center gap-sm"
         >
           <span className="material-symbols-outlined text-[18px]">bar_chart</span>
-          View Results
+          Xem Kết Quả
         </button>
       ) : (
         <button
@@ -263,7 +263,7 @@ function QuizCard({ quiz }) {
           <span className="material-symbols-outlined text-[18px]">
             {isInProgress ? 'play_circle' : isFailed ? 'replay' : 'play_arrow'}
           </span>
-          {isInProgress ? 'Continue Quiz' : isFailed ? 'Retake Quiz' : 'Start Quiz'}
+          {isInProgress ? 'Tiếp tục kiểm tra' : isFailed ? 'Làm lại' : 'Bắt Đầu Kiểm Tra'}
         </button>
       )}
     </div>

@@ -51,7 +51,7 @@ function Avatar({ src, name, size = 10 }) {
 }
 function TypeBadge({ type }) {
   const map = {
-    quiz:     { label: 'Quiz',       cls: 'bg-blue-100 text-blue-700',   icon: 'quiz' },
+    quiz:     { label: 'Bài Kiểm Tra', cls: 'bg-blue-100 text-blue-700',   icon: 'quiz' },
     practice: { label: 'Luyện tập',  cls: 'bg-purple-100 text-purple-700', icon: 'psychology' },
     exam:     { label: 'Đề thi',     cls: 'bg-orange-100 text-orange-700', icon: 'description' },
   }
@@ -414,7 +414,7 @@ function StudentsSection({ token }) {
 
               <div className="grid grid-cols-3 gap-sm bg-surface-container-low p-sm rounded-xl border border-outline-variant/20">
                 <div className="text-center">
-                  <p className="font-label-sm text-on-surface-variant mb-1">Quiz</p>
+                  <p className="font-label-sm text-on-surface-variant mb-1">Bài Kiểm Tra</p>
                   <p className="font-headline-sm font-semibold text-primary">{s.quiz_count || 0}</p>
                   <p className={`text-xs mt-1 font-medium ${scoreColor(s.avg_quiz_score)}`}>{s.avg_quiz_score ? `${s.avg_quiz_score}% TB` : '—'}</p>
                 </div>
@@ -716,7 +716,7 @@ function ActivitySection({ token }) {
         <div className="flex gap-xs">
           {[
             { key: 'all',      label: 'Tất cả' },
-            { key: 'quiz',     label: 'Quiz' },
+            { key: 'quiz',     label: 'Bài Kiểm Tra' },
             { key: 'practice', label: 'Luyện tập' },
             { key: 'exam',     label: 'Đề thi' },
           ].map(f => (
@@ -828,7 +828,7 @@ function SettingsSection({ user, displayName }) {
       {/* Platform info */}
       <div className="bg-surface-container-low rounded-2xl border border-outline-variant/20 p-lg">
         <p className="font-label-sm text-label-sm text-on-surface-variant text-center">
-          EduX Parent Portal • Phiên bản 1.0 • Chương trình GDPT 2018
+          EduX Cổng Phụ Huynh • Phiên bản 1.0 • Chương trình GDPT 2018
         </p>
       </div>
     </div>

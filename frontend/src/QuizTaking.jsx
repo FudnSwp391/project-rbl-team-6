@@ -101,14 +101,14 @@ function ConfirmModal({ unanswered, onConfirm, onCancel }) {
             </span>
           </div>
           <div>
-            <h3 className="font-headline-md text-headline-md text-on-surface mb-xs">Submit Quiz?</h3>
+            <h3 className="font-headline-md text-headline-md text-on-surface mb-xs">Nộp bài kiểm tra?</h3>
             {unanswered > 0 ? (
               <p className="font-body-md text-body-md text-on-surface-variant">
-                You have <strong className="text-amber-600">{unanswered} unanswered question{unanswered > 1 ? 's' : ''}</strong>. Are you sure you want to submit?
+                Bạn còn <strong className="text-amber-600">{unanswered} câu hỏi chưa trả lời</strong>. Bạn có chắc muốn nộp bài không?
               </p>
             ) : (
               <p className="font-body-md text-body-md text-on-surface-variant">
-                You've answered all questions. Ready to submit?
+                Bạn đã trả lời tất cả câu hỏi. Sẵn sàng nộp bài?
               </p>
             )}
           </div>
@@ -117,13 +117,13 @@ function ConfirmModal({ unanswered, onConfirm, onCancel }) {
               onClick={onCancel}
               className="flex-1 h-11 border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface hover:bg-surface-container transition-colors"
             >
-              Keep reviewing
+              Tiếp tục xem lại
             </button>
             <button
               onClick={onConfirm}
               className="flex-1 h-11 bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:opacity-90 transition-opacity"
             >
-              Submit now
+              Nộp bài ngay
             </button>
           </div>
         </div>
@@ -434,7 +434,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
       <div className="fixed inset-0 flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-md">
           <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
-          <p className="font-body-md text-body-md text-on-surface-variant">Loading quiz...</p>
+          <p className="font-body-md text-body-md text-on-surface-variant">Đang tải bài kiểm tra...</p>
         </div>
       </div>
     )
@@ -447,7 +447,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
           <span className="material-symbols-outlined text-error text-[48px]">error</span>
           <h2 className="font-headline-md text-headline-md text-on-surface mt-md mb-sm">{error}</h2>
           <button onClick={() => window.history.back()} className="btn-primary px-md py-sm rounded-lg bg-primary text-on-primary font-label-md text-label-md">
-            Go back
+            Quay lại
           </button>
         </div>
       </div>
@@ -487,7 +487,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         <div className="flex-1 min-w-0">
           <h1 className="font-label-md text-label-md text-on-surface truncate">{quiz?.title}</h1>
           <p className="font-label-sm text-label-sm text-on-surface-variant">
-            {quiz?.subject} • Question {currentIndex + 1} of {questions.length}
+            {quiz?.subject} • Câu hỏi {currentIndex + 1} / {questions.length}
           </p>
         </div>
 
@@ -495,13 +495,13 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
           {/* Answered count */}
           <div className="hidden sm:flex items-center gap-xs">
             <span className="font-label-sm text-label-sm text-on-surface-variant">
-              {answeredCount}/{questions.length} answered
+              {answeredCount}/{questions.length} đã trả lời
             </span>
           </div>
 
           {/* Keyboard hint (desktop only) */}
           <div className="hidden lg:flex items-center gap-xs px-2 py-1 rounded-lg bg-surface-container-high text-on-surface-variant"
-               title="Keyboard shortcuts: ←→ navigate • A/B/C/D answer • F flag">
+               title="Phím tắt: ←→ điều hướng • A/B/C/D trả lời • F đánh dấu">
             <span className="material-symbols-outlined text-[14px]">keyboard</span>
             <span className="font-label-sm text-[11px]">← → A–D F</span>
           </div>
@@ -530,7 +530,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
             ) : (
               <span className="material-symbols-outlined text-[16px]">send</span>
             )}
-            <span className="hidden sm:inline">{submitting ? 'Submitting...' : 'Submit'}</span>
+            <span className="hidden sm:inline">{submitting ? 'Đang nộp...' : 'Nộp bài'}</span>
           </button>
         </div>
       </header>
@@ -552,11 +552,11 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}>
           <div className="p-md border-b border-outline-variant/20 shrink-0">
-            <h2 className="font-label-md text-label-md text-on-surface mb-xs">Questions</h2>
+            <h2 className="font-label-md text-label-md text-on-surface mb-xs">Câu Hỏi</h2>
             <div className="flex gap-sm flex-wrap text-[11px] font-label-sm text-label-sm">
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-primary inline-block" />Answered</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-surface-container-high inline-block border border-outline-variant" />Not answered</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-400 inline-block" />Flagged</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-primary inline-block" />Đã trả lời</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-surface-container-high inline-block border border-outline-variant" />Chưa trả lời</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-400 inline-block" />Đã đánh dấu</span>
             </div>
           </div>
 
@@ -597,7 +597,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
               />
             </div>
             <p className="font-label-sm text-label-sm text-on-surface-variant text-center">
-              {answeredCount} of {questions.length} answered
+              {answeredCount} / {questions.length} đã trả lời
             </p>
           </div>
         </aside>
@@ -663,7 +663,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
                   className="flex items-center gap-xs h-10 px-md border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-                  Previous
+                  Trước
                 </button>
 
                 <button
@@ -677,7 +677,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
                   <span className="material-symbols-outlined text-[18px]" style={flagged.has(currentIndex) ? { fontVariationSettings: "'FILL' 1" } : {}}>
                     flag
                   </span>
-                  {flagged.has(currentIndex) ? 'Flagged' : 'Flag'}
+                  {flagged.has(currentIndex) ? 'Đã đánh dấu' : 'Đánh dấu'}
                 </button>
 
                 {currentIndex < questions.length - 1 ? (
@@ -685,7 +685,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
                     onClick={() => setCurrentIndex(i => Math.min(questions.length - 1, i + 1))}
                     className="flex items-center gap-xs h-10 px-md bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:opacity-90 transition-opacity"
                   >
-                    Next
+                    Tiếp theo
                     <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                   </button>
                 ) : (
@@ -694,14 +694,14 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
                     className="flex items-center gap-xs h-10 px-md bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:opacity-90 transition-opacity"
                   >
                     <span className="material-symbols-outlined text-[18px]">send</span>
-                    Submit
+                    Nộp bài
                   </button>
                 )}
               </div>
             </div>
           ) : (
             <div className="flex items-center justify-center h-full">
-              <p className="text-on-surface-variant font-body-md text-body-md">No questions found.</p>
+              <p className="text-on-surface-variant font-body-md text-body-md">Không tìm thấy câu hỏi.</p>
             </div>
           )}
         </main>

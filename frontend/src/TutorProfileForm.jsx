@@ -25,8 +25,8 @@ const MAX_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
 
 const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'))
 const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+  'Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6',
+  'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12',
 ]
 const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = Array.from({ length: 80 }, (_, i) => String(CURRENT_YEAR - 18 - i))
@@ -37,24 +37,24 @@ const COUNTRIES = [
 ]
 
 const EDUCATION_LEVELS = [
-  "Bachelor's Degree",
-  "Master's Degree",
-  'PhD / Doctorate',
-  'Professional Certification',
-  'Other',
+  'Cử Nhân',
+  'Thạc Sĩ',
+  'Tiến Sĩ / Nghiên Cứu Sinh',
+  'Chứng Chỉ Nghề Nghiệp',
+  'Khác',
 ]
 
 const LANGUAGES = [
-  'Vietnamese (Native)',
-  'English (Native)',
-  'English (Fluent)',
-  'English (Intermediate)',
-  'Chinese (Mandarin)',
-  'Japanese',
-  'Korean',
-  'French',
-  'German',
-  'Spanish',
+  'Tiếng Việt (Bản ngữ)',
+  'Tiếng Anh (Bản ngữ)',
+  'Tiếng Anh (Thành thạo)',
+  'Tiếng Anh (Trung cấp)',
+  'Tiếng Trung (Phổ thông)',
+  'Tiếng Nhật',
+  'Tiếng Hàn',
+  'Tiếng Pháp',
+  'Tiếng Đức',
+  'Tiếng Tây Ban Nha',
 ]
 
 const SUGGESTED_SUBJECTS = [
@@ -76,10 +76,10 @@ const SUGGESTED_SUBJECTS = [
 function validateImageFile(file) {
   if (!file) return null
   if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-    return 'Only image files (JPG, JPEG, PNG, WEBP) are allowed.'
+    return 'Chỉ chấp nhận file ảnh (JPG, JPEG, PNG, WEBP).'
   }
   if (file.size > MAX_SIZE_BYTES) {
-    return 'File size must be under 5 MB.'
+    return 'Kích thước file phải dưới 5 MB.'
   }
   return null
 }
@@ -91,7 +91,7 @@ function createObjectURL(file) {
 
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
-const STEPS = ['About You', 'Experience', 'Documents', 'Review & Submit']
+const STEPS = ['Về Bạn', 'Kinh Nghiệm', 'Tài Liệu', 'Xem Lại & Nộp']
 
 function Stepper({ current }) {
   return (
@@ -172,14 +172,14 @@ function ImageUploadCard({ id, label, description, file, onFileChange, onRemove,
               onClick={() => inputRef.current?.click()}
               className="px-3 py-1.5 text-sm font-semibold text-primary border border-primary rounded-lg hover:bg-primary/5 transition-colors"
             >
-              Change
+              Thay Đổi
             </button>
             <button
               type="button"
               onClick={onRemove}
               className="px-3 py-1.5 text-sm font-semibold text-error border border-error rounded-lg hover:bg-error/5 transition-colors"
             >
-              Remove
+              Xóa
             </button>
           </div>
         </div>
@@ -191,8 +191,8 @@ function ImageUploadCard({ id, label, description, file, onFileChange, onRemove,
           className="w-full border-2 border-dashed border-outline-variant rounded-lg p-6 flex flex-col items-center gap-2 hover:border-primary/50 hover:bg-primary/5 transition-all duration-200 cursor-pointer"
         >
           <span className="material-symbols-outlined text-[36px] text-on-surface-variant">upload_file</span>
-          <span className="font-label-md text-label-md text-primary">Click to upload image</span>
-          <span className="font-label-sm text-label-sm text-on-surface-variant">JPG, JPEG, PNG, WEBP · Max 5 MB</span>
+          <span className="font-label-md text-label-md text-primary">Nhấp để tải ảnh lên</span>
+          <span className="font-label-sm text-label-sm text-on-surface-variant">JPG, JPEG, PNG, WEBP · Tối đa 5 MB</span>
         </button>
       )}
 
@@ -316,39 +316,39 @@ export default function TutorProfileForm() {
   // ── Validation per step ───────────────────────────────────────────────────────
   const validateStep1 = () => {
     const e = {}
-    if (!firstName.trim()) e.firstName = 'First name is required.'
-    if (!lastName.trim()) e.lastName = 'Last name is required.'
-    if (!displayName.trim()) e.displayName = 'Display name is required.'
-    if (!birthDay) e.birthDay = 'Please select a day.'
-    if (!birthMonth) e.birthMonth = 'Please select a month.'
-    if (!birthYear) e.birthYear = 'Please select a year.'
-    if (!gender) e.gender = 'Please select a gender.'
-    if (!country) e.country = 'Please select a country.'
-    if (!city.trim()) e.city = 'City is required.'
-    if (!phone.trim()) e.phone = 'Phone number is required.'
-    if (!bio.trim()) e.bio = 'Bio is required.'
-    else if (bio.trim().length < 100) e.bio = `Bio must be at least 100 characters (currently ${bio.trim().length}).`
+    if (!firstName.trim()) e.firstName = 'Tên là bắt buộc.'
+    if (!lastName.trim()) e.lastName = 'Họ là bắt buộc.'
+    if (!displayName.trim()) e.displayName = 'Tên hiển thị là bắt buộc.'
+    if (!birthDay) e.birthDay = 'Vui lòng chọn ngày.'
+    if (!birthMonth) e.birthMonth = 'Vui lòng chọn tháng.'
+    if (!birthYear) e.birthYear = 'Vui lòng chọn năm.'
+    if (!gender) e.gender = 'Vui lòng chọn giới tính.'
+    if (!country) e.country = 'Vui lòng chọn quốc gia.'
+    if (!city.trim()) e.city = 'Thành phố là bắt buộc.'
+    if (!phone.trim()) e.phone = 'Số điện thoại là bắt buộc.'
+    if (!bio.trim()) e.bio = 'Giới thiệu bản thân là bắt buộc.'
+    else if (bio.trim().length < 100) e.bio = `Giới thiệu phải có ít nhất 100 ký tự (hiện tại: ${bio.trim().length}).`
     setErrors(e)
     return Object.keys(e).length === 0
   }
 
   const validateStep2 = () => {
     const e = {}
-    if (subjects.length === 0) e.subjects = 'Add at least one subject.'
-    if (!education) e.education = 'Please select your education level.'
-    if (!experienceYears && experienceYears !== 0) e.experienceYears = 'Years of experience is required.'
-    else if (isNaN(Number(experienceYears)) || Number(experienceYears) < 0) e.experienceYears = 'Must be a valid number.'
-    if (!language) e.language = 'Please select a teaching language.'
-    if (hourlyRate !== '' && (isNaN(Number(hourlyRate)) || Number(hourlyRate) < 0)) e.hourlyRate = 'Must be a valid number.'
+    if (subjects.length === 0) e.subjects = 'Vui lòng thêm ít nhất một môn học.'
+    if (!education) e.education = 'Vui lòng chọn trình độ học vấn.'
+    if (!experienceYears && experienceYears !== 0) e.experienceYears = 'Số năm kinh nghiệm là bắt buộc.'
+    else if (isNaN(Number(experienceYears)) || Number(experienceYears) < 0) e.experienceYears = 'Phải là một số hợp lệ.'
+    if (!language) e.language = 'Vui lòng chọn ngôn ngữ giảng dạy.'
+    if (hourlyRate !== '' && (isNaN(Number(hourlyRate)) || Number(hourlyRate) < 0)) e.hourlyRate = 'Phải là một số hợp lệ.'
     setErrors(e)
     return Object.keys(e).length === 0
   }
 
   const validateStep3 = () => {
     const e = {}
-    if (!profilePhotoFile) e.profilePhoto = 'Profile photo is required.'
-    if (!certificateFile) e.certificate = 'Certificate image is required.'
-    if (!cccdFile) e.cccd = 'CCCD / ID Card image is required.'
+    if (!profilePhotoFile) e.profilePhoto = 'Ảnh đại diện là bắt buộc.'
+    if (!certificateFile) e.certificate = 'Ảnh chứng chỉ là bắt buộc.'
+    if (!cccdFile) e.cccd = 'Ảnh CCCD / CMND là bắt buộc.'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -373,7 +373,7 @@ export default function TutorProfileForm() {
   // ── Submit ────────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!tosAccepted) {
-      setErrors({ tos: 'You must accept the Terms of Service.' })
+      setErrors({ tos: 'Bạn phải đồng ý với Điều Khoản Dịch Vụ.' })
       return
     }
     setSubmitting(true)
@@ -437,7 +437,7 @@ export default function TutorProfileForm() {
       if (!res.ok) throw new Error(data.message || 'Submission failed.')
 
       setSubmitMessage({
-        text: 'Application submitted successfully! Your status is now Pending review.',
+        text: 'Hồ sơ đã được nộp thành công! Trạng thái của bạn hiện đang chờ xét duyệt.',
         type: 'success',
       })
 
@@ -469,16 +469,16 @@ export default function TutorProfileForm() {
             <>
               <div className="p-lg md:p-xl">
                 <div className="mb-lg">
-                  <h1 className="font-headline-md text-headline-md text-on-surface mb-2">Create your tutor profile</h1>
+                  <h1 className="font-headline-md text-headline-md text-on-surface mb-2">Tạo hồ sơ gia sư của bạn</h1>
                   <p className="font-body-md text-body-md text-on-surface-variant">
-                    Tell us a bit about yourself. This information helps students find the perfect match.
+                    Hãy cho chúng tôi biết đôi điều về bạn. Thông tin này giúp học sinh tìm được gia sư phù hợp nhất.
                   </p>
                 </div>
 
                 <div className="flex gap-4 p-md bg-secondary-container/50 border border-secondary-container rounded-lg mb-lg">
                   <span className="material-symbols-outlined text-primary">info</span>
                   <p className="font-body-md text-body-md text-on-surface-variant">
-                    Please make sure your information is identical to your government-issued ID.
+                    Vui lòng đảm bảo thông tin của bạn khớp với giấy tờ tùy thân do cơ quan nhà nước cấp.
                   </p>
                 </div>
 
@@ -487,11 +487,11 @@ export default function TutorProfileForm() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
                     <div className="flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        First Name <span className="text-error">*</span>
+                        Tên <span className="text-error">*</span>
                       </label>
                       <input
                         className={inputCls(errors.firstName)}
-                        placeholder="e.g. John"
+                        placeholder="Ví dụ: Văn A"
                         type="text"
                         value={firstName}
                         onChange={e => setFirstName(e.target.value)}
@@ -500,11 +500,11 @@ export default function TutorProfileForm() {
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        Last Name <span className="text-error">*</span>
+                        Họ <span className="text-error">*</span>
                       </label>
                       <input
                         className={inputCls(errors.lastName)}
-                        placeholder="e.g. Doe"
+                        placeholder="Ví dụ: Nguyễn"
                         type="text"
                         value={lastName}
                         onChange={e => setLastName(e.target.value)}
@@ -516,11 +516,11 @@ export default function TutorProfileForm() {
                   {/* Display Name */}
                   <div className="flex flex-col gap-2">
                     <label className="font-label-md text-label-md text-on-surface-variant">
-                      Profile Display Name <span className="text-error">*</span>
+                      Tên Hiển Thị Hồ Sơ <span className="text-error">*</span>
                     </label>
                     <input
                       className={inputCls(errors.displayName)}
-                      placeholder="How students will see your name"
+                      placeholder="Tên mà học sinh sẽ nhìn thấy"
                       type="text"
                       value={displayName}
                       onChange={e => setDisplayName(e.target.value)}
@@ -532,7 +532,7 @@ export default function TutorProfileForm() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-md">
                     <div className="md:col-span-2 flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        Birthday <span className="text-error">*</span>
+                        Ngày Sinh <span className="text-error">*</span>
                       </label>
                       <div className="grid grid-cols-3 gap-2">
                         <select
@@ -540,7 +540,7 @@ export default function TutorProfileForm() {
                           value={birthDay}
                           onChange={e => setBirthDay(e.target.value)}
                         >
-                          <option value="">Day</option>
+                          <option value="">Ngày</option>
                           {DAYS.map(d => <option key={d}>{d}</option>)}
                         </select>
                         <select
@@ -548,7 +548,7 @@ export default function TutorProfileForm() {
                           value={birthMonth}
                           onChange={e => setBirthMonth(e.target.value)}
                         >
-                          <option value="">Month</option>
+                          <option value="">Tháng</option>
                           {MONTHS.map(m => <option key={m}>{m}</option>)}
                         </select>
                         <select
@@ -556,28 +556,28 @@ export default function TutorProfileForm() {
                           value={birthYear}
                           onChange={e => setBirthYear(e.target.value)}
                         >
-                          <option value="">Year</option>
+                          <option value="">Năm</option>
                           {YEARS.map(y => <option key={y}>{y}</option>)}
                         </select>
                       </div>
                       {(errors.birthDay || errors.birthMonth || errors.birthYear) && (
-                        <FieldError msg="Please select a complete birthday." />
+                        <FieldError msg="Vui lòng chọn đầy đủ ngày sinh." />
                       )}
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        Gender <span className="text-error">*</span>
+                        Giới Tính <span className="text-error">*</span>
                       </label>
                       <select
                         className={selectCls(errors.gender)}
                         value={gender}
                         onChange={e => setGender(e.target.value)}
                       >
-                        <option value="">Select</option>
-                        <option>Male</option>
-                        <option>Female</option>
-                        <option>Non-binary</option>
-                        <option>Prefer not to say</option>
+                        <option value="">Chọn</option>
+                        <option>Nam</option>
+                        <option>Nữ</option>
+                        <option>Phi nhị giới</option>
+                        <option>Không muốn tiết lộ</option>
                       </select>
                       <FieldError msg={errors.gender} />
                     </div>
@@ -587,25 +587,25 @@ export default function TutorProfileForm() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-md">
                     <div className="flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        Country <span className="text-error">*</span>
+                        Quốc Gia <span className="text-error">*</span>
                       </label>
                       <select
                         className={selectCls(errors.country)}
                         value={country}
                         onChange={e => setCountry(e.target.value)}
                       >
-                        <option value="">Select</option>
+                        <option value="">Chọn</option>
                         {COUNTRIES.map(c => <option key={c}>{c}</option>)}
                       </select>
                       <FieldError msg={errors.country} />
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        City <span className="text-error">*</span>
+                        Thành Phố <span className="text-error">*</span>
                       </label>
                       <input
                         className={inputCls(errors.city)}
-                        placeholder="e.g. Hanoi"
+                        placeholder="Ví dụ: Hà Nội"
                         type="text"
                         value={city}
                         onChange={e => setCity(e.target.value)}
@@ -614,7 +614,7 @@ export default function TutorProfileForm() {
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        Phone Number <span className="text-error">*</span>
+                        Số Điện Thoại <span className="text-error">*</span>
                       </label>
                       <input
                         className={inputCls(errors.phone)}
@@ -630,13 +630,13 @@ export default function TutorProfileForm() {
                   {/* Bio */}
                   <div className="flex flex-col gap-2">
                     <label className="font-label-md text-label-md text-on-surface-variant">
-                      Bio <span className="text-error">*</span>
+                      Giới Thiệu Bản Thân <span className="text-error">*</span>
                     </label>
                     <textarea
                       className={`p-4 rounded-lg border ${
                         errors.bio ? 'border-error' : 'border-outline'
                       } focus:border-primary focus:ring-0 outline-none transition-all bg-white font-body-md resize-none focus:shadow-[0_0_0_3px_rgba(30,64,175,0.15)]`}
-                      placeholder="Share your academic background and teaching philosophy..."
+                      placeholder="Chia sẻ về nền tảng học thuật và triết lý giảng dạy của bạn..."
                       rows="5"
                       value={bio}
                       onChange={e => setBio(e.target.value)}
@@ -644,7 +644,7 @@ export default function TutorProfileForm() {
                     <div className="flex justify-between items-center">
                       <FieldError msg={errors.bio} />
                       <p className={`font-label-sm text-label-sm ml-auto ${bio.length >= 100 ? 'text-green-600' : 'text-on-surface-variant'}`}>
-                        {bio.length} / 100 min characters
+                        {bio.length} / 100 ký tự tối thiểu
                       </p>
                     </div>
                   </div>
@@ -668,9 +668,9 @@ export default function TutorProfileForm() {
             <>
               <div className="p-lg md:p-xl">
                 <div className="mb-lg">
-                  <h1 className="font-headline-md text-headline-md text-on-surface mb-2">Professional Experience</h1>
+                  <h1 className="font-headline-md text-headline-md text-on-surface mb-2">Kinh Nghiệm Chuyên Môn</h1>
                   <p className="font-body-md text-body-md text-on-surface-variant">
-                    Tell us about your academic expertise and teaching background.
+                    Hãy cho chúng tôi biết về chuyên môn học thuật và kinh nghiệm giảng dạy của bạn.
                   </p>
                 </div>
 
@@ -678,7 +678,7 @@ export default function TutorProfileForm() {
                   {/* Subjects */}
                   <div className="flex flex-col gap-2">
                     <label className="font-label-md text-label-md text-on-surface-variant">
-                      Subjects you can teach <span className="text-error">*</span>
+                      Môn học bạn có thể dạy <span className="text-error">*</span>
                     </label>
                     <div
                       className={`flex flex-wrap gap-2 p-3 border rounded-lg bg-white transition-all ${
@@ -702,7 +702,7 @@ export default function TutorProfileForm() {
                       ))}
                       <input
                         className="flex-1 bg-transparent border-none focus:ring-0 outline-none font-body-md text-body-md min-w-[120px]"
-                        placeholder="Type a subject and press Enter…"
+                        placeholder="Nhập môn học và nhấn Enter…"
                         value={subjectInput}
                         onChange={e => setSubjectInput(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSubject() } }}
@@ -729,7 +729,7 @@ export default function TutorProfileForm() {
                       {SUGGESTED_SUBJECTS.every(s => subjects.includes(s)) && (
                         <span className="font-label-sm text-label-sm text-green-600 flex items-center gap-1">
                           <span className="material-symbols-outlined text-[14px]">check_circle</span>
-                          All suggested subjects added
+                          Đã thêm tất cả môn học gợi ý
                         </span>
                       )}
                     </div>
@@ -740,21 +740,21 @@ export default function TutorProfileForm() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
                     <div className="flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        Highest Education Level <span className="text-error">*</span>
+                        Trình Độ Học Vấn Cao Nhất <span className="text-error">*</span>
                       </label>
                       <select
                         className={selectCls(errors.education)}
                         value={education}
                         onChange={e => setEducation(e.target.value)}
                       >
-                        <option value="">Select</option>
+                        <option value="">Chọn</option>
                         {EDUCATION_LEVELS.map(l => <option key={l}>{l}</option>)}
                       </select>
                       <FieldError msg={errors.education} />
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        Years of Teaching Experience <span className="text-error">*</span>
+                        Số Năm Kinh Nghiệm Giảng Dạy <span className="text-error">*</span>
                       </label>
                       <input
                         className={inputCls(errors.experienceYears)}
@@ -772,20 +772,20 @@ export default function TutorProfileForm() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
                     <div className="flex flex-col gap-2">
                       <label className="font-label-md text-label-md text-on-surface-variant">
-                        Teaching Language <span className="text-error">*</span>
+                        Ngôn Ngữ Giảng Dạy <span className="text-error">*</span>
                       </label>
                       <select
                         className={selectCls(errors.language)}
                         value={language}
                         onChange={e => setLanguage(e.target.value)}
                       >
-                        <option value="">Select</option>
+                        <option value="">Chọn</option>
                         {LANGUAGES.map(l => <option key={l}>{l}</option>)}
                       </select>
                       <FieldError msg={errors.language} />
                     </div>
                     <div className="flex flex-col gap-2">
-                      <label className="font-label-md text-label-md text-on-surface-variant">Hourly Rate ($)</label>
+                      <label className="font-label-md text-label-md text-on-surface-variant">Giá Theo Giờ ($)</label>
                       <div className="relative">
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant font-body-md">$</span>
                         <input
@@ -803,10 +803,10 @@ export default function TutorProfileForm() {
 
                   {/* Teaching Style */}
                   <div className="flex flex-col gap-2">
-                    <label className="font-label-md text-label-md text-on-surface-variant">Teaching Style Description</label>
+                    <label className="font-label-md text-label-md text-on-surface-variant">Mô Tả Phương Pháp Giảng Dạy</label>
                     <textarea
                       className="p-4 rounded-lg border border-outline focus:border-primary focus:ring-0 outline-none transition-all bg-white font-body-md resize-none focus:shadow-[0_0_0_3px_rgba(30,64,175,0.15)]"
-                      placeholder="Describe your methodology, how you engage with students, and what they can expect from a lesson…"
+                      placeholder="Mô tả phương pháp của bạn, cách bạn tương tác với học sinh và những gì học sinh có thể mong đợi từ mỗi buổi học…"
                       rows="4"
                       value={teachingStyle}
                       onChange={e => setTeachingStyle(e.target.value)}
@@ -815,10 +815,10 @@ export default function TutorProfileForm() {
 
                   {/* Qualifications */}
                   <div className="flex flex-col gap-2">
-                    <label className="font-label-md text-label-md text-on-surface-variant">Certificates / Qualifications Description</label>
+                    <label className="font-label-md text-label-md text-on-surface-variant">Mô Tả Chứng Chỉ / Bằng Cấp</label>
                     <textarea
                       className="p-4 rounded-lg border border-outline focus:border-primary focus:ring-0 outline-none transition-all bg-white font-body-md resize-none focus:shadow-[0_0_0_3px_rgba(30,64,175,0.15)]"
-                      placeholder="List your key certifications, academic honors, or specialized training…"
+                      placeholder="Liệt kê các chứng chỉ quan trọng, danh hiệu học thuật hoặc khóa đào tạo chuyên biệt của bạn…"
                       rows="3"
                       value={qualifications}
                       onChange={e => setQualifications(e.target.value)}
@@ -829,7 +829,7 @@ export default function TutorProfileForm() {
                   <div className="p-md bg-tertiary-fixed rounded-xl flex gap-md items-start">
                     <span className="material-symbols-outlined text-tertiary flex-shrink-0">info</span>
                     <p className="font-body-md text-body-md text-on-surface">
-                      <strong>Pro Tip:</strong> Tutors with detailed teaching style descriptions receive 40% more booking requests. Be as specific as possible!
+                      <strong>Mẹo Hay:</strong> Gia sư có mô tả phương pháp giảng dạy chi tiết nhận được nhiều hơn 40% yêu cầu đặt lịch. Hãy mô tả càng cụ thể càng tốt!
                     </p>
                   </div>
                 </form>
@@ -857,16 +857,16 @@ export default function TutorProfileForm() {
             <>
               <div className="p-lg md:p-xl">
                 <div className="mb-lg">
-                  <h1 className="font-headline-md text-headline-md text-on-surface mb-2">Upload Your Documents</h1>
+                  <h1 className="font-headline-md text-headline-md text-on-surface mb-2">Tải Lên Tài Liệu Của Bạn</h1>
                   <p className="font-body-md text-body-md text-on-surface-variant">
-                    Please upload clear image files. These will be securely reviewed by our administrators.
+                    Vui lòng tải lên file ảnh rõ ràng. Các tài liệu này sẽ được quản trị viên xem xét một cách bảo mật.
                   </p>
                 </div>
 
                 <div className="flex gap-4 p-md bg-secondary-container/50 border border-secondary-container rounded-lg mb-lg">
                   <span className="material-symbols-outlined text-primary flex-shrink-0">shield</span>
                   <p className="font-body-md text-body-md text-on-surface-variant">
-                    Documents are stored securely and only visible to administrators for verification purposes.
+                    Tài liệu được lưu trữ bảo mật và chỉ hiển thị cho quản trị viên để xác minh.
                   </p>
                 </div>
 
@@ -874,8 +874,8 @@ export default function TutorProfileForm() {
                   {/* Profile Photo */}
                   <ImageUploadCard
                     id="upload-profile-photo"
-                    label="Profile Photo"
-                    description="A professional headshot. Accepted formats: JPG, JPEG, PNG, WEBP. Max 5MB."
+                    label="Ảnh Đại Diện"
+                    description="Ảnh chân dung chuyên nghiệp. Định dạng chấp nhận: JPG, JPEG, PNG, WEBP. Tối đa 5MB."
                     file={profilePhotoFile}
                     onFileChange={e => handleImageChange(e, setProfilePhotoFile, 'profilePhoto')}
                     onRemove={() => { setProfilePhotoFile(null); setErrors(prev => ({ ...prev, profilePhoto: '' })) }}
@@ -887,8 +887,8 @@ export default function TutorProfileForm() {
                     {/* Certificate */}
                     <ImageUploadCard
                       id="upload-certificate"
-                      label="Certificate Image"
-                      description="Certificate image. Accepted formats: JPG, JPEG, PNG, WEBP. Max 5MB."
+                      label="Ảnh Chứng Chỉ"
+                      description="Ảnh chứng chỉ. Định dạng chấp nhận: JPG, JPEG, PNG, WEBP. Tối đa 5MB."
                       file={certificateFile}
                       onFileChange={e => handleImageChange(e, setCertificateFile, 'certificate')}
                       onRemove={() => { setCertificateFile(null); setErrors(prev => ({ ...prev, certificate: '' })) }}
@@ -899,8 +899,8 @@ export default function TutorProfileForm() {
                     {/* CCCD */}
                     <ImageUploadCard
                       id="upload-cccd"
-                      label="CCCD / ID Card Image"
-                      description="CCCD / ID Card image. Accepted formats: JPG, JPEG, PNG, WEBP. Max 5MB."
+                      label="Ảnh CCCD / CMND"
+                      description="Ảnh CCCD / CMND. Định dạng chấp nhận: JPG, JPEG, PNG, WEBP. Tối đa 5MB."
                       file={cccdFile}
                       onFileChange={e => handleImageChange(e, setCccdFile, 'cccd')}
                       onRemove={() => { setCccdFile(null); setErrors(prev => ({ ...prev, cccd: '' })) }}
@@ -916,13 +916,13 @@ export default function TutorProfileForm() {
                   className="px-8 h-12 bg-transparent text-primary font-label-md text-label-md rounded-lg border border-primary hover:bg-surface-container transition-all duration-200"
                   onClick={handleBack}
                 >
-                  Back
+                  Quay Lại
                 </button>
                 <button
                   className="px-10 h-12 bg-primary text-white font-label-md text-label-md rounded-lg shadow-md hover:brightness-110 active:scale-95 transition-all duration-200"
                   onClick={handleContinue}
                 >
-                  Continue
+                  Tiếp Tục
                 </button>
               </div>
             </>
@@ -933,9 +933,9 @@ export default function TutorProfileForm() {
             <>
               <div className="p-lg md:p-xl space-y-lg">
                 <div className="mb-lg">
-                  <h1 className="font-headline-md text-headline-md text-on-surface mb-2">Review & Submit</h1>
+                  <h1 className="font-headline-md text-headline-md text-on-surface mb-2">Xem Lại & Nộp Hồ Sơ</h1>
                   <p className="font-body-md text-body-md text-on-surface-variant">
-                    Please review your information before submitting your application.
+                    Vui lòng kiểm tra lại thông tin của bạn trước khi nộp hồ sơ.
                   </p>
                 </div>
 
@@ -943,7 +943,7 @@ export default function TutorProfileForm() {
                 <section className="bg-surface-container-low rounded-xl border border-outline-variant/40 overflow-hidden">
                   <div className="px-md py-sm bg-surface-container border-b border-outline-variant/30 flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary text-[20px]">person</span>
-                    <h2 className="font-label-md text-label-md text-on-surface">Personal Information</h2>
+                    <h2 className="font-label-md text-label-md text-on-surface">Thông Tin Cá Nhân</h2>
                   </div>
                   <div className="p-md grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6">
                     {[
@@ -962,7 +962,7 @@ export default function TutorProfileForm() {
                       </div>
                     ))}
                     <div className="sm:col-span-2">
-                      <p className="font-label-sm text-label-sm text-on-surface-variant">Bio</p>
+                      <p className="font-label-sm text-label-sm text-on-surface-variant">Giới Thiệu Bản Thân</p>
                       <p className="font-body-md text-body-md text-on-surface line-clamp-3">{bio}</p>
                     </div>
                   </div>
@@ -972,15 +972,15 @@ export default function TutorProfileForm() {
                 <section className="bg-surface-container-low rounded-xl border border-outline-variant/40 overflow-hidden">
                   <div className="px-md py-sm bg-surface-container border-b border-outline-variant/30 flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary text-[20px]">work</span>
-                    <h2 className="font-label-md text-label-md text-on-surface">Professional Experience</h2>
+                    <h2 className="font-label-md text-label-md text-on-surface">Kinh Nghiệm Chuyên Môn</h2>
                   </div>
                   <div className="p-md grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6">
                     {[
-                      ['Subjects', subjects.join(', ') || '—'],
-                      ['Education Level', education || '—'],
-                      ['Years of Experience', experienceYears || '—'],
-                      ['Teaching Language', language || '—'],
-                      ['Hourly Rate', hourlyRate ? `$${hourlyRate}` : '—'],
+                      ['Môn Học', subjects.join(', ') || '—'],
+                      ['Trình Độ Học Vấn', education || '—'],
+                      ['Số Năm Kinh Nghiệm', experienceYears || '—'],
+                      ['Ngôn Ngữ Giảng Dạy', language || '—'],
+                      ['Giá Theo Giờ', hourlyRate ? `$${hourlyRate}` : '—'],
                     ].map(([label, value]) => (
                       <div key={label}>
                         <p className="font-label-sm text-label-sm text-on-surface-variant">{label}</p>
@@ -994,13 +994,13 @@ export default function TutorProfileForm() {
                 <section className="bg-surface-container-low rounded-xl border border-outline-variant/40 overflow-hidden">
                   <div className="px-md py-sm bg-surface-container border-b border-outline-variant/30 flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary text-[20px]">description</span>
-                    <h2 className="font-label-md text-label-md text-on-surface">Documents Uploaded</h2>
+                    <h2 className="font-label-md text-label-md text-on-surface">Tài Liệu Đã Tải Lên</h2>
                   </div>
                   <div className="p-md grid grid-cols-1 sm:grid-cols-3 gap-md">
                     {[
-                      { label: 'Profile Photo', file: profilePhotoFile },
-                      { label: 'Certificate Image', file: certificateFile },
-                      { label: 'CCCD / ID Card Image', file: cccdFile },
+                      { label: 'Ảnh Đại Diện', file: profilePhotoFile },
+                      { label: 'Ảnh Chứng Chỉ', file: certificateFile },
+                      { label: 'Ảnh CCCD / CMND', file: cccdFile },
                     ].map(({ label, file }) => {
                       const url = file ? createObjectURL(file) : null
                       return (
@@ -1027,7 +1027,7 @@ export default function TutorProfileForm() {
                                 {file.name}
                               </p>
                             ) : (
-                              <p className="font-label-sm text-label-sm text-error">Not uploaded</p>
+                              <p className="font-label-sm text-label-sm text-error">Chưa tải lên</p>
                             )}
                           </div>
                         </div>
@@ -1038,16 +1038,16 @@ export default function TutorProfileForm() {
 
                 {/* Terms of Service */}
                 <section className="bg-surface-container-low rounded-xl border border-outline-variant/40 p-md">
-                  <h2 className="font-label-md text-label-md text-on-surface mb-sm">Terms of Service</h2>
+                  <h2 className="font-label-md text-label-md text-on-surface mb-sm">Điều Khoản Dịch Vụ</h2>
                   <div className="h-36 overflow-y-auto text-on-surface-variant font-body-md text-sm p-sm border border-outline-variant rounded-lg bg-white mb-md leading-relaxed">
-                    <p className="mb-2"><strong>1. Accuracy of Information</strong></p>
-                    <p className="mb-3">By submitting this application, you confirm that all information provided is accurate and matches your government-issued identification documents.</p>
-                    <p className="mb-2"><strong>2. Document Verification</strong></p>
-                    <p className="mb-3">Your uploaded documents (CCCD/ID Card and Certificate) will be reviewed by our admin team for verification. False documents may result in account suspension.</p>
-                    <p className="mb-2"><strong>3. Application Review</strong></p>
-                    <p className="mb-3">Your application will be set to "Pending" status and reviewed within 3–5 business days. You will be notified of the outcome via email.</p>
-                    <p className="mb-2"><strong>4. Privacy</strong></p>
-                    <p>Your personal information and documents are stored securely and will not be shared with third parties without your consent.</p>
+                    <p className="mb-2"><strong>1. Tính Chính Xác Của Thông Tin</strong></p>
+                    <p className="mb-3">Bằng cách nộp hồ sơ này, bạn xác nhận rằng tất cả thông tin cung cấp là chính xác và khớp với giấy tờ tùy thân do cơ quan nhà nước cấp.</p>
+                    <p className="mb-2"><strong>2. Xác Minh Tài Liệu</strong></p>
+                    <p className="mb-3">Các tài liệu bạn tải lên (CCCD/CMND và Chứng chỉ) sẽ được đội ngũ quản trị viên xem xét để xác minh. Tài liệu giả mạo có thể dẫn đến việc khóa tài khoản.</p>
+                    <p className="mb-2"><strong>3. Xem Xét Hồ Sơ</strong></p>
+                    <p className="mb-3">Hồ sơ của bạn sẽ được đặt ở trạng thái "Chờ Xét Duyệt" và được xem xét trong vòng 3–5 ngày làm việc. Bạn sẽ được thông báo kết quả qua email.</p>
+                    <p className="mb-2"><strong>4. Quyền Riêng Tư</strong></p>
+                    <p>Thông tin cá nhân và tài liệu của bạn được lưu trữ bảo mật và sẽ không được chia sẻ với bên thứ ba khi chưa có sự đồng ý của bạn.</p>
                   </div>
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input
@@ -1061,7 +1061,7 @@ export default function TutorProfileForm() {
                       className="mt-1 w-4 h-4 accent-primary flex-shrink-0"
                     />
                     <span className="font-body-md text-body-md text-on-surface">
-                      I have read and agree to the Terms of Service. I confirm all uploaded information and documents are genuine.
+                      Tôi đã đọc và đồng ý với Điều Khoản Dịch Vụ. Tôi xác nhận tất cả thông tin và tài liệu đã tải lên là xác thực.
                     </span>
                   </label>
                   <FieldError msg={errors.tos} />
@@ -1090,7 +1090,7 @@ export default function TutorProfileForm() {
                   onClick={handleBack}
                   disabled={submitting}
                 >
-                  Back
+                  Quay Lại
                 </button>
                 <button
                   className="px-10 h-12 bg-primary text-white font-label-md text-label-md rounded-lg shadow-md hover:brightness-110 active:scale-95 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
@@ -1100,7 +1100,7 @@ export default function TutorProfileForm() {
                   {submitting && (
                     <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
                   )}
-                  {submitting ? 'Submitting…' : 'Submit Application'}
+                  {submitting ? 'Đang nộp…' : 'Nộp Hồ Sơ'}
                 </button>
               </div>
             </>

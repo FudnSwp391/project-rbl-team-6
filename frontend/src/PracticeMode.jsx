@@ -125,27 +125,27 @@ const QUESTION_PRESETS = [5, 10, 15, 20]
 const DIFFICULTIES = [
   {
     key: 'easy',
-    label: 'Easy',
+    label: 'Dễ',
     dot: '🟢',
-    desc: 'Fundamentals & basics',
+    desc: 'Kiến thức cơ bản',
     color: 'border-green-300 hover:border-green-400',
     activeBg: 'bg-green-50 border-green-500 ring-2 ring-green-200',
     iconBg: 'bg-green-100 text-green-600',
   },
   {
     key: 'medium',
-    label: 'Medium',
+    label: 'Trung Bình',
     dot: '🟡',
-    desc: 'Applied concepts',
+    desc: 'Vận dụng kiến thức',
     color: 'border-amber-300 hover:border-amber-400',
     activeBg: 'bg-amber-50 border-amber-500 ring-2 ring-amber-200',
     iconBg: 'bg-amber-100 text-amber-600',
   },
   {
     key: 'hard',
-    label: 'Hard',
+    label: 'Khó',
     dot: '🔴',
-    desc: 'Advanced & challenging',
+    desc: 'Nâng cao & thách thức',
     color: 'border-red-300 hover:border-red-400',
     activeBg: 'bg-red-50 border-red-500 ring-2 ring-red-200',
     iconBg: 'bg-red-100 text-red-600',
@@ -154,12 +154,12 @@ const DIFFICULTIES = [
 
 // Time limit presets (in minutes; null = unlimited)
 const TIME_LIMITS = [
-  { label: 'No limit', value: null, icon: 'all_inclusive', color: 'text-on-surface-variant' },
-  { label: '5 min',   value: 5,    icon: 'timer',         color: 'text-green-600' },
-  { label: '10 min',  value: 10,   icon: 'timer',         color: 'text-green-600' },
-  { label: '15 min',  value: 15,   icon: 'timer',         color: 'text-amber-600' },
-  { label: '20 min',  value: 20,   icon: 'timer',         color: 'text-amber-600' },
-  { label: '30 min',  value: 30,   icon: 'timer',         color: 'text-red-500' },
+  { label: 'Không giới hạn', value: null, icon: 'all_inclusive', color: 'text-on-surface-variant' },
+  { label: '5 phút',   value: 5,    icon: 'timer',         color: 'text-green-600' },
+  { label: '10 phút',  value: 10,   icon: 'timer',         color: 'text-green-600' },
+  { label: '15 phút',  value: 15,   icon: 'timer',         color: 'text-amber-600' },
+  { label: '20 phút',  value: 20,   icon: 'timer',         color: 'text-amber-600' },
+  { label: '30 phút',  value: 30,   icon: 'timer',         color: 'text-red-500' },
 ]
 
 // AI-suggested time: 1.5 min per question, rounded
@@ -289,11 +289,11 @@ export default function PracticeMode({ token }) {
     const now = new Date()
     const diff = now - d
     const mins = Math.floor(diff / 60000)
-    if (mins < 60) return `${mins}m ago`
+    if (mins < 60) return `${mins} phút trước`
     const hrs = Math.floor(mins / 60)
-    if (hrs < 24) return `${hrs}h ago`
+    if (hrs < 24) return `${hrs} giờ trước`
     const days = Math.floor(hrs / 24)
-    if (days < 7) return `${days}d ago`
+    if (days < 7) return `${days} ngày trước`
     return d.toLocaleDateString()
   }
 
@@ -315,10 +315,10 @@ export default function PracticeMode({ token }) {
         </div>
         <div className="text-center">
           <h3 className="font-headline-md text-headline-md text-on-surface mb-xs">
-            AI is creating your quiz...
+            AI đang tạo bài kiểm tra...
           </h3>
           <p className="font-body-md text-body-md text-on-surface-variant">
-            Generating personalized questions. This may take a moment.
+            Đang tạo câu hỏi cá nhân hóa. Vui lòng chờ trong giây lát.
           </p>
         </div>
       </div>
@@ -385,12 +385,12 @@ export default function PracticeMode({ token }) {
           </div>
           <div>
             <h2 className="font-headline-lg text-headline-lg text-on-surface">
-              AI Practice
+              Luyện Tập AI
             </h2>
           </div>
         </div>
         <p className="font-body-lg text-body-lg text-on-surface-variant ml-[52px] -mt-sm">
-          Practice smarter with AI-generated quizzes tailored to your needs.
+          Luyện tập thông minh hơn với bài kiểm tra do AI tạo ra, phù hợp với nhu cầu của bạn.
         </p>
       </div>
 
@@ -400,10 +400,10 @@ export default function PracticeMode({ token }) {
           <div className="flex justify-between items-center mb-md">
             <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-sm">
               <span className="material-symbols-outlined text-primary">history</span>
-              Recent Sessions
+              Phiên Gần Đây
             </h3>
             <span className="font-label-sm text-label-sm text-on-surface-variant">
-              {history.length} session{history.length !== 1 ? 's' : ''}
+              {history.length} phiên
             </span>
           </div>
 
@@ -416,7 +416,7 @@ export default function PracticeMode({ token }) {
 
               const handleDelete = async (e) => {
                 e.stopPropagation()
-                if (!confirm('Discard this practice session?')) return
+                if (!confirm('Bạn có muốn xóa phiên luyện tập này không?')) return
                 try {
                   const res = await fetch(`${apiBaseUrl}/api/practice/${session.id}`, {
                     method: 'DELETE',
@@ -443,7 +443,7 @@ export default function PracticeMode({ token }) {
                   {!isCompleted && (
                     <button
                       onClick={handleDelete}
-                      title="Discard session"
+                      title="Xóa phiên"
                       className="absolute top-2 right-2 w-6 h-6 rounded-full bg-surface-container-high text-on-surface-variant hover:bg-red-100 hover:text-red-600 flex items-center justify-center transition-colors z-10"
                     >
                       <span className="material-symbols-outlined text-[14px]">close</span>
@@ -454,7 +454,7 @@ export default function PracticeMode({ token }) {
                     <div className="flex-1 min-w-0 pr-6">
                       <p className="font-label-md text-label-md text-on-surface truncate">{session.topic}</p>
                       <p className="font-label-sm text-label-sm text-on-surface-variant">
-                        {session.total_questions} questions
+                        {session.total_questions} câu hỏi
                         {session.difficulty && ` • ${session.difficulty}`}
                       </p>
                     </div>
@@ -469,7 +469,7 @@ export default function PracticeMode({ token }) {
                     ) : (
                       <span className="inline-flex items-center gap-xs px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container font-label-sm text-[11px] shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                        In Progress
+                        Đang Làm
                       </span>
                     )}
                   </div>
@@ -493,12 +493,12 @@ export default function PracticeMode({ token }) {
                     </span>
                     {isCompleted ? (
                       <span className="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-xs">
-                        View result
+                        Xem kết quả
                         <span className="material-symbols-outlined text-[14px]">chevron_right</span>
                       </span>
                     ) : (
                       <span className="font-label-sm text-label-sm text-primary flex items-center gap-xs">
-                        Continue
+                        Tiếp tục
                         <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
                       </span>
                     )}
@@ -531,7 +531,7 @@ export default function PracticeMode({ token }) {
             >
               bolt
             </span>
-            Quick Setup
+            Thiết Lập Nhanh
           </button>
           <button
             onClick={() => setActiveTab('chat')}
@@ -551,7 +551,7 @@ export default function PracticeMode({ token }) {
             >
               chat
             </span>
-            Chat with AI
+            Trò Chuyện với AI
           </button>
         </div>
       </div>
@@ -746,7 +746,7 @@ export default function PracticeMode({ token }) {
                   <span className="material-symbols-outlined text-[18px] text-primary">
                     format_list_numbered
                   </span>
-                  Number of questions
+                  Số lượng câu hỏi
                 </span>
               </label>
               <div className="flex flex-wrap gap-sm">
@@ -768,7 +768,7 @@ export default function PracticeMode({ token }) {
                 ))}
                 <div className="flex items-center gap-sm">
                   <span className="text-on-surface-variant font-label-sm text-label-sm">
-                    or
+                    hoặc
                   </span>
                   <input
                     type="number"
@@ -778,7 +778,7 @@ export default function PracticeMode({ token }) {
                       setUseCustomCount(true)
                     }}
                     onFocus={() => setUseCustomCount(true)}
-                    placeholder="Custom"
+                    placeholder="Tùy chỉnh"
                     min={1}
                     max={50}
                     className={`h-12 w-24 rounded-xl border-2 text-center font-label-md text-label-md text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none transition-all duration-200 ${
@@ -798,7 +798,7 @@ export default function PracticeMode({ token }) {
                   <span className="material-symbols-outlined text-[18px] text-primary">
                     signal_cellular_alt
                   </span>
-                  Difficulty level
+                  Độ khó
                 </span>
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-md">
@@ -836,7 +836,7 @@ export default function PracticeMode({ token }) {
                 <label className="font-label-md text-label-md text-on-surface">
                   <span className="flex items-center gap-xs">
                     <span className="material-symbols-outlined text-[18px] text-primary">timer</span>
-                    Time limit
+                    Giới hạn thời gian
                   </span>
                 </label>
                 {/* AI Suggest button */}
@@ -852,7 +852,7 @@ export default function PracticeMode({ token }) {
                     className="inline-flex items-center gap-xs px-2.5 py-1 rounded-lg bg-primary-container text-on-primary-container font-label-sm text-label-sm hover:opacity-90 transition-opacity"
                   >
                     <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
-                    AI suggest
+                    AI gợi ý
                   </button>
                 )}
               </div>
@@ -873,14 +873,14 @@ export default function PracticeMode({ token }) {
                   </button>
                 ))}
                 <div className="flex items-center gap-xs">
-                  <span className="text-on-surface-variant font-label-sm text-label-sm">or</span>
+                  <span className="text-on-surface-variant font-label-sm text-label-sm">hoặc</span>
                   <div className="relative">
                     <input
                       type="number"
                       value={customTime}
                       onChange={(e) => { setCustomTime(e.target.value); setUseCustomTime(true) }}
                       onFocus={() => setUseCustomTime(true)}
-                      placeholder="Custom"
+                      placeholder="Tùy chỉnh"
                       min={1}
                       max={180}
                       className={`h-10 w-24 rounded-xl border-2 text-center font-label-sm text-label-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none transition-all duration-200 ${
@@ -899,10 +899,10 @@ export default function PracticeMode({ token }) {
                 <span className="material-symbols-outlined text-[14px]">info</span>
                 {
                   useCustomTime && customTime
-                    ? `${customTime}-minute timer will start when quiz begins`
+                    ? `Bộ đếm ${customTime} phút sẽ bắt đầu khi bài kiểm tra bắt đầu`
                     : timeLimit
-                      ? `${timeLimit}-minute timer will start when quiz begins`
-                      : 'No time limit — practice at your own pace'
+                      ? `Bộ đếm ${timeLimit} phút sẽ bắt đầu khi bài kiểm tra bắt đầu`
+                      : 'Không giới hạn thời gian — luyện tập theo tốc độ của bạn'
                 }
               </p>
             </div>

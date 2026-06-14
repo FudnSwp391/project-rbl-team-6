@@ -181,7 +181,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
       <div className="fixed inset-0 flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-md">
           <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
-          <p className="font-body-md text-body-md text-on-surface-variant">Loading results...</p>
+          <p className="font-body-md text-body-md text-on-surface-variant">Đang tải kết quả...</p>
         </div>
       </div>
     )
@@ -192,12 +192,12 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
       <div className="fixed inset-0 flex items-center justify-center bg-background p-md">
         <div className="text-center">
           <span className="material-symbols-outlined text-error text-[48px]">error</span>
-          <h2 className="font-headline-md text-headline-md text-on-surface mt-md mb-md">{error || 'Results not found'}</h2>
+          <h2 className="font-headline-md text-headline-md text-on-surface mt-md mb-md">{error || 'Không tìm thấy kết quả'}</h2>
           <button
             onClick={() => window.location.hash = '/dashboard'}
             className="h-10 px-md bg-primary text-on-primary rounded-lg font-label-md text-label-md"
           >
-            Back to Dashboard
+            Quay lại Bảng Điều Khiển
           </button>
         </div>
       </div>
@@ -207,7 +207,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
   const percentage = data.score ?? 0
   const color = percentage >= 70 ? 'text-green-600' : percentage >= 50 ? 'text-amber-600' : 'text-red-600'
   const bgGrade = percentage >= 70 ? 'from-green-50 to-emerald-50' : percentage >= 50 ? 'from-amber-50 to-yellow-50' : 'from-red-50 to-rose-50'
-  const grade = percentage >= 90 ? 'Excellent! 🎉' : percentage >= 70 ? 'Good job! 👍' : percentage >= 50 ? 'Keep it up! 💪' : 'Need more practice 📚'
+  const grade = percentage >= 90 ? 'Xuất sắc! 🎉' : percentage >= 70 ? 'Làm tốt lắm! 👍' : percentage >= 50 ? 'Cố lên! 💪' : 'Cần luyện tập thêm 📚'
 
   return (
     <div className="min-h-screen bg-background font-body-md text-body-md text-on-surface">
@@ -218,7 +218,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
           className="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md"
         >
           <span className="material-symbols-outlined text-[20px]">arrow_back</span>
-          Back to Dashboard
+          Quay lại Bảng Điều Khiển
         </button>
         <div className="flex-1" />
         <span className="font-label-sm text-label-sm text-on-surface-variant hidden sm:inline">
@@ -234,7 +234,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
             <CircularProgress percentage={percentage} size={140} strokeWidth={12} />
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <span className={`font-headline-lg text-headline-lg font-black ${color}`}>{percentage}%</span>
-              <span className="font-label-sm text-label-sm text-on-surface-variant">score</span>
+              <span className="font-label-sm text-label-sm text-on-surface-variant">điểm số</span>
             </div>
           </div>
 
@@ -246,10 +246,10 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
           {/* Stats row */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-sm w-full">
             {[
-              { label: 'Total', value: data.total_questions, icon: 'quiz', color: 'text-on-surface' },
-              { label: 'Correct', value: data.total_correct ?? '—', icon: 'check_circle', color: 'text-green-600' },
-              { label: 'Wrong', value: (data.total_questions - (data.total_correct ?? 0)), icon: 'cancel', color: 'text-red-600' },
-              { label: 'Time', value: formatDuration(data.started_at, data.submitted_at), icon: 'timer', color: 'text-primary' },
+              { label: 'Tổng', value: data.total_questions, icon: 'quiz', color: 'text-on-surface' },
+              { label: 'Đúng', value: data.total_correct ?? '—', icon: 'check_circle', color: 'text-green-600' },
+              { label: 'Sai', value: (data.total_questions - (data.total_correct ?? 0)), icon: 'cancel', color: 'text-red-600' },
+              { label: 'Thời gian', value: formatDuration(data.started_at, data.submitted_at), icon: 'timer', color: 'text-primary' },
             ].map(stat => (
               <div key={stat.label} className="bg-white/70 backdrop-blur-sm rounded-xl p-sm flex flex-col items-center gap-xs shadow-sm">
                 <span className={`material-symbols-outlined text-[20px] ${stat.color}`} style={{ fontVariationSettings: "'FILL' 1" }}>
@@ -267,7 +267,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
           <div className="flex flex-col gap-md">
             <h2 className="font-headline-md text-headline-md text-on-surface flex items-center gap-sm">
               <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>fact_check</span>
-              Question Review
+              Xem Lại Câu Hỏi
             </h2>
 
             {data.questions.map((q, idx) => {
@@ -318,7 +318,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
                   )}
 
                   {unanswered && (
-                    <p className="ml-10 font-label-sm text-label-sm text-on-surface-variant italic">Not answered</p>
+                    <p className="ml-10 font-label-sm text-label-sm text-on-surface-variant italic">Chưa trả lời</p>
                   )}
                 </div>
               )
@@ -333,7 +333,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
             className="flex-1 sm:flex-none h-11 px-xl border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface hover:bg-surface-container transition-colors flex items-center justify-center gap-sm"
           >
             <span className="material-symbols-outlined text-[18px]">home</span>
-            Back to Dashboard
+            Quay lại Bảng Điều Khiển
           </button>
           {isPractice ? (
             <button
@@ -341,7 +341,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
               className="flex-1 sm:flex-none h-11 px-xl bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:opacity-90 transition-opacity flex items-center justify-center gap-sm"
             >
               <span className="material-symbols-outlined text-[18px]">refresh</span>
-              New Practice
+              Luyện tập mới
             </button>
           ) : isExamPaper ? (
             <button
@@ -349,7 +349,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
               className="flex-1 sm:flex-none h-11 px-xl bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:opacity-90 transition-opacity flex items-center justify-center gap-sm"
             >
               <span className="material-symbols-outlined text-[18px]">article</span>
-              More Exams
+              Thêm Kỳ Thi
             </button>
           ) : (
             <button
@@ -357,7 +357,7 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
               className="flex-1 sm:flex-none h-11 px-xl bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:opacity-90 transition-opacity flex items-center justify-center gap-sm"
             >
               <span className="material-symbols-outlined text-[18px]">quiz</span>
-              More Quizzes
+              Thêm Bài Kiểm Tra
             </button>
           )}
         </div>
