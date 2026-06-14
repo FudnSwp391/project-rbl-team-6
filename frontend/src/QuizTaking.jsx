@@ -197,58 +197,50 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
     if (isExamPaper) {
       fetchExamPaper()
     } else if (isPractice) {
-      // Try to load from sessionStorage first (written by PracticeMode after generate)
-      const stored = sessionStorage.getItem('practice_session')
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored)
-          if (!practiceSessionId || parsed.sessionId === practiceSessionId) {
-            setQuestions(parsed.questions || [])
-            setQuiz({
-              title: parsed.topic || 'AI Practice',
-              subject: `${parsed.difficulty || 'medium'} difficulty`,
-              total_questions: (parsed.questions || []).length
-            })
-            // Set timer from stored time limit
-            if (parsed.timeLimitMins && parsed.timeLimitMins > 0) {
-              const secs = parsed.timeLimitMins * 60
-              setTimeRemaining(secs)
-              setTotalSeconds(secs)
-            }
-            setLoading(false)
-            sessionStorage.removeItem('practice_session')
-            return
-          }
-        } catch (_) {}
-      }
+      // Always fetch from backend to ensure latest time and state, avoiding stale sessionStorage from tab restores
       fetchPracticeSession()
     } else if (quizId) {
       fetchQuizData()
     }
   }, [quizId, isPractice, practiceSessionId, isExamPaper, examPaperId])
 
-  // ── Auto-save draft every 30s ──
+  // ── Auto-save draft every 10s + save on page hide / close / unmount ──
   useEffect(() => {
     if (isExamPaper) return
     if (!isPractice && !attemptId) return
     if (isPractice && !practiceSessionId) return
-    
-    autoSaveRef.current = setInterval(() => {
+
+    const doSave = () => {
       if (isPractice) {
         savePracticeDraft()
       } else {
         saveDraft()
       }
-    }, 30000)
+    }
+    
+    // Periodic auto-save every 10 seconds
+    autoSaveRef.current = setInterval(doSave, 10000)
+
+    // Save when tab becomes hidden (user switches tab, minimizes, or is about to close)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        doSave()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    // Save when browser tab is closing / refreshing (backup for visibilitychange)
+    const handleBeforeUnload = () => {
+      doSave()
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
 
     return () => {
       clearInterval(autoSaveRef.current)
-      // Save one last time when unmounting
-      if (isPractice) {
-        savePracticeDraft()
-      } else {
-        saveDraft()
-      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      // Save one last time when unmounting (SPA navigation)
+      doSave()
     }
   }, [attemptId, practiceSessionId, isPractice, isExamPaper])
 
@@ -307,7 +299,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
     // Backend fallback: re-fetch session questions (no correct answers)
     try {
       setLoading(true)
-      const res = await fetch(`${apiBaseUrl}/api/practice/${practiceSessionId}/questions`, {
+      const res = await fetch(`${apiBaseUrl}/api/practice/${practiceSessionId}/questions?_t=${Date.now()}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error('Failed to load practice session')

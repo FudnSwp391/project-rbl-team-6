@@ -193,7 +193,7 @@ export default function PracticeMode({ token }) {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const res = await fetch(`${apiBaseUrl}/api/practice/history`, {
+        const res = await fetch(`${apiBaseUrl}/api/practice/history?_t=${Date.now()}`, {
           headers: { Authorization: `Bearer ${token}` },
         })
         if (res.ok) {
@@ -261,15 +261,6 @@ export default function PracticeMode({ token }) {
         }
         throw new Error(data.message || 'Generate failed')
       }
-
-      // Store questions + session data + time limit in sessionStorage
-      sessionStorage.setItem('practice_session', JSON.stringify({
-        sessionId: data.session.id,
-        topic: data.session.topic,
-        difficulty: data.session.difficulty,
-        questions: data.questions,
-        timeLimitMins: timeLimitMins ?? null,   // null = no limit
-      }))
 
       window.location.hash = '/practice-quiz/' + data.session.id
     } catch (err) {

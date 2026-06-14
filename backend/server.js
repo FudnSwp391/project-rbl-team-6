@@ -1289,7 +1289,7 @@ app.post('/api/practice/generate', verifyToken, async (req, res) => {
 app.get('/api/practice/history', verifyToken, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, topic, difficulty, score, total_questions, total_correct, status, created_at, submitted_at FROM practice_sessions WHERE student_id=$1 ORDER BY created_at DESC LIMIT 50`,
+      `SELECT id, topic, difficulty, score, total_questions, total_correct, status, created_at, submitted_at, time_limit_mins, time_remaining_seconds FROM practice_sessions WHERE student_id=$1 ORDER BY created_at DESC LIMIT 50`,
       [req.user.userId]
     );
     return res.json({ sessions: r.rows });
