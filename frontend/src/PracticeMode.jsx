@@ -247,7 +247,7 @@ export default function PracticeMode({ token }) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ topic: t, count: c, difficulty: d }),
+        body: JSON.stringify({ topic: t, count: c, difficulty: d, timeLimitMins }),
       })
 
       const data = await res.json()
@@ -338,29 +338,43 @@ export default function PracticeMode({ token }) {
     <div className="flex flex-col gap-xl animate-[fadeIn_0.4s_ease-out]">
       {/* ── Resume Popup ── */}
       {resumeSession && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-md bg-black/50 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-          <div className="bg-surface rounded-2xl p-xl max-w-sm w-full shadow-2xl flex flex-col gap-md animate-[slideUp_0.2s_ease-out]">
-            <div className="flex items-center gap-sm text-primary">
-              <span className="material-symbols-outlined text-[32px]">history</span>
-              <h3 className="font-headline-sm text-headline-sm">Làm tiếp bài thi?</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-md bg-black/60 backdrop-blur-md animate-[fadeIn_0.3s_ease-out]">
+          <div className="relative bg-surface/95 backdrop-blur-2xl rounded-[24px] p-xl max-w-sm w-full shadow-[0_32px_64px_-12px_rgba(0,0,0,0.3)] border border-outline-variant/30 flex flex-col items-center text-center gap-md animate-[slideUp_0.4s_cubic-bezier(0.16,1,0.3,1)] overflow-hidden">
+            
+            {/* Decorative background glow */}
+            <div className="absolute -top-12 -right-12 w-32 h-32 bg-primary/20 rounded-full blur-3xl pointer-events-none"></div>
+            
+            {/* Icon Container */}
+            <div className="relative flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-2">
+              <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping opacity-75" style={{ animationDuration: '3s' }}></div>
+              <span className="material-symbols-outlined text-[36px] text-primary relative z-10" style={{ fontVariationSettings: "'FILL' 1" }}>
+                history
+              </span>
             </div>
-            <p className="font-body-md text-body-md text-on-surface-variant">
-              Bạn chưa làm xong bài thi <strong>"{resumeSession.topic}"</strong>. Bạn có muốn tiếp tục làm không?
-            </p>
-            <div className="flex justify-end gap-sm mt-sm">
+
+            <div className="flex flex-col gap-xs z-10">
+              <h3 className="font-headline-sm text-headline-sm text-on-surface">Làm tiếp bài thi?</h3>
+              <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
+                Bạn đang làm dở bài thi <br />
+                <strong className="text-primary text-body-lg">"{resumeSession.topic}"</strong>
+              </p>
+            </div>
+
+            <div className="flex justify-stretch w-full gap-sm mt-md z-10">
               <button
                 onClick={() => setResumeSession(null)}
-                className="px-md py-2 rounded-full font-label-lg text-label-lg text-on-surface hover:bg-surface-container transition-colors"
+                className="flex-1 px-4 py-3 rounded-xl font-label-lg text-label-lg text-on-surface bg-surface-container hover:bg-surface-container-high transition-all active:scale-95"
               >
-                Không
+                Để sau
               </button>
               <button
                 onClick={() => {
                   window.location.hash = '/practice-quiz/' + resumeSession.id
                 }}
-                className="px-md py-2 rounded-full font-label-lg text-label-lg bg-primary text-on-primary hover:bg-primary/90 transition-colors shadow-sm"
+                className="flex-1 px-4 py-3 rounded-xl font-label-lg text-label-lg bg-primary text-on-primary hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/30 transition-all active:scale-95 flex items-center justify-center gap-2"
               >
-                Có, làm tiếp
+                Tiếp tục
+                <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
               </button>
             </div>
           </div>

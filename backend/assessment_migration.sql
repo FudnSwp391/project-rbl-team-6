@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS practice_sessions (
   student_id      UUID NOT NULL REFERENCES users(id),
   topic           TEXT NOT NULL,
   difficulty      TEXT DEFAULT 'medium' CHECK (difficulty IN ('easy','medium','hard')),
+  time_limit_mins INT,
+  time_remaining_seconds INT,
   questions       JSONB NOT NULL DEFAULT '[]',
   answers         JSONB DEFAULT '{}',
   score           INT,
