@@ -11,6 +11,8 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from './AuthContext'
 import MessagesSection from './components/MessagesSection'
+import TutorAssessmentManager from './components/TutorAssessmentManager'
+import TutorGradingDashboard from './components/TutorGradingDashboard'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -71,6 +73,8 @@ const NAV_ITEMS = [
   { id: 'overview', icon: 'dashboard', label: 'Overview' },
   { id: 'schedule', icon: 'calendar_today', label: 'My Schedule' },
   { id: 'students', icon: 'group', label: 'Students' },
+  { id: 'assessments', icon: 'description', label: 'Assessments' },
+  { id: 'grading', icon: 'fact_check', label: 'Review & Grade' },
   { id: 'earnings', icon: 'payments', label: 'Earnings' },
   { id: 'messages', icon: 'chat', label: 'Messages' },
   { id: 'tutor-profile', icon: 'badge', label: 'My Profile' },
@@ -474,6 +478,12 @@ export default function TutorDashboard() {
 
           {/* ── Messages ── */}
           {activeSection === 'messages' && <MessagesSection token={token} user={user} />}
+
+          {/* ── Assessments ── */}
+          {activeSection === 'assessments' && <TutorAssessmentManager token={token} />}
+
+          {/* ── Grading ── */}
+          {activeSection === 'grading' && <TutorGradingDashboard token={token} />}
 
           {/* ── Welcome (Overview) ── */}
           {activeSection === 'overview' && (
