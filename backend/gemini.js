@@ -108,8 +108,9 @@ CRITICAL RULES:
 - If English: include actual grammar, vocabulary or reading questions in English
 - If History/Geography: include real historical events, dates, places
 ${grade ? `- Content must be appropriate for Grade ${grade} Vietnamese students` : ""}
-- Questions should be in Vietnamese if the subject is Vietnamese (Toán, Ngữ văn, Lịch sử, etc.)
-- Questions in English for Tiếng Anh subject
+- CRITICAL LANGUAGE RULE: When generating content in Vietnamese, use ONLY standard Vietnamese alphabet (Chữ Quốc Ngữ). ABSOLUTELY DO NOT mix Chinese/Kanji/Hanja characters into Vietnamese sentences (e.g. do not write "生命", use "tính mạng").
+- EXCEPTION: You may use foreign languages and characters ONLY IF the quiz topic is explicitly about that specific foreign language (e.g., Tiếng Anh, Tiếng Nhật, Tiếng Trung).
+- Questions should be in Vietnamese for all general subjects (Toán, Ngữ văn, Lịch sử, GDCD, etc.).
 
 IMPORTANT: Return ONLY a valid JSON array. No markdown, no code blocks, no extra text.
 
