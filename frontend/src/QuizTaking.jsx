@@ -145,6 +145,15 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
   const [showConfirm, setShowConfirm] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const autoSaveRef = useRef(null)
+  
+  // Refs to always have latest values for interval without triggering re-runs
+  const answersRef = useRef(answers)
+  const timeRemainingRef = useRef(timeRemaining)
+
+  useEffect(() => {
+    answersRef.current = answers
+    timeRemainingRef.current = timeRemaining
+  }, [answers, timeRemaining])
 
   // ── Keyboard shortcuts ──
   useEffect(() => {
@@ -225,8 +234,17 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         saveDraft()
       }
     }, 30000)
-    return () => clearInterval(autoSaveRef.current)
-  }, [attemptId, practiceSessionId, answers, timeRemaining, isPractice, isExamPaper])
+
+    return () => {
+      clearInterval(autoSaveRef.current)
+      // Save one last time when unmounting
+      if (isPractice) {
+        savePracticeDraft()
+      } else {
+        saveDraft()
+      }
+    }
+  }, [attemptId, practiceSessionId, isPractice, isExamPaper])
 
   async function fetchExamPaper() {
     try {
@@ -320,7 +338,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
       await fetch(`${apiBaseUrl}/api/practice/${practiceSessionId}/save-progress`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ answers, timeRemaining }),
+        body: JSON.stringify({ answers: answersRef.current, timeRemaining: timeRemainingRef.current }),
       })
     } catch (_) { /* silent */ }
   }
@@ -330,13 +348,13 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
     try {
       const quizAnswers = {}
       questions.forEach((q, idx) => {
-        const ans = answers[String(idx)]
+        const ans = answersRef.current[String(idx)]
         if (ans) quizAnswers[q.id] = ans
       })
       await fetch(`${apiBaseUrl}/api/quizzes/${quizId}/save-draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ attemptId, answers: quizAnswers, timeRemainingSeconds: timeRemaining }),
+        body: JSON.stringify({ attemptId, answers: quizAnswers, timeRemainingSeconds: timeRemainingRef.current }),
       })
     } catch (_) { /* silent */ }
   }
