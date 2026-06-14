@@ -339,6 +339,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ answers: answersRef.current, timeRemaining: timeRemainingRef.current }),
+        keepalive: true
       })
     } catch (_) { /* silent */ }
   }
@@ -355,6 +356,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ attemptId, answers: quizAnswers, timeRemainingSeconds: timeRemainingRef.current }),
+        keepalive: true
       })
     } catch (_) { /* silent */ }
   }
