@@ -341,17 +341,17 @@ export default function TutorDashboard() {
       >
         {/* Logo */}
         <div className="px-md mb-lg">
-          <div className="flex items-center gap-sm">
-            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary">
+          <a href="#/" className="flex items-center gap-sm hover:opacity-80 transition-opacity no-underline">
+            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary shrink-0">
               <span className="material-symbols-outlined text-[18px]">school</span>
             </div>
             <div>
-              <h1 className="font-headline-md text-[20px] leading-tight font-black text-primary">
+              <h1 className="font-headline-md text-[20px] leading-tight font-black text-primary m-0">
                 EduX
               </h1>
-              <p className="font-label-sm text-label-sm text-on-surface-variant">Cổng Gia Sư</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant m-0">Cổng Gia Sư</p>
             </div>
-          </div>
+          </a>
         </div>
 
         {/* Nav items */}

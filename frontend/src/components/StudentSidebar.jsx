@@ -34,15 +34,17 @@ export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRout
       >
         {/* Logo */}
         <div className="px-md mb-xl flex items-center gap-sm">
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary">
-            <span className="material-symbols-outlined text-[20px]">school</span>
-          </div>
-          <div>
-            <h1 className="font-headline-md text-headline-md font-black text-primary leading-tight">
-              EduX
-            </h1>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Student Portal</p>
-          </div>
+          <a href="#/" className="flex items-center gap-sm hover:opacity-80 transition-opacity no-underline">
+            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary shrink-0">
+              <span className="material-symbols-outlined text-[20px]">school</span>
+            </div>
+            <div>
+              <h1 className="font-headline-md text-headline-md font-black text-primary leading-tight m-0">
+                EduX
+              </h1>
+              <p className="font-label-sm text-label-sm text-on-surface-variant m-0">Student Portal</p>
+            </div>
+          </a>
         </div>
 
         {/* Nav items */}

@@ -229,13 +229,15 @@ export default function ParentDashboard() {
       `}>
         {/* Brand */}
         <div className="mb-lg px-sm flex items-center gap-sm">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-tertiary flex items-center justify-center">
-            <span className="material-symbols-outlined text-white text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>family_restroom</span>
-          </div>
-          <div>
-            <h1 className="font-headline-md text-headline-md font-bold text-primary leading-tight">EduX</h1>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Phụ huynh</p>
-          </div>
+          <a href="#/" className="flex items-center gap-sm hover:opacity-80 transition-opacity no-underline">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-tertiary flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-white text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>family_restroom</span>
+            </div>
+            <div>
+              <h1 className="font-headline-md text-headline-md font-bold text-primary leading-tight m-0">EduX</h1>
+              <p className="font-label-sm text-label-sm text-on-surface-variant m-0">Phụ huynh</p>
+            </div>
+          </a>
         </div>
 
         {/* Nav */}
