@@ -820,8 +820,16 @@ app.post(
         birthday, gender, country, city, phone,
         education, language, hourly_rate,
         teaching_style, qualifications,
+        teaching_methods, suitable_students, cert_metadata,
       } = req.body;
       const userId = req.user.userId;
+
+      let parsedTeachingMethods = [];
+      let parsedSuitableStudents = [];
+      let parsedCertMetadata = [];
+      try { parsedTeachingMethods = JSON.parse(teaching_methods || '[]'); } catch {}
+      try { parsedSuitableStudents = JSON.parse(suitable_students || '[]'); } catch {}
+      try { parsedCertMetadata = JSON.parse(cert_metadata || '[]'); } catch {}
 
       const files = req.files || {};
       const photoFile = files["profile_photo"] ? files["profile_photo"][0] : null;
@@ -854,6 +862,7 @@ app.post(
           birthday || null, gender, country, city, phone,
           education, language, parseFloat(hourly_rate) || null,
           teaching_style, qualifications,
+          JSON.stringify(parsedTeachingMethods), JSON.stringify(parsedSuitableStudents),
           "pending", userId,
         ];
         let query = `UPDATE tutor_profiles SET
@@ -862,13 +871,14 @@ app.post(
           birthday = $7, gender = $8, country = $9, city = $10, phone = $11,
           education = $12, language = $13, hourly_rate = $14,
           teaching_style = $15, qualifications = $16,
-          status = $17, reject_reason = NULL`;
+          teaching_methods = $17, suitable_students = $18,
+          status = $19, reject_reason = NULL`;
 
-        let idx = 19; // $18 = userId
+        let idx = 21; // $20 = userId
         if (photoPath) { query += `, profile_photo_url = $${idx}`; values.push(photoPath); idx++; }
         if (cccdPath)  { query += `, cccd_url = $${idx}`;          values.push(cccdPath);  idx++; }
 
-        query += ` WHERE user_id = $18 RETURNING *`;
+        query += ` WHERE user_id = $20 RETURNING *`;
         result = await pool.query(query, values);
       } else {
         result = await pool.query(
@@ -878,6 +888,7 @@ app.post(
             birthday, gender, country, city, phone,
             education, language, hourly_rate,
             teaching_style, qualifications,
+            teaching_methods, suitable_students,
             profile_photo_url, cccd_url,
             status
           ) VALUES (
@@ -887,6 +898,7 @@ app.post(
             $13, $14, $15,
             $16, $17,
             $18, $19,
+            $20, $21,
             'pending'
           ) RETURNING *`,
           [
@@ -895,21 +907,24 @@ app.post(
             birthday || null, gender, country, city, phone,
             education, language, parseFloat(hourly_rate) || null,
             teaching_style, qualifications,
+            JSON.stringify(parsedTeachingMethods), JSON.stringify(parsedSuitableStudents),
             photoPath, cccdPath,
           ]
         );
       }
 
-      // Insert new certificates into tutor_certificates table
+      // Insert new certificates into tutor_certificates table (with metadata)
       if (certFiles.length > 0) {
         const profileId = result.rows[0].id;
         await pool.query("DELETE FROM tutor_certificates WHERE tutor_profile_id = $1", [profileId]);
-        for (const f of certFiles) {
+        for (let i = 0; i < certFiles.length; i++) {
+          const f = certFiles[i];
+          const meta = parsedCertMetadata[i] || {};
           const ext = f.originalname.split('.').pop();
           const certPath = await uploadFileToStorage(f, `certificates/${userId}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
           await pool.query(
-            "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
-            [profileId, f.originalname, certPath]
+            "INSERT INTO tutor_certificates (tutor_profile_id, name, url, cert_type, issuer, issue_year) VALUES ($1, $2, $3, $4, $5, $6)",
+            [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
           );
         }
       }
@@ -978,8 +993,9 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
         tp.bio, tp.subjects, tp.experience_years,
         tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
         tp.created_at, tp.profile_photo_url, tp.hourly_rate,
+        tp.teaching_methods, tp.suitable_students,
         COALESCE(
-          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url) ORDER BY tc.created_at)
+          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
            FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
           '[]'::json
         ) AS certificates
@@ -1123,8 +1139,9 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
         tp.bio, tp.subjects, tp.experience_years,
         tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
         tp.created_at, tp.profile_photo_url, tp.hourly_rate,
+        tp.teaching_methods, tp.suitable_students,
         COALESCE(
-          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url) ORDER BY tc.created_at)
+          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
            FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
           '[]'::json
         ) AS certificates
@@ -2838,6 +2855,43 @@ app.get("/api/tutors", async (req, res) => {
   }
 });
 
+// ── GET /api/tutors/:id ───────────────────────────────────────────────────────
+// Trả về hồ sơ chi tiết của một gia sư theo user ID (public, không cần auth)
+app.get("/api/tutors/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT
+         u.id, u.full_name, u.picture, u.email,
+         tp.bio, tp.subjects, tp.experience_years,
+         tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
+         tp.education, tp.language, tp.teaching_style, tp.qualifications,
+         tp.first_name, tp.last_name, tp.display_name, tp.phone,
+         tp.headline, tp.teaching_methods, tp.suitable_students,
+         COALESCE(
+           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.reviewer_id = u.id),
+           0
+         ) AS avg_r,
+         COALESCE(
+           (SELECT COUNT(*) FROM reviews r WHERE r.reviewer_id = u.id),
+           0
+         ) AS review_count
+       FROM tutor_profiles tp
+       JOIN users u ON tp.user_id = u.id
+       WHERE u.id = $1 AND tp.status = 'approved'
+       LIMIT 1`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Tutor not found." });
+    }
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error("GET /api/tutors/:id error:", err.message);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 // ── GET /api/reviews/featured ─────────────────────────────────────────────────
 // Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)
 app.get("/api/reviews/featured", async (req, res) => {
@@ -2986,6 +3040,31 @@ async function startServer() {
     console.log("✅ DB migration: tutor_certificates table ready");
   } catch (err) {
     console.error("⚠️  DB migration (tutor_certificates) warning:", err.message);
+  }
+
+  // Auto-migrate: teaching_methods & suitable_students columns on tutor_profiles
+  try {
+    await pool.query(`
+      ALTER TABLE tutor_profiles
+        ADD COLUMN IF NOT EXISTS teaching_methods  JSONB NOT NULL DEFAULT '[]',
+        ADD COLUMN IF NOT EXISTS suitable_students JSONB NOT NULL DEFAULT '[]'
+    `);
+    console.log("✅ DB migration: teaching_methods & suitable_students columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (teaching_methods) warning:", err.message);
+  }
+
+  // Auto-migrate: cert_type, issuer, issue_year on tutor_certificates
+  try {
+    await pool.query(`
+      ALTER TABLE tutor_certificates
+        ADD COLUMN IF NOT EXISTS cert_type  TEXT DEFAULT 'Chứng chỉ',
+        ADD COLUMN IF NOT EXISTS issuer     TEXT,
+        ADD COLUMN IF NOT EXISTS issue_year INTEGER
+    `);
+    console.log("✅ DB migration: tutor_certificates extended columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (cert extended cols) warning:", err.message);
   }
 
   // Auto-migrate: create reviews table

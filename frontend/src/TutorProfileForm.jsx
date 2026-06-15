@@ -71,6 +71,17 @@ const SUGGESTED_SUBJECTS = [
   'Ôn thi đánh giá năng lực',
 ]
 
+const SUITABLE_STUDENTS_OPTIONS = [
+  'Học sinh Tiểu học (lớp 1–5)',
+  'Học sinh THCS (lớp 6–9)',
+  'Học sinh THPT (lớp 10–12)',
+  'Sinh viên Đại học / Cao đẳng',
+  'Người đi làm / Học viên tự do',
+  'Trẻ mầm non (dưới 6 tuổi)',
+  'Học sinh luyện thi chuyên đề',
+  'Học sinh mất gốc / cần bổ trợ',
+]
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function validateImageFile(file) {
@@ -276,9 +287,14 @@ export default function TutorProfileForm() {
   const [teachingStyle, setTeachingStyle] = useState('')
   const [qualifications, setQualifications] = useState('')
 
+  // ── Step 2 structured fields ──────────────────────────────────────────────────
+  const [teachingMethods, setTeachingMethods] = useState([''])
+  const [suitableStudents, setSuitableStudents] = useState([])
+
   // ── Step 3 files ────────────────────────────────────────────────────────────
   const [profilePhotoFile, setProfilePhotoFile] = useState(null)
   const [certificateFiles, setCertificateFiles] = useState([])
+  const [certMetadata, setCertMetadata] = useState([])
   const [cccdFile, setCccdFile] = useState(null)
 
   // ── Errors ──────────────────────────────────────────────────────────────────
@@ -298,6 +314,28 @@ export default function TutorProfileForm() {
     setSubjectInput('')
   }
   const removeSubject = (s) => setSubjects(prev => prev.filter(x => x !== s))
+
+  // ── Teaching methods handlers ────────────────────────────────────────────────
+  const addTeachingMethod = () => {
+    if (teachingMethods.length < 8) setTeachingMethods(prev => [...prev, ''])
+  }
+  const removeTeachingMethod = (idx) => {
+    if (teachingMethods.length > 1) setTeachingMethods(prev => prev.filter((_, i) => i !== idx))
+  }
+  const updateTeachingMethod = (idx, val) => {
+    setTeachingMethods(prev => prev.map((m, i) => i === idx ? val : m))
+  }
+
+  // ── Suitable students handlers ────────────────────────────────────────────────
+  const toggleSuitableStudent = (option) => {
+    setSuitableStudents(prev =>
+      prev.includes(option) ? prev.filter(x => x !== option) : [...prev, option])
+  }
+
+  // ── Cert metadata helper ──────────────────────────────────────────────────────
+  const updateCertMeta = (idx, field, val) => {
+    setCertMetadata(prev => prev.map((m, i) => i === idx ? { ...m, [field]: val } : m))
+  }
 
   // ── Image change handler ─────────────────────────────────────────────────────
   const handleImageChange = useCallback((e, setFileFn, errorKey) => {
@@ -357,10 +395,12 @@ export default function TutorProfileForm() {
     if (errs.length) setErrors(prev => ({ ...prev, certificate: errs.join('; ') }))
     else setErrors(prev => ({ ...prev, certificate: '' }))
     setCertificateFiles(prev => [...prev, ...valid])
+    setCertMetadata(prev => [...prev, ...valid.map(() => ({ name: '', cert_type: 'Chứng chỉ', issuer: '', year: '' }))])
   }, [])
 
   const removeCertificate = useCallback((idx) => {
     setCertificateFiles(prev => prev.filter((_, i) => i !== idx))
+    setCertMetadata(prev => prev.filter((_, i) => i !== idx))
   }, [])
 
   const validateStep3 = () => {
@@ -417,6 +457,9 @@ export default function TutorProfileForm() {
     if (hourlyRate !== '') formData.append('hourly_rate', hourlyRate)
     formData.append('teaching_style', teachingStyle.trim())
     formData.append('qualifications', qualifications.trim())
+    formData.append('teaching_methods', JSON.stringify(teachingMethods.filter(m => m.trim())))
+    formData.append('suitable_students', JSON.stringify(suitableStudents))
+    formData.append('cert_metadata', JSON.stringify(certMetadata))
     // Step 3 images
     if (profilePhotoFile) formData.append('profile_photo', profilePhotoFile)
     certificateFiles.forEach(f => formData.append('certificates', f))
@@ -844,6 +887,83 @@ export default function TutorProfileForm() {
                     />
                   </div>
 
+                  {/* Teaching Methods */}
+                  <div className="flex flex-col gap-2">
+                    <label className="font-label-md text-label-md text-on-surface-variant">
+                      Phương Pháp Giảng Dạy
+                    </label>
+                    <p className="font-label-sm text-label-sm text-on-surface-variant -mt-1">
+                      Mô tả từng bước hoặc phương pháp bạn áp dụng khi dạy (ví dụ: kiểm tra đầu vào, lộ trình học, v.v.)
+                    </p>
+                    <div className="flex flex-col gap-2">
+                      {teachingMethods.map((method, idx) => (
+                        <div key={idx} className="flex items-start gap-2">
+                          <span className="flex items-center justify-center w-6 h-6 mt-3 rounded-full bg-primary text-white text-xs font-bold shrink-0">
+                            {idx + 1}
+                          </span>
+                          <textarea
+                            className="flex-1 p-3 rounded-lg border border-outline focus:border-primary focus:ring-0 outline-none transition-all bg-white font-body-md resize-none focus:shadow-[0_0_0_3px_rgba(30,64,175,0.15)]"
+                            rows={2}
+                            placeholder={`Phương pháp ${idx + 1}…`}
+                            value={method}
+                            onChange={e => updateTeachingMethod(idx, e.target.value)}
+                          />
+                          {teachingMethods.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeTeachingMethod(idx)}
+                              className="mt-2 p-1.5 text-error hover:bg-error/10 rounded-lg transition-colors"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">delete</span>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {teachingMethods.length < 8 && (
+                      <button
+                        type="button"
+                        onClick={addTeachingMethod}
+                        className="self-start flex items-center gap-1 px-3 py-1.5 border border-primary text-primary rounded-lg text-label-sm font-label-sm hover:bg-primary/5 transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">add</span>
+                        Thêm phương pháp
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Suitable Students */}
+                  <div className="flex flex-col gap-2">
+                    <label className="font-label-md text-label-md text-on-surface-variant">
+                      Đối Tượng Học Sinh Phù Hợp
+                    </label>
+                    <div className="flex flex-wrap gap-2 p-3 border rounded-lg border-outline bg-white">
+                      {SUITABLE_STUDENTS_OPTIONS.map(option => {
+                        const selected = suitableStudents.includes(option)
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() => toggleSuitableStudent(option)}
+                            className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-label-sm font-label-sm border transition-all duration-150 active:scale-95 ${
+                              selected
+                                ? 'bg-primary text-white border-primary'
+                                : 'border-outline-variant text-on-surface-variant hover:border-primary hover:text-primary hover:bg-primary/5'
+                            }`}
+                          >
+                            {selected && <span className="material-symbols-outlined text-[13px]">check</span>}
+                            {option}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {suitableStudents.length > 0 && (
+                      <p className="font-label-sm text-label-sm text-primary">
+                        Đã chọn {suitableStudents.length} đối tượng
+                      </p>
+                    )}
+                  </div>
+
                   {/* Pro Tip */}
                   <div className="p-md bg-tertiary-fixed rounded-xl flex gap-md items-start">
                     <span className="material-symbols-outlined text-tertiary flex-shrink-0">info</span>
@@ -932,21 +1052,49 @@ export default function TutorProfileForm() {
                         <p className="text-body-sm font-body-sm">Chưa có chứng chỉ nào. Nhấn "Thêm" để tải lên.</p>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-sm mt-xs">
+                      <div className="flex flex-col gap-sm mt-xs">
                         {certificateFiles.map((f, i) => {
                           const url = createObjectURL(f)
+                          const meta = certMetadata[i] || { name: '', cert_type: 'Chứng chỉ', issuer: '', year: '' }
                           return (
-                            <div key={i} className="relative rounded-lg overflow-hidden border border-outline-variant aspect-video bg-surface-container">
-                              {url && <img src={url} alt={f.name} className="w-full h-full object-cover" onLoad={() => URL.revokeObjectURL(url)} />}
-                              <button
-                                type="button"
-                                onClick={() => removeCertificate(i)}
-                                className="absolute top-1 right-1 w-6 h-6 bg-error text-on-error rounded-full flex items-center justify-center hover:opacity-90"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">close</span>
-                              </button>
-                              <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1 py-0.5">
-                                <p className="text-white text-[10px] truncate">{f.name}</p>
+                            <div key={i} className="flex gap-sm p-sm border border-outline-variant rounded-xl bg-surface">
+                              {/* Thumbnail */}
+                              <div className="relative w-24 h-20 rounded-lg overflow-hidden border border-outline-variant bg-surface-container shrink-0">
+                                {url && <img src={url} alt={f.name} className="w-full h-full object-cover" onLoad={() => URL.revokeObjectURL(url)} />}
+                                <button
+                                  type="button"
+                                  onClick={() => removeCertificate(i)}
+                                  className="absolute top-0.5 right-0.5 w-5 h-5 bg-error text-on-error rounded-full flex items-center justify-center hover:opacity-90"
+                                >
+                                  <span className="material-symbols-outlined text-[11px]">close</span>
+                                </button>
+                              </div>
+                              {/* Metadata fields */}
+                              <div className="flex-1 flex flex-col gap-xs min-w-0">
+                                <input
+                                  className="h-8 px-2 text-sm rounded-lg border border-outline focus:border-primary outline-none transition-all bg-white"
+                                  placeholder="Tên chứng chỉ / bằng cấp…"
+                                  value={meta.name}
+                                  onChange={e => updateCertMeta(i, 'name', e.target.value)}
+                                />
+                                <div className="grid grid-cols-2 gap-xs">
+                                  <input
+                                    className="h-8 px-2 text-sm rounded-lg border border-outline focus:border-primary outline-none transition-all bg-white"
+                                    placeholder="Đơn vị cấp…"
+                                    value={meta.issuer}
+                                    onChange={e => updateCertMeta(i, 'issuer', e.target.value)}
+                                  />
+                                  <input
+                                    type="number"
+                                    className="h-8 px-2 text-sm rounded-lg border border-outline focus:border-primary outline-none transition-all bg-white"
+                                    placeholder="Năm cấp"
+                                    min="1990"
+                                    max={new Date().getFullYear()}
+                                    value={meta.year}
+                                    onChange={e => updateCertMeta(i, 'year', e.target.value)}
+                                  />
+                                </div>
+                                <p className="text-[11px] text-on-surface-variant truncate">{f.name}</p>
                               </div>
                             </div>
                           )
@@ -1045,6 +1193,26 @@ export default function TutorProfileForm() {
                         <p className="font-body-md text-body-md text-on-surface">{value}</p>
                       </div>
                     ))}
+                    {teachingMethods.filter(m => m.trim()).length > 0 && (
+                      <div className="sm:col-span-2">
+                        <p className="font-label-sm text-label-sm text-on-surface-variant mb-1">Phương Pháp Giảng Dạy</p>
+                        <ol className="list-decimal list-inside space-y-1">
+                          {teachingMethods.filter(m => m.trim()).map((m, i) => (
+                            <li key={i} className="font-body-md text-body-md text-on-surface">{m}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+                    {suitableStudents.length > 0 && (
+                      <div className="sm:col-span-2">
+                        <p className="font-label-sm text-label-sm text-on-surface-variant mb-1">Đối Tượng Phù Hợp</p>
+                        <div className="flex flex-wrap gap-1">
+                          {suitableStudents.map(s => (
+                            <span key={s} className="px-2 py-0.5 bg-primary/10 text-primary rounded-full text-label-sm font-label-sm">{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </section>
 

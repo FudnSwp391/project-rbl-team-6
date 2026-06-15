@@ -156,10 +156,10 @@ export default function AdminDashboard() {
 
       {/* ══ SIDEBAR ══ */}
       <aside className="w-64 h-screen fixed left-0 top-0 bg-white shadow-sm z-20 flex flex-col py-6 px-2">
-        <div className="px-3 pb-8 pt-1">
+        <a href="#/" className="block px-3 pb-8 pt-1 no-underline cursor-pointer">
           <h1 className="text-2xl font-bold text-primary">EduX</h1>
           <p className="text-xs text-on-surface-variant mt-0.5">Bảng điều khiển Admin</p>
-        </div>
+        </a>
 
         <nav className="flex-1 overflow-y-auto space-y-0.5 pr-1">
           {NAV_ITEMS.map(item => {
@@ -746,6 +746,42 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
               </div>
             )}
 
+            {/* Teaching Methods */}
+            {selectedTutor.teaching_methods && selectedTutor.teaching_methods.length > 0 && (
+              <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant">
+                <h3 className="text-headline-md font-headline-md text-on-surface mb-sm flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary">psychology</span>
+                  Phương pháp giảng dạy
+                </h3>
+                <ol className="flex flex-col gap-sm">
+                  {selectedTutor.teaching_methods.map((method, i) => (
+                    <li key={i} className="flex items-start gap-sm">
+                      <span className="flex items-center justify-center w-6 h-6 mt-0.5 rounded-full bg-primary text-white text-xs font-bold shrink-0">{i + 1}</span>
+                      <p className="text-body-md font-body-md text-on-surface leading-relaxed">{method}</p>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {/* Suitable Students */}
+            {selectedTutor.suitable_students && selectedTutor.suitable_students.length > 0 && (
+              <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant">
+                <h3 className="text-headline-md font-headline-md text-on-surface mb-sm flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary">group</span>
+                  Đối tượng học sinh phù hợp
+                </h3>
+                <div className="flex flex-wrap gap-xs">
+                  {selectedTutor.suitable_students.map((s, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-full text-label-sm font-label-sm border border-primary/20">
+                      <span className="material-symbols-outlined text-[13px]">check_circle</span>
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Professional Info */}
             <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant">
               <h3 className="text-headline-md font-headline-md text-on-surface mb-md flex items-center gap-2">
@@ -858,7 +894,9 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
                               <p className="text-label-md font-label-md text-on-surface truncate">
                                 {cert.name && cert.name !== 'Chứng chỉ' ? cert.name : `Chứng chỉ ${i + 1}`}
                               </p>
-                              <p className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">Nhấn để xem</p>
+                              <p className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">
+                                {[cert.issuer, cert.issue_year].filter(Boolean).join(' · ') || 'Nhấn để xem'}
+                              </p>
                             </div>
                             <span className="material-symbols-outlined text-primary text-[20px] shrink-0">open_in_new</span>
                           </button>
