@@ -24,11 +24,12 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem('token') || null)
 
   /**
-   * Call this after a successful login / register / google-auth response.
-   * Saves token + user to state AND localStorage.
-   * Then redirects to the correct page based on user role:
-   *   admin   → #/admin
-   *   others  → #/dashboard
+   * Call this after a successful LOGIN (returning user).
+   * Redirects based on role:
+   *   admin  → #/admin
+   *   tutor  → #/tutor  (dashboard, already has profile)
+   *   parent → #/parent
+   *   others → #/dashboard
    */
   function login(newToken, newUser) {
     localStorage.setItem('token', newToken)
@@ -36,11 +37,41 @@ export function AuthProvider({ children }) {
     setToken(newToken)
     setUser(newUser)
 
-    // Role-based redirect after login
     if (newUser?.role === 'admin') {
       window.location.hash = '/admin'
+<<<<<<< HEAD
     } else {
       window.location.hash = '/'             // Redirect to home page
+=======
+    } else if (newUser?.role === 'tutor') {
+      window.location.hash = '/tutor'
+    } else if (newUser?.role === 'parent') {
+      window.location.hash = '/parent'
+    } else {
+      window.location.hash = '/dashboard'
+    }
+  }
+
+  /**
+   * Call this after a successful REGISTER (new user).
+   * Same as login() EXCEPT tutors are sent to onboarding (#/tutor-profile)
+   * so they fill in their profile information before accessing the dashboard.
+   */
+  function loginAfterRegister(newToken, newUser) {
+    localStorage.setItem('token', newToken)
+    localStorage.setItem('user', JSON.stringify(newUser))
+    setToken(newToken)
+    setUser(newUser)
+
+    if (newUser?.role === 'admin') {
+      window.location.hash = '/admin'
+    } else if (newUser?.role === 'tutor') {
+      window.location.hash = '/tutor-profile'  // ← Onboarding wizard
+    } else if (newUser?.role === 'parent') {
+      window.location.hash = '/parent'
+    } else {
+      window.location.hash = '/dashboard'
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
     }
   }
 
@@ -52,6 +83,18 @@ export function AuthProvider({ children }) {
     setUser(null)
     // Navigate back to home page
     window.location.hash = '/'
+  }
+
+  /**
+   * Lưu token + user vào state/localStorage KHÔNG redirect.
+   * Dùng trong TutorProfileForm sau khi register thành công,
+   * để giữ nguyên trang hiện tại (show success message) trước khi redirect thủ công.
+   */
+  function loginSilent(newToken, newUser) {
+    localStorage.setItem('token', newToken)
+    localStorage.setItem('user', JSON.stringify(newUser))
+    setToken(newToken)
+    setUser(newUser)
   }
 
   /**
@@ -67,7 +110,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, token, login, loginAfterRegister, loginSilent, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   )

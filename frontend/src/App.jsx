@@ -1,7 +1,6 @@
 /**
  * App.jsx
  * Main application shell — handles hash-based routing and renders the correct page.
- * Routes: / (home)  #/signin  #/signup  #/admin
  */
 import { useEffect, useState, useRef } from 'react'
 import './App.css'
@@ -10,18 +9,30 @@ import SignUp from './SignUp'
 import AdminDashboard from './AdminDashboard'
 import StudentDashboard from './StudentDashboard'
 import TutorDashboard from './TutorDashboard'
+<<<<<<< HEAD
 import ParentDashboard from './ParentDashboard'    // ← NEW
 import MyCourses from './pages/MyCourses'
 import CourseDetail from './pages/CourseDetail'
+=======
+import ParentDashboard from './ParentDashboard'
+import QuizTaking from './QuizTaking'
+import QuizResult from './QuizResult'
+import TutorProfileForm from './TutorProfileForm'
+import FindTutorsPage from './FindTutorsPage'
+import SubjectsPage from './SubjectsPage'
+import BecomeTutorPage from './BecomeTutorPage'
+import TutorDetailPage from './TutorDetailPage'
+
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 import { useAuth } from './AuthContext'
 
 const subjects = [
-  { name: 'Mathematics', icon: 'calculate' },
-  { name: 'Science', icon: 'science' },
-  { name: 'Languages', icon: 'translate' },
-  { name: 'Music', icon: 'music_note' },
-  { name: 'Art', icon: 'palette' },
-  { name: 'Coding', icon: 'code' },
+  { name: 'Toán Học', icon: 'calculate' },
+  { name: 'Khoa Học', icon: 'science' },
+  { name: 'Ngôn Ngữ', icon: 'translate' },
+  { name: 'Âm Nhạc', icon: 'music_note' },
+  { name: 'Nghệ Thuật', icon: 'palette' },
+  { name: 'Lập Trình', icon: 'code' },
 ]
 
 const tutors = [
@@ -76,12 +87,21 @@ const tutors = [
 ]
 
 const footerLinks = {
-  platform: ['Find Tutors', 'Become a Tutor', 'Subjects'],
-  company: ['About Us', 'Support', 'Privacy Policy'],
+  platform: [
+    { label: 'Tìm Gia Sư', href: '#/find-tutors' },
+    { label: 'Trở Thành Gia Sư', href: '#/become-tutor' },
+    { label: 'Môn Học', href: '#/subjects' }
+  ],
+  company: [
+    { label: 'Về Chúng Tôi', href: '#' },
+    { label: 'Hỗ Trợ', href: '#' },
+    { label: 'Chính Sách Bảo Mật', href: '#' }
+  ],
 }
 
 // ─── Helper: parse the hash to get the current route ─────────────────────────
 const getRouteFromHash = () => {
+<<<<<<< HEAD
   let normalized = window.location.hash.replace(/^#/, '') || '/'
   // remove trailing slash if exists
   if (normalized.length > 1 && normalized.endsWith('/')) {
@@ -96,6 +116,49 @@ const getRouteFromHash = () => {
   if (normalized === '/my-courses' || normalized.startsWith('/my-courses')) return 'mycourses'  // My Courses
   if (normalized.startsWith('/course/')) return 'coursedetail'  // Course Detail
   return 'home'
+=======
+
+  let normalized = window.location.hash.replace(/^#/, '') || '/'
+  normalized = normalized.split('?')[0] // remove query params for matching
+  if (normalized === '/signin')    return { name: 'signin' }
+  if (normalized === '/signup')    return { name: 'signup' }
+  if (normalized === '/admin')     return { name: 'admin' }
+  if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }   // Student Dashboard
+  if (normalized === '/tutor')     return { name: 'tutor' }       // Tutor Dashboard
+  if (normalized === '/tutor-profile') return { name: 'tutor-profile' } // Tutor Profile Form
+  if (normalized === '/tutor-detail') return { name: 'tutor-detail' }
+  if (normalized === '/parent')    return { name: 'parent' }      // Parent Dashboard
+  if (normalized === '/find-tutors') return { name: 'find-tutors' }
+  if (normalized === '/subjects')  return { name: 'subjects' }
+  if (normalized === '/become-tutor') return { name: 'become-tutor' }
+
+  // Quiz routes: #/quiz/<id>
+  const quizMatch = normalized.match(/^\/quiz\/([^/]+)$/)
+  if (quizMatch) return { name: 'quiz', id: quizMatch[1] }
+
+  // Quiz result routes: #/quiz-result/<attemptId>
+  const resultMatch = normalized.match(/^\/quiz-result\/([^/]+)$/)
+  if (resultMatch) return { name: 'quiz-result', id: resultMatch[1] }
+
+  // Practice quiz: #/practice-quiz/<sessionId>
+  const practiceQuizMatch = normalized.match(/^\/practice-quiz\/([^/]+)$/)
+  if (practiceQuizMatch) return { name: 'practice-quiz', id: practiceQuizMatch[1] }
+
+  // Practice result: #/practice-result/<sessionId>
+  const practiceResultMatch = normalized.match(/^\/practice-result\/([^/]+)$/)
+  if (practiceResultMatch) return { name: 'practice-result', id: practiceResultMatch[1] }
+
+  // Exam routes: #/exam-quiz/<id>
+  const examMatch = normalized.match(/^\/exam-quiz\/([^/]+)$/)
+  if (examMatch) return { name: 'exam-quiz', id: examMatch[1] }
+
+  // Exam result routes: #/exam-result/<attemptId>
+  const examResultMatch = normalized.match(/^\/exam-result\/([^/]+)$/)
+  if (examResultMatch) return { name: 'exam-result', id: examResultMatch[1] }
+
+  return { name: 'home' }
+
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 }
 
 // ─── Access Denied page (shown to non-admin users who visit #/admin) ──────────
@@ -104,26 +167,58 @@ function AccessDenied({ isLoggedIn, onGoSignIn }) {
     <div className="academia-page">
       <div className="access-denied-wrap">
         <span className="material-symbols-outlined access-denied-icon">lock</span>
-        <h1 className="access-denied-title">Access Denied</h1>
+        <h1 className="access-denied-title">Truy Cập Bị Từ Chối</h1>
         {isLoggedIn ? (
           <p className="access-denied-msg">
-            You do not have admin privileges to view this page.
+            Bạn không có quyền quản trị viên để xem trang này.
           </p>
         ) : (
           <p className="access-denied-msg">
-            Please sign in as an admin to access this page.
+            Vui lòng đăng nhập với tư cách quản trị viên để truy cập trang này.
           </p>
         )}
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <a href="#/" className="btn btn-outline">← Back to Home</a>
+          <a href="#/" className="btn btn-outline">← Quay Lại Trang Chủ</a>
           {!isLoggedIn && (
-            <button className="btn btn-primary" onClick={onGoSignIn}>Sign In</button>
+            <button className="btn btn-primary" onClick={onGoSignIn}>Đăng Nhập</button>
           )}
         </div>
       </div>
     </div>
   )
 }
+
+const feedbackData = [
+  {
+    id: 1,
+    initials: 'LM', bgColor: 'bg-[#d4e3ff]', textColor: 'text-[#003564]',
+    name: 'Liam Miller', role: 'Học Sinh', time: '2 phút trước', pulse: true,
+    subject: 'Calculus II',
+    content: `"Sarah thật sự là cứu tinh! Tôi đã gặp khó khăn với các phương pháp tích phân, nhưng cách hướng dẫn từng bước của cô ấy đã giúp mọi thứ trở nên rõ ràng. Rất khuyến khích!"`
+  },
+  {
+    id: 2,
+    initials: 'AP', bgColor: 'bg-[#e2e2e2]', textColor: 'text-[#5d5f5f]',
+    name: 'Alice Porter', role: 'Phụ Huynh', time: '15 phút trước', pulse: false,
+    subject: 'Luyện Thi SAT',
+    content: `"Điểm số của con gái tôi đã tăng 200 điểm chỉ trong hai tháng. David rất chuyên nghiệp, nhiệt tình và am hiểu kiến thức."`
+  },
+  {
+    id: 3,
+    initials: 'JK', bgColor: 'bg-[#dde1ff]', textColor: 'text-[#00288e]',
+    name: 'Julian Kim', role: 'Học Sinh', time: 'Vừa xong', pulse: true,
+    subject: 'Python Cơ Bản',
+    content: `"Các bài tập lập trình rất hay. Tôi đã đi từ con số không đến việc tự xây dựng web scraper đầu tiên trong 4 tuần. Đây là khoản đầu tư tốt nhất cho sự nghiệp của tôi!"`
+  },
+  {
+    id: 4,
+    initials: 'SB', bgColor: 'bg-[#a4c9ff]', textColor: 'text-[#003564]',
+    name: 'Sonia Brown', role: 'Học Sinh', time: '1 giờ trước', pulse: false,
+    subject: 'Tiếng Tây Ban Nha B1',
+    content: `"Elena là một người nói chuyện tuyệt vời. Sự tự tin khi giao tiếp của tôi đã tăng vọt. ¡Muchas gracias!"`
+  }
+];
+const displayFeedback = [...feedbackData, ...feedbackData];
 
 // ─── Home Page ────────────────────────────────────────────────────────────────
 function HomePage({ onGoSignIn }) {
@@ -153,13 +248,13 @@ function HomePage({ onGoSignIn }) {
           </a>
 
           <nav className="header-nav">
-            <a href="#">Find Tutors</a>
-            <a href="#">Become a Tutor</a>
-            <a href="#">Subjects</a>
+            <a href="#/find-tutors">Tìm Gia Sư</a>
+            <a href="#/become-tutor">Trở Thành Gia Sư</a>
+            <a href="#/subjects">Môn Học</a>
             {/* Show Admin link if user is admin */}
             {user?.role === 'admin' && (
               <a href="#/admin" style={{ color: 'var(--primary)', fontWeight: 700 }}>
-                Admin
+                Quản Trị Viên
               </a>
             )}
           </nav>
@@ -211,10 +306,29 @@ function HomePage({ onGoSignIn }) {
                   </button>
                 </div>
               )}
+<<<<<<< HEAD
+=======
+              <span className="header-username">{user.name || user.email}</span>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  if (user.role === 'admin') window.location.hash = '/admin';
+                  else if (user.role === 'tutor') window.location.hash = '/tutor';
+                  else window.location.hash = '/dashboard';
+                }}
+                style={{ marginLeft: '12px' }}
+              >
+                Bảng Điều Khiển
+              </button>
+              <button type="button" className="btn btn-outline" onClick={logout} style={{ marginLeft: '8px' }}>
+                Đăng Xuất
+              </button>
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
             </div>
           ) : (
             <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
-              Login
+              Đăng Nhập
             </button>
           )}
         </div>
@@ -224,10 +338,10 @@ function HomePage({ onGoSignIn }) {
         <section className="hero">
           <div className="hero-overlay" />
           <div className="container hero-content">
-            <h1>Find the perfect tutor for your learning journey</h1>
+            <h1>Tìm gia sư hoàn hảo cho hành trình học tập của bạn</h1>
             <p>
-              Expert educators ready to help you master new subjects and achieve
-              your academic goals.
+              Các nhà giáo dục chuyên nghiệp sẵn sàng giúp bạn nắm vững các môn học mới
+              và đạt được mục tiêu học tập của bạn.
             </p>
             <div className="search-panel">
               <label className="search-field">
@@ -236,7 +350,7 @@ function HomePage({ onGoSignIn }) {
                   type="text"
                   value={topic}
                   onChange={(event) => setTopic(event.target.value)}
-                  placeholder="What do you want to learn?"
+                  placeholder="Bạn muốn học gì?"
                 />
               </label>
               <label className="search-field">
@@ -245,11 +359,11 @@ function HomePage({ onGoSignIn }) {
                   type="text"
                   value={place}
                   onChange={(event) => setPlace(event.target.value)}
-                  placeholder="Online or specific location?"
+                  placeholder="Học trực tuyến hay tại địa điểm cụ thể?"
                 />
               </label>
               <button type="button" className="btn btn-primary search-button">
-                Search
+                Tìm Kiếm
               </button>
             </div>
           </div>
@@ -257,7 +371,7 @@ function HomePage({ onGoSignIn }) {
 
         <section className="section section-subjects">
           <div className="container">
-            <h2>Popular Subjects</h2>
+            <h2>Môn Học Phổ Biến</h2>
             <div className="subject-grid">
               {subjects.map((item) => (
                 <a href="#" className="subject-card" key={item.name}>
@@ -274,9 +388,9 @@ function HomePage({ onGoSignIn }) {
         <section className="section section-tutors">
           <div className="container">
             <div className="section-head">
-              <h2>Featured Tutors</h2>
+              <h2>Gia Sư Nổi Bật</h2>
               <a href="#" className="see-all">
-                See all
+                Xem tất cả
                 <span className="material-symbols-outlined">arrow_forward</span>
               </a>
             </div>
@@ -293,7 +407,7 @@ function HomePage({ onGoSignIn }) {
                           star
                         </span>
                         <span>{tutor.rating}</span>
-                        <small>({tutor.reviews} reviews)</small>
+                        <small>({tutor.reviews} nhận xét)</small>
                       </p>
                     </div>
                   </div>
@@ -310,13 +424,73 @@ function HomePage({ onGoSignIn }) {
                   <div className="tutor-foot">
                     <p className="price">
                       <strong>${tutor.rate}</strong>
-                      <span>/hr</span>
+                      <span>/giờ</span>
                     </p>
                     <button type="button" className="btn btn-outline">
-                      View Profile
+                      Xem Hồ Sơ
                     </button>
                   </div>
                 </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Feedback Section */}
+        <section className="py-20 mt-10 bg-[#f8f9fb] relative overflow-hidden">
+          <style>{`
+            .shadow-level-2 { box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08); }
+            .glass-card {
+                background: rgba(255, 255, 255, 0.7);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border: 1px solid rgba(255, 255, 255, 0.4);
+            }
+            @keyframes scroll {
+                0% { transform: translateX(0); }
+                100% { transform: translateX(calc(-380px * 4 - 24px * 4)); }
+            }
+            .scroll-container {
+                display: flex;
+                width: max-content;
+                animation: scroll 40s linear infinite;
+            }
+            .scroll-container:hover {
+                animation-play-state: paused;
+            }
+          `}</style>
+          <div className="max-w-[1280px] mx-auto px-6 mb-10">
+            <h2 className="text-3xl font-bold text-[#191c1e]">Cộng đồng chúng tôi nói gì</h2>
+            <p className="text-[#444653] mt-2">Trải nghiệm thực tế từ học sinh và phụ huynh trên toàn thế giới.</p>
+          </div>
+          <div className="relative w-full overflow-hidden h-64 flex items-center">
+            {/* Scroller Content */}
+            <div className="scroll-container gap-6 px-6">
+              {displayFeedback.map((fb, idx) => (
+                <div key={`${fb.id}-${idx}`} className="glass-card w-[380px] p-6 rounded-xl shadow-level-2 flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-full ${fb.bgColor} ${fb.textColor} flex items-center justify-center font-bold`}>
+                        {fb.initials}
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-[#191c1e] leading-tight">{fb.name}</h4>
+                        <span className="text-xs font-medium text-[#444653]">{fb.role}</span>
+                      </div>
+                    </div>
+                    <span className={`text-[11px] font-medium px-2 py-1 ${fb.pulse ? 'bg-[#00288e]/10 text-[#00288e]' : 'bg-[#c4c5d5]/30 text-[#444653]'} rounded-full flex items-center gap-1`}>
+                      {fb.pulse && <span className="w-1.5 h-1.5 bg-[#00288e] rounded-full animate-pulse"></span>}
+                      {fb.time}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#00288e]">Phản hồi đã xác minh cho {fb.subject}</span>
+                    <div className="flex mt-1">
+                      {[1,2,3,4,5].map(i => <span key={i} className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
+                    </div>
+                  </div>
+                  <p className="text-[#444653] text-sm line-clamp-3">{fb.content}</p>
+                </div>
               ))}
             </div>
           </div>
@@ -331,25 +505,25 @@ function HomePage({ onGoSignIn }) {
               <span className="brand-name">EduX</span>
             </a>
             <p className="footer-copy">
-              Copyright 2024 EduX. Empowering minds globally.
+              Bản quyền 2024 EduX. Nâng tầm tri thức toàn cầu.
             </p>
           </div>
           <div>
-            <h4>Platform</h4>
+            <h4>Nền Tảng</h4>
             <ul>
               {footerLinks.platform.map((item) => (
-                <li key={item}>
-                  <a href="#">{item}</a>
+                <li key={item.label}>
+                  <a href={item.href}>{item.label}</a>
                 </li>
               ))}
             </ul>
           </div>
           <div>
-            <h4>Company</h4>
+            <h4>Công Ty</h4>
             <ul>
               {footerLinks.company.map((item) => (
-                <li key={item}>
-                  <a href="#">{item}</a>
+                <li key={item.label}>
+                  <a href={item.href}>{item.label}</a>
                 </li>
               ))}
             </ul>
@@ -362,7 +536,7 @@ function HomePage({ onGoSignIn }) {
 
 // ─── Root App component ───────────────────────────────────────────────────────
 function App() {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [route, setRoute] = useState(() => getRouteFromHash())
 
   useEffect(() => {
@@ -379,78 +553,98 @@ function App() {
     if (nextRoute === 'mycourses') { window.location.hash = '/my-courses'; return }
     if (nextRoute === 'coursedetail') { window.location.hash = '/course/1'; return }
     if (nextRoute === 'tutor')     { window.location.hash = '/tutor';     return }
+    if (nextRoute === 'tutor-profile') { window.location.hash = '/tutor-profile'; return }
+    if (nextRoute === 'tutor-detail') { window.location.hash = '/tutor-detail'; return }
     if (nextRoute === 'parent')    { window.location.hash = '/parent';    return }
     window.location.hash = '/'
   }
 
+  const routeName = route.name || route   // backward compat
+
   // ── Route: Sign In ──
-  if (route === 'signin') {
-    return (
-      <SignIn
-        onSwitchToSignUp={() => navigateTo('signup')}
-        onGoHome={() => navigateTo('home')}
-      />
-    )
+  if (routeName === 'signin') {
+    return <SignIn onSwitchToSignUp={() => navigateTo('signup')} onGoHome={() => navigateTo('home')} />
   }
 
   // ── Route: Sign Up ──
-  if (route === 'signup') {
-    return (
-      <SignUp
-        onSwitchToSignIn={() => navigateTo('signin')}
-        onGoHome={() => navigateTo('home')}
-      />
-    )
+  if (routeName === 'signup') {
+    return <SignUp onSwitchToSignIn={() => navigateTo('signin')} onGoHome={() => navigateTo('home')} />
   }
 
-  // ── Route: Admin Dashboard (protected) ──
-  if (route === 'admin') {
-    // Not logged in → guide to sign in
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
-    // Logged in but not admin → access denied
-    if (user.role !== 'admin') {
-      return <AccessDenied isLoggedIn={true} />
-    }
-    // Admin → show dashboard
+  // ── Route: Admin Dashboard ──
+  if (routeName === 'admin') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    if (user.role !== 'admin') return <AccessDenied isLoggedIn={true} />
     return <AdminDashboard />
   }
 
-  // ── Route: Student Dashboard (protected) ──
-  if (route === 'dashboard') {
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
+  // ── Route: Student Dashboard ──
+  if (routeName === 'dashboard') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     return <StudentDashboard />
   }
 
-  // ── Route: Tutor Dashboard (protected) ──
-  if (route === 'tutor') {
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
+  // ── Route: Tutor Dashboard ──
+  if (routeName === 'tutor') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     return <TutorDashboard />
   }
 
-  // ── Route: Parent Dashboard (protected) ──
-  if (route === 'parent') {
-    if (!user) {
+  // ── Route: Parent Dashboard ──
+  if (routeName === 'parent') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <ParentDashboard />
+  }
+
+  // ── Route: Quiz Taking (formal quiz) ──
+  if (routeName === 'quiz') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizTaking quizId={route.id} token={token} isPractice={false} />
+  }
+
+  // ── Route: Practice Quiz Taking ──
+  if (routeName === 'practice-quiz') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizTaking
+      isPractice={true}
+      practiceSessionId={route.id}
+      token={token}
+    />
+  }
+
+  // ── Route: Quiz Result (formal) ──
+  if (routeName === 'quiz-result') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizResult attemptId={route.id} token={token} isPractice={false} />
+  }
+
+  // ── Route: Practice Result ──
+  if (routeName === 'practice-result') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizResult isPractice={true} sessionId={route.id} token={token} />
+  }
+
+  // ── Route: Exam Paper Taking ──
+  if (routeName === 'exam-quiz') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizTaking
+      isExamPaper={true}
+      examPaperId={route.id}
+      token={token}
+    />
+  }
+
+  // ── Route: Exam Paper Result ──
+  if (routeName === 'exam-result') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizResult isExamPaper={true} attemptId={route.id} token={token} />
+  }
+
+  // ── Route: Tutor Profile (protected) ──
+  if (routeName === 'tutor-profile') {
+    const hasPendingReg = !!sessionStorage.getItem('pendingTutorReg')
+    // Cho phép truy cập nếu: đã đăng nhập (tutor cũ) HOẶC đang trong luồng đăng ký mới
+    if (!user && !hasPendingReg) {
       return (
         <AccessDenied
           isLoggedIn={false}
@@ -458,7 +652,50 @@ function App() {
         />
       )
     }
-    return <ParentDashboard />
+    return (
+      <div className="bg-background min-h-screen flex flex-col">
+        <header className="bg-surface-container-lowest shadow-sm sticky top-0 z-50">
+          <div className="flex justify-between items-center w-full px-6 md:px-10 max-w-[1280px] mx-auto h-16">
+            <div className="font-bold text-2xl text-primary tracking-tight">EduX</div>
+            {user && !hasPendingReg && (
+              <button
+                onClick={() => window.location.hash = '/tutor'}
+                className="text-on-surface-variant font-semibold text-sm hover:bg-surface-container px-3 py-2 rounded-lg transition-all duration-200"
+              >
+                ← Quay Lại Bảng Điều Khiển
+              </button>
+            )}
+          </div>
+        </header>
+        <TutorProfileForm />
+        <footer className="bg-surface-container-lowest border-t border-outline-variant mt-auto">
+          <div className="w-full py-6 px-10 flex flex-col md:flex-row justify-between items-center max-w-[1280px] mx-auto gap-4">
+            <span className="text-xs text-on-secondary-container">© 2024 EduX. Hỗ Trợ Học Thuật Chuyên Nghiệp.</span>
+            <div className="flex gap-6">
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Hỗ Trợ</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Chính Sách Bảo Mật</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Liên Hệ</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+    )
+  }
+
+  // ── Route: Public Pages ──
+  if (routeName === 'find-tutors') {
+    return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'subjects') {
+    return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'become-tutor') {
+    return <BecomeTutorPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+
+  // ── Route: Tutor Detail Page ──
+  if (routeName === 'tutor-detail') {
+    return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
 
   // ── Route: My Courses (protected) ──
@@ -492,3 +729,4 @@ function App() {
 }
 
 export default App
+
