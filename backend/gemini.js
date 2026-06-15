@@ -122,6 +122,10 @@ function buildQuizPrompt(topic, count, difficulty, questionType = 'multiple_choi
 }`;
   }
 
+  const isChineseTopic = /tiếng trung|chinese|mandarin|hán ngữ|汉语|中文/i.test(topic);
+  const isJapaneseTopic = /tiếng nhật|japanese|日本語/i.test(topic);
+  const isForeignLangTopic = isChineseTopic || isJapaneseTopic || /tiếng hàn|korean|arabic|tiếng ả rập/i.test(topic);
+
   return `You are an expert Vietnamese educator. ${context}
 
 Generate exactly ${count} questions about "${topic}".
@@ -137,9 +141,16 @@ ${typeRules}
 - If English: include actual grammar, vocabulary or reading questions in English
 - If History/Geography: include real historical events, dates, places
 ${grade ? `- Content must be appropriate for Grade ${grade} Vietnamese students` : ""}
-- CRITICAL LANGUAGE RULE: When generating content in Vietnamese, use ONLY standard Vietnamese alphabet (Chữ Quốc Ngữ). ABSOLUTELY DO NOT mix Chinese/Kanji/Hanja characters into Vietnamese sentences.
-- EXCEPTION: You may use foreign languages and characters ONLY IF the quiz topic is explicitly about that specific foreign language.
-- Questions should be in Vietnamese for all general subjects (Toán, Ngữ văn, Lịch sử, GDCD, etc.).
+
+LANGUAGE RULES (EXTREMELY IMPORTANT — FOLLOW STRICTLY):
+- ALL question text, ALL answer options, ALL explanations MUST be written in PURE Vietnamese (Chữ Quốc Ngữ only).
+- STRICTLY FORBIDDEN: Do NOT include ANY Chinese characters (汉字/漢字), Japanese characters (Hiragana/Katakana/Kanji), Korean characters (Hangul), or ANY other non-Latin, non-Vietnamese script in ANY field.
+- This rule applies to EVERY SINGLE WORD in EVERY field: question, optionA, optionB, optionC, optionD, explanation, suggested_answer.
+${isForeignLangTopic
+  ? `- EXCEPTION for this topic: Since the topic explicitly involves a foreign language, you MAY include foreign script ONLY within quoted example words/phrases, but the surrounding explanation must still be in Vietnamese.`
+  : `- NO EXCEPTIONS: Even if a concept has a foreign-language origin (e.g. a borrowed word), write it using only Vietnamese alphabet characters.`
+}
+- Double-check every single option before returning. If any option contains non-Vietnamese script, rewrite it in Vietnamese.
 
 IMPORTANT: Return ONLY a valid JSON array. No markdown, no code blocks, no extra text.
 
@@ -147,6 +158,21 @@ Each object must have exactly these fields depending on question_type:
 ${jsonFormat}
 
 Generate ${count} diverse questions covering different aspects of "${topic}".`;
+}
+
+// Detect non-Latin foreign scripts (Chinese, Japanese, Korean, Arabic, etc.)
+// Returns true if the string contains characters that should NOT appear in Vietnamese text
+function containsForeignScript(text) {
+  if (!text || typeof text !== 'string') return false;
+  // CJK Unified Ideographs, Hiragana, Katakana, Hangul, Arabic
+  return /[\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF\u0600-\u06FF]/.test(text);
+}
+
+function hasForeignScriptInQuestion(q) {
+  const fields = [q.question, q.optionA, q.optionB, q.optionC, q.optionD,
+                  q.option_a, q.option_b, q.option_c, q.option_d,
+                  q.explanation, q.suggested_answer];
+  return fields.some(f => containsForeignScript(f));
 }
 
 function normalizeQuestions(questions) {
@@ -230,15 +256,42 @@ async function chatWithGroq(messages, systemInstruction) {
 
 async function generateQuizQuestions(topic, count = 10, difficulty = "medium", questionType = "multiple_choice") {
   const prompt = buildQuizPrompt(topic, count, difficulty, questionType);
+  const isForeignLangTopic = /tiếng trung|chinese|mandarin|hán ngữ|tiếng nhật|japanese|tiếng hàn|korean/i.test(topic);
+
+  async function tryGenerate(generatorFn, label) {
+    try {
+      console.log(`🤖 Generating quiz [${label}]: "${topic}" (${count}q, ${difficulty})`);
+      let questions = await generatorFn(prompt);
+      console.log(`✅ ${label} success: ${questions.length} questions`);
+
+      // Check for foreign script contamination (skip check for foreign language topics)
+      if (!isForeignLangTopic) {
+        const dirty = questions.filter(hasForeignScriptInQuestion);
+        if (dirty.length > 0) {
+          console.warn(`⚠️  ${label}: ${dirty.length}/${questions.length} questions contain foreign script — retrying once`);
+          questions = await generatorFn(prompt);
+          const stillDirty = questions.filter(hasForeignScriptInQuestion);
+          if (stillDirty.length > 0) {
+            console.warn(`⚠️  ${label} retry: still ${stillDirty.length} dirty questions — filtering them out`);
+            // Keep clean questions; if not enough, log warning but continue
+            const clean = questions.filter(q => !hasForeignScriptInQuestion(q));
+            if (clean.length === 0) throw new Error('All generated questions contain foreign script');
+            questions = clean;
+          }
+        }
+      }
+
+      return normalizeQuestions(questions);
+    } catch (err) {
+      throw err;
+    }
+  }
 
   try {
-    console.log('🤖 Generating quiz [Gemini]: "' + topic + '" (' + count + 'q, ' + difficulty + ')');
-    const questions = await generateWithGemini(prompt);
-    console.log('✅ Gemini success: ' + questions.length + ' questions');
-    return normalizeQuestions(questions);
+    return await tryGenerate(generateWithGemini, 'Gemini');
   } catch (geminiErr) {
     if (isQuotaError(geminiErr)) {
-      console.warn('⚠️  Gemini quota exceeded — trying Groq fallback for "' + topic + '"');
+      console.warn(`⚠️  Gemini quota exceeded — trying Groq fallback for "${topic}"`);
     } else {
       console.error("❌ Gemini error:", geminiErr.message, "— trying Groq fallback");
     }
@@ -246,16 +299,13 @@ async function generateQuizQuestions(topic, count = 10, difficulty = "medium", q
 
   if (hasGroq) {
     try {
-      console.log('🔄 Generating quiz [Groq]: "' + topic + '" (' + count + 'q, ' + difficulty + ')');
-      const questions = await generateWithGroq(prompt);
-      console.log('✅ Groq success: ' + questions.length + ' questions');
-      return normalizeQuestions(questions);
+      return await tryGenerate(generateWithGroq, 'Groq');
     } catch (groqErr) {
       console.error("❌ Groq error:", groqErr.message);
     }
   }
 
-  console.error('💀 Both Gemini and Groq failed for "' + topic + '"');
+  console.error(`💀 Both Gemini and Groq failed for "${topic}"`);
   return generateQuotaNotice(topic, count);
 }
 
