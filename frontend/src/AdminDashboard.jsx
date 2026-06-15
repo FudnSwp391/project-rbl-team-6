@@ -157,7 +157,7 @@ export default function AdminDashboard() {
       {/* ══ SIDEBAR ══ */}
       <aside className="w-64 h-screen fixed left-0 top-0 bg-white shadow-sm z-20 flex flex-col py-6 px-2">
         <div className="px-3 pb-8 pt-1">
-          <h1 className="text-2xl font-bold text-primary">AcademiaFlow</h1>
+          <h1 className="text-2xl font-bold text-primary">EduX</h1>
           <p className="text-xs text-on-surface-variant mt-0.5">Bảng điều khiển Admin</p>
         </div>
 
@@ -870,6 +870,28 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId }) {
             <InfoRow icon="badge" label="Mã người dùng" value={`#${detail.id}`} />
             <InfoRow icon="calendar_today" label="Ngày tham gia" value={fmtDate(detail.created_at)} />
             {detail.google_id && <InfoRow icon="account_circle" label="Xác thực" value="Google OAuth" />}
+            {detail.login_logs?.[0] && (
+              <div className="flex items-start gap-2">
+                <span className={`material-symbols-outlined text-[15px] mt-0.5 ${detail.login_logs[0].is_suspicious ? 'text-orange-500' : 'text-on-surface-variant'}`}>
+                  {detail.login_logs[0].is_suspicious ? 'gpp_maybe' : 'router'}
+                </span>
+                <span className="text-xs text-on-surface-variant min-w-[80px]">IP gần nhất</span>
+                <div className="flex-1 text-right">
+                  <span className={`text-xs font-mono font-semibold ${detail.login_logs[0].is_suspicious ? 'text-orange-600' : 'text-on-surface'}`}>
+                    {detail.login_logs[0].ip_address}
+                  </span>
+                  {detail.login_logs[0].is_suspicious && (
+                    <span className="ml-1 text-[10px] font-bold text-orange-600 bg-orange-100 px-1.5 py-0.5 rounded">IP mới</span>
+                  )}
+                  <p className="text-[10px] text-on-surface-variant mt-0.5">
+                    {new Date(detail.login_logs[0].created_at).toLocaleString('vi-VN')}
+                  </p>
+                </div>
+              </div>
+            )}
+            {!detail.login_logs?.length && (
+              <InfoRow icon="router" label="IP gần nhất" value="Chưa có dữ liệu" />
+            )}
           </div>
 
           {detail.role === 'tutor' && detail.tutor_profile && (
@@ -903,6 +925,29 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId }) {
             <div className="space-y-2 pt-2 border-t border-outline-variant">
               <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Thống kê học tập</p>
               <InfoRow icon="quiz" label="Số lần làm bài" value={detail.quiz_attempts ?? 0} />
+            </div>
+          )}
+
+          {detail.login_logs?.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-outline-variant">
+              <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide flex items-center gap-1">
+                <span className="material-symbols-outlined text-[14px]">history</span>
+                Lịch sử đăng nhập
+              </p>
+              <div className="space-y-1.5 max-h-[160px] overflow-y-auto">
+                {detail.login_logs.map((log, i) => (
+                  <div key={i} className={`flex items-start gap-2 p-2 rounded-lg text-xs ${log.is_suspicious ? 'bg-orange-50 border border-orange-200' : 'bg-surface-container-low'}`}>
+                    <span className={`material-symbols-outlined text-[14px] mt-0.5 shrink-0 ${log.is_suspicious ? 'text-orange-500' : 'text-on-surface-variant'}`}>
+                      {log.is_suspicious ? 'gpp_maybe' : 'check_circle'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-on-surface truncate">{log.ip_address}</p>
+                      <p className="text-on-surface-variant truncate">{new Date(log.created_at).toLocaleString('vi-VN')}</p>
+                    </div>
+                    {log.is_suspicious && <span className="shrink-0 text-[10px] font-bold text-orange-600 bg-orange-100 px-1.5 py-0.5 rounded">IP mới</span>}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -2109,7 +2154,7 @@ function AuditLogsView() {
 function SettingsView() {
   const [saved, setSaved] = useState(false)
   const [form, setForm] = useState({
-    siteName: 'AcademiaFlow',
+    siteName: 'EduX',
     supportEmail: 'support@academiaflow.com',
     maxPendingDays: '7',
     autoRejectDays: '30',

@@ -195,13 +195,33 @@ const feedbackData = [
     content: `"Elena là một người nói chuyện tuyệt vời. Sự tự tin khi giao tiếp của tôi đã tăng vọt. ¡Muchas gracias!"`
   }
 ];
-const displayFeedback = [...feedbackData, ...feedbackData];
-
 // ─── Home Page ────────────────────────────────────────────────────────────────
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+
+function formatTimeAgo(dateStr) {
+  if (!dateStr) return ''
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
+  if (diff < 60)   return 'Vừa xong'
+  if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`
+  return `${Math.floor(diff / 86400)} ngày trước`
+}
+
 function HomePage({ onGoSignIn }) {
   const { user, logout } = useAuth()
   const [topic, setTopic] = useState('')
   const [place, setPlace] = useState('')
+  const [liveReviews, setLiveReviews] = useState([])
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/reviews/featured?limit=12`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (Array.isArray(data) && data.length > 0) setLiveReviews(data) })
+      .catch(() => {})
+  }, [])
+
+  const reviewsToShow = liveReviews.length > 0 ? liveReviews : feedbackData
+  const displayFeedbackLive = [...reviewsToShow, ...reviewsToShow]
 
   return (
     <div className="academia-page">
@@ -393,32 +413,52 @@ function HomePage({ onGoSignIn }) {
           <div className="relative w-full overflow-hidden h-64 flex items-center">
             {/* Scroller Content */}
             <div className="scroll-container gap-6 px-6">
-              {displayFeedback.map((fb, idx) => (
-                <div key={`${fb.id}-${idx}`} className="glass-card w-[380px] p-6 rounded-xl shadow-level-2 flex flex-col gap-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full ${fb.bgColor} ${fb.textColor} flex items-center justify-center font-bold`}>
-                        {fb.initials}
+              {displayFeedbackLive.map((fb, idx) => {
+                // Hỗ trợ cả format DB (reviewer_name) lẫn format mock cũ (name)
+                const name    = fb.reviewer_name || fb.name || ''
+                const role    = fb.reviewer_role || fb.role || 'student'
+                const picture = fb.user_picture || fb.reviewer_picture || null
+                const initials = fb.initials || name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+                const subject = fb.subject || ''
+                const content = fb.content || ''
+                const roleLabel = role === 'parent' ? 'Phụ Huynh' : role === 'tutor' ? 'Gia Sư' : 'Học Sinh'
+                const timeLabel = fb.time || formatTimeAgo(fb.created_at)
+                const avatarColors = [
+                  ['bg-[#d4e3ff]','text-[#003564]'], ['bg-[#e2e2e2]','text-[#5d5f5f]'],
+                  ['bg-[#dde1ff]','text-[#00288e]'], ['bg-[#a4c9ff]','text-[#003564]'],
+                  ['bg-[#fce7f3]','text-[#7c3aed]'], ['bg-[#dcfce7]','text-[#15803d]'],
+                ]
+                const [bgColor, textColor] = avatarColors[idx % avatarColors.length]
+                return (
+                  <div key={`${fb.id || idx}-${idx}`} className="glass-card w-[380px] p-6 rounded-xl shadow-level-2 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        {picture ? (
+                          <img src={picture} alt={name} className="w-10 h-10 rounded-full object-cover" />
+                        ) : (
+                          <div className={`w-10 h-10 rounded-full ${bgColor} ${textColor} flex items-center justify-center font-bold text-sm`}>
+                            {initials}
+                          </div>
+                        )}
+                        <div>
+                          <h4 className="font-semibold text-[#191c1e] leading-tight">{name}</h4>
+                          <span className="text-xs font-medium text-[#444653]">{roleLabel}</span>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-semibold text-[#191c1e] leading-tight">{fb.name}</h4>
-                        <span className="text-xs font-medium text-[#444653]">{fb.role}</span>
+                      <span className="text-[11px] font-medium px-2 py-1 bg-[#c4c5d5]/30 text-[#444653] rounded-full">
+                        {timeLabel}
+                      </span>
+                    </div>
+                    <div>
+                      {subject && <span className="text-xs font-bold uppercase tracking-wider text-[#00288e]">Phản hồi đã xác minh cho {subject}</span>}
+                      <div className="flex mt-1">
+                        {[1,2,3,4,5].map(i => <span key={i} className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
                       </div>
                     </div>
-                    <span className={`text-[11px] font-medium px-2 py-1 ${fb.pulse ? 'bg-[#00288e]/10 text-[#00288e]' : 'bg-[#c4c5d5]/30 text-[#444653]'} rounded-full flex items-center gap-1`}>
-                      {fb.pulse && <span className="w-1.5 h-1.5 bg-[#00288e] rounded-full animate-pulse"></span>}
-                      {fb.time}
-                    </span>
+                    <p className="text-[#444653] text-sm line-clamp-3">{content}</p>
                   </div>
-                  <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-[#00288e]">Phản hồi đã xác minh cho {fb.subject}</span>
-                    <div className="flex mt-1">
-                      {[1,2,3,4,5].map(i => <span key={i} className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
-                    </div>
-                  </div>
-                  <p className="text-[#444653] text-sm line-clamp-3">{fb.content}</p>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         </section>
