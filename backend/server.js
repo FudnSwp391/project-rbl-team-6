@@ -447,6 +447,23 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+const classRoutes = require("./routes/classRoutes");
+const materialRoutes = require("./routes/materialRoutes");
+const assignmentRoutes = require("./routes/assignmentRoutes");
+const discussionRoutes = require("./routes/discussionRoutes");
+const lessonRoutes = require("./routes/lessonRoutes");
+const learningPathRoutes = require("./routes/learningPathRoutes");
+
+app.use("/api/classes/:classId/materials", materialRoutes);
+app.use("/api/classes", classRoutes);
+app.use("/", assignmentRoutes);
+app.use("/", discussionRoutes);
+app.use("/", lessonRoutes);
+app.use("/", learningPathRoutes);
+
 // ─── Start server ─────────────────────────────────────────────────────────────
 app.listen(port, () => {
   console.log(`🚀 Server is running on http://localhost:${port}`);

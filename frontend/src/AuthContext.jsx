@@ -39,12 +39,8 @@ export function AuthProvider({ children }) {
     // Role-based redirect after login
     if (newUser?.role === 'admin') {
       window.location.hash = '/admin'
-    } else if (newUser?.role === 'tutor') {
-      window.location.hash = '/tutor'        // Tutor Dashboard
-    } else if (newUser?.role === 'parent') {
-      window.location.hash = '/parent'       // Parent Dashboard
     } else {
-      window.location.hash = '/dashboard'    // Student Dashboard
+      window.location.hash = '/'             // Redirect to home page
     }
   }
 
