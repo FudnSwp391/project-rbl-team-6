@@ -2,7 +2,7 @@
  * ParentDashboard.jsx
  * ─────────────────────────────────────────────────────────────────────────────
  * Dashboard phụ huynh — dữ liệu thật từ API.
- * Sections: Tổng quan | Học sinh | Gia sư | Lịch sử hoạt động | Cài đặt
+ * Sections: Tổng quan | Học sinh | Gia sư | Lịch sử hoạt động | Tài chính | Cài đặt
  */
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
@@ -16,6 +16,7 @@ const NAV = [
   { key: 'tutors',    icon: 'school',           label: 'Gia sư' },
   { key: 'messages',  icon: 'chat',             label: 'Tin nhắn' },
   { key: 'activity',  icon: 'analytics',        label: 'Hoạt động' },
+  { key: 'finance',   icon: 'account_balance_wallet', label: 'Tài chính' },
   { key: 'settings',  icon: 'settings',         label: 'Cài đặt' },
 ]
 
@@ -61,6 +62,100 @@ function TypeBadge({ type }) {
       <span className="material-symbols-outlined text-[12px]">{m.icon}</span>
       {m.label}
     </span>
+  )
+}
+
+// ─── Notification Dropdown ─────────────────────────────────────────────────────
+const MOCK_NOTIFICATIONS = [
+  { id: 1, type: 'payment', icon: 'payments',       color: 'text-red-500',    bg: 'bg-red-50',    title: 'Nhắc đóng học phí', body: 'Học phí tháng 7 của Bé Minh chưa được thanh toán.', time: '2 giờ trước', unread: true },
+  { id: 2, type: 'tutor',   icon: 'event_busy',     color: 'text-amber-600',  bg: 'bg-amber-50',  title: 'Gia sư báo nghỉ',   body: 'Thầy Nguyễn Văn A báo nghỉ buổi học Toán ngày 18/7.', time: '5 giờ trước', unread: true },
+  { id: 3, type: 'result',  icon: 'grading',        color: 'text-blue-600',   bg: 'bg-blue-50',   title: 'Kết quả bài kiểm tra mới', body: 'Bé Lan vừa hoàn thành bài Ngữ văn lớp 11 — 82%.', time: 'Hôm qua', unread: true },
+  { id: 4, type: 'payment', icon: 'check_circle',   color: 'text-green-600',  bg: 'bg-green-50',  title: 'Thanh toán thành công', body: 'Hóa đơn #INV-0023 đã được xác nhận.', time: '2 ngày trước', unread: false },
+  { id: 5, type: 'result',  icon: 'psychology',     color: 'text-purple-600', bg: 'bg-purple-50', title: 'Báo cáo luyện tập AI', body: 'Bé Minh đã hoàn thành 5 phiên luyện tập tuần này.', time: '3 ngày trước', unread: false },
+]
+
+function NotificationDropdown() {
+  const [open, setOpen] = useState(false)
+  const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS)
+  const dropdownRef = useRef(null)
+  const unreadCount = notifications.filter(n => n.unread).length
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const markAllRead = () => setNotifications(prev => prev.map(n => ({ ...n, unread: false })))
+  const markRead = (id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, unread: false } : n))
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="relative p-2 text-on-surface-variant hover:text-primary rounded-full hover:bg-surface-container transition-colors"
+        aria-label="Thông báo"
+      >
+        <span className="material-symbols-outlined" style={unreadCount > 0 ? { fontVariationSettings: "'FILL' 1" } : {}}>
+          notifications
+        </span>
+        {unreadCount > 0 && (
+          <span className="absolute top-1 right-1 min-w-[18px] h-[18px] rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1 border-2 border-surface">
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-80 bg-surface rounded-2xl shadow-xl border border-outline-variant/20 overflow-hidden z-50 animate-[fadeIn_0.15s_ease-out]">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/20">
+            <h4 className="font-headline-sm text-on-surface">Thông báo</h4>
+            {unreadCount > 0 && (
+              <button onClick={markAllRead} className="text-xs text-primary hover:underline font-medium">
+                Đánh dấu tất cả đã đọc
+              </button>
+            )}
+          </div>
+
+          {/* List */}
+          <div className="max-h-96 overflow-y-auto divide-y divide-outline-variant/10">
+            {notifications.length === 0 ? (
+              <div className="p-6 text-center text-on-surface-variant text-sm">Không có thông báo nào</div>
+            ) : (
+              notifications.map(n => (
+                <button
+                  key={n.id}
+                  onClick={() => markRead(n.id)}
+                  className={`w-full text-left flex items-start gap-3 p-3 hover:bg-surface-container-low transition-colors ${n.unread ? 'bg-primary/5' : ''}`}
+                >
+                  <div className={`w-9 h-9 rounded-full ${n.bg} flex items-center justify-center shrink-0 mt-0.5`}>
+                    <span className={`material-symbols-outlined text-[18px] ${n.color}`} style={{ fontVariationSettings: "'FILL' 1" }}>
+                      {n.icon}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <p className={`font-label-md text-on-surface truncate ${n.unread ? 'font-semibold' : ''}`}>{n.title}</p>
+                      {n.unread && <span className="w-2 h-2 rounded-full bg-primary shrink-0" />}
+                    </div>
+                    <p className="font-body-sm text-on-surface-variant text-xs leading-snug mt-0.5 line-clamp-2">{n.body}</p>
+                    <p className="text-[11px] text-on-surface-variant/70 mt-1">{n.time}</p>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-4 py-2 border-t border-outline-variant/20 text-center">
+            <button className="text-xs text-primary hover:underline font-medium">Xem tất cả thông báo</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -168,9 +263,7 @@ export default function ParentDashboard() {
             </p>
           </div>
 
-          <button className="relative p-2 text-on-surface-variant hover:text-primary rounded-full hover:bg-surface-container transition-colors">
-            <span className="material-symbols-outlined">notifications</span>
-          </button>
+          <NotificationDropdown />
         </header>
 
         {/* Content */}
@@ -180,6 +273,7 @@ export default function ParentDashboard() {
           {section === 'tutors'    && <TutorsSection    token={token} />}
           {section === 'messages'  && <MessagesSection  token={token} user={user} />}
           {section === 'activity'  && <ActivitySection  token={token} />}
+          {section === 'finance'   && <FinanceSection   token={token} />}
           {section === 'settings'  && <SettingsSection  user={user} displayName={displayName} />}
         </main>
       </div>
@@ -323,7 +417,8 @@ function StudentsSection({ token }) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
-  
+  const [selectedStudent, setSelectedStudent] = useState(null)
+
   const fetchChildren = () => {
     setLoading(true)
     fetch(`${API_BASE}/api/parent/children`, {
@@ -334,9 +429,7 @@ function StudentsSection({ token }) {
       .catch(() => setLoading(false))
   }
 
-  useEffect(() => {
-    fetchChildren()
-  }, [token])
+  useEffect(() => { fetchChildren() }, [token])
 
   const handleUnlink = async (studentId, studentName) => {
     if (!window.confirm(`Bạn có chắc muốn hủy liên kết với học sinh ${studentName}?`)) return
@@ -347,12 +440,21 @@ function StudentsSection({ token }) {
       })
       if (res.ok) fetchChildren()
       else alert('Lỗi khi hủy liên kết')
-    } catch (e) {
-      alert('Lỗi kết nối')
-    }
+    } catch { alert('Lỗi kết nối') }
   }
 
   if (loading) return <LoadingSkeleton />
+
+  // ── Detail view ──
+  if (selectedStudent) {
+    return (
+      <StudentDetailView
+        token={token}
+        student={selectedStudent}
+        onBack={() => setSelectedStudent(null)}
+      />
+    )
+  }
 
   const filtered = children.filter(s =>
     s.student_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -378,7 +480,7 @@ function StudentsSection({ token }) {
               className="pl-9 pr-4 h-10 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-body-sm"
             />
           </div>
-          <button 
+          <button
             onClick={() => setShowAddModal(true)}
             className="h-10 px-4 rounded-xl bg-primary text-on-primary font-label-md flex items-center gap-1 hover:bg-primary/90 transition-colors shadow-sm"
           >
@@ -393,7 +495,11 @@ function StudentsSection({ token }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
           {filtered.map(s => (
-            <div key={s.link_id} className="bg-surface rounded-2xl border border-outline-variant/30 shadow-sm p-md flex flex-col gap-md relative overflow-hidden group hover:border-primary/30 transition-colors">
+            <div
+              key={s.link_id}
+              className="bg-surface rounded-2xl border border-outline-variant/30 shadow-sm p-md flex flex-col gap-md relative overflow-hidden group hover:border-primary/30 hover:shadow-md transition-all cursor-pointer"
+              onClick={() => setSelectedStudent(s)}
+            >
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-sm">
                   <Avatar src={s.student_picture} name={s.student_name} size={12} />
@@ -403,8 +509,8 @@ function StudentsSection({ token }) {
                     {!s.nickname && <p className="font-label-sm text-label-sm text-on-surface-variant">{s.student_email}</p>}
                   </div>
                 </div>
-                <button 
-                  onClick={() => handleUnlink(s.student_id, s.student_name)}
+                <button
+                  onClick={e => { e.stopPropagation(); handleUnlink(s.student_id, s.student_name) }}
                   className="w-8 h-8 flex items-center justify-center rounded-full text-error opacity-0 group-hover:opacity-100 hover:bg-error/10 transition-all"
                   title="Hủy liên kết"
                 >
@@ -429,10 +535,13 @@ function StudentsSection({ token }) {
                   <p className="text-xs mt-1 font-medium text-on-surface-variant">—</p>
                 </div>
               </div>
-              
+
               <div className="flex justify-between items-center text-xs text-on-surface-variant border-t border-outline-variant/20 pt-sm mt-auto">
                 <span>Liên kết ngày: {fmtDate(s.linked_at)}</span>
-                <span>Hoạt động cuối: {fmtDate(s.last_quiz_at)}</span>
+                <span className="flex items-center gap-1 text-primary font-medium">
+                  Xem chi tiết
+                  <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                </span>
               </div>
             </div>
           ))}
@@ -440,6 +549,375 @@ function StudentsSection({ token }) {
       )}
 
       {showAddModal && <AddStudentModal token={token} onClose={() => setShowAddModal(false)} onAdded={fetchChildren} />}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  STUDENT DETAIL VIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Mock data — replace with real API calls when backend endpoints are ready
+const MOCK_SCHEDULE = [
+  { id: 1, subject: 'Toán',     time: 'Thứ 2, 18/07 • 18:00 – 20:00', tutor: 'Nguyễn Văn A', tutorId: 'tutor-1' },
+  { id: 2, subject: 'Ngữ văn',  time: 'Thứ 4, 20/07 • 17:00 – 19:00', tutor: 'Trần Thị B',   tutorId: 'tutor-2' },
+  { id: 3, subject: 'Tiếng Anh',time: 'Thứ 6, 22/07 • 19:00 – 21:00', tutor: 'Lê Văn C',     tutorId: 'tutor-3' },
+  { id: 4, subject: 'Vật lí',   time: 'Thứ 7, 23/07 • 08:00 – 10:00', tutor: 'Phạm Thị D',   tutorId: 'tutor-4' },
+]
+
+const MOCK_REVIEWS = [
+  { id: 1, date: 'Tuần 2 – Tháng 7/2025', tutor: 'Nguyễn Văn A', subject: 'Toán', content: 'Em tiến bộ rõ rệt trong phần phương trình bậc 2. Cần ôn thêm phần bất phương trình. Thái độ học tập tốt, chăm chú nghe giảng.', rating: 4 },
+  { id: 2, date: 'Tuần 1 – Tháng 7/2025', tutor: 'Trần Thị B',   subject: 'Ngữ văn', content: 'Bài làm văn nghị luận có chiều sâu hơn so với tuần trước. Tuy nhiên phần phân tích nhân vật còn sơ sài, cần đọc thêm tác phẩm.', rating: 3 },
+  { id: 3, date: 'Tháng 6/2025',           tutor: 'Lê Văn C',     subject: 'Tiếng Anh', content: 'Kỹ năng nghe và đọc hiểu cải thiện tốt. Grammar cần luyện thêm thì hiện tại hoàn thành. Speaking tự tin hơn.', rating: 5 },
+]
+
+const SUBJECT_COLORS = {
+  'Toán':      'bg-blue-100 text-blue-700 border-blue-200',
+  'Ngữ văn':   'bg-purple-100 text-purple-700 border-purple-200',
+  'Tiếng Anh': 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  'Vật lí':    'bg-orange-100 text-orange-700 border-orange-200',
+  'Hoá học':   'bg-red-100 text-red-700 border-red-200',
+  'Sinh học':  'bg-green-100 text-green-700 border-green-200',
+}
+function subjectColor(s) { return SUBJECT_COLORS[s] || 'bg-surface-container text-on-surface-variant border-outline-variant/30' }
+
+function StarRating({ value }) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {[1,2,3,4,5].map(i => (
+        <span key={i} className={`material-symbols-outlined text-[16px] ${i <= value ? 'text-amber-400' : 'text-outline-variant'}`}
+          style={{ fontVariationSettings: i <= value ? "'FILL' 1" : '' }}>
+          star
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function StudentDetailView({ token, student, onBack }) {
+  const [leaveModal, setLeaveModal] = useState(null) // { scheduleItem }
+  const [messageModal, setMessageModal] = useState(null) // { tutorId, tutorName }
+
+  // Derived stats from what we already have on the card
+  const avgScore = ((student.avg_quiz_score || 0) + (student.avg_practice_score || 0)) / 2 || null
+  const totalAttempts = (student.quiz_count || 0) + (student.practice_count || 0) + (student.exam_count || 0)
+  const completionPct = totalAttempts > 0 ? Math.min(100, Math.round((totalAttempts / Math.max(totalAttempts, 10)) * 100)) : 0
+  const absences = 2 // mock — replace with API
+
+  return (
+    <div className="flex flex-col gap-lg max-w-5xl mx-auto">
+
+      {/* ── Back + Header ── */}
+      <div className="flex items-center gap-md">
+        <button
+          onClick={onBack}
+          className="w-10 h-10 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center transition-colors shrink-0"
+        >
+          <span className="material-symbols-outlined">arrow_back</span>
+        </button>
+        <div className="flex items-center gap-md flex-1">
+          <Avatar src={student.student_picture} name={student.student_name} size={14} />
+          <div>
+            <h3 className="font-headline-md text-headline-md text-on-surface">{student.nickname || student.student_name}</h3>
+            {student.nickname && <p className="font-body-sm text-on-surface-variant">{student.student_name} • {student.student_email}</p>}
+            {!student.nickname && <p className="font-body-sm text-on-surface-variant">{student.student_email}</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* ── 1. Mini Dashboard ── */}
+      <div>
+        <h4 className="font-headline-sm text-on-surface mb-md flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>dashboard</span>
+          Tổng quan
+        </h4>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-md">
+          {/* Điểm trung bình */}
+          <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="material-symbols-outlined text-[20px] text-blue-500" style={{ fontVariationSettings: "'FILL' 1" }}>grade</span>
+              <span className="text-[11px] font-medium text-on-surface-variant bg-surface-container px-2 py-0.5 rounded-full">Tổng hợp</span>
+            </div>
+            <p className={`font-display-sm text-display-sm font-black leading-none ${avgScore ? scoreColor(avgScore) : 'text-on-surface-variant'}`}>
+              {avgScore ? `${Math.round(avgScore)}%` : '—'}
+            </p>
+            <p className="font-label-sm text-on-surface-variant">Điểm trung bình</p>
+          </div>
+
+          {/* Số buổi vắng/muộn */}
+          <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="material-symbols-outlined text-[20px] text-amber-500" style={{ fontVariationSettings: "'FILL' 1" }}>event_busy</span>
+              <span className="text-[11px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Tháng này</span>
+            </div>
+            <p className={`font-display-sm text-display-sm font-black leading-none ${absences > 2 ? 'text-red-500' : absences > 0 ? 'text-amber-600' : 'text-green-600'}`}>
+              {absences}
+            </p>
+            <p className="font-label-sm text-on-surface-variant">Buổi vắng / muộn</p>
+          </div>
+
+          {/* % Hoàn thành */}
+          <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm col-span-2">
+            <div className="flex items-center justify-between">
+              <span className="material-symbols-outlined text-[20px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>task_alt</span>
+              <span className="text-[11px] font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">{totalAttempts} bài</span>
+            </div>
+            <div className="flex items-end justify-between gap-md">
+              <div>
+                <p className="font-display-sm text-display-sm font-black leading-none text-green-600">{completionPct}%</p>
+                <p className="font-label-sm text-on-surface-variant mt-1">Hoàn thành bài tập</p>
+              </div>
+              <div className="flex-1 max-w-[140px]">
+                <div className="flex justify-between text-xs text-on-surface-variant mb-1">
+                  <span>Quiz: {student.quiz_count || 0}</span>
+                  <span>Practice: {student.practice_count || 0}</span>
+                </div>
+                <div className="h-2.5 bg-surface-container-high rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-700"
+                    style={{ width: `${completionPct}%` }}
+                  />
+                </div>
+                <div className="h-2 bg-surface-container-high rounded-full overflow-hidden mt-1">
+                  <div
+                    className="h-full rounded-full bg-purple-400 transition-all duration-700"
+                    style={{ width: `${Math.min(100, ((student.practice_count || 0) / Math.max(totalAttempts, 1)) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── 2. Lịch học sắp tới ── */}
+      <div>
+        <h4 className="font-headline-sm text-on-surface mb-md flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>calendar_month</span>
+          Lịch học sắp tới
+        </h4>
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          {MOCK_SCHEDULE.length === 0 ? (
+            <EmptyState icon="event_available" text="Chưa có buổi học nào sắp tới" />
+          ) : (
+            <div className="divide-y divide-outline-variant/10">
+              {MOCK_SCHEDULE.map(item => (
+                <div key={item.id} className="flex items-center gap-md p-4 hover:bg-surface-container-low/50 transition-colors">
+                  {/* Subject badge */}
+                  <div className={`shrink-0 px-3 py-1.5 rounded-xl border text-sm font-semibold ${subjectColor(item.subject)}`}>
+                    {item.subject}
+                  </div>
+
+                  {/* Time + Tutor */}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-label-md text-on-surface flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[15px] text-on-surface-variant">schedule</span>
+                      {item.time}
+                    </p>
+                    <p className="font-label-sm text-on-surface-variant flex items-center gap-1 mt-0.5">
+                      <span className="material-symbols-outlined text-[14px]">person</span>
+                      {item.tutor}
+                    </p>
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => setLeaveModal(item)}
+                      className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors flex items-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">event_busy</span>
+                      Xin nghỉ
+                    </button>
+                    <button
+                      onClick={() => setMessageModal({ tutorId: item.tutorId, tutorName: item.tutor })}
+                      className="h-8 px-3 rounded-lg border border-primary/30 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 transition-colors flex items-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">chat</span>
+                      Nhắn gia sư
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── 3. Nhận xét định kỳ (Timeline) ── */}
+      <div>
+        <h4 className="font-headline-sm text-on-surface mb-md flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>rate_review</span>
+          Nhận xét định kỳ
+        </h4>
+
+        {MOCK_REVIEWS.length === 0 ? (
+          <EmptyState icon="rate_review" text="Chưa có nhận xét nào từ gia sư" />
+        ) : (
+          <div className="relative">
+            {/* Timeline line */}
+            <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-outline-variant/30" />
+
+            <div className="flex flex-col gap-md">
+              {MOCK_REVIEWS.map((review, idx) => (
+                <div key={review.id} className="flex gap-md pl-2">
+                  {/* Dot */}
+                  <div className="relative shrink-0 flex flex-col items-center" style={{ width: 24 }}>
+                    <div className={`w-4 h-4 rounded-full border-2 border-surface z-10 mt-1 ${idx === 0 ? 'bg-primary border-primary' : 'bg-surface-container-high border-outline-variant'}`} />
+                  </div>
+
+                  {/* Card */}
+                  <div className="flex-1 bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-md mb-2">
+                    <div className="flex items-start justify-between gap-md mb-3">
+                      <div>
+                        <p className="font-label-sm text-on-surface-variant text-xs">{review.date}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${subjectColor(review.subject)}`}>{review.subject}</span>
+                          <span className="font-label-sm text-on-surface-variant text-xs flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px]">person</span>
+                            {review.tutor}
+                          </span>
+                        </div>
+                      </div>
+                      <StarRating value={review.rating} />
+                    </div>
+                    <p className="font-body-sm text-on-surface leading-relaxed">{review.content}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Leave Modal ── */}
+      {leaveModal && (
+        <LeaveRequestModal
+          scheduleItem={leaveModal}
+          studentName={student.nickname || student.student_name}
+          onClose={() => setLeaveModal(null)}
+        />
+      )}
+
+      {/* ── Message Modal ── */}
+      {messageModal && (
+        <QuickMessageModal
+          tutorName={messageModal.tutorName}
+          onClose={() => setMessageModal(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function LeaveRequestModal({ scheduleItem, studentName, onClose }) {
+  const [reason, setReason] = useState('')
+  const [sent, setSent] = useState(false)
+
+  const handleSend = () => {
+    // TODO: call API to notify tutor
+    setSent(true)
+    setTimeout(onClose, 1500)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
+          <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
+            <span className="material-symbols-outlined text-amber-500">event_busy</span>
+            Xin nghỉ phép
+          </h3>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container">
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
+        </div>
+        <div className="p-4 flex flex-col gap-4">
+          {sent ? (
+            <div className="flex flex-col items-center gap-2 py-4 text-center">
+              <span className="material-symbols-outlined text-green-500 text-[40px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+              <p className="font-label-md text-on-surface">Đã gửi yêu cầu nghỉ phép!</p>
+              <p className="font-body-sm text-on-surface-variant">Gia sư {scheduleItem.tutor} sẽ nhận được thông báo.</p>
+            </div>
+          ) : (
+            <>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
+                <p className="font-medium text-amber-800">{scheduleItem.subject} — {scheduleItem.time}</p>
+                <p className="text-amber-600 text-xs mt-0.5">Gia sư: {scheduleItem.tutor}</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Lý do nghỉ (không bắt buộc)</label>
+                <textarea
+                  value={reason}
+                  onChange={e => setReason(e.target.value)}
+                  rows={3}
+                  placeholder="VD: Bé bệnh, có việc gia đình..."
+                  className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
+                />
+              </div>
+              <button
+                onClick={handleSend}
+                className="h-11 w-full rounded-xl bg-amber-500 text-white font-medium hover:bg-amber-600 transition-colors"
+              >
+                Gửi yêu cầu nghỉ
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function QuickMessageModal({ tutorName, onClose }) {
+  const [message, setMessage] = useState('')
+  const [sent, setSent] = useState(false)
+
+  const handleSend = () => {
+    if (!message.trim()) return
+    // TODO: call messages API
+    setSent(true)
+    setTimeout(onClose, 1500)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
+          <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary">chat</span>
+            Nhắn gia sư {tutorName}
+          </h3>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container">
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
+        </div>
+        <div className="p-4 flex flex-col gap-4">
+          {sent ? (
+            <div className="flex flex-col items-center gap-2 py-4 text-center">
+              <span className="material-symbols-outlined text-green-500 text-[40px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+              <p className="font-label-md text-on-surface">Đã gửi tin nhắn!</p>
+            </div>
+          ) : (
+            <>
+              <textarea
+                value={message}
+                onChange={e => setMessage(e.target.value)}
+                rows={4}
+                placeholder={`Nhắn cho ${tutorName}...`}
+                className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
+              />
+              <button
+                onClick={handleSend}
+                disabled={!message.trim()}
+                className="h-11 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                Gửi tin nhắn
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -567,6 +1045,188 @@ function AddStudentModal({ token, onClose, onAdded }) {
   )
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: FINANCE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const MOCK_PENDING_INVOICES = [
+  { id: 'INV-0028', student: 'Bé Minh', subject: 'Toán + Lý', period: 'Tháng 7/2025', amount: 1800000, dueDate: '20/07/2025', overdue: false },
+  { id: 'INV-0027', student: 'Bé Lan',  subject: 'Ngữ văn',   period: 'Tháng 7/2025', amount: 900000,  dueDate: '15/07/2025', overdue: true },
+]
+
+const MOCK_PAID_INVOICES = [
+  { id: 'INV-0026', student: 'Bé Minh', subject: 'Toán + Lý', period: 'Tháng 6/2025', amount: 1800000, paidDate: '18/06/2025', method: 'Chuyển khoản' },
+  { id: 'INV-0025', student: 'Bé Lan',  subject: 'Ngữ văn',   period: 'Tháng 6/2025', amount: 900000,  paidDate: '12/06/2025', method: 'Tiền mặt' },
+  { id: 'INV-0024', student: 'Bé Minh', subject: 'Toán + Lý', period: 'Tháng 5/2025', amount: 1800000, paidDate: '20/05/2025', method: 'Chuyển khoản' },
+  { id: 'INV-0023', student: 'Bé Lan',  subject: 'Ngữ văn',   period: 'Tháng 5/2025', amount: 900000,  paidDate: '14/05/2025', method: 'Tiền mặt' },
+]
+
+function fmtMoney(n) {
+  return n.toLocaleString('vi-VN') + 'đ'
+}
+
+function FinanceSection() {
+  const [tab, setTab] = useState('pending') // 'pending' | 'history'
+  const totalDebt = MOCK_PENDING_INVOICES.reduce((s, i) => s + i.amount, 0)
+  const overdueInvoices = MOCK_PENDING_INVOICES.filter(i => i.overdue)
+
+  return (
+    <div className="flex flex-col gap-lg max-w-4xl mx-auto">
+      <div>
+        <h3 className="font-headline-md text-headline-md text-on-surface">Quản lý Tài chính</h3>
+        <p className="font-body-sm text-on-surface-variant">Theo dõi học phí và lịch sử thanh toán</p>
+      </div>
+
+      {/* ── Debt alert banner ── */}
+      {overdueInvoices.length > 0 && (
+        <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4 flex items-start gap-3">
+          <span className="material-symbols-outlined text-red-500 text-[28px] shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>
+            warning
+          </span>
+          <div className="flex-1">
+            <p className="font-headline-sm text-red-700 font-semibold">
+              {overdueInvoices.length} hóa đơn đã quá hạn thanh toán!
+            </p>
+            <p className="font-body-sm text-red-600 mt-1">
+              {overdueInvoices.map(i => `${i.id} (${i.student} — ${i.period})`).join(', ')}. Vui lòng thanh toán để tránh ảnh hưởng lịch học.
+            </p>
+          </div>
+          <span className="font-headline-sm text-red-700 font-black shrink-0">{fmtMoney(overdueInvoices.reduce((s, i) => s + i.amount, 0))}</span>
+        </div>
+      )}
+
+      {/* ── Summary cards ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-md">
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1">
+          <span className="material-symbols-outlined text-[22px] text-amber-500" style={{ fontVariationSettings: "'FILL' 1" }}>pending_actions</span>
+          <p className="font-headline-sm font-black text-amber-600">{fmtMoney(totalDebt)}</p>
+          <p className="font-label-sm text-on-surface-variant">Tổng chờ thanh toán</p>
+        </div>
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1">
+          <span className="material-symbols-outlined text-[22px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>payments</span>
+          <p className="font-headline-sm font-black text-green-600">{fmtMoney(MOCK_PAID_INVOICES.reduce((s, i) => s + i.amount, 0))}</p>
+          <p className="font-label-sm text-on-surface-variant">Đã thanh toán (năm nay)</p>
+        </div>
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1 col-span-2 lg:col-span-1">
+          <span className="material-symbols-outlined text-[22px] text-red-500" style={{ fontVariationSettings: "'FILL' 1" }}>receipt_long</span>
+          <p className="font-headline-sm font-black text-red-500">{overdueInvoices.length}</p>
+          <p className="font-label-sm text-on-surface-variant">Hóa đơn quá hạn</p>
+        </div>
+      </div>
+
+      {/* ── Tab switcher ── */}
+      <div className="flex bg-surface-container-high/60 rounded-xl p-1 gap-1">
+        {[
+          { key: 'pending', label: 'Chờ thanh toán', icon: 'pending_actions' },
+          { key: 'history', label: 'Lịch sử đã đóng', icon: 'receipt_long' },
+        ].map(t => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-lg font-label-md transition-all ${
+              tab === t.key
+                ? 'bg-surface shadow-sm text-primary'
+                : 'text-on-surface-variant hover:text-on-surface'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]" style={tab === t.key ? { fontVariationSettings: "'FILL' 1" } : {}}>{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Pending invoices ── */}
+      {tab === 'pending' && (
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          {MOCK_PENDING_INVOICES.length === 0 ? (
+            <EmptyState icon="check_circle" text="Không có hóa đơn nào đang chờ thanh toán 🎉" />
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface-container-low border-b border-outline-variant/20">
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Mã hóa đơn</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Học sinh</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm hidden md:table-cell">Môn / Kỳ</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Số tiền</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Hạn TT</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm text-right">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/10">
+                {MOCK_PENDING_INVOICES.map(inv => (
+                  <tr key={inv.id} className={`hover:bg-surface-container-low/50 transition-colors ${inv.overdue ? 'bg-red-50/40' : ''}`}>
+                    <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.id}</td>
+                    <td className="p-4 font-label-md text-on-surface">{inv.student}</td>
+                    <td className="p-4 font-body-sm text-on-surface-variant hidden md:table-cell">
+                      <p>{inv.subject}</p>
+                      <p className="text-xs">{inv.period}</p>
+                    </td>
+                    <td className="p-4 font-label-md text-on-surface font-semibold">{fmtMoney(inv.amount)}</td>
+                    <td className={`p-4 font-label-sm text-sm ${inv.overdue ? 'text-red-600 font-semibold' : 'text-on-surface-variant'}`}>
+                      {inv.dueDate}
+                    </td>
+                    <td className="p-4 text-right">
+                      {inv.overdue ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold">
+                          <span className="material-symbols-outlined text-[12px]">error</span>
+                          Quá hạn
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">
+                          <span className="material-symbols-outlined text-[12px]">schedule</span>
+                          Chờ TT
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ── Paid history ── */}
+      {tab === 'history' && (
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-surface-container-low border-b border-outline-variant/20">
+                <th className="p-4 font-label-md text-on-surface-variant text-sm">Mã hóa đơn</th>
+                <th className="p-4 font-label-md text-on-surface-variant text-sm">Học sinh</th>
+                <th className="p-4 font-label-md text-on-surface-variant text-sm hidden md:table-cell">Môn / Kỳ</th>
+                <th className="p-4 font-label-md text-on-surface-variant text-sm">Số tiền</th>
+                <th className="p-4 font-label-md text-on-surface-variant text-sm">Ngày TT</th>
+                <th className="p-4 font-label-md text-on-surface-variant text-sm text-right hidden sm:table-cell">Hình thức</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-outline-variant/10">
+              {MOCK_PAID_INVOICES.map(inv => (
+                <tr key={inv.id} className="hover:bg-surface-container-low/50 transition-colors">
+                  <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.id}</td>
+                  <td className="p-4 font-label-md text-on-surface">{inv.student}</td>
+                  <td className="p-4 font-body-sm text-on-surface-variant hidden md:table-cell">
+                    <p>{inv.subject}</p>
+                    <p className="text-xs">{inv.period}</p>
+                  </td>
+                  <td className="p-4 font-label-md text-on-surface font-semibold">{fmtMoney(inv.amount)}</td>
+                  <td className="p-4 font-label-sm text-green-600">{inv.paidDate}</td>
+                  <td className="p-4 text-right hidden sm:table-cell">
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-semibold">
+                      <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                      {inv.method}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SECTION: TUTORS
