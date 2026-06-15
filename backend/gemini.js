@@ -39,6 +39,181 @@ function generateQuotaNotice(topic, count) {
   return notices;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Language detection helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Detect which foreign language the topic is about.
+ * Returns an object describing how the quiz should handle scripts/language.
+ */
+function detectTopicLanguage(topic) {
+  const t = topic.toLowerCase();
+
+  // English — questions/answers should be in English (Latin script, fine)
+  if (/tiếng anh|english|grammar|vocabulary|ielts|toeic|toefl/.test(t)) {
+    return {
+      lang: 'english',
+      nativeName: 'Tiếng Anh',
+      script: 'latin',
+      questionLang: 'English',
+      allowForeignScript: false, // Latin script is always fine
+      promptRule: `Since this is an English language quiz:
+- Write ALL questions and answer options IN ENGLISH (not Vietnamese).
+- Explanations may be bilingual (English + Vietnamese) to help learners.
+- Use proper English grammar, vocabulary, and sentence structure.`,
+    };
+  }
+
+  // French — Latin script, questions/answers in French
+  if (/tiếng pháp|french|français|le français/.test(t)) {
+    return {
+      lang: 'french',
+      nativeName: 'Tiếng Pháp',
+      script: 'latin',
+      questionLang: 'French',
+      allowForeignScript: false,
+      promptRule: `Since this is a French language quiz:
+- Write ALL questions and answer options IN FRENCH.
+- Explanations should be in Vietnamese to help learners understand.
+- Use proper French grammar, vocabulary, and sentence structure.`,
+    };
+  }
+
+  // German — Latin script
+  if (/tiếng đức|german|deutsch/.test(t)) {
+    return {
+      lang: 'german',
+      nativeName: 'Tiếng Đức',
+      script: 'latin',
+      questionLang: 'German',
+      allowForeignScript: false,
+      promptRule: `Since this is a German language quiz:
+- Write ALL questions and answer options IN GERMAN.
+- Explanations should be in Vietnamese to help learners understand.`,
+    };
+  }
+
+  // Spanish — Latin script
+  if (/tiếng tây ban nha|spanish|español/.test(t)) {
+    return {
+      lang: 'spanish',
+      nativeName: 'Tiếng Tây Ban Nha',
+      script: 'latin',
+      questionLang: 'Spanish',
+      allowForeignScript: false,
+      promptRule: `Since this is a Spanish language quiz:
+- Write ALL questions and answer options IN SPANISH.
+- Explanations should be in Vietnamese to help learners understand.`,
+    };
+  }
+
+  // Japanese — uses Hiragana, Katakana, Kanji
+  if (/tiếng nhật|japanese|日本語|nihongo/.test(t)) {
+    return {
+      lang: 'japanese',
+      nativeName: 'Tiếng Nhật',
+      script: 'japanese', // Hiragana U+3040-309F, Katakana U+30A0-30FF, Kanji U+4E00-9FFF
+      allowForeignScript: true,
+      promptRule: `Since this is a Japanese language quiz:
+- Questions should be in Vietnamese, asking about Japanese words/grammar/vocabulary.
+- Japanese words, phrases, or example sentences MUST be written using proper Japanese script (Hiragana/Katakana/Kanji) — do NOT romanize them unless specifically testing romaji.
+- Explanations should be in Vietnamese.
+- Example format: "Từ '日本語' (nihongo) có nghĩa là gì?" with options in Vietnamese.`,
+    };
+  }
+
+  // Chinese — uses Hanzi
+  if (/tiếng trung|chinese|mandarin|hán ngữ|trung quốc|中文|汉语/.test(t)) {
+    return {
+      lang: 'chinese',
+      nativeName: 'Tiếng Trung',
+      script: 'chinese', // CJK U+4E00-9FFF
+      allowForeignScript: true,
+      promptRule: `Since this is a Chinese language quiz:
+- Questions should be in Vietnamese, asking about Chinese words/characters/grammar.
+- Chinese words, characters, or example sentences MUST use proper Chinese characters (汉字).
+- Explanations should be in Vietnamese.
+- Example format: "Từ '你好' có nghĩa là gì?" with options in Vietnamese.`,
+    };
+  }
+
+  // Korean — uses Hangul
+  if (/tiếng hàn|korean|hangul|한국어/.test(t)) {
+    return {
+      lang: 'korean',
+      nativeName: 'Tiếng Hàn',
+      script: 'korean', // Hangul U+AC00-D7AF
+      allowForeignScript: true,
+      promptRule: `Since this is a Korean language quiz:
+- Questions should be in Vietnamese, asking about Korean words/grammar/vocabulary.
+- Korean words or example sentences MUST be written in Hangul — do NOT romanize them unless testing romanization.
+- Explanations should be in Vietnamese.
+- Example format: "Từ '안녕하세요' được dùng để làm gì?" with options in Vietnamese.`,
+    };
+  }
+
+  // Arabic
+  if (/tiếng ả rập|arabic|عربي/.test(t)) {
+    return {
+      lang: 'arabic',
+      nativeName: 'Tiếng Ả Rập',
+      script: 'arabic', // Arabic U+0600-06FF
+      allowForeignScript: true,
+      promptRule: `Since this is an Arabic language quiz:
+- Questions should be in Vietnamese, asking about Arabic words/grammar/vocabulary.
+- Arabic words or example sentences should use proper Arabic script.
+- Explanations should be in Vietnamese.`,
+    };
+  }
+
+  // Default: pure Vietnamese topic — no foreign script allowed
+  return {
+    lang: 'vietnamese',
+    nativeName: 'Tiếng Việt',
+    script: 'latin',
+    allowForeignScript: false,
+    promptRule: null, // will use strict Vietnamese-only rule
+  };
+}
+
+/**
+ * Check if a text field contains unexpected foreign script.
+ * Takes the topic language info to know what IS expected.
+ */
+function containsUnexpectedForeignScript(text, topicLang) {
+  if (!text || typeof text !== 'string') return false;
+
+  // For pure Vietnamese topics: no CJK, no Arabic, no Japanese kana allowed
+  if (topicLang.lang === 'vietnamese') {
+    return /[\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF\u0600-\u06FF]/.test(text);
+  }
+
+  // For Japanese topic: Chinese-only characters could still slip in unexpectedly,
+  // but Hiragana/Katakana/Kanji are all expected — skip check
+  if (topicLang.lang === 'japanese') return false;
+
+  // For Chinese topic: Hanzi is expected — skip check
+  if (topicLang.lang === 'chinese') return false;
+
+  // For Korean topic: Hangul is expected — skip check
+  if (topicLang.lang === 'korean') return false;
+
+  // For Arabic topic: Arabic script is expected — skip check
+  if (topicLang.lang === 'arabic') return false;
+
+  // For Latin-script foreign languages (English/French/German/Spanish):
+  // CJK, Japanese kana, Hangul, Arabic would all be unexpected
+  return /[\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF\u0600-\u06FF]/.test(text);
+}
+
+function hasBadScriptInQuestion(q, topicLang) {
+  const fields = [q.question, q.optionA, q.optionB, q.optionC, q.optionD,
+                  q.option_a, q.option_b, q.option_c, q.option_d,
+                  q.explanation, q.suggested_answer];
+  return fields.some(f => containsUnexpectedForeignScript(f, topicLang));
+}
+
 function buildCurriculumContext(topic) {
   const gradeMatch = topic.match(/l[oớ]p\s*(\d+)/i);
   const grade = gradeMatch ? parseInt(gradeMatch[1]) : null;
@@ -83,6 +258,7 @@ function buildQuizPrompt(topic, count, difficulty, questionType = 'multiple_choi
   };
 
   const { context, coreTopic, grade } = buildCurriculumContext(topic);
+  const topicLang = detectTopicLanguage(topic);
 
   let typeRules = "";
   let jsonFormat = "";
@@ -122,6 +298,23 @@ function buildQuizPrompt(topic, count, difficulty, questionType = 'multiple_choi
 }`;
   }
 
+  // Build the language rule section based on detected topic language
+  let languageRule;
+  if (topicLang.promptRule) {
+    // Foreign language topic — use its specific rule
+    languageRule = `LANGUAGE RULES FOR THIS TOPIC (${topicLang.nativeName.toUpperCase()}):
+${topicLang.promptRule}
+- IMPORTANT: Even for foreign language topics, do NOT mix unrelated foreign scripts. For example, do not include Chinese characters in a Japanese quiz unless the question is specifically about borrowed kanji.`;
+  } else {
+    // Pure Vietnamese topic — strict no-foreign-script rule
+    languageRule = `LANGUAGE RULES (STRICTLY ENFORCED):
+- ALL content (questions, answer options, explanations) MUST be written in PURE Vietnamese (Chữ Quốc Ngữ only).
+- ABSOLUTELY FORBIDDEN: Chinese characters (汉字), Japanese Hiragana/Katakana/Kanji, Korean Hangul, Arabic script, or any other non-Latin script.
+- This applies to EVERY field: question, optionA, optionB, optionC, optionD, explanation, suggested_answer.
+- NO EXCEPTIONS — even if a concept has a foreign name, write it using Vietnamese alphabet transliteration.
+- Before returning each question, verify every single option contains only Vietnamese text.`;
+  }
+
   return `You are an expert Vietnamese educator. ${context}
 
 Generate exactly ${count} questions about "${topic}".
@@ -129,17 +322,15 @@ Difficulty level: ${difficultyMap[difficulty] || difficultyMap.medium}.
 
 CRITICAL RULES:
 ${typeRules}
-- Questions must test actual knowledge of "${coreTopic}" content, NOT meta-questions about how to study it
-- If Multiple Choice: Questions must have SPECIFIC, MEANINGFUL answer options
+- Questions must test actual knowledge of "${coreTopic}", NOT meta-questions about how to study it.
+- If Multiple Choice: Questions must have SPECIFIC, MEANINGFUL answer options.
 - If Essay: Questions must require students to write sentences, paragraphs or solve problems with steps.
-- If Mathematics: include actual calculations or mathematical concepts
-- If Physics/Chemistry/Biology: include real scientific facts and formulas
-- If English: include actual grammar, vocabulary or reading questions in English
-- If History/Geography: include real historical events, dates, places
-${grade ? `- Content must be appropriate for Grade ${grade} Vietnamese students` : ""}
-- CRITICAL LANGUAGE RULE: When generating content in Vietnamese, use ONLY standard Vietnamese alphabet (Chữ Quốc Ngữ). ABSOLUTELY DO NOT mix Chinese/Kanji/Hanja characters into Vietnamese sentences.
-- EXCEPTION: You may use foreign languages and characters ONLY IF the quiz topic is explicitly about that specific foreign language.
-- Questions should be in Vietnamese for all general subjects (Toán, Ngữ văn, Lịch sử, GDCD, etc.).
+- If Mathematics: include actual calculations or mathematical concepts.
+- If Physics/Chemistry/Biology: include real scientific facts and formulas.
+- If History/Geography: include real historical events, dates, places.
+${grade ? `- Content must be appropriate for Grade ${grade} Vietnamese students.` : ""}
+
+${languageRule}
 
 IMPORTANT: Return ONLY a valid JSON array. No markdown, no code blocks, no extra text.
 
@@ -230,15 +421,35 @@ async function chatWithGroq(messages, systemInstruction) {
 
 async function generateQuizQuestions(topic, count = 10, difficulty = "medium", questionType = "multiple_choice") {
   const prompt = buildQuizPrompt(topic, count, difficulty, questionType);
+  const topicLang = detectTopicLanguage(topic);
+
+  async function tryGenerate(generatorFn, label) {
+    console.log(`🤖 Generating quiz [${label}]: "${topic}" (${count}q, ${difficulty}, lang: ${topicLang.lang})`);
+    let questions = await generatorFn(prompt);
+    console.log(`✅ ${label} success: ${questions.length} questions`);
+
+    // Validate: check for unexpected foreign script
+    const dirty = questions.filter(q => hasBadScriptInQuestion(q, topicLang));
+    if (dirty.length > 0) {
+      console.warn(`⚠️  ${label}: ${dirty.length}/${questions.length} questions have unexpected script — retrying once`);
+      questions = await generatorFn(prompt);
+      const stillDirty = questions.filter(q => hasBadScriptInQuestion(q, topicLang));
+      if (stillDirty.length > 0) {
+        console.warn(`⚠️  ${label} retry: still ${stillDirty.length} dirty — filtering out bad questions`);
+        const clean = questions.filter(q => !hasBadScriptInQuestion(q, topicLang));
+        if (clean.length === 0) throw new Error('All generated questions failed script validation');
+        questions = clean;
+      }
+    }
+
+    return normalizeQuestions(questions);
+  }
 
   try {
-    console.log('🤖 Generating quiz [Gemini]: "' + topic + '" (' + count + 'q, ' + difficulty + ')');
-    const questions = await generateWithGemini(prompt);
-    console.log('✅ Gemini success: ' + questions.length + ' questions');
-    return normalizeQuestions(questions);
+    return await tryGenerate(generateWithGemini, 'Gemini');
   } catch (geminiErr) {
     if (isQuotaError(geminiErr)) {
-      console.warn('⚠️  Gemini quota exceeded — trying Groq fallback for "' + topic + '"');
+      console.warn(`⚠️  Gemini quota exceeded — trying Groq fallback for "${topic}"`);
     } else {
       console.error("❌ Gemini error:", geminiErr.message, "— trying Groq fallback");
     }
@@ -246,16 +457,13 @@ async function generateQuizQuestions(topic, count = 10, difficulty = "medium", q
 
   if (hasGroq) {
     try {
-      console.log('🔄 Generating quiz [Groq]: "' + topic + '" (' + count + 'q, ' + difficulty + ')');
-      const questions = await generateWithGroq(prompt);
-      console.log('✅ Groq success: ' + questions.length + ' questions');
-      return normalizeQuestions(questions);
+      return await tryGenerate(generateWithGroq, 'Groq');
     } catch (groqErr) {
       console.error("❌ Groq error:", groqErr.message);
     }
   }
 
-  console.error('💀 Both Gemini and Groq failed for "' + topic + '"');
+  console.error(`💀 Both Gemini and Groq failed for "${topic}"`);
   return generateQuotaNotice(topic, count);
 }
 

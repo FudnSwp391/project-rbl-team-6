@@ -62,7 +62,7 @@ export function AuthProvider({ children }) {
     if (newUser?.role === 'admin') {
       window.location.hash = '/admin'
     } else if (newUser?.role === 'tutor') {
-      window.location.hash = '/tutor-profile'  // ← Onboarding wizard
+      window.location.hash = '/tutor-profile'
     } else if (newUser?.role === 'parent') {
       window.location.hash = '/parent'
     } else {

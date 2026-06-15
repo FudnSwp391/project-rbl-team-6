@@ -1223,9 +1223,24 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+const classRoutes = require("./routes/classRoutes");
+const materialRoutes = require("./routes/materialRoutes");
+const assignmentRoutes = require("./routes/assignmentRoutes");
+const discussionRoutes = require("./routes/discussionRoutes");
+const lessonRoutes = require("./routes/lessonRoutes");
+const learningPathRoutes = require("./routes/learningPathRoutes");
+
+app.use("/api/classes/:classId/materials", materialRoutes);
+app.use("/api/classes", classRoutes);
+app.use("/", assignmentRoutes);
+app.use("/", discussionRoutes);
+app.use("/", lessonRoutes);
+app.use("/", learningPathRoutes);
+
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
-// Returns all users with optional search and role filter. Supports pagination.
-// Query params: search, role, page (default 1), limit (default 20)
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
   const { search = "", role = "all", page = "1", limit = "20" } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
