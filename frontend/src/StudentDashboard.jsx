@@ -35,6 +35,9 @@ const MY_TUTORS = [
   },
 ]
 
+<<<<<<< HEAD
+import StudentSidebar from './components/StudentSidebar'
+=======
 const NAV_ITEMS = [
   { id: 'dashboard', icon: 'dashboard', label: 'Bảng Điều Khiển' },
   { id: 'courses', icon: 'school', label: 'Khóa Học Của Tôi' },
@@ -45,6 +48,7 @@ const NAV_ITEMS = [
   { id: 'exam-papers', icon: 'description', label: 'Đề thi' },
   { id: 'parent-link', icon: 'family_restroom', label: 'Mã chia sẻ' },
 ]
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 
 export default function StudentDashboard() {
   const { user, token, logout } = useAuth()
@@ -80,6 +84,14 @@ export default function StudentDashboard() {
   return (
     <div className="bg-background text-on-background font-body-md text-body-md antialiased flex h-screen overflow-hidden">
 
+<<<<<<< HEAD
+      <StudentSidebar 
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        activeRoute="dashboard"
+        logout={logout}
+      />
+=======
       {/* ── Mobile overlay ── */}
       {sidebarOpen && (
         <div
@@ -167,6 +179,7 @@ export default function StudentDashboard() {
           </div>
         </div>
       </nav>
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 
       {/* ── Main content wrapper ── */}
       <div className="flex-1 flex flex-col lg:ml-64 h-full overflow-hidden">

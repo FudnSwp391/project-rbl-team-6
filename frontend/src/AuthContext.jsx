@@ -39,6 +39,10 @@ export function AuthProvider({ children }) {
 
     if (newUser?.role === 'admin') {
       window.location.hash = '/admin'
+<<<<<<< HEAD
+    } else {
+      window.location.hash = '/'             // Redirect to home page
+=======
     } else if (newUser?.role === 'tutor') {
       window.location.hash = '/tutor'
     } else if (newUser?.role === 'parent') {
@@ -67,6 +71,7 @@ export function AuthProvider({ children }) {
       window.location.hash = '/parent'
     } else {
       window.location.hash = '/dashboard'
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
     }
   }
 

@@ -1181,6 +1181,28 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
   }
 });
 
+<<<<<<< HEAD
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+const classRoutes = require("./routes/classRoutes");
+const materialRoutes = require("./routes/materialRoutes");
+const assignmentRoutes = require("./routes/assignmentRoutes");
+const discussionRoutes = require("./routes/discussionRoutes");
+const lessonRoutes = require("./routes/lessonRoutes");
+const learningPathRoutes = require("./routes/learningPathRoutes");
+
+app.use("/api/classes/:classId/materials", materialRoutes);
+app.use("/api/classes", classRoutes);
+app.use("/", assignmentRoutes);
+app.use("/", discussionRoutes);
+app.use("/", lessonRoutes);
+app.use("/", learningPathRoutes);
+
+// ─── Start server ─────────────────────────────────────────────────────────────
+app.listen(port, () => {
+  console.log(`🚀 Server is running on http://localhost:${port}`);
+=======
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 // Returns all users with optional search and role filter. Supports pagination.
 // Query params: search, role, page (default 1), limit (default 20)
@@ -1227,6 +1249,7 @@ app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
     console.error("GET /api/admin/users error:", err);
     return res.status(500).json({ message: "Server error." });
   }
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 });
 
 // ── GET /api/admin/users/:id ─────────────────────────────────────────────────

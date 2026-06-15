@@ -2,13 +2,18 @@
  * App.jsx
  * Main application shell — handles hash-based routing and renders the correct page.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import './App.css'
 import SignIn from './SignIn'
 import SignUp from './SignUp'
 import AdminDashboard from './AdminDashboard'
 import StudentDashboard from './StudentDashboard'
 import TutorDashboard from './TutorDashboard'
+<<<<<<< HEAD
+import ParentDashboard from './ParentDashboard'    // ← NEW
+import MyCourses from './pages/MyCourses'
+import CourseDetail from './pages/CourseDetail'
+=======
 import ParentDashboard from './ParentDashboard'
 import QuizTaking from './QuizTaking'
 import QuizResult from './QuizResult'
@@ -18,6 +23,7 @@ import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorDetailPage from './TutorDetailPage'
 
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -95,6 +101,22 @@ const footerLinks = {
 
 // ─── Helper: parse the hash to get the current route ─────────────────────────
 const getRouteFromHash = () => {
+<<<<<<< HEAD
+  let normalized = window.location.hash.replace(/^#/, '') || '/'
+  // remove trailing slash if exists
+  if (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1)
+  }
+  if (normalized === '/signin')    return 'signin'
+  if (normalized === '/signup')    return 'signup'
+  if (normalized === '/admin')     return 'admin'
+  if (normalized === '/dashboard') return 'dashboard'   // Student Dashboard
+  if (normalized === '/tutor')     return 'tutor'       // Tutor Dashboard
+  if (normalized === '/parent')    return 'parent'      // Parent Dashboard
+  if (normalized === '/my-courses' || normalized.startsWith('/my-courses')) return 'mycourses'  // My Courses
+  if (normalized.startsWith('/course/')) return 'coursedetail'  // Course Detail
+  return 'home'
+=======
 
   let normalized = window.location.hash.replace(/^#/, '') || '/'
   normalized = normalized.split('?')[0] // remove query params for matching
@@ -136,6 +158,7 @@ const getRouteFromHash = () => {
 
   return { name: 'home' }
 
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 }
 
 // ─── Access Denied page (shown to non-admin users who visit #/admin) ──────────
@@ -202,6 +225,18 @@ function HomePage({ onGoSignIn }) {
   const { user, logout } = useAuth()
   const [topic, setTopic] = useState('')
   const [place, setPlace] = useState('')
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const dropdownRef = useRef(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   return (
     <div className="academia-page">
@@ -226,16 +261,53 @@ function HomePage({ onGoSignIn }) {
 
           {/* Show user info + logout OR login button */}
           {user ? (
-            <div className="header-user">
-              {user.picture ? (
-                <img
-                  src={user.picture}
-                  alt={user.name}
-                  className="header-avatar"
-                />
-              ) : (
-                <span className="material-symbols-outlined">account_circle</span>
+            <div className="header-user" style={{ position: 'relative' }} ref={dropdownRef}>
+              <div 
+                style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              >
+                {user.picture ? (
+                  <img
+                    src={user.picture}
+                    alt={user.name}
+                    className="header-avatar"
+                  />
+                ) : (
+                  <span className="material-symbols-outlined">account_circle</span>
+                )}
+                <span className="header-username">{user.name || user.email}</span>
+                <span style={{ fontSize: '0.8em' }}>▼</span>
+              </div>
+              
+              {isDropdownOpen && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: '8px',
+                  backgroundColor: 'var(--surface, #fff)',
+                  border: '1px solid var(--outline-variant, #ccc)',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                  minWidth: '150px',
+                  zIndex: 1000,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden'
+                }}>
+                  <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Dashboard</a>
+                  <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
+                  <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
+                  <button 
+                    onClick={logout} 
+                    style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
+                  >
+                    Logout
+                  </button>
+                </div>
               )}
+<<<<<<< HEAD
+=======
               <span className="header-username">{user.name || user.email}</span>
               <button
                 type="button"
@@ -252,6 +324,7 @@ function HomePage({ onGoSignIn }) {
               <button type="button" className="btn btn-outline" onClick={logout} style={{ marginLeft: '8px' }}>
                 Đăng Xuất
               </button>
+>>>>>>> cac19781017142fbca126d01db84b6453311ac7d
             </div>
           ) : (
             <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
@@ -477,6 +550,8 @@ function App() {
     if (nextRoute === 'signup')    { window.location.hash = '/signup';    return }
     if (nextRoute === 'admin')     { window.location.hash = '/admin';     return }
     if (nextRoute === 'dashboard') { window.location.hash = '/dashboard'; return }
+    if (nextRoute === 'mycourses') { window.location.hash = '/my-courses'; return }
+    if (nextRoute === 'coursedetail') { window.location.hash = '/course/1'; return }
     if (nextRoute === 'tutor')     { window.location.hash = '/tutor';     return }
     if (nextRoute === 'tutor-profile') { window.location.hash = '/tutor-profile'; return }
     if (nextRoute === 'tutor-detail') { window.location.hash = '/tutor-detail'; return }
@@ -621,6 +696,32 @@ function App() {
   // ── Route: Tutor Detail Page ──
   if (routeName === 'tutor-detail') {
     return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+
+  // ── Route: My Courses (protected) ──
+  if (route === 'mycourses') {
+    if (!user) {
+      return (
+        <AccessDenied
+          isLoggedIn={false}
+          onGoSignIn={() => navigateTo('signin')}
+        />
+      )
+    }
+    return <MyCourses />
+  }
+
+  // ── Route: Course Detail (protected) ──
+  if (route === 'coursedetail') {
+    if (!user) {
+      return (
+        <AccessDenied
+          isLoggedIn={false}
+          onGoSignIn={() => navigateTo('signin')}
+        />
+      )
+    }
+    return <CourseDetail />
   }
 
   // ── Route: Home ──
