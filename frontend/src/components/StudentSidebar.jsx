@@ -3,8 +3,12 @@ import React from 'react'
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Dashboard', href: '#/dashboard', id: 'dashboard' },
   { icon: 'school', label: 'My Courses', href: '#/my-courses', id: 'my-courses' },
-  { icon: 'calendar_today', label: 'Schedule', href: '#', id: 'schedule' },
-  { icon: 'chat', label: 'Messages', href: '#', id: 'messages' },
+  { icon: 'calendar_today', label: 'Schedule', href: '#/dashboard/schedule', id: 'schedule' },
+  { icon: 'chat', label: 'Messages', href: '#/dashboard/messages', id: 'messages' },
+  { icon: 'quiz', label: 'Assessments', href: '#/dashboard/assessments', id: 'assessments' },
+  { icon: 'psychology', label: 'AI Practice', href: '#/dashboard/practice', id: 'practice' },
+  { icon: 'description', label: 'Đề thi', href: '#/dashboard/exam-papers', id: 'exam-papers' },
+  { icon: 'family_restroom', label: 'Mã chia sẻ', href: '#/dashboard/parent-link', id: 'parent-link' },
 ]
 
 export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRoute, logout }) {

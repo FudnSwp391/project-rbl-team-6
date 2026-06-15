@@ -74,7 +74,7 @@ export default function StudentDashboard() {
       <StudentSidebar
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
-        activeRoute="dashboard"
+        activeRoute={activeSection}
         logout={logout}
       />
 
