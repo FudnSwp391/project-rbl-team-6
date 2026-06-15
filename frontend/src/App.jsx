@@ -18,7 +18,7 @@ import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
-import TutorDetailPage from './TutorDetailPage'
+import TutorProfile from './pages/TutorProfile'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -691,7 +691,7 @@ function App() {
 
   // ── Route: Tutor Detail Page ──
   if (routeName === 'tutor-detail') {
-    return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+    return <TutorProfile tutorId={route.id} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
 
   // ── Route: My Courses (protected) ──
