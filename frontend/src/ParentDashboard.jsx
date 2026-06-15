@@ -66,19 +66,49 @@ function TypeBadge({ type }) {
 }
 
 // ─── Notification Dropdown ─────────────────────────────────────────────────────
-const MOCK_NOTIFICATIONS = [
-  { id: 1, type: 'payment', icon: 'payments',       color: 'text-red-500',    bg: 'bg-red-50',    title: 'Nhắc đóng học phí', body: 'Học phí tháng 7 của Bé Minh chưa được thanh toán.', time: '2 giờ trước', unread: true },
-  { id: 2, type: 'tutor',   icon: 'event_busy',     color: 'text-amber-600',  bg: 'bg-amber-50',  title: 'Gia sư báo nghỉ',   body: 'Thầy Nguyễn Văn A báo nghỉ buổi học Toán ngày 18/7.', time: '5 giờ trước', unread: true },
-  { id: 3, type: 'result',  icon: 'grading',        color: 'text-blue-600',   bg: 'bg-blue-50',   title: 'Kết quả bài kiểm tra mới', body: 'Bé Lan vừa hoàn thành bài Ngữ văn lớp 11 — 82%.', time: 'Hôm qua', unread: true },
-  { id: 4, type: 'payment', icon: 'check_circle',   color: 'text-green-600',  bg: 'bg-green-50',  title: 'Thanh toán thành công', body: 'Hóa đơn #INV-0023 đã được xác nhận.', time: '2 ngày trước', unread: false },
-  { id: 5, type: 'result',  icon: 'psychology',     color: 'text-purple-600', bg: 'bg-purple-50', title: 'Báo cáo luyện tập AI', body: 'Bé Minh đã hoàn thành 5 phiên luyện tập tuần này.', time: '3 ngày trước', unread: false },
-]
+const NOTIF_ICON_MAP = {
+  payment:        { icon: 'payments',     color: 'text-red-500',    bg: 'bg-red-50' },
+  tutor_review:   { icon: 'rate_review',  color: 'text-purple-600', bg: 'bg-purple-50' },
+  student_absent: { icon: 'event_busy',   color: 'text-amber-600',  bg: 'bg-amber-50' },
+  quiz_result:    { icon: 'grading',      color: 'text-blue-600',   bg: 'bg-blue-50' },
+  practice_report:{ icon: 'psychology',   color: 'text-purple-600', bg: 'bg-purple-50' },
+  system:         { icon: 'info',         color: 'text-on-surface-variant', bg: 'bg-surface-container' },
+}
+function notifStyle(type) { return NOTIF_ICON_MAP[type] || NOTIF_ICON_MAP.system }
 
-function NotificationDropdown() {
+function timeAgo(dateStr) {
+  if (!dateStr) return ''
+  const diff = (Date.now() - new Date(dateStr)) / 1000
+  if (diff < 3600)  return `${Math.floor(diff / 60)} phút trước`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`
+  if (diff < 604800) return `${Math.floor(diff / 86400)} ngày trước`
+  return new Date(dateStr).toLocaleDateString('vi-VN')
+}
+
+function NotificationDropdown({ token }) {
   const [open, setOpen] = useState(false)
-  const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS)
+  const [notifications, setNotifications] = useState([])
+  const [unreadCount, setUnreadCount] = useState(0)
   const dropdownRef = useRef(null)
-  const unreadCount = notifications.filter(n => n.unread).length
+
+  const fetchNotifs = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setNotifications(data.notifications || [])
+      setUnreadCount(data.unread_count || 0)
+    } catch { /* silent */ }
+  }
+
+  useEffect(() => {
+    if (token) fetchNotifs()
+    // Poll every 30s for new notifications
+    const interval = setInterval(() => { if (token) fetchNotifs() }, 30000)
+    return () => clearInterval(interval)
+  }, [token])
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -88,13 +118,26 @@ function NotificationDropdown() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const markAllRead = () => setNotifications(prev => prev.map(n => ({ ...n, unread: false })))
-  const markRead = (id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, unread: false } : n))
+  const markAllRead = async () => {
+    await fetch(`${API_BASE}/api/notifications/read-all`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}` }
+    })
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
+    setUnreadCount(0)
+  }
+
+  const markRead = async (id) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n))
+    setUnreadCount(prev => Math.max(0, prev - 1))
+    await fetch(`${API_BASE}/api/notifications/${id}/read`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}` }
+    })
+  }
 
   return (
     <div className="relative" ref={dropdownRef}>
       <button
-        onClick={() => setOpen(v => !v)}
+        onClick={() => { setOpen(v => !v) }}
         className="relative p-2 text-on-surface-variant hover:text-primary rounded-full hover:bg-surface-container transition-colors"
         aria-label="Thông báo"
       >
@@ -110,7 +153,6 @@ function NotificationDropdown() {
 
       {open && (
         <div className="absolute right-0 top-full mt-2 w-80 bg-surface rounded-2xl shadow-xl border border-outline-variant/20 overflow-hidden z-50 animate-[fadeIn_0.15s_ease-out]">
-          {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/20">
             <h4 className="font-headline-sm text-on-surface">Thông báo</h4>
             {unreadCount > 0 && (
@@ -120,36 +162,37 @@ function NotificationDropdown() {
             )}
           </div>
 
-          {/* List */}
           <div className="max-h-96 overflow-y-auto divide-y divide-outline-variant/10">
             {notifications.length === 0 ? (
               <div className="p-6 text-center text-on-surface-variant text-sm">Không có thông báo nào</div>
             ) : (
-              notifications.map(n => (
-                <button
-                  key={n.id}
-                  onClick={() => markRead(n.id)}
-                  className={`w-full text-left flex items-start gap-3 p-3 hover:bg-surface-container-low transition-colors ${n.unread ? 'bg-primary/5' : ''}`}
-                >
-                  <div className={`w-9 h-9 rounded-full ${n.bg} flex items-center justify-center shrink-0 mt-0.5`}>
-                    <span className={`material-symbols-outlined text-[18px] ${n.color}`} style={{ fontVariationSettings: "'FILL' 1" }}>
-                      {n.icon}
-                    </span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-1">
-                      <p className={`font-label-md text-on-surface truncate ${n.unread ? 'font-semibold' : ''}`}>{n.title}</p>
-                      {n.unread && <span className="w-2 h-2 rounded-full bg-primary shrink-0" />}
+              notifications.map(n => {
+                const style = notifStyle(n.type)
+                return (
+                  <button
+                    key={n.id}
+                    onClick={() => markRead(n.id)}
+                    className={`w-full text-left flex items-start gap-3 p-3 hover:bg-surface-container-low transition-colors ${!n.is_read ? 'bg-primary/5' : ''}`}
+                  >
+                    <div className={`w-9 h-9 rounded-full ${style.bg} flex items-center justify-center shrink-0 mt-0.5`}>
+                      <span className={`material-symbols-outlined text-[18px] ${style.color}`} style={{ fontVariationSettings: "'FILL' 1" }}>
+                        {n.icon || style.icon}
+                      </span>
                     </div>
-                    <p className="font-body-sm text-on-surface-variant text-xs leading-snug mt-0.5 line-clamp-2">{n.body}</p>
-                    <p className="text-[11px] text-on-surface-variant/70 mt-1">{n.time}</p>
-                  </div>
-                </button>
-              ))
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1">
+                        <p className={`font-label-md text-on-surface truncate ${!n.is_read ? 'font-semibold' : ''}`}>{n.title}</p>
+                        {!n.is_read && <span className="w-2 h-2 rounded-full bg-primary shrink-0" />}
+                      </div>
+                      <p className="font-body-sm text-on-surface-variant text-xs leading-snug mt-0.5 line-clamp-2">{n.body}</p>
+                      <p className="text-[11px] text-on-surface-variant/70 mt-1">{timeAgo(n.created_at)}</p>
+                    </div>
+                  </button>
+                )
+              })
             )}
           </div>
 
-          {/* Footer */}
           <div className="px-4 py-2 border-t border-outline-variant/20 text-center">
             <button className="text-xs text-primary hover:underline font-medium">Xem tất cả thông báo</button>
           </div>
@@ -263,7 +306,7 @@ export default function ParentDashboard() {
             </p>
           </div>
 
-          <NotificationDropdown />
+          <NotificationDropdown token={token} />
         </header>
 
         {/* Content */}
@@ -557,20 +600,6 @@ function StudentsSection({ token }) {
 //  STUDENT DETAIL VIEW
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Mock data — replace with real API calls when backend endpoints are ready
-const MOCK_SCHEDULE = [
-  { id: 1, subject: 'Toán',     time: 'Thứ 2, 18/07 • 18:00 – 20:00', tutor: 'Nguyễn Văn A', tutorId: 'tutor-1' },
-  { id: 2, subject: 'Ngữ văn',  time: 'Thứ 4, 20/07 • 17:00 – 19:00', tutor: 'Trần Thị B',   tutorId: 'tutor-2' },
-  { id: 3, subject: 'Tiếng Anh',time: 'Thứ 6, 22/07 • 19:00 – 21:00', tutor: 'Lê Văn C',     tutorId: 'tutor-3' },
-  { id: 4, subject: 'Vật lí',   time: 'Thứ 7, 23/07 • 08:00 – 10:00', tutor: 'Phạm Thị D',   tutorId: 'tutor-4' },
-]
-
-const MOCK_REVIEWS = [
-  { id: 1, date: 'Tuần 2 – Tháng 7/2025', tutor: 'Nguyễn Văn A', subject: 'Toán', content: 'Em tiến bộ rõ rệt trong phần phương trình bậc 2. Cần ôn thêm phần bất phương trình. Thái độ học tập tốt, chăm chú nghe giảng.', rating: 4 },
-  { id: 2, date: 'Tuần 1 – Tháng 7/2025', tutor: 'Trần Thị B',   subject: 'Ngữ văn', content: 'Bài làm văn nghị luận có chiều sâu hơn so với tuần trước. Tuy nhiên phần phân tích nhân vật còn sơ sài, cần đọc thêm tác phẩm.', rating: 3 },
-  { id: 3, date: 'Tháng 6/2025',           tutor: 'Lê Văn C',     subject: 'Tiếng Anh', content: 'Kỹ năng nghe và đọc hiểu cải thiện tốt. Grammar cần luyện thêm thì hiện tại hoàn thành. Speaking tự tin hơn.', rating: 5 },
-]
-
 const SUBJECT_COLORS = {
   'Toán':      'bg-blue-100 text-blue-700 border-blue-200',
   'Ngữ văn':   'bg-purple-100 text-purple-700 border-purple-200',
@@ -586,41 +615,91 @@ function StarRating({ value }) {
     <div className="flex items-center gap-0.5">
       {[1,2,3,4,5].map(i => (
         <span key={i} className={`material-symbols-outlined text-[16px] ${i <= value ? 'text-amber-400' : 'text-outline-variant'}`}
-          style={{ fontVariationSettings: i <= value ? "'FILL' 1" : '' }}>
-          star
-        </span>
+          style={{ fontVariationSettings: i <= value ? "'FILL' 1" : '' }}>star</span>
       ))}
     </div>
   )
 }
 
-function StudentDetailView({ token, student, onBack }) {
-  const [leaveModal, setLeaveModal] = useState(null) // { scheduleItem }
-  const [messageModal, setMessageModal] = useState(null) // { tutorId, tutorName }
+function fmtScheduleTime(dateStr, durationMins) {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  const dow = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][d.getDay()]
+  const date = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })
+  const startH = String(d.getHours()).padStart(2,'0')
+  const startM = String(d.getMinutes()).padStart(2,'0')
+  const end = new Date(d.getTime() + (durationMins || 120) * 60000)
+  const endH = String(end.getHours()).padStart(2,'0')
+  const endM = String(end.getMinutes()).padStart(2,'0')
+  return `${dow}, ${date} • ${startH}:${startM} – ${endH}:${endM}`
+}
 
-  // Derived stats from what we already have on the card
-  const avgScore = ((student.avg_quiz_score || 0) + (student.avg_practice_score || 0)) / 2 || null
-  const totalAttempts = (student.quiz_count || 0) + (student.practice_count || 0) + (student.exam_count || 0)
+function StudentDetailView({ token, student, onBack }) {
+  const [schedule, setSchedule] = useState([])
+  const [reviews, setReviews] = useState([])
+  const [absences, setAbsences] = useState(0)
+  const [scheduleLoading, setScheduleLoading] = useState(true)
+  const [reviewsLoading, setReviewsLoading] = useState(true)
+  const [leaveModal, setLeaveModal] = useState(null)
+  const [messageModal, setMessageModal] = useState(null)
+
+  useEffect(() => {
+    // Fetch schedule + absences
+    fetch(`${API_BASE}/api/parent/children/${student.student_id}/schedule`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => {
+        setSchedule(d.sessions || [])
+        setAbsences(d.absences_this_month || 0)
+        setScheduleLoading(false)
+      })
+      .catch(() => setScheduleLoading(false))
+
+    // Fetch reviews
+    fetch(`${API_BASE}/api/parent/children/${student.student_id}/reviews`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => { setReviews(d.reviews || []); setReviewsLoading(false) })
+      .catch(() => setReviewsLoading(false))
+  }, [student.student_id, token])
+
+  const handleLeaveSubmit = async (sessionId, reason) => {
+    const res = await fetch(
+      `${API_BASE}/api/parent/children/${student.student_id}/schedule/${sessionId}/leave`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason })
+      }
+    )
+    if (!res.ok) throw new Error('Gửi yêu cầu thất bại')
+    // Update local state
+    setSchedule(prev => prev.map(s => s.id === sessionId ? { ...s, status: 'cancelled' } : s))
+  }
+
+  // Derived stats
+  const avgScore = ((parseFloat(student.avg_quiz_score) || 0) + (parseFloat(student.avg_practice_score) || 0)) / 2 || null
+  const totalAttempts = (parseInt(student.quiz_count) || 0) + (parseInt(student.practice_count) || 0) + (parseInt(student.exam_count) || 0)
   const completionPct = totalAttempts > 0 ? Math.min(100, Math.round((totalAttempts / Math.max(totalAttempts, 10)) * 100)) : 0
-  const absences = 2 // mock — replace with API
 
   return (
     <div className="flex flex-col gap-lg max-w-5xl mx-auto">
 
       {/* ── Back + Header ── */}
       <div className="flex items-center gap-md">
-        <button
-          onClick={onBack}
-          className="w-10 h-10 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center transition-colors shrink-0"
-        >
+        <button onClick={onBack} className="w-10 h-10 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center transition-colors shrink-0">
           <span className="material-symbols-outlined">arrow_back</span>
         </button>
         <div className="flex items-center gap-md flex-1">
           <Avatar src={student.student_picture} name={student.student_name} size={14} />
           <div>
             <h3 className="font-headline-md text-headline-md text-on-surface">{student.nickname || student.student_name}</h3>
-            {student.nickname && <p className="font-body-sm text-on-surface-variant">{student.student_name} • {student.student_email}</p>}
-            {!student.nickname && <p className="font-body-sm text-on-surface-variant">{student.student_email}</p>}
+            {student.nickname
+              ? <p className="font-body-sm text-on-surface-variant">{student.student_name} • {student.student_email}</p>
+              : <p className="font-body-sm text-on-surface-variant">{student.student_email}</p>
+            }
           </div>
         </div>
       </div>
@@ -644,14 +723,14 @@ function StudentDetailView({ token, student, onBack }) {
             <p className="font-label-sm text-on-surface-variant">Điểm trung bình</p>
           </div>
 
-          {/* Số buổi vắng/muộn */}
+          {/* Buổi vắng/muộn */}
           <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm">
             <div className="flex items-center justify-between">
               <span className="material-symbols-outlined text-[20px] text-amber-500" style={{ fontVariationSettings: "'FILL' 1" }}>event_busy</span>
               <span className="text-[11px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Tháng này</span>
             </div>
             <p className={`font-display-sm text-display-sm font-black leading-none ${absences > 2 ? 'text-red-500' : absences > 0 ? 'text-amber-600' : 'text-green-600'}`}>
-              {absences}
+              {scheduleLoading ? '…' : absences}
             </p>
             <p className="font-label-sm text-on-surface-variant">Buổi vắng / muộn</p>
           </div>
@@ -673,16 +752,11 @@ function StudentDetailView({ token, student, onBack }) {
                   <span>Practice: {student.practice_count || 0}</span>
                 </div>
                 <div className="h-2.5 bg-surface-container-high rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-700"
-                    style={{ width: `${completionPct}%` }}
-                  />
+                  <div className="h-full rounded-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-700" style={{ width: `${completionPct}%` }} />
                 </div>
                 <div className="h-2 bg-surface-container-high rounded-full overflow-hidden mt-1">
-                  <div
-                    className="h-full rounded-full bg-purple-400 transition-all duration-700"
-                    style={{ width: `${Math.min(100, ((student.practice_count || 0) / Math.max(totalAttempts, 1)) * 100)}%` }}
-                  />
+                  <div className="h-full rounded-full bg-purple-400 transition-all duration-700"
+                    style={{ width: `${Math.min(100, ((parseInt(student.practice_count) || 0) / Math.max(totalAttempts, 1)) * 100)}%` }} />
                 </div>
               </div>
             </div>
@@ -697,48 +771,51 @@ function StudentDetailView({ token, student, onBack }) {
           Lịch học sắp tới
         </h4>
         <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
-          {MOCK_SCHEDULE.length === 0 ? (
-            <EmptyState icon="event_available" text="Chưa có buổi học nào sắp tới" />
+          {scheduleLoading ? (
+            <div className="p-md flex items-center gap-2 text-on-surface-variant"><div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /><span className="text-sm">Đang tải lịch học...</span></div>
+          ) : schedule.length === 0 ? (
+            <EmptyState icon="event_available" text="Chưa có buổi học nào sắp tới. Gia sư cần thêm lịch học trong hệ thống." />
           ) : (
             <div className="divide-y divide-outline-variant/10">
-              {MOCK_SCHEDULE.map(item => (
-                <div key={item.id} className="flex items-center gap-md p-4 hover:bg-surface-container-low/50 transition-colors">
-                  {/* Subject badge */}
-                  <div className={`shrink-0 px-3 py-1.5 rounded-xl border text-sm font-semibold ${subjectColor(item.subject)}`}>
-                    {item.subject}
+              {schedule.map(item => {
+                const isCancelled = item.status === 'cancelled'
+                return (
+                  <div key={item.id} className={`flex items-center gap-md p-4 transition-colors ${isCancelled ? 'opacity-50 bg-surface-container-low' : 'hover:bg-surface-container-low/50'}`}>
+                    <div className={`shrink-0 px-3 py-1.5 rounded-xl border text-sm font-semibold ${subjectColor(item.subject)}`}>
+                      {item.subject}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-label-md text-on-surface flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[15px] text-on-surface-variant">schedule</span>
+                        {fmtScheduleTime(item.scheduled_at, item.duration_mins)}
+                      </p>
+                      <p className="font-label-sm text-on-surface-variant flex items-center gap-1 mt-0.5">
+                        <span className="material-symbols-outlined text-[14px]">person</span>
+                        {item.tutor_name}
+                        {isCancelled && <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">Đã hủy</span>}
+                      </p>
+                    </div>
+                    {!isCancelled && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => setLeaveModal(item)}
+                          className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">event_busy</span>
+                          Xin nghỉ
+                        </button>
+                        <button
+                          onClick={() => setMessageModal({ tutorId: item.tutor_id, tutorName: item.tutor_name })}
+                          className="h-8 px-3 rounded-lg border border-primary/30 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 transition-colors flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">chat</span>
+                          Nhắn gia sư
+                        </button>
+                      </div>
+                    )}
                   </div>
-
-                  {/* Time + Tutor */}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-label-md text-on-surface flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[15px] text-on-surface-variant">schedule</span>
-                      {item.time}
-                    </p>
-                    <p className="font-label-sm text-on-surface-variant flex items-center gap-1 mt-0.5">
-                      <span className="material-symbols-outlined text-[14px]">person</span>
-                      {item.tutor}
-                    </p>
-                  </div>
-
-                  {/* Action buttons */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => setLeaveModal(item)}
-                      className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors flex items-center gap-1"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">event_busy</span>
-                      Xin nghỉ
-                    </button>
-                    <button
-                      onClick={() => setMessageModal({ tutorId: item.tutorId, tutorName: item.tutor })}
-                      className="h-8 px-3 rounded-lg border border-primary/30 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 transition-colors flex items-center gap-1"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">chat</span>
-                      Nhắn gia sư
-                    </button>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -750,32 +827,28 @@ function StudentDetailView({ token, student, onBack }) {
           <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>rate_review</span>
           Nhận xét định kỳ
         </h4>
-
-        {MOCK_REVIEWS.length === 0 ? (
+        {reviewsLoading ? (
+          <div className="p-md flex items-center gap-2 text-on-surface-variant"><div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /><span className="text-sm">Đang tải nhận xét...</span></div>
+        ) : reviews.length === 0 ? (
           <EmptyState icon="rate_review" text="Chưa có nhận xét nào từ gia sư" />
         ) : (
           <div className="relative">
-            {/* Timeline line */}
             <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-outline-variant/30" />
-
             <div className="flex flex-col gap-md">
-              {MOCK_REVIEWS.map((review, idx) => (
+              {reviews.map((review, idx) => (
                 <div key={review.id} className="flex gap-md pl-2">
-                  {/* Dot */}
                   <div className="relative shrink-0 flex flex-col items-center" style={{ width: 24 }}>
                     <div className={`w-4 h-4 rounded-full border-2 border-surface z-10 mt-1 ${idx === 0 ? 'bg-primary border-primary' : 'bg-surface-container-high border-outline-variant'}`} />
                   </div>
-
-                  {/* Card */}
                   <div className="flex-1 bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-md mb-2">
                     <div className="flex items-start justify-between gap-md mb-3">
                       <div>
-                        <p className="font-label-sm text-on-surface-variant text-xs">{review.date}</p>
+                        <p className="font-label-sm text-on-surface-variant text-xs">{review.period_label}</p>
                         <div className="flex items-center gap-2 mt-1">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${subjectColor(review.subject)}`}>{review.subject}</span>
                           <span className="font-label-sm text-on-surface-variant text-xs flex items-center gap-1">
                             <span className="material-symbols-outlined text-[13px]">person</span>
-                            {review.tutor}
+                            {review.tutor_name}
                           </span>
                         </div>
                       </div>
@@ -790,34 +863,40 @@ function StudentDetailView({ token, student, onBack }) {
         )}
       </div>
 
-      {/* ── Leave Modal ── */}
+      {/* Modals */}
       {leaveModal && (
         <LeaveRequestModal
+          token={token}
+          studentId={student.student_id}
           scheduleItem={leaveModal}
-          studentName={student.nickname || student.student_name}
           onClose={() => setLeaveModal(null)}
+          onSubmit={handleLeaveSubmit}
         />
       )}
-
-      {/* ── Message Modal ── */}
       {messageModal && (
-        <QuickMessageModal
-          tutorName={messageModal.tutorName}
-          onClose={() => setMessageModal(null)}
-        />
+        <QuickMessageModal tutorName={messageModal.tutorName} onClose={() => setMessageModal(null)} />
       )}
     </div>
   )
 }
 
-function LeaveRequestModal({ scheduleItem, studentName, onClose }) {
+function LeaveRequestModal({ token, studentId, scheduleItem, onClose, onSubmit }) {
   const [reason, setReason] = useState('')
+  const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
+  const [error, setError] = useState('')
 
-  const handleSend = () => {
-    // TODO: call API to notify tutor
-    setSent(true)
-    setTimeout(onClose, 1500)
+  const handleSend = async () => {
+    setSending(true)
+    setError('')
+    try {
+      await onSubmit(scheduleItem.id, reason)
+      setSent(true)
+      setTimeout(onClose, 1500)
+    } catch (e) {
+      setError(e.message || 'Có lỗi xảy ra. Vui lòng thử lại.')
+      setSending(false)
+    }
   }
 
   return (
@@ -837,29 +916,27 @@ function LeaveRequestModal({ scheduleItem, studentName, onClose }) {
             <div className="flex flex-col items-center gap-2 py-4 text-center">
               <span className="material-symbols-outlined text-green-500 text-[40px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
               <p className="font-label-md text-on-surface">Đã gửi yêu cầu nghỉ phép!</p>
-              <p className="font-body-sm text-on-surface-variant">Gia sư {scheduleItem.tutor} sẽ nhận được thông báo.</p>
+              <p className="font-body-sm text-on-surface-variant">Gia sư {scheduleItem.tutor_name} sẽ nhận được thông báo.</p>
             </div>
           ) : (
             <>
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
-                <p className="font-medium text-amber-800">{scheduleItem.subject} — {scheduleItem.time}</p>
-                <p className="text-amber-600 text-xs mt-0.5">Gia sư: {scheduleItem.tutor}</p>
+                <p className="font-medium text-amber-800">{scheduleItem.subject} — {fmtScheduleTime(scheduleItem.scheduled_at, scheduleItem.duration_mins)}</p>
+                <p className="text-amber-600 text-xs mt-0.5">Gia sư: {scheduleItem.tutor_name}</p>
               </div>
+              {error && <p className="text-sm text-error bg-error/10 p-2 rounded-lg">{error}</p>}
               <div>
                 <label className="block text-xs font-medium text-on-surface-variant mb-1">Lý do nghỉ (không bắt buộc)</label>
-                <textarea
-                  value={reason}
-                  onChange={e => setReason(e.target.value)}
-                  rows={3}
+                <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
                   placeholder="VD: Bé bệnh, có việc gia đình..."
                   className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
                 />
               </div>
-              <button
-                onClick={handleSend}
-                className="h-11 w-full rounded-xl bg-amber-500 text-white font-medium hover:bg-amber-600 transition-colors"
+              <button onClick={handleSend} disabled={sending}
+                className="h-11 w-full rounded-xl bg-amber-500 text-white font-medium hover:bg-amber-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                Gửi yêu cầu nghỉ
+                {sending && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                {sending ? 'Đang gửi...' : 'Gửi yêu cầu nghỉ'}
               </button>
             </>
           )}
@@ -875,7 +952,6 @@ function QuickMessageModal({ tutorName, onClose }) {
 
   const handleSend = () => {
     if (!message.trim()) return
-    // TODO: call messages API
     setSent(true)
     setTimeout(onClose, 1500)
   }
@@ -900,16 +976,12 @@ function QuickMessageModal({ tutorName, onClose }) {
             </div>
           ) : (
             <>
-              <textarea
-                value={message}
-                onChange={e => setMessage(e.target.value)}
-                rows={4}
+              <p className="text-sm text-on-surface-variant">Tin nhắn sẽ được gửi qua mục Tin nhắn trong hệ thống.</p>
+              <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4}
                 placeholder={`Nhắn cho ${tutorName}...`}
                 className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
               />
-              <button
-                onClick={handleSend}
-                disabled={!message.trim()}
+              <button onClick={handleSend} disabled={!message.trim()}
                 className="h-11 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
                 Gửi tin nhắn
@@ -1050,26 +1122,30 @@ function AddStudentModal({ token, onClose, onAdded }) {
 //  SECTION: FINANCE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const MOCK_PENDING_INVOICES = [
-  { id: 'INV-0028', student: 'Bé Minh', subject: 'Toán + Lý', period: 'Tháng 7/2025', amount: 1800000, dueDate: '20/07/2025', overdue: false },
-  { id: 'INV-0027', student: 'Bé Lan',  subject: 'Ngữ văn',   period: 'Tháng 7/2025', amount: 900000,  dueDate: '15/07/2025', overdue: true },
-]
-
-const MOCK_PAID_INVOICES = [
-  { id: 'INV-0026', student: 'Bé Minh', subject: 'Toán + Lý', period: 'Tháng 6/2025', amount: 1800000, paidDate: '18/06/2025', method: 'Chuyển khoản' },
-  { id: 'INV-0025', student: 'Bé Lan',  subject: 'Ngữ văn',   period: 'Tháng 6/2025', amount: 900000,  paidDate: '12/06/2025', method: 'Tiền mặt' },
-  { id: 'INV-0024', student: 'Bé Minh', subject: 'Toán + Lý', period: 'Tháng 5/2025', amount: 1800000, paidDate: '20/05/2025', method: 'Chuyển khoản' },
-  { id: 'INV-0023', student: 'Bé Lan',  subject: 'Ngữ văn',   period: 'Tháng 5/2025', amount: 900000,  paidDate: '14/05/2025', method: 'Tiền mặt' },
-]
-
 function fmtMoney(n) {
-  return n.toLocaleString('vi-VN') + 'đ'
+  return Number(n).toLocaleString('vi-VN') + 'đ'
 }
 
-function FinanceSection() {
-  const [tab, setTab] = useState('pending') // 'pending' | 'history'
-  const totalDebt = MOCK_PENDING_INVOICES.reduce((s, i) => s + i.amount, 0)
-  const overdueInvoices = MOCK_PENDING_INVOICES.filter(i => i.overdue)
+function FinanceSection({ token }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState('pending')
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/parent/invoices`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <LoadingSkeleton />
+
+  const pending = data?.pending || []
+  const paid    = data?.paid    || []
+  const summary = data?.summary || { total_debt: 0, total_paid: 0, overdue_count: 0 }
+  const overdueInvoices = pending.filter(i => i.status === 'overdue')
 
   return (
     <div className="flex flex-col gap-lg max-w-4xl mx-auto">
@@ -1078,57 +1154,47 @@ function FinanceSection() {
         <p className="font-body-sm text-on-surface-variant">Theo dõi học phí và lịch sử thanh toán</p>
       </div>
 
-      {/* ── Debt alert banner ── */}
+      {/* Debt alert banner */}
       {overdueInvoices.length > 0 && (
         <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4 flex items-start gap-3">
-          <span className="material-symbols-outlined text-red-500 text-[28px] shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>
-            warning
-          </span>
+          <span className="material-symbols-outlined text-red-500 text-[28px] shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>warning</span>
           <div className="flex-1">
-            <p className="font-headline-sm text-red-700 font-semibold">
-              {overdueInvoices.length} hóa đơn đã quá hạn thanh toán!
-            </p>
+            <p className="font-headline-sm text-red-700 font-semibold">{overdueInvoices.length} hóa đơn đã quá hạn thanh toán!</p>
             <p className="font-body-sm text-red-600 mt-1">
-              {overdueInvoices.map(i => `${i.id} (${i.student} — ${i.period})`).join(', ')}. Vui lòng thanh toán để tránh ảnh hưởng lịch học.
+              {overdueInvoices.map(i => `${i.invoice_no} (${i.student_name} — ${i.period})`).join(', ')}. Vui lòng thanh toán để tránh ảnh hưởng lịch học.
             </p>
           </div>
-          <span className="font-headline-sm text-red-700 font-black shrink-0">{fmtMoney(overdueInvoices.reduce((s, i) => s + i.amount, 0))}</span>
+          <span className="font-headline-sm text-red-700 font-black shrink-0">{fmtMoney(overdueInvoices.reduce((s,i) => s + parseInt(i.amount), 0))}</span>
         </div>
       )}
 
-      {/* ── Summary cards ── */}
+      {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-md">
         <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1">
           <span className="material-symbols-outlined text-[22px] text-amber-500" style={{ fontVariationSettings: "'FILL' 1" }}>pending_actions</span>
-          <p className="font-headline-sm font-black text-amber-600">{fmtMoney(totalDebt)}</p>
+          <p className="font-headline-sm font-black text-amber-600">{fmtMoney(summary.total_debt)}</p>
           <p className="font-label-sm text-on-surface-variant">Tổng chờ thanh toán</p>
         </div>
         <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1">
           <span className="material-symbols-outlined text-[22px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>payments</span>
-          <p className="font-headline-sm font-black text-green-600">{fmtMoney(MOCK_PAID_INVOICES.reduce((s, i) => s + i.amount, 0))}</p>
-          <p className="font-label-sm text-on-surface-variant">Đã thanh toán (năm nay)</p>
+          <p className="font-headline-sm font-black text-green-600">{fmtMoney(summary.total_paid)}</p>
+          <p className="font-label-sm text-on-surface-variant">Đã thanh toán (lịch sử)</p>
         </div>
         <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1 col-span-2 lg:col-span-1">
           <span className="material-symbols-outlined text-[22px] text-red-500" style={{ fontVariationSettings: "'FILL' 1" }}>receipt_long</span>
-          <p className="font-headline-sm font-black text-red-500">{overdueInvoices.length}</p>
+          <p className="font-headline-sm font-black text-red-500">{summary.overdue_count}</p>
           <p className="font-label-sm text-on-surface-variant">Hóa đơn quá hạn</p>
         </div>
       </div>
 
-      {/* ── Tab switcher ── */}
+      {/* Tab switcher */}
       <div className="flex bg-surface-container-high/60 rounded-xl p-1 gap-1">
         {[
           { key: 'pending', label: 'Chờ thanh toán', icon: 'pending_actions' },
           { key: 'history', label: 'Lịch sử đã đóng', icon: 'receipt_long' },
         ].map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-lg font-label-md transition-all ${
-              tab === t.key
-                ? 'bg-surface shadow-sm text-primary'
-                : 'text-on-surface-variant hover:text-on-surface'
-            }`}
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-lg font-label-md transition-all ${tab === t.key ? 'bg-surface shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
           >
             <span className="material-symbols-outlined text-[18px]" style={tab === t.key ? { fontVariationSettings: "'FILL' 1" } : {}}>{t.icon}</span>
             {t.label}
@@ -1136,10 +1202,10 @@ function FinanceSection() {
         ))}
       </div>
 
-      {/* ── Pending invoices ── */}
+      {/* Pending invoices */}
       {tab === 'pending' && (
         <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
-          {MOCK_PENDING_INVOICES.length === 0 ? (
+          {pending.length === 0 ? (
             <EmptyState icon="check_circle" text="Không có hóa đơn nào đang chờ thanh toán 🎉" />
           ) : (
             <table className="w-full text-left border-collapse">
@@ -1154,30 +1220,23 @@ function FinanceSection() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/10">
-                {MOCK_PENDING_INVOICES.map(inv => (
-                  <tr key={inv.id} className={`hover:bg-surface-container-low/50 transition-colors ${inv.overdue ? 'bg-red-50/40' : ''}`}>
-                    <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.id}</td>
-                    <td className="p-4 font-label-md text-on-surface">{inv.student}</td>
+                {pending.map(inv => (
+                  <tr key={inv.id} className={`hover:bg-surface-container-low/50 transition-colors ${inv.status === 'overdue' ? 'bg-red-50/40' : ''}`}>
+                    <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.invoice_no}</td>
+                    <td className="p-4 font-label-md text-on-surface">{inv.student_name}</td>
                     <td className="p-4 font-body-sm text-on-surface-variant hidden md:table-cell">
                       <p>{inv.subject}</p>
                       <p className="text-xs">{inv.period}</p>
                     </td>
                     <td className="p-4 font-label-md text-on-surface font-semibold">{fmtMoney(inv.amount)}</td>
-                    <td className={`p-4 font-label-sm text-sm ${inv.overdue ? 'text-red-600 font-semibold' : 'text-on-surface-variant'}`}>
-                      {inv.dueDate}
+                    <td className={`p-4 font-label-sm text-sm ${inv.status === 'overdue' ? 'text-red-600 font-semibold' : 'text-on-surface-variant'}`}>
+                      {inv.due_date ? new Date(inv.due_date).toLocaleDateString('vi-VN') : '—'}
                     </td>
                     <td className="p-4 text-right">
-                      {inv.overdue ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold">
-                          <span className="material-symbols-outlined text-[12px]">error</span>
-                          Quá hạn
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">
-                          <span className="material-symbols-outlined text-[12px]">schedule</span>
-                          Chờ TT
-                        </span>
-                      )}
+                      {inv.status === 'overdue'
+                        ? <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold"><span className="material-symbols-outlined text-[12px]">error</span>Quá hạn</span>
+                        : <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold"><span className="material-symbols-outlined text-[12px]">schedule</span>Chờ TT</span>
+                      }
                     </td>
                   </tr>
                 ))}
@@ -1187,41 +1246,45 @@ function FinanceSection() {
         </div>
       )}
 
-      {/* ── Paid history ── */}
+      {/* Paid history */}
       {tab === 'history' && (
         <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-surface-container-low border-b border-outline-variant/20">
-                <th className="p-4 font-label-md text-on-surface-variant text-sm">Mã hóa đơn</th>
-                <th className="p-4 font-label-md text-on-surface-variant text-sm">Học sinh</th>
-                <th className="p-4 font-label-md text-on-surface-variant text-sm hidden md:table-cell">Môn / Kỳ</th>
-                <th className="p-4 font-label-md text-on-surface-variant text-sm">Số tiền</th>
-                <th className="p-4 font-label-md text-on-surface-variant text-sm">Ngày TT</th>
-                <th className="p-4 font-label-md text-on-surface-variant text-sm text-right hidden sm:table-cell">Hình thức</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-outline-variant/10">
-              {MOCK_PAID_INVOICES.map(inv => (
-                <tr key={inv.id} className="hover:bg-surface-container-low/50 transition-colors">
-                  <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.id}</td>
-                  <td className="p-4 font-label-md text-on-surface">{inv.student}</td>
-                  <td className="p-4 font-body-sm text-on-surface-variant hidden md:table-cell">
-                    <p>{inv.subject}</p>
-                    <p className="text-xs">{inv.period}</p>
-                  </td>
-                  <td className="p-4 font-label-md text-on-surface font-semibold">{fmtMoney(inv.amount)}</td>
-                  <td className="p-4 font-label-sm text-green-600">{inv.paidDate}</td>
-                  <td className="p-4 text-right hidden sm:table-cell">
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-semibold">
-                      <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-                      {inv.method}
-                    </span>
-                  </td>
+          {paid.length === 0 ? (
+            <EmptyState icon="receipt_long" text="Chưa có lịch sử thanh toán nào" />
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface-container-low border-b border-outline-variant/20">
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Mã hóa đơn</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Học sinh</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm hidden md:table-cell">Môn / Kỳ</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Số tiền</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Ngày TT</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm text-right hidden sm:table-cell">Hình thức</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/10">
+                {paid.map(inv => (
+                  <tr key={inv.id} className="hover:bg-surface-container-low/50 transition-colors">
+                    <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.invoice_no}</td>
+                    <td className="p-4 font-label-md text-on-surface">{inv.student_name}</td>
+                    <td className="p-4 font-body-sm text-on-surface-variant hidden md:table-cell">
+                      <p>{inv.subject}</p>
+                      <p className="text-xs">{inv.period}</p>
+                    </td>
+                    <td className="p-4 font-label-md text-on-surface font-semibold">{fmtMoney(inv.amount)}</td>
+                    <td className="p-4 font-label-sm text-green-600">{inv.paid_at ? new Date(inv.paid_at).toLocaleDateString('vi-VN') : '—'}</td>
+                    <td className="p-4 text-right hidden sm:table-cell">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-semibold">
+                        <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                        {inv.pay_method || 'Đã thanh toán'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </div>
