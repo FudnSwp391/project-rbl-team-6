@@ -455,6 +455,38 @@ app.get("/", (req, res) => {
   res.send("EduX Backend is running Γ£à");
 });
 
+// ─É─ö POST /api/auth/check-email ─É─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö
+// Kiểm tra email đã tồn tại chưa (dùng trước khi đăng ký để báo lỗi sớm)
+app.post("/api/auth/check-email", async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ message: "Email is required." });
+
+  try {
+    const result = await pool.query(
+      "SELECT id, google_id FROM users WHERE email = $1",
+      [email.toLowerCase().trim()]
+    );
+    if (result.rows.length === 0) {
+      return res.json({ available: true });
+    }
+    if (result.rows[0].google_id) {
+      return res.status(409).json({
+        available: false,
+        isGoogleAccount: true,
+        message: "Email này đã được đăng ký qua Google. Vui lòng đăng nhập bằng Google.",
+      });
+    }
+    return res.status(409).json({
+      available: false,
+      isGoogleAccount: false,
+      message: "Email này đã được đăng ký. Vui lòng đăng nhập.",
+    });
+  } catch (err) {
+    console.error("check-email error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 // ΓöÇΓöÇΓöÇ POST /api/auth/register ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // ─É─âng k├╜ bß║▒ng email + password
 app.post("/api/auth/register", async (req, res) => {
@@ -644,6 +676,9 @@ app.post("/api/auth/login", async (req, res) => {
 
     const token = createToken(user);
 
+    const ip = getClientIP(req);
+    const suspicious = await logLoginAttempt(user.id, ip, req.headers['user-agent']);
+
     return res.json({
       token,
       user: {
@@ -653,6 +688,8 @@ app.post("/api/auth/login", async (req, res) => {
         role: user.role,
         picture: user.picture,
       },
+      suspiciousLogin: suspicious,
+      loginIP: ip,
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -719,6 +756,9 @@ app.post("/api/auth/google", async (req, res) => {
 
     const token = createToken(user);
 
+    const ip = getClientIP(req);
+    const suspicious = await logLoginAttempt(user.id, ip, req.headers['user-agent']);
+
     return res.json({
       token,
       user: {
@@ -728,6 +768,8 @@ app.post("/api/auth/google", async (req, res) => {
         role: user.role,
         picture: user.picture,
       },
+      suspiciousLogin: suspicious,
+      loginIP: ip,
     });
   } catch (error) {
     console.error("Google auth error:", error);
@@ -1181,7 +1223,6 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
   }
 });
 
-<<<<<<< HEAD
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1199,13 +1240,7 @@ app.use("/", discussionRoutes);
 app.use("/", lessonRoutes);
 app.use("/", learningPathRoutes);
 
-// ─── Start server ─────────────────────────────────────────────────────────────
-app.listen(port, () => {
-  console.log(`🚀 Server is running on http://localhost:${port}`);
-=======
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
-// Returns all users with optional search and role filter. Supports pagination.
-// Query params: search, role, page (default 1), limit (default 20)
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
   const { search = "", role = "all", page = "1", limit = "20" } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -1249,7 +1284,6 @@ app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
     console.error("GET /api/admin/users error:", err);
     return res.status(500).json({ message: "Server error." });
   }
->>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 });
 
 // ── GET /api/admin/users/:id ─────────────────────────────────────────────────
@@ -1285,6 +1319,15 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
       );
       user.quiz_attempts = parseInt(attemptsResult.rows[0].count);
     }
+
+    // Lịch sử đăng nhập gần nhất (10 lần)
+    const logsResult = await pool.query(
+      `SELECT ip_address, user_agent, is_suspicious, created_at
+       FROM login_logs WHERE user_id = $1
+       ORDER BY created_at DESC LIMIT 10`,
+      [id]
+    );
+    user.login_logs = logsResult.rows;
 
     return res.json(user);
   } catch (err) {
@@ -2563,6 +2606,165 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 });
 
 
+// ── GET /api/tutors (public) ──────────────────────────────────────────────────
+// Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
+app.get("/api/tutors", async (req, res) => {
+  const { search = "", subjects = "", sort = "rating", page = "1", limit = "12" } = req.query;
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+  const offset = (pageNum - 1) * limitNum;
+
+  const conditions = ["tp.status = 'approved'"];
+  const values = [];
+  let idx = 1;
+
+  if (search.trim()) {
+    conditions.push(`(u.full_name ILIKE $${idx} OR tp.subjects ILIKE $${idx} OR tp.bio ILIKE $${idx})`);
+    values.push(`%${search.trim()}%`);
+    idx++;
+  }
+
+  if (subjects.trim()) {
+    const subjectList = subjects.split(",").map(s => s.trim()).filter(Boolean);
+    if (subjectList.length > 0) {
+      const subConds = subjectList.map(() => `tp.subjects ILIKE $${idx++}`);
+      conditions.push(`(${subConds.join(" OR ")})`);
+      subjectList.forEach(s => values.push(`%${s}%`));
+    }
+  }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+
+  const orderMap = {
+    rating:     "tp.experience_years DESC NULLS LAST",
+    price_asc:  "tp.hourly_rate ASC NULLS LAST",
+    price_desc: "tp.hourly_rate DESC NULLS LAST",
+    experience: "tp.experience_years DESC NULLS LAST",
+    newest:     "tp.created_at DESC",
+  };
+  const orderBy = orderMap[sort] || orderMap.newest;
+
+  try {
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM tutor_profiles tp JOIN users u ON tp.user_id = u.id ${where}`,
+      values
+    );
+    const total = parseInt(countRes.rows[0].count);
+
+    const tutorsRes = await pool.query(
+      `SELECT
+         u.id, u.full_name, u.picture,
+         tp.bio, tp.subjects, tp.experience_years,
+         tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
+         0 AS avg_r,
+         0 AS review_count
+       FROM tutor_profiles tp
+       JOIN users u ON tp.user_id = u.id
+       ${where}
+       ORDER BY ${orderBy}
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, limitNum, offset]
+    );
+
+    return res.json({
+      tutors: tutorsRes.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    });
+  } catch (err) {
+    console.error("GET /api/tutors error:", err.message);
+    return res.status(500).json({ message: "Server error.", detail: err.message });
+  }
+});
+
+// ── GET /api/reviews/featured ─────────────────────────────────────────────────
+// Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)
+app.get("/api/reviews/featured", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 12, 30);
+  try {
+    const result = await pool.query(
+      `SELECT r.id, r.reviewer_name, r.reviewer_role, r.reviewer_picture,
+              r.rating, r.subject, r.content, r.created_at,
+              u.picture AS user_picture, u.full_name AS user_full_name
+       FROM reviews r
+       LEFT JOIN users u ON u.id = r.reviewer_id
+       WHERE r.rating = 5
+       ORDER BY r.created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/reviews/featured error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── POST /api/reviews ──────────────────────────────────────────────────────────
+// Người dùng đã đăng nhập gửi đánh giá mới
+app.post("/api/reviews", verifyToken, async (req, res) => {
+  const { rating, subject, content } = req.body || {};
+  if (!rating || !content) {
+    return res.status(400).json({ message: "rating và content là bắt buộc." });
+  }
+  if (rating < 1 || rating > 5) {
+    return res.status(400).json({ message: "rating phải từ 1 đến 5." });
+  }
+  try {
+    const userResult = await pool.query(
+      "SELECT full_name, role, picture FROM users WHERE id = $1",
+      [req.user.userId]
+    );
+    if (!userResult.rows.length) return res.status(404).json({ message: "User not found." });
+    const u = userResult.rows[0];
+
+    const result = await pool.query(
+      `INSERT INTO reviews (reviewer_id, reviewer_name, reviewer_role, reviewer_picture, rating, subject, content)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [req.user.userId, u.full_name, u.role, u.picture || null, rating, subject || null, content]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("POST /api/reviews error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// Helper: lấy IP thực của client (hỗ trợ proxy/Nginx)
+function getClientIP(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+// Helper: ghi log đăng nhập + trả về flag suspicious nếu IP lạ
+async function logLoginAttempt(userId, ip, userAgent) {
+  try {
+    // Lấy IP của lần đăng nhập cuối cùng trong 30 ngày
+    const recent = await pool.query(
+      `SELECT ip_address FROM login_logs
+       WHERE user_id = $1 AND created_at > NOW() - INTERVAL '30 days'
+       ORDER BY created_at DESC LIMIT 5`,
+      [userId]
+    );
+    const recentIPs = recent.rows.map(r => r.ip_address);
+    const suspicious = recentIPs.length > 0 && !recentIPs.includes(ip);
+
+    await pool.query(
+      `INSERT INTO login_logs (user_id, ip_address, user_agent, is_suspicious)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, ip, userAgent || null, suspicious]
+    );
+    return suspicious;
+  } catch (err) {
+    console.error("logLoginAttempt error:", err.message);
+    return false;
+  }
+}
+
 async function startServer() {
   // Auto-migrate: add is_banned column if it doesn't exist yet
   try {
@@ -2572,6 +2774,81 @@ async function startServer() {
     console.log("✅ DB migration: users.is_banned ready");
   } catch (err) {
     console.error("⚠️  DB migration warning:", err.message);
+  }
+
+  // Auto-migrate: create login_logs table
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS login_logs (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        ip_address    TEXT NOT NULL,
+        user_agent    TEXT,
+        is_suspicious BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_login_logs_user_id ON login_logs(user_id);
+      CREATE INDEX IF NOT EXISTS idx_login_logs_created_at ON login_logs(created_at);
+    `);
+    console.log("✅ DB migration: login_logs table ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (login_logs) warning:", err.message);
+  }
+
+  // Auto-migrate: tutor_profiles extra columns
+  try {
+    await pool.query(`
+      ALTER TABLE tutor_profiles
+        ADD COLUMN IF NOT EXISTS hourly_rate       NUMERIC(10,2),
+        ADD COLUMN IF NOT EXISTS profile_photo_url TEXT,
+        ADD COLUMN IF NOT EXISTS city              TEXT,
+        ADD COLUMN IF NOT EXISTS country           TEXT,
+        ADD COLUMN IF NOT EXISTS phone             TEXT,
+        ADD COLUMN IF NOT EXISTS headline          TEXT,
+        ADD COLUMN IF NOT EXISTS reject_reason     TEXT
+    `);
+    console.log("✅ DB migration: tutor_profiles extra columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (tutor_profiles cols) warning:", err.message);
+  }
+
+  // Auto-migrate: create reviews table
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reviews (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reviewer_id      UUID REFERENCES users(id) ON DELETE SET NULL,
+        reviewer_name    TEXT NOT NULL,
+        reviewer_role    TEXT NOT NULL DEFAULT 'student',
+        reviewer_picture TEXT,
+        rating           INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        subject          TEXT,
+        content          TEXT NOT NULL,
+        created_at       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log("✅ DB migration: reviews table ready");
+
+    // Seed 5-star reviews nếu bảng còn trống
+    const { rows } = await pool.query("SELECT COUNT(*) FROM reviews");
+    if (parseInt(rows[0].count) === 0) {
+      await pool.query(`
+        INSERT INTO reviews (reviewer_name, reviewer_role, rating, subject, content, created_at) VALUES
+        ('Nguyễn Văn An',   'student', 5, 'Toán Cao Cấp',       'Gia sư giải thích rất rõ ràng, từng bước một. Tôi đã hiểu được tích phân bội sau 3 buổi học. Cực kỳ khuyến khích!',                                      NOW() - INTERVAL ''2 minutes''),
+        ('Trần Thị Bích',   'parent',  5, 'Tiếng Anh IELTS',    'Con tôi tăng từ 5.5 lên 7.0 chỉ sau 3 tháng. Gia sư rất tận tâm, có phương pháp riêng cho từng học sinh. Cảm ơn EduX rất nhiều!',                         NOW() - INTERVAL ''18 minutes''),
+        ('Lê Minh Châu',    'student', 5, 'Lập Trình Python',   'Từ chỗ không biết gì về code, giờ tôi đã tự viết được ứng dụng Flask đầu tiên. Gia sư hướng dẫn thực chiến, không dạy lý thuyết suông.',                  NOW() - INTERVAL ''1 hour''),
+        ('Phạm Hoàng Duy',  'student', 5, 'Vật Lý Đại Cương',   'Bài giảng sinh động, có nhiều ví dụ thực tế. Điểm thi cuối kỳ của tôi từ 5 lên 9. Thầy rất nhiệt tình và kiên nhẫn.',                                     NOW() - INTERVAL ''3 hours''),
+        ('Nguyễn Thị Hoa',  'parent',  5, 'Toán Tiểu Học',      'Con tôi 9 tuổi rất thích học, không còn sợ môn Toán nữa. Gia sư biết cách tạo hứng thú cho các em nhỏ. Sẽ tiếp tục đăng ký dài hạn.',                    NOW() - INTERVAL ''5 hours''),
+        ('Đỗ Văn Khoa',     'student', 5, 'Hóa Hữu Cơ',         'Môn Hóa luôn là cơn ác mộng nhưng nhờ gia sư tôi đã vượt qua kỳ thi tốt nghiệp với điểm 8.5. Phương pháp ghi nhớ cực hay!',                              NOW() - INTERVAL ''8 hours''),
+        ('Vũ Thị Lan',      'student', 5, 'Tiếng Nhật N3',       'Sau 6 tháng học, tôi thi đậu JLPT N3 lần đầu tiên. Gia sư bản ngữ, phát âm chuẩn, giáo trình được thiết kế rất khoa học.',                               NOW() - INTERVAL ''1 day''),
+        ('Bùi Minh Long',   'parent',  5, 'Toán THPT',           'Điểm thi thử đại học của con tôi tăng vọt từ 6 lên 8.5 điểm. Gia sư không chỉ dạy kiến thức mà còn rèn kỹ năng làm bài thi hiệu quả.',                   NOW() - INTERVAL ''2 days''),
+        ('Hoàng Thị Mai',   'student', 5, 'Luyện Thi THPT QG',  'Thi thử lần đầu được 18/30, sau 2 tháng ôn với gia sư tôi đạt 26/30. Rất biết ơn sự tận tâm và kinh nghiệm của thầy.',                                    NOW() - INTERVAL ''3 days''),
+        ('Đinh Văn Nam',    'student', 5, 'Tin Học Văn Phòng',   'Học Excel và Word từ cơ bản đến nâng cao, giờ làm việc nhanh hơn rất nhiều. Gia sư dạy đúng những gì thực tế cần dùng, không mất thời gian lý thuyết dài.' , NOW() - INTERVAL ''4 days'')
+      `);
+      console.log("✅ DB seed: 10 sample reviews inserted");
+    }
+  } catch (err) {
+    console.error("⚠️  DB migration (reviews) warning:", err.message);
   }
 
   app.listen(port, () => {

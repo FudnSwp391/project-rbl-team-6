@@ -9,12 +9,9 @@ import SignUp from './SignUp'
 import AdminDashboard from './AdminDashboard'
 import StudentDashboard from './StudentDashboard'
 import TutorDashboard from './TutorDashboard'
-<<<<<<< HEAD
-import ParentDashboard from './ParentDashboard'    // ← NEW
+import ParentDashboard from './ParentDashboard'
 import MyCourses from './pages/MyCourses'
 import CourseDetail from './pages/CourseDetail'
-=======
-import ParentDashboard from './ParentDashboard'
 import QuizTaking from './QuizTaking'
 import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
@@ -22,8 +19,6 @@ import FindTutorsPage from './FindTutorsPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorDetailPage from './TutorDetailPage'
-
->>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -101,64 +96,42 @@ const footerLinks = {
 
 // ─── Helper: parse the hash to get the current route ─────────────────────────
 const getRouteFromHash = () => {
-<<<<<<< HEAD
-  let normalized = window.location.hash.replace(/^#/, '') || '/'
-  // remove trailing slash if exists
-  if (normalized.length > 1 && normalized.endsWith('/')) {
-    normalized = normalized.slice(0, -1)
-  }
-  if (normalized === '/signin')    return 'signin'
-  if (normalized === '/signup')    return 'signup'
-  if (normalized === '/admin')     return 'admin'
-  if (normalized === '/dashboard') return 'dashboard'   // Student Dashboard
-  if (normalized === '/tutor')     return 'tutor'       // Tutor Dashboard
-  if (normalized === '/parent')    return 'parent'      // Parent Dashboard
-  if (normalized === '/my-courses' || normalized.startsWith('/my-courses')) return 'mycourses'  // My Courses
-  if (normalized.startsWith('/course/')) return 'coursedetail'  // Course Detail
-  return 'home'
-=======
 
   let normalized = window.location.hash.replace(/^#/, '') || '/'
-  normalized = normalized.split('?')[0] // remove query params for matching
+  normalized = normalized.split('?')[0]
   if (normalized === '/signin')    return { name: 'signin' }
   if (normalized === '/signup')    return { name: 'signup' }
   if (normalized === '/admin')     return { name: 'admin' }
-  if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }   // Student Dashboard
-  if (normalized === '/tutor')     return { name: 'tutor' }       // Tutor Dashboard
-  if (normalized === '/tutor-profile') return { name: 'tutor-profile' } // Tutor Profile Form
+  if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }
+  if (normalized === '/tutor')     return { name: 'tutor' }
+  if (normalized === '/tutor-profile') return { name: 'tutor-profile' }
   if (normalized === '/tutor-detail') return { name: 'tutor-detail' }
-  if (normalized === '/parent')    return { name: 'parent' }      // Parent Dashboard
+  if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
+  if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
+  if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
 
-  // Quiz routes: #/quiz/<id>
   const quizMatch = normalized.match(/^\/quiz\/([^/]+)$/)
   if (quizMatch) return { name: 'quiz', id: quizMatch[1] }
 
-  // Quiz result routes: #/quiz-result/<attemptId>
   const resultMatch = normalized.match(/^\/quiz-result\/([^/]+)$/)
   if (resultMatch) return { name: 'quiz-result', id: resultMatch[1] }
 
-  // Practice quiz: #/practice-quiz/<sessionId>
   const practiceQuizMatch = normalized.match(/^\/practice-quiz\/([^/]+)$/)
   if (practiceQuizMatch) return { name: 'practice-quiz', id: practiceQuizMatch[1] }
 
-  // Practice result: #/practice-result/<sessionId>
   const practiceResultMatch = normalized.match(/^\/practice-result\/([^/]+)$/)
   if (practiceResultMatch) return { name: 'practice-result', id: practiceResultMatch[1] }
 
-  // Exam routes: #/exam-quiz/<id>
   const examMatch = normalized.match(/^\/exam-quiz\/([^/]+)$/)
   if (examMatch) return { name: 'exam-quiz', id: examMatch[1] }
 
-  // Exam result routes: #/exam-result/<attemptId>
   const examResultMatch = normalized.match(/^\/exam-result\/([^/]+)$/)
   if (examResultMatch) return { name: 'exam-result', id: examResultMatch[1] }
 
   return { name: 'home' }
-
->>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 }
 
 // ─── Access Denied page (shown to non-admin users who visit #/admin) ──────────
@@ -218,15 +191,32 @@ const feedbackData = [
     content: `"Elena là một người nói chuyện tuyệt vời. Sự tự tin khi giao tiếp của tôi đã tăng vọt. ¡Muchas gracias!"`
   }
 ];
-const displayFeedback = [...feedbackData, ...feedbackData];
-
 // ─── Home Page ────────────────────────────────────────────────────────────────
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+
+function formatTimeAgo(dateStr) {
+  if (!dateStr) return ''
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
+  if (diff < 60)   return 'Vừa xong'
+  if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`
+  return `${Math.floor(diff / 86400)} ngày trước`
+}
+
 function HomePage({ onGoSignIn }) {
   const { user, logout } = useAuth()
   const [topic, setTopic] = useState('')
   const [place, setPlace] = useState('')
+  const [liveReviews, setLiveReviews] = useState([])
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/reviews/featured?limit=12`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (Array.isArray(data) && data.length > 0) setLiveReviews(data) })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -237,6 +227,9 @@ function HomePage({ onGoSignIn }) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  const reviewsToShow = liveReviews.length > 0 ? liveReviews : feedbackData
+  const displayFeedbackLive = [...reviewsToShow, ...reviewsToShow]
 
   return (
     <div className="academia-page">
@@ -306,25 +299,6 @@ function HomePage({ onGoSignIn }) {
                   </button>
                 </div>
               )}
-<<<<<<< HEAD
-=======
-              <span className="header-username">{user.name || user.email}</span>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  if (user.role === 'admin') window.location.hash = '/admin';
-                  else if (user.role === 'tutor') window.location.hash = '/tutor';
-                  else window.location.hash = '/dashboard';
-                }}
-                style={{ marginLeft: '12px' }}
-              >
-                Bảng Điều Khiển
-              </button>
-              <button type="button" className="btn btn-outline" onClick={logout} style={{ marginLeft: '8px' }}>
-                Đăng Xuất
-              </button>
->>>>>>> cac19781017142fbca126d01db84b6453311ac7d
             </div>
           ) : (
             <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
@@ -466,32 +440,52 @@ function HomePage({ onGoSignIn }) {
           <div className="relative w-full overflow-hidden h-64 flex items-center">
             {/* Scroller Content */}
             <div className="scroll-container gap-6 px-6">
-              {displayFeedback.map((fb, idx) => (
-                <div key={`${fb.id}-${idx}`} className="glass-card w-[380px] p-6 rounded-xl shadow-level-2 flex flex-col gap-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full ${fb.bgColor} ${fb.textColor} flex items-center justify-center font-bold`}>
-                        {fb.initials}
+              {displayFeedbackLive.map((fb, idx) => {
+                // Hỗ trợ cả format DB (reviewer_name) lẫn format mock cũ (name)
+                const name    = fb.reviewer_name || fb.name || ''
+                const role    = fb.reviewer_role || fb.role || 'student'
+                const picture = fb.user_picture || fb.reviewer_picture || null
+                const initials = fb.initials || name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+                const subject = fb.subject || ''
+                const content = fb.content || ''
+                const roleLabel = role === 'parent' ? 'Phụ Huynh' : role === 'tutor' ? 'Gia Sư' : 'Học Sinh'
+                const timeLabel = fb.time || formatTimeAgo(fb.created_at)
+                const avatarColors = [
+                  ['bg-[#d4e3ff]','text-[#003564]'], ['bg-[#e2e2e2]','text-[#5d5f5f]'],
+                  ['bg-[#dde1ff]','text-[#00288e]'], ['bg-[#a4c9ff]','text-[#003564]'],
+                  ['bg-[#fce7f3]','text-[#7c3aed]'], ['bg-[#dcfce7]','text-[#15803d]'],
+                ]
+                const [bgColor, textColor] = avatarColors[idx % avatarColors.length]
+                return (
+                  <div key={`${fb.id || idx}-${idx}`} className="glass-card w-[380px] p-6 rounded-xl shadow-level-2 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        {picture ? (
+                          <img src={picture} alt={name} className="w-10 h-10 rounded-full object-cover" />
+                        ) : (
+                          <div className={`w-10 h-10 rounded-full ${bgColor} ${textColor} flex items-center justify-center font-bold text-sm`}>
+                            {initials}
+                          </div>
+                        )}
+                        <div>
+                          <h4 className="font-semibold text-[#191c1e] leading-tight">{name}</h4>
+                          <span className="text-xs font-medium text-[#444653]">{roleLabel}</span>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-semibold text-[#191c1e] leading-tight">{fb.name}</h4>
-                        <span className="text-xs font-medium text-[#444653]">{fb.role}</span>
+                      <span className="text-[11px] font-medium px-2 py-1 bg-[#c4c5d5]/30 text-[#444653] rounded-full">
+                        {timeLabel}
+                      </span>
+                    </div>
+                    <div>
+                      {subject && <span className="text-xs font-bold uppercase tracking-wider text-[#00288e]">Phản hồi đã xác minh cho {subject}</span>}
+                      <div className="flex mt-1">
+                        {[1,2,3,4,5].map(i => <span key={i} className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
                       </div>
                     </div>
-                    <span className={`text-[11px] font-medium px-2 py-1 ${fb.pulse ? 'bg-[#00288e]/10 text-[#00288e]' : 'bg-[#c4c5d5]/30 text-[#444653]'} rounded-full flex items-center gap-1`}>
-                      {fb.pulse && <span className="w-1.5 h-1.5 bg-[#00288e] rounded-full animate-pulse"></span>}
-                      {fb.time}
-                    </span>
+                    <p className="text-[#444653] text-sm line-clamp-3">{content}</p>
                   </div>
-                  <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-[#00288e]">Phản hồi đã xác minh cho {fb.subject}</span>
-                    <div className="flex mt-1">
-                      {[1,2,3,4,5].map(i => <span key={i} className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
-                    </div>
-                  </div>
-                  <p className="text-[#444653] text-sm line-clamp-3">{fb.content}</p>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         </section>
@@ -699,7 +693,7 @@ function App() {
   }
 
   // ── Route: My Courses (protected) ──
-  if (route === 'mycourses') {
+  if (routeName === 'mycourses') {
     if (!user) {
       return (
         <AccessDenied
@@ -712,7 +706,7 @@ function App() {
   }
 
   // ── Route: Course Detail (protected) ──
-  if (route === 'coursedetail') {
+  if (routeName === 'coursedetail') {
     if (!user) {
       return (
         <AccessDenied
