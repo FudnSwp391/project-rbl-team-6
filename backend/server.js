@@ -862,7 +862,6 @@ app.post(
           birthday || null, gender, country, city, phone,
           education, language, parseFloat(hourly_rate) || null,
           teaching_style, qualifications,
-          JSON.stringify(parsedTeachingMethods), JSON.stringify(parsedSuitableStudents),
           "pending", userId,
         ];
         let query = `UPDATE tutor_profiles SET
@@ -871,14 +870,13 @@ app.post(
           birthday = $7, gender = $8, country = $9, city = $10, phone = $11,
           education = $12, language = $13, hourly_rate = $14,
           teaching_style = $15, qualifications = $16,
-          teaching_methods = $17, suitable_students = $18,
-          status = $19, reject_reason = NULL`;
+          status = $17, reject_reason = NULL`;
 
-        let idx = 21; // $20 = userId
+        let idx = 19; // $18 = userId
         if (photoPath) { query += `, profile_photo_url = $${idx}`; values.push(photoPath); idx++; }
         if (cccdPath)  { query += `, cccd_url = $${idx}`;          values.push(cccdPath);  idx++; }
 
-        query += ` WHERE user_id = $20 RETURNING *`;
+        query += ` WHERE user_id = $18 RETURNING *`;
         result = await pool.query(query, values);
       } else {
         result = await pool.query(
@@ -888,7 +886,6 @@ app.post(
             birthday, gender, country, city, phone,
             education, language, hourly_rate,
             teaching_style, qualifications,
-            teaching_methods, suitable_students,
             profile_photo_url, cccd_url,
             status
           ) VALUES (
@@ -898,7 +895,6 @@ app.post(
             $13, $14, $15,
             $16, $17,
             $18, $19,
-            $20, $21,
             'pending'
           ) RETURNING *`,
           [
@@ -907,10 +903,26 @@ app.post(
             birthday || null, gender, country, city, phone,
             education, language, parseFloat(hourly_rate) || null,
             teaching_style, qualifications,
-            JSON.stringify(parsedTeachingMethods), JSON.stringify(parsedSuitableStudents),
             photoPath, cccdPath,
           ]
         );
+      }
+
+      // Optional: save structured fields (separate query, non-fatal if columns not ready)
+      try {
+        await pool.query(
+          `UPDATE tutor_profiles SET
+            teaching_methods  = $1::jsonb,
+            suitable_students = $2::jsonb
+           WHERE id = $3`,
+          [
+            JSON.stringify(parsedTeachingMethods),
+            JSON.stringify(parsedSuitableStudents),
+            result.rows[0].id,
+          ]
+        );
+      } catch (structErr) {
+        console.warn("[Profile] structured fields save skipped:", structErr.message);
       }
 
       // Insert new certificates into tutor_certificates table (with metadata)
@@ -922,10 +934,18 @@ app.post(
           const meta = parsedCertMetadata[i] || {};
           const ext = f.originalname.split('.').pop();
           const certPath = await uploadFileToStorage(f, `certificates/${userId}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
-          await pool.query(
-            "INSERT INTO tutor_certificates (tutor_profile_id, name, url, cert_type, issuer, issue_year) VALUES ($1, $2, $3, $4, $5, $6)",
-            [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
-          );
+          try {
+            await pool.query(
+              "INSERT INTO tutor_certificates (tutor_profile_id, name, url, cert_type, issuer, issue_year) VALUES ($1, $2, $3, $4, $5, $6)",
+              [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
+            );
+          } catch (certExtErr) {
+            // Fall back to basic insert if extended cert columns don't exist yet
+            await pool.query(
+              "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
+              [profileId, meta.name || f.originalname, certPath]
+            );
+          }
         }
       }
 
