@@ -278,7 +278,7 @@ export default function TutorProfileForm() {
 
   // ── Step 3 files ────────────────────────────────────────────────────────────
   const [profilePhotoFile, setProfilePhotoFile] = useState(null)
-  const [certificateFile, setCertificateFile] = useState(null)
+  const [certificateFiles, setCertificateFiles] = useState([])
   const [cccdFile, setCccdFile] = useState(null)
 
   // ── Errors ──────────────────────────────────────────────────────────────────
@@ -344,10 +344,29 @@ export default function TutorProfileForm() {
     return Object.keys(e).length === 0
   }
 
+  const handleCertificatesChange = useCallback((e) => {
+    const newFiles = Array.from(e.target.files || [])
+    e.target.value = ''
+    const valid = []
+    const errs = []
+    newFiles.forEach(f => {
+      const err = validateImageFile(f)
+      if (err) errs.push(`${f.name}: ${err}`)
+      else valid.push(f)
+    })
+    if (errs.length) setErrors(prev => ({ ...prev, certificate: errs.join('; ') }))
+    else setErrors(prev => ({ ...prev, certificate: '' }))
+    setCertificateFiles(prev => [...prev, ...valid])
+  }, [])
+
+  const removeCertificate = useCallback((idx) => {
+    setCertificateFiles(prev => prev.filter((_, i) => i !== idx))
+  }, [])
+
   const validateStep3 = () => {
     const e = {}
     if (!profilePhotoFile) e.profilePhoto = 'Ảnh đại diện là bắt buộc.'
-    if (!certificateFile) e.certificate = 'Ảnh chứng chỉ là bắt buộc.'
+    if (certificateFiles.length === 0) e.certificate = 'Bắt buộc tải lên ít nhất 1 chứng chỉ.'
     if (!cccdFile) e.cccd = 'Ảnh CCCD / CMND là bắt buộc.'
     setErrors(e)
     return Object.keys(e).length === 0
@@ -400,7 +419,7 @@ export default function TutorProfileForm() {
     formData.append('qualifications', qualifications.trim())
     // Step 3 images
     if (profilePhotoFile) formData.append('profile_photo', profilePhotoFile)
-    if (certificateFile) formData.append('certificate', certificateFile)
+    certificateFiles.forEach(f => formData.append('certificates', f))
     if (cccdFile) formData.append('cccd', cccdFile)
 
     try {
@@ -883,31 +902,70 @@ export default function TutorProfileForm() {
                     required
                   />
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
-                    {/* Certificate */}
-                    <ImageUploadCard
-                      id="upload-certificate"
-                      label="Ảnh Chứng Chỉ"
-                      description="Ảnh chứng chỉ. Định dạng chấp nhận: JPG, JPEG, PNG, WEBP. Tối đa 5MB."
-                      file={certificateFile}
-                      onFileChange={e => handleImageChange(e, setCertificateFile, 'certificate')}
-                      onRemove={() => { setCertificateFile(null); setErrors(prev => ({ ...prev, certificate: '' })) }}
-                      error={errors.certificate}
-                      required
-                    />
-
-                    {/* CCCD */}
-                    <ImageUploadCard
-                      id="upload-cccd"
-                      label="Ảnh CCCD / CMND"
-                      description="Ảnh CCCD / CMND. Định dạng chấp nhận: JPG, JPEG, PNG, WEBP. Tối đa 5MB."
-                      file={cccdFile}
-                      onFileChange={e => handleImageChange(e, setCccdFile, 'cccd')}
-                      onRemove={() => { setCccdFile(null); setErrors(prev => ({ ...prev, cccd: '' })) }}
-                      error={errors.cccd}
-                      required
-                    />
+                  {/* Certificates — multiple */}
+                  <div className="rounded-xl border border-outline-variant bg-surface-container-low p-md">
+                    <div className="flex justify-between items-start mb-sm">
+                      <div>
+                        <p className="font-label-md text-label-md text-on-surface">Chứng chỉ / Bằng cấp <span className="text-error">*</span></p>
+                        <p className="font-label-sm text-label-sm text-on-surface-variant mt-0.5">Có thể tải lên nhiều chứng chỉ (tối đa 10)</p>
+                      </div>
+                      <label
+                        htmlFor="upload-certificates"
+                        className="cursor-pointer flex items-center gap-1 px-sm py-xs bg-primary text-on-primary rounded-lg text-label-sm font-label-sm hover:opacity-90 transition-opacity shrink-0"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">add</span>Thêm
+                        <input
+                          id="upload-certificates"
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          multiple
+                          className="hidden"
+                          onChange={handleCertificatesChange}
+                          disabled={certificateFiles.length >= 10}
+                        />
+                      </label>
+                    </div>
+                    {errors.certificate && <p className="text-error text-label-sm mb-sm">{errors.certificate}</p>}
+                    {certificateFiles.length === 0 ? (
+                      <div className="border-2 border-dashed border-outline-variant rounded-lg p-lg flex flex-col items-center gap-2 text-on-surface-variant">
+                        <span className="material-symbols-outlined text-4xl">workspace_premium</span>
+                        <p className="text-body-sm font-body-sm">Chưa có chứng chỉ nào. Nhấn "Thêm" để tải lên.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-sm mt-xs">
+                        {certificateFiles.map((f, i) => {
+                          const url = createObjectURL(f)
+                          return (
+                            <div key={i} className="relative rounded-lg overflow-hidden border border-outline-variant aspect-video bg-surface-container">
+                              {url && <img src={url} alt={f.name} className="w-full h-full object-cover" onLoad={() => URL.revokeObjectURL(url)} />}
+                              <button
+                                type="button"
+                                onClick={() => removeCertificate(i)}
+                                className="absolute top-1 right-1 w-6 h-6 bg-error text-on-error rounded-full flex items-center justify-center hover:opacity-90"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">close</span>
+                              </button>
+                              <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1 py-0.5">
+                                <p className="text-white text-[10px] truncate">{f.name}</p>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
+
+                  {/* CCCD */}
+                  <ImageUploadCard
+                    id="upload-cccd"
+                    label="Ảnh CCCD / CMND"
+                    description="Ảnh CCCD / CMND. Định dạng chấp nhận: JPG, JPEG, PNG, WEBP. Tối đa 5MB."
+                    file={cccdFile}
+                    onFileChange={e => handleImageChange(e, setCccdFile, 'cccd')}
+                    onRemove={() => { setCccdFile(null); setErrors(prev => ({ ...prev, cccd: '' })) }}
+                    error={errors.cccd}
+                    required
+                  />
                 </div>
               </div>
 
@@ -999,7 +1057,6 @@ export default function TutorProfileForm() {
                   <div className="p-md grid grid-cols-1 sm:grid-cols-3 gap-md">
                     {[
                       { label: 'Ảnh Đại Diện', file: profilePhotoFile },
-                      { label: 'Ảnh Chứng Chỉ', file: certificateFile },
                       { label: 'Ảnh CCCD / CMND', file: cccdFile },
                     ].map(({ label, file }) => {
                       const url = file ? createObjectURL(file) : null
@@ -1033,6 +1090,40 @@ export default function TutorProfileForm() {
                         </div>
                       )
                     })}
+                    {/* Certificates preview */}
+                    {certificateFiles.map((f, i) => {
+                      const url = createObjectURL(f)
+                      return (
+                        <div key={i} className="flex flex-col items-center gap-2">
+                          {url ? (
+                            <div className="w-full aspect-video rounded-lg overflow-hidden border border-outline-variant bg-surface-container shadow-sm">
+                              <img src={url} alt={f.name} className="w-full h-full object-cover" onLoad={() => URL.revokeObjectURL(url)} />
+                            </div>
+                          ) : (
+                            <div className="w-full aspect-video rounded-lg bg-surface-container border border-outline-variant flex items-center justify-center">
+                              <span className="material-symbols-outlined text-[36px] text-on-surface-variant">workspace_premium</span>
+                            </div>
+                          )}
+                          <div className="text-center">
+                            <p className="font-label-md text-label-md text-on-surface">Chứng chỉ {i + 1}</p>
+                            <p className="font-label-sm text-label-sm text-green-600 flex items-center justify-center gap-1">
+                              <span className="material-symbols-outlined text-[14px]">check_circle</span>{f.name}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {certificateFiles.length === 0 && (
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="w-full aspect-video rounded-lg bg-surface-container border border-outline-variant flex items-center justify-center">
+                          <span className="material-symbols-outlined text-[36px] text-on-surface-variant">workspace_premium</span>
+                        </div>
+                        <div className="text-center">
+                          <p className="font-label-md text-label-md text-on-surface">Chứng chỉ</p>
+                          <p className="font-label-sm text-label-sm text-error">Chưa tải lên</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </section>
 

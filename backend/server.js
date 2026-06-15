@@ -801,9 +801,9 @@ app.post(
   verifyToken,
   // Khai b├ío ─æß╗º 3 file fields ─æß╗â multer kh├┤ng n├⌐m LIMIT_UNEXPECTED_FILE
   upload.fields([
-    { name: "profile_photo", maxCount: 1 },
-    { name: "certificate",   maxCount: 1 },
-    { name: "cccd",          maxCount: 1 },
+    { name: "profile_photo",  maxCount: 1  },
+    { name: "certificates",   maxCount: 10 },
+    { name: "cccd",           maxCount: 1  },
   ]),
   // ΓöÇΓöÇ Multer error handler: trß║ú JSON thay v├¼ HTML ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   (err, req, res, next) => {
@@ -825,20 +825,15 @@ app.post(
 
       const files = req.files || {};
       const photoFile = files["profile_photo"] ? files["profile_photo"][0] : null;
-      const certFile  = files["certificate"]   ? files["certificate"][0]   : null;
+      const certFiles = files["certificates"]  || [];
       const cccdFile  = files["cccd"]          ? files["cccd"][0]          : null;
 
       let photoPath = null;
-      let certPath  = null;
       let cccdPath  = null;
 
       if (photoFile) {
         const ext = photoFile.originalname.split('.').pop();
         photoPath = await uploadFileToStorage(photoFile, `profile_photos/${userId}_${Date.now()}.${ext}`);
-      }
-      if (certFile) {
-        const ext = certFile.originalname.split('.').pop();
-        certPath = await uploadFileToStorage(certFile, `certificates/${userId}_${Date.now()}.${ext}`);
       }
       if (cccdFile) {
         const ext = cccdFile.originalname.split('.').pop();
@@ -871,13 +866,11 @@ app.post(
 
         let idx = 19; // $18 = userId
         if (photoPath) { query += `, profile_photo_url = $${idx}`; values.push(photoPath); idx++; }
-        if (certPath)  { query += `, certificate_url = $${idx}`;   values.push(certPath);  idx++; }
         if (cccdPath)  { query += `, cccd_url = $${idx}`;          values.push(cccdPath);  idx++; }
 
         query += ` WHERE user_id = $18 RETURNING *`;
         result = await pool.query(query, values);
       } else {
-        // ΓöÇΓöÇ INSERT ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
         result = await pool.query(
           `INSERT INTO tutor_profiles (
             user_id, bio, subjects, experience_years,
@@ -885,7 +878,7 @@ app.post(
             birthday, gender, country, city, phone,
             education, language, hourly_rate,
             teaching_style, qualifications,
-            profile_photo_url, certificate_url, cccd_url,
+            profile_photo_url, cccd_url,
             status
           ) VALUES (
             $1, $2, $3, $4,
@@ -893,7 +886,7 @@ app.post(
             $8, $9, $10, $11, $12,
             $13, $14, $15,
             $16, $17,
-            $18, $19, $20,
+            $18, $19,
             'pending'
           ) RETURNING *`,
           [
@@ -902,9 +895,23 @@ app.post(
             birthday || null, gender, country, city, phone,
             education, language, parseFloat(hourly_rate) || null,
             teaching_style, qualifications,
-            photoPath, certPath, cccdPath,
+            photoPath, cccdPath,
           ]
         );
+      }
+
+      // Insert new certificates into tutor_certificates table
+      if (certFiles.length > 0) {
+        const profileId = result.rows[0].id;
+        await pool.query("DELETE FROM tutor_certificates WHERE tutor_profile_id = $1", [profileId]);
+        for (const f of certFiles) {
+          const ext = f.originalname.split('.').pop();
+          const certPath = await uploadFileToStorage(f, `certificates/${userId}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
+          await pool.query(
+            "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
+            [profileId, f.originalname, certPath]
+          );
+        }
       }
 
       return res.status(200).json(result.rows[0]);
@@ -967,18 +974,15 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
   try {
     const result = await pool.query(`
       SELECT
-        tp.id,
-        tp.user_id,
-        u.full_name,
-        u.email,
-        tp.bio,
-        tp.subjects,
-        tp.experience_years,
-        tp.certificate_url,
-        tp.cccd_url,
-        tp.status,
-        tp.reject_reason,
-        tp.created_at
+        tp.id, tp.user_id, u.full_name, u.email,
+        tp.bio, tp.subjects, tp.experience_years,
+        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
+        tp.created_at, tp.profile_photo_url, tp.hourly_rate,
+        COALESCE(
+          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url) ORDER BY tc.created_at)
+           FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
+          '[]'::json
+        ) AS certificates
       FROM tutor_profiles tp
       JOIN users u ON u.id = tp.user_id
       WHERE tp.status = 'pending'
@@ -991,7 +995,6 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
   }
 });
 
-// ΓöÇΓöÇΓöÇ PATCH /api/admin/tutors/:id/approve ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Approves a tutor application and optionally sends them an email
 app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -1111,24 +1114,20 @@ app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) =
   }
 });
 
-// ─── GET /api/admin/tutors/pending ────────────────────────────────────────────
-// Returns all tutor_profiles with status = 'pending', joined with users
+// ─── GET /api/admin/tutors/pending (duplicate route kept for compatibility) ───
 app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        tp.id,
-        tp.user_id,
-        u.full_name,
-        u.email,
-        tp.bio,
-        tp.subjects,
-        tp.experience_years,
-        tp.certificate_url,
-        tp.cccd_url,
-        tp.status,
-        tp.reject_reason,
-        tp.created_at
+        tp.id, tp.user_id, u.full_name, u.email,
+        tp.bio, tp.subjects, tp.experience_years,
+        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
+        tp.created_at, tp.profile_photo_url, tp.hourly_rate,
+        COALESCE(
+          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url) ORDER BY tc.created_at)
+           FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
+          '[]'::json
+        ) AS certificates
       FROM tutor_profiles tp
       JOIN users u ON u.id = tp.user_id
       WHERE tp.status = 'pending'
@@ -2810,6 +2809,23 @@ async function startServer() {
     console.log("✅ DB migration: tutor_profiles extra columns ready");
   } catch (err) {
     console.error("⚠️  DB migration (tutor_profiles cols) warning:", err.message);
+  }
+
+  // Auto-migrate: tutor_certificates table (multiple certs per tutor)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_certificates (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tutor_profile_id UUID NOT NULL REFERENCES tutor_profiles(id) ON DELETE CASCADE,
+        name             TEXT,
+        url              TEXT NOT NULL,
+        created_at       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_tutor_certs_profile ON tutor_certificates(tutor_profile_id)`);
+    console.log("✅ DB migration: tutor_certificates table ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (tutor_certificates) warning:", err.message);
   }
 
   // Auto-migrate: create reviews table
