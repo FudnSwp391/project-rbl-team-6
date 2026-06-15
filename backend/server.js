@@ -2155,6 +2155,166 @@ app.get('/api/parent/children/:studentId/progress', verifyToken, async (req, res
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  PARENT EXTENDED APIs — Schedule, Reviews, Invoices, Notifications
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/parent/children/:studentId/schedule
+app.get('/api/parent/children/:studentId/schedule', verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+
+    const sessions = await pool.query(`
+      SELECT ts.id, ts.subject, ts.scheduled_at, ts.duration_mins, ts.status, ts.leave_reason, ts.notes,
+             u.id AS tutor_id, u.full_name AS tutor_name, u.picture AS tutor_picture
+      FROM tutor_sessions ts
+      JOIN users u ON ts.tutor_id = u.id
+      WHERE ts.student_id = $1 AND ts.scheduled_at >= NOW() - INTERVAL '7 days'
+      ORDER BY ts.scheduled_at ASC LIMIT 20
+    `, [studentId]);
+
+    const absences = await pool.query(`
+      SELECT COUNT(*) AS count FROM tutor_sessions
+      WHERE student_id=$1 AND status IN ('absent','late') AND scheduled_at >= date_trunc('month', NOW())
+    `, [studentId]);
+
+    return res.json({ sessions: sessions.rows, absences_this_month: parseInt(absences.rows[0].count) });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// POST /api/parent/children/:studentId/schedule/:sessionId/leave
+app.post('/api/parent/children/:studentId/schedule/:sessionId/leave', verifyToken, async (req, res) => {
+  try {
+    const { studentId, sessionId } = req.params;
+    const { reason } = req.body;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+
+    const updated = await pool.query(`
+      UPDATE tutor_sessions SET status='cancelled', leave_reason=$1, updated_at=NOW()
+      WHERE id=$2 AND student_id=$3 AND status='scheduled' RETURNING *
+    `, [reason || null, sessionId, studentId]);
+
+    if (!updated.rows.length) return res.status(404).json({ message: 'Không tìm thấy buổi học hoặc đã không thể hủy.' });
+
+    const session = updated.rows[0];
+    const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [studentId]);
+    await pool.query(`
+      INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+      VALUES ($1, 'student_absent', 'Học sinh xin nghỉ', $2, 'event_busy', $3, 'session')
+    `, [
+      session.tutor_id,
+      `${studentRes.rows[0]?.full_name || 'Học sinh'} xin nghỉ buổi ${session.subject} ngày ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. Lý do: ${reason || 'Không có lý do.'}`,
+      sessionId
+    ]);
+
+    return res.json({ message: 'Đã gửi yêu cầu nghỉ phép.' });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/parent/children/:studentId/reviews
+app.get('/api/parent/children/:studentId/reviews', verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+
+    const reviews = await pool.query(`
+      SELECT tr.id, tr.subject, tr.period_label, tr.content, tr.rating, tr.created_at,
+             u.full_name AS tutor_name, u.picture AS tutor_picture
+      FROM tutor_reviews tr
+      JOIN users u ON tr.tutor_id = u.id
+      WHERE tr.student_id=$1 ORDER BY tr.created_at DESC LIMIT 20
+    `, [studentId]);
+
+    return res.json({ reviews: reviews.rows });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// POST /api/tutor/reviews — gia sư tạo nhận xét định kỳ
+app.post('/api/tutor/reviews', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { student_id, subject, period_label, content, rating } = req.body;
+    if (!student_id || !subject || !period_label || !content)
+      return res.status(400).json({ message: 'Thiếu thông tin bắt buộc.' });
+
+    const review = await pool.query(`
+      INSERT INTO tutor_reviews (student_id, tutor_id, subject, period_label, content, rating)
+      VALUES ($1,$2,$3,$4,$5,$6) RETURNING *
+    `, [student_id, req.user.userId, subject, period_label, content, rating || 3]);
+
+    const parents = await pool.query('SELECT parent_id FROM parent_children WHERE student_id=$1', [student_id]);
+    const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [student_id]);
+    for (const p of parents.rows) {
+      await pool.query(`
+        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+        VALUES ($1,'tutor_review',$2,$3,'rate_review',$4,'review')
+      `, [p.parent_id, `Nhận xét mới từ gia sư — ${subject}`,
+          `Gia sư vừa gửi nhận xét định kỳ cho ${studentRes.rows[0]?.full_name || 'học sinh'} (${period_label}).`,
+          review.rows[0].id]);
+    }
+    return res.status(201).json({ review: review.rows[0] });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/parent/invoices
+app.get('/api/parent/invoices', verifyToken, async (req, res) => {
+  try {
+    const parentId = req.user.userId;
+    await pool.query(`UPDATE invoices SET status='overdue' WHERE parent_id=$1 AND status='pending' AND due_date < CURRENT_DATE`, [parentId]);
+
+    const [pending, paid] = await Promise.all([
+      pool.query(`
+        SELECT i.*, u.full_name AS student_name, t.full_name AS tutor_name
+        FROM invoices i JOIN users u ON i.student_id=u.id LEFT JOIN users t ON i.tutor_id=t.id
+        WHERE i.parent_id=$1 AND i.status IN ('pending','overdue') ORDER BY i.due_date ASC NULLS LAST
+      `, [parentId]),
+      pool.query(`
+        SELECT i.*, u.full_name AS student_name, t.full_name AS tutor_name
+        FROM invoices i JOIN users u ON i.student_id=u.id LEFT JOIN users t ON i.tutor_id=t.id
+        WHERE i.parent_id=$1 AND i.status='paid' ORDER BY i.paid_at DESC LIMIT 50
+      `, [parentId])
+    ]);
+
+    const totalDebt = pending.rows.reduce((s, i) => s + parseInt(i.amount), 0);
+    const totalPaid = paid.rows.reduce((s, i) => s + parseInt(i.amount), 0);
+    const overdueCount = pending.rows.filter(i => i.status === 'overdue').length;
+
+    return res.json({ pending: pending.rows, paid: paid.rows,
+      summary: { total_debt: totalDebt, total_paid: totalPaid, overdue_count: overdueCount } });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/notifications
+app.get('/api/notifications', verifyToken, async (req, res) => {
+  try {
+    const notifs = await pool.query(
+      `SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
+      [req.user.userId]
+    );
+    const unreadCount = notifs.rows.filter(n => !n.is_read).length;
+    return res.json({ notifications: notifs.rows, unread_count: unreadCount });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// PUT /api/notifications/read-all
+app.put('/api/notifications/read-all', verifyToken, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=TRUE WHERE user_id=$1', [req.user.userId]);
+    return res.json({ message: 'OK' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// PUT /api/notifications/:id/read
+app.put('/api/notifications/:id/read', verifyToken, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=TRUE WHERE id=$1 AND user_id=$2', [req.params.id, req.user.userId]);
+    return res.json({ message: 'OK' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
 
 
 
