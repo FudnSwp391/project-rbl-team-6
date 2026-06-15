@@ -105,7 +105,9 @@ const getRouteFromHash = () => {
   if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }
   if (normalized === '/tutor')     return { name: 'tutor' }
   if (normalized === '/tutor-profile') return { name: 'tutor-profile' }
-  if (normalized === '/tutor-detail') return { name: 'tutor-detail' }
+
+  const tutorDetailMatch = normalized.match(/^\/tutor-detail\/([^/]+)$/)
+  if (tutorDetailMatch) return { name: 'tutor-detail', id: tutorDetailMatch[1] }
   if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
   if (normalized === '/subjects')  return { name: 'subjects' }
