@@ -191,14 +191,10 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
     }
 
     // ── Step 3: Fetch full profile from API (enhance what's shown) ─────────────
-    const isMockId = /^\d+$/.test(String(tutorId))
-    if (isMockId) {
-      // Mock card IDs — just use the built data, no API call needed
-      if (!saved) {
-        setTutor(buildTutor(null))
-        setLoading(false)
-      }
-      return
+    // Always try to fetch from API. If it's a mock card, the API will return 404 and we'll fallback to saved data.
+    if (!saved) {
+      // Show loading if we don't have saved data to render immediately
+      setLoading(true)
     }
 
     fetch(`${API_BASE}/api/tutors/${tutorId}`)

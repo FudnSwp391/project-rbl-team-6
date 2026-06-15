@@ -111,7 +111,10 @@ function TutorCard({ tutor, isMock }) {
             <span className="text-xs font-normal text-[#5d5f5f]">/giờ</span>
           </span>
           <button
-            onClick={() => window.location.hash = `/tutor-detail/${tutor.id}`}
+            onClick={() => {
+              sessionStorage.setItem('viewingTutor', JSON.stringify(tutor));
+              window.location.hash = `/tutor-detail/${tutor.id}`;
+            }}
             className="px-5 py-2 border border-[#00288e] text-[#00288e] hover:bg-[#00288e] hover:text-white rounded-lg text-sm font-semibold transition-all"
           >
             Xem Hồ Sơ
