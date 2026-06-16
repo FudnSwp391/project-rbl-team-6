@@ -138,6 +138,8 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   const [selectedSubjects, setSelectedSubjects] = useState([]);
   const [maxPrice, setMaxPrice]       = useState(200);
   const [sort, setSort]               = useState('rating');
+  const [method, setMethod]           = useState('');
+  const [level, setLevel]             = useState('');
 
   const fetchTutors = useCallback(async (pg = 1) => {
     setLoading(true);
@@ -146,6 +148,8 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         page: pg, limit: 12, sort,
         ...(search && { search }),
         ...(selectedSubjects.length && { subjects: selectedSubjects.join(',') }),
+        ...(method && { method }),
+        ...(level && { level }),
       });
       const res = await fetch(`${API_BASE}/api/tutors?${params}`);
       const data = await res.json();
@@ -174,7 +178,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
     } finally {
       setLoading(false);
     }
-  }, [search, selectedSubjects, sort]);
+  }, [search, selectedSubjects, sort, method, level]);
 
   useEffect(() => { fetchTutors(page); }, [fetchTutors, page]);
 
@@ -190,7 +194,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
 
   const handleReset = () => {
     setSearchInput(''); setSearch(''); setSelectedSubjects([]);
-    setMaxPrice(200); setSort('rating'); setPage(1);
+    setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setPage(1);
   };
 
   const displayTutors = isMock
@@ -213,6 +217,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
           </a>
           <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
             <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/ai-suggest">AI Gợi Ý</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
           </nav>
@@ -300,6 +305,39 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                   <span className="text-xs text-[#757684]">$20</span>
                   <span className="text-xs text-[#757684]">$200+</span>
                 </div>
+              </div>
+
+              <div className="mb-8">
+                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">Hình Thức Học</label>
+                <div className="space-y-2">
+                  {[{ v: '', l: 'Tất Cả' }, { v: 'online', l: 'Online' }, { v: 'offline', l: 'Offline' }].map(opt => (
+                    <label key={opt.v} className="flex items-center gap-3 cursor-pointer group">
+                      <input
+                        type="radio"
+                        name="method"
+                        checked={method === opt.v}
+                        onChange={() => { setMethod(opt.v); setPage(1); }}
+                        className="text-[#00288e] focus:ring-[#00288e]"
+                      />
+                      <span className="text-sm text-[#444653] group-hover:text-[#00288e] transition-colors">{opt.l}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mb-8">
+                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">Cấp Độ</label>
+                <select
+                  value={level}
+                  onChange={e => { setLevel(e.target.value); setPage(1); }}
+                  className="w-full px-3 py-2 rounded-lg border border-[#c4c5d5] text-sm text-[#444653] bg-white focus:outline-none focus:ring-2 focus:ring-[#00288e]/20 focus:border-[#00288e] transition-all"
+                >
+                  <option value="">Tất Cả Cấp Độ</option>
+                  <option value="Cấp 1">Cấp 1 (Tiểu học)</option>
+                  <option value="Cấp 2">Cấp 2 (THCS)</option>
+                  <option value="Cấp 3">Cấp 3 (THPT)</option>
+                  <option value="Đại học">Đại học</option>
+                </select>
               </div>
 
               <div className="mb-8">

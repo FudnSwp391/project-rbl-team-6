@@ -1,10 +1,15 @@
 import React, { useEffect } from 'react';
+import EntityReviews from './components/EntityReviews';
 
 export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
   useEffect(() => {
     // Scroll to top on mount
     window.scrollTo(0, 0);
   }, []);
+
+  // Gia sư đang xem (được FindTutorsPage / AI Gợi ý / Trang chủ lưu khi điều hướng)
+  let viewingTutor = null;
+  try { viewingTutor = JSON.parse(sessionStorage.getItem('viewingTutor') || 'null'); } catch { viewingTutor = null; }
 
   return (
     <div className="bg-[#f8f9fb] text-[#191c1e] min-h-screen font-sans">
@@ -27,6 +32,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
           {/* Nav Links (Centered) */}
           <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
             <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/ai-suggest">AI Gợi Ý</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
           </nav>
@@ -226,6 +232,11 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
             </section>
           </div>
         </div>
+
+        {/* TV3: Khu đánh giá gia sư (hiện khi tới từ danh sách/AI/trang chủ) */}
+        {viewingTutor?.id && (
+          <EntityReviews targetType="tutor" targetId={viewingTutor.id} title="Đánh giá gia sư" />
+        )}
       </main>
 
       {/* Footer */}
