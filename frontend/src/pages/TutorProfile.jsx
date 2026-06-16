@@ -542,7 +542,10 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                     Đặt Lịch Học
                   </button>
                   <button
-                    onClick={() => alert('Tính năng nhắn tin sẽ được phát triển sau.')}
+                    onClick={() => {
+                      if (!user) return onGoSignIn();
+                      alert('Để nhắn tin, bạn cần tham gia khóa học của gia sư này. Nếu đã đăng ký, vui lòng vào Bảng điều khiển -> Tin nhắn để trao đổi.');
+                    }}
                     className="w-full bg-white border border-[#c4c5d5] text-[#00288e] py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#f8f9fb] transition-colors flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-[18px]">chat</span>
@@ -567,7 +570,10 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             <span className="text-xs text-[#444653]">/giờ</span>
           </div>
           <button
-            onClick={() => alert('Tính năng nhắn tin sẽ được phát triển sau.')}
+            onClick={() => {
+              if (!user) return onGoSignIn();
+              alert('Để nhắn tin, bạn cần tham gia khóa học của gia sư này. Nếu đã đăng ký, vui lòng vào Bảng điều khiển -> Tin nhắn để trao đổi.');
+            }}
             className="px-4 py-2.5 border border-[#00288e] text-[#00288e] rounded-xl text-sm font-semibold"
           >
             Nhắn Tin
