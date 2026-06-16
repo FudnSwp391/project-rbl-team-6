@@ -302,9 +302,9 @@ function TutorCard({ tutor, onApprove, onReject }) {
 
       {/* Details grid */}
       <div className="tutor-app-details">
-        <DetailRow icon="menu_book" label="Subjects" value={tutor.subjects || '—'} />
-        <DetailRow icon="work_history" label="Experience" value={tutor.experience_years != null ? `${tutor.experience_years} year(s)` : '—'} />
-        <DetailRow icon="format_quote" label="Bio" value={tutor.bio || '—'} multiline />
+        <DetailRow icon="menu_book" label="Subjects" value={tutor.subjects || '---'} />
+        <DetailRow icon="work_history" label="Experience" value={tutor.experience_years != null ? `${tutor.experience_years} year(s)` : '---'} />
+        <DetailRow icon="format_quote" label="Bio" value={tutor.bio || '---'} multiline />
       </div>
 
       {/* File links */}
@@ -323,7 +323,7 @@ function TutorCard({ tutor, onApprove, onReject }) {
 
       {/* Applied at */}
       <p className="tutor-app-date">
-        Applied: {tutor.created_at ? new Date(tutor.created_at).toLocaleDateString() : '—'}
+        Applied: {tutor.created_at ? new Date(tutor.created_at).toLocaleDateString() : '---'}
       </p>
 
       {/* Action buttons */}
@@ -348,7 +348,6 @@ function TutorCard({ tutor, onApprove, onReject }) {
     </div>
   )
 }
-
 function DetailRow({ icon, label, value, multiline }) {
   return (
     <div className="detail-row">
