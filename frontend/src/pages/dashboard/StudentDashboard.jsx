@@ -88,7 +88,7 @@ export default function StudentDashboard() {
 
   // Suy ra số liệu
   const today = new Date().toISOString().slice(0, 10)
-  const confirmed = myBookings.filter(b => b.status === 'confirmed')
+  const confirmed = myBookings.filter(b => b.status === 'Approved')
   const upcoming = confirmed
     .filter(b => (b.lesson_date || '').slice(0, 10) >= today)
     .sort((a, b) => (a.lesson_date + a.time_slot).localeCompare(b.lesson_date + b.time_slot))
@@ -748,12 +748,12 @@ function BookingSection({ tutors: mockTutors, token }) {
                           {b.note && <span className="italic opacity-80">— {b.note}</span>}
                         </p>
                       </div>
-                      {b.status === 'pending' ? (
+                      {b.status === 'Pending' ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 font-label-sm text-label-sm shrink-0">
                           <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>hourglass_top</span>
                           Chờ duyệt
                         </span>
-                      ) : b.status === 'declined' ? (
+                      ) : b.status === 'Declined' ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 text-red-700 font-label-sm text-label-sm shrink-0">
                           <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>cancel</span>
                           Bị từ chối

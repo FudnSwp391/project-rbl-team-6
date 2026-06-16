@@ -71,8 +71,8 @@ export default function TutorDashboard() {
 
   // Phân loại lịch theo hôm nay / sắp tới
   const today = todayStr()
-  const confirmedBookings = studentBookings.filter(b => b.status === 'confirmed')
-  const pendingBookings = studentBookings.filter(b => b.status === 'pending')
+  const confirmedBookings = studentBookings.filter(b => b.status === 'Approved')
+  const pendingBookings = studentBookings.filter(b => b.status === 'Pending')
   const todayBookings = confirmedBookings.filter(b => (b.lesson_date || '').slice(0, 10) === today)
   const upcomingBookings = confirmedBookings.filter(b => (b.lesson_date || '').slice(0, 10) > today)
 
@@ -83,7 +83,7 @@ export default function TutorDashboard() {
     try {
       await api.setBookingStatus(id, status)
       setStudentBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b))
-      toastSuccess(status === 'confirmed' ? 'Đã duyệt lịch học.' : 'Đã từ chối lịch học.')
+      toastSuccess(status === 'Approved' ? 'Đã duyệt lịch học.' : 'Đã từ chối lịch học.')
     } catch (e) {
       toastError(e.message)
     } finally {
@@ -293,8 +293,8 @@ export default function TutorDashboard() {
                     key={b.id}
                     booking={b}
                     busy={actingId === b.id}
-                    onAccept={() => handleBookingAction(b.id, 'confirmed')}
-                    onDecline={() => handleBookingAction(b.id, 'declined')}
+                    onAccept={() => handleBookingAction(b.id, 'Approved')}
+                    onDecline={() => handleBookingAction(b.id, 'Declined')}
                   />
                 ))}
               </div>
@@ -465,7 +465,7 @@ function StudentBookingRow({ booking }) {
           )}
         </div>
       </div>
-      {booking.status === 'pending' ? (
+      {booking.status === 'Pending' ? (
         <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#fef3c7] text-[#b45309] font-label-sm text-label-sm shrink-0">
           <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>hourglass_top</span>
           Chờ duyệt

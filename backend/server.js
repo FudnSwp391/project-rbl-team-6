@@ -876,7 +876,7 @@ app.get("/api/tutor/stats", verifyToken, resolveTutorProfile, async (req, res) =
       pool.query(
         `SELECT COUNT(*)::int AS lessons,
                 COUNT(DISTINCT student_id)::int AS students
-         FROM bookings WHERE tutor_id = $1 AND status = 'confirmed'`,
+         FROM bookings WHERE tutor_id = $1 AND status = 'Approved'`,
         [userId]
       ),
       pool.query(
@@ -1279,7 +1279,7 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
               u.picture AS tutor_picture
        FROM bookings b
        LEFT JOIN users u ON u.id = b.tutor_id
-       WHERE b.student_id = $1 AND b.status IN ('pending', 'confirmed', 'declined')
+       WHERE b.student_id = $1 AND b.status IN ('Pending', 'Approved', 'Declined')
        ORDER BY b.lesson_date ASC, b.time_slot ASC`,
       [req.user.userId]
     );
@@ -1311,8 +1311,8 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       }
     }
 
-    // Có gia sư thật → chờ gia sư duyệt (pending). Không có (mock) → confirmed luôn.
-    const initialStatus = tutorId ? "pending" : "confirmed";
+    // Có gia sư thật → chờ gia sư duyệt (Pending). Không có (mock) → Approved luôn.
+    const initialStatus = tutorId ? "Pending" : "Approved";
 
     const result = await pool.query(
       `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status)
@@ -1347,8 +1347,8 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
               u.full_name AS student_name, u.email AS student_email, u.picture AS student_picture
        FROM bookings b
        JOIN users u ON u.id = b.student_id
-       WHERE b.tutor_id = $1 AND b.status IN ('pending', 'confirmed')
-       ORDER BY (b.status = 'pending') DESC, b.lesson_date ASC, b.time_slot ASC`,
+       WHERE b.tutor_id = $1 AND b.status IN ('Pending', 'Approved')
+       ORDER BY (b.status = 'Pending') DESC, b.lesson_date ASC, b.time_slot ASC`,
       [req.user.userId]
     );
     return res.json(result.rows);
@@ -1362,12 +1362,12 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
 app.patch("/api/tutor/bookings/:id/status", verifyToken, async (req, res) => {
   try {
     const { status } = req.body || {};
-    if (!["confirmed", "declined"].includes(status)) {
-      return res.status(400).json({ message: "status phải là 'confirmed' hoặc 'declined'." });
+    if (!["Approved", "Declined"].includes(status)) {
+      return res.status(400).json({ message: "status phải là 'Approved' hoặc 'Declined'." });
     }
     const r = await pool.query(
       `UPDATE bookings SET status = $1
-       WHERE id = $2 AND tutor_id = $3 AND status = 'pending'
+       WHERE id = $2 AND tutor_id = $3 AND status = 'Pending'
        RETURNING id, status`,
       [status, req.params.id, req.user.userId]
     );
