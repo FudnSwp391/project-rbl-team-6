@@ -3220,6 +3220,413 @@ async function startServer() {
     console.error("⚠️  DB migration (reviews) warning:", err.message);
   }
 
+  app.get("/api/tutor/courses", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
+    await ensureCourseSchema();
+    const courses = await pool.query(
+      `SELECT c.*,
+              COUNT(DISTINCT l.id)::int AS "lessonCount",
+              COUNT(DISTINCT e.id)::int AS "enrollmentCount",
+              COALESCE(COUNT(DISTINCT e.id) FILTER (WHERE e.status = 'active') * c.price, 0)::int AS revenue
+       FROM courses c
+       LEFT JOIN course_lessons l ON l.course_id = c.id
+       LEFT JOIN course_enrollments e ON e.course_id = c.id
+       WHERE c.tutor_id = $1
+       GROUP BY c.id
+       ORDER BY c.updated_at DESC, c.created_at DESC`,
+      [req.user.userId]
+    );
+    const ids = courses.rows.map((course) => course.id);
+    const lessons = ids.length
+      ? await pool.query(
+          `SELECT *
+           FROM course_lessons
+           WHERE course_id = ANY($1::uuid[])
+           ORDER BY course_id, position ASC, created_at ASC`,
+          [ids]
+        )
+      : { rows: [] };
+    const lessonMap = lessons.rows.reduce((map, lesson) => {
+      if (!map[lesson.course_id]) map[lesson.course_id] = [];
+      map[lesson.course_id].push({
+        id: lesson.id,
+        title: lesson.title,
+        description: lesson.description || "",
+        videoUrl: lesson.video_url || "",
+        materialUrl: lesson.material_url || "",
+        durationLabel: lesson.duration_label || "",
+        isPreview: lesson.is_preview,
+        position: lesson.position,
+      });
+      return map;
+    }, {});
+
+    return res.json(courses.rows.map((course) => ({
+      id: course.id,
+      title: course.title,
+      description: course.description || "",
+      subject: course.subject || "",
+      level: course.level || "",
+      price: course.price || 0,
+      thumbnailUrl: course.thumbnail_url || "",
+      learningOutcomes: Array.isArray(course.learning_outcomes) ? course.learning_outcomes : [],
+      requirements: Array.isArray(course.requirements) ? course.requirements : [],
+      status: course.status,
+      lessonCount: course.lessonCount,
+      enrollmentCount: course.enrollmentCount,
+      revenue: course.revenue || 0,
+      lessons: lessonMap[course.id] || [],
+      createdAt: course.created_at,
+      updatedAt: course.updated_at,
+    })));
+  } catch (error) {
+    console.error("Get tutor courses error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+async function saveCourseLessons(client, courseId, lessons = []) {
+  await client.query("DELETE FROM course_lessons WHERE course_id = $1", [courseId]);
+  const cleanLessons = Array.isArray(lessons)
+    ? lessons
+        .map((lesson, index) => ({
+          title: String(lesson.title || "").trim(),
+          description: String(lesson.description || "").trim(),
+          videoUrl: String(lesson.videoUrl || lesson.video_url || "").trim(),
+          materialUrl: String(lesson.materialUrl || lesson.material_url || "").trim(),
+          durationLabel: String(lesson.durationLabel || lesson.duration_label || "").trim(),
+          isPreview: Boolean(lesson.isPreview || lesson.is_preview),
+          position: Number(lesson.position || index + 1),
+        }))
+        .filter((lesson) => lesson.title)
+    : [];
+
+  for (const lesson of cleanLessons) {
+    await client.query(
+      `INSERT INTO course_lessons
+         (course_id, title, description, video_url, material_url, duration_label, is_preview, position)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [courseId, lesson.title, lesson.description || null, lesson.videoUrl || null, lesson.materialUrl || null, lesson.durationLabel || null, lesson.isPreview, lesson.position]
+    );
+  }
+}
+
+async function upsertTutorCourse(req, res, courseId = null) {
+  if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
+  await ensureCourseSchema();
+  const { title, description, subject, level, price, thumbnailUrl, status, lessons, learningOutcomes, requirements } = req.body || {};
+  const cleanTitle = String(title || "").trim();
+  const cleanStatus = ["draft", "pending_review", "published", "rejected", "archived"].includes(status) ? status : "draft";
+  const cleanLessons = Array.isArray(lessons) ? lessons.filter((lesson) => String(lesson.title || "").trim()) : [];
+  const cleanOutcomes = Array.isArray(learningOutcomes) ? learningOutcomes.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  const cleanRequirements = Array.isArray(requirements) ? requirements.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  if (!cleanTitle) return res.status(400).json({ message: "Course title is required." });
+  if (cleanStatus === "published" && cleanLessons.length === 0) {
+    return res.status(400).json({ message: "Add at least one lesson before publishing." });
+  }
+
+  if (courseId) {
+    const owner = await pool.query("SELECT id FROM courses WHERE id = $1 AND tutor_id = $2", [courseId, req.user.userId]);
+    if (owner.rows.length === 0) return res.status(404).json({ message: "Course not found." });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    let id = courseId;
+    if (id) {
+      await client.query(
+        `UPDATE courses
+         SET title = $1, description = $2, subject = $3, level = $4, price = $5,
+             thumbnail_url = $6, status = $7, learning_outcomes = $8, requirements = $9, updated_at = NOW()
+         WHERE id = $10 AND tutor_id = $11`,
+        [cleanTitle, String(description || "").trim() || null, String(subject || "").trim() || null, String(level || "").trim() || null, Math.max(Number(price || 0), 0), String(thumbnailUrl || "").trim() || null, cleanStatus, JSON.stringify(cleanOutcomes), JSON.stringify(cleanRequirements), id, req.user.userId]
+      );
+    } else {
+      const created = await client.query(
+        `INSERT INTO courses (tutor_id, title, description, subject, level, price, thumbnail_url, status, learning_outcomes, requirements)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id`,
+        [req.user.userId, cleanTitle, String(description || "").trim() || null, String(subject || "").trim() || null, String(level || "").trim() || null, Math.max(Number(price || 0), 0), String(thumbnailUrl || "").trim() || null, cleanStatus, JSON.stringify(cleanOutcomes), JSON.stringify(cleanRequirements)]
+      );
+      id = created.rows[0].id;
+    }
+    await saveCourseLessons(client, id, cleanLessons);
+    await client.query("COMMIT");
+    return res.status(courseId ? 200 : 201).json({ message: "Course saved.", id });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+app.post("/api/tutor/courses", verifyToken, async (req, res) => {
+  try {
+    return await upsertTutorCourse(req, res);
+  } catch (error) {
+    console.error("Create course error:", error);
+    return res.status(500).json({ message: error.message || "Server error." });
+  }
+});
+
+app.patch("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+  try {
+    return await upsertTutorCourse(req, res, req.params.id);
+  } catch (error) {
+    console.error("Update course error:", error);
+    return res.status(500).json({ message: error.message || "Server error." });
+  }
+});
+
+app.delete("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
+    await ensureCourseSchema();
+    const result = await pool.query(
+      "UPDATE courses SET status = 'archived', updated_at = NOW() WHERE id = $1 AND tutor_id = $2 RETURNING id",
+      [req.params.id, req.user.userId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ message: "Course not found." });
+    return res.json({ message: "Course archived." });
+  } catch (error) {
+    console.error("Archive course error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+app.get("/api/tutor/students", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "tutor") {
+      return res.status(403).json({ message: "Tutor access only." });
+    }
+
+    const tutorId = req.user.userId;
+    const result = await pool.query(
+      `SELECT
+         b.id AS "bookingId",
+         b.student_id AS "studentId",
+         COALESCE(b.child_name, b.student_name, s.full_name, 'Student') AS "studentName",
+         s.email AS "studentEmail",
+         s.picture AS "studentAvatar",
+         b.child_name AS "childName",
+         b.subject,
+         to_char(b.lesson_date, 'YYYY-MM-DD') AS date,
+         b.time_slot AS "timeSlot",
+         b.note AS notes,
+         b.booking_type AS "bookingType",
+         b.status AS "bookingStatus",
+         a.status AS "attendanceStatus",
+         a.note AS "attendanceNote",
+         a.marked_at AS "markedAt"
+       FROM bookings b
+       LEFT JOIN users s ON s.id = b.student_id
+       LEFT JOIN attendance a ON a.booking_id = b.id
+       WHERE b.tutor_id = $1
+         AND b.status IN ('Approved', 'Pending')
+       ORDER BY b.lesson_date DESC, b.time_slot DESC`,
+      [tutorId]
+    );
+
+    const grouped = new Map();
+    for (const row of result.rows) {
+      const key = `${row.studentId}:${row.childName || ''}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          studentId: row.studentId,
+          studentName: row.studentName,
+          studentEmail: row.studentEmail,
+          studentAvatar: row.studentAvatar,
+          childName: row.childName,
+          subjects: new Set(),
+          lessons: [],
+        });
+      }
+      const student = grouped.get(key);
+      if (row.subject) student.subjects.add(row.subject);
+      student.lessons.push(row);
+    }
+
+    const students = Array.from(grouped.values()).map((student) => {
+      const approvedLessons = student.lessons.filter((lesson) => lesson.bookingStatus === 'Approved');
+      const marked = approvedLessons.filter((lesson) => lesson.attendanceStatus);
+      const absences = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'absent');
+      const present = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'present');
+      const upcoming = approvedLessons
+        .filter((lesson) => new Date(`${lesson.date}T00:00:00`) >= new Date(new Date().toDateString()))
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.timeSlot).localeCompare(String(b.timeSlot)))[0] || null;
+
+      return {
+        ...student,
+        subjects: Array.from(student.subjects),
+        totalLessons: approvedLessons.length,
+        pendingRequests: student.lessons.filter((lesson) => lesson.bookingStatus === 'Pending').length,
+        markedLessons: marked.length,
+        absentCount: absences.length,
+        presentCount: present.length,
+        attendanceRate: marked.length ? Math.round((present.length / marked.length) * 100) : null,
+        nextLesson: upcoming,
+      };
+    });
+
+    return res.json(students);
+  } catch (error) {
+    console.error("Get tutor students error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "tutor") {
+      return res.status(403).json({ message: "Tutor access only." });
+    }
+
+    const tutorId = req.user.userId;
+    const { id } = req.params;
+    const { status, note } = req.body || {};
+    const allowed = ["present", "absent", "excused"];
+
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ message: "Invalid attendance status." });
+    }
+
+    const bookingResult = await pool.query(
+      `SELECT id, tutor_id, student_id
+       FROM bookings
+       WHERE id = $1 AND tutor_id = $2 AND status = 'Approved'
+       LIMIT 1`,
+      [id, tutorId]
+    );
+
+    if (bookingResult.rows.length === 0) {
+      return res.status(404).json({ message: "Approved booking not found." });
+    }
+
+    const booking = bookingResult.rows[0];
+    const result = await pool.query(
+      `INSERT INTO attendance (booking_id, tutor_id, student_id, status, note, marked_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (booking_id)
+       DO UPDATE SET status = EXCLUDED.status,
+                     note = EXCLUDED.note,
+                     marked_at = NOW(),
+                     updated_at = NOW()
+       RETURNING id, booking_id AS "bookingId", status, note, marked_at AS "markedAt"`,
+      [booking.id, booking.tutor_id, booking.student_id, status, note?.trim() || null]
+    );
+
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Update attendance error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "tutor") {
+      return res.status(403).json({ message: "Tutor access only." });
+    }
+
+    const tutorId = req.user.userId;
+    const profileResult = await pool.query(
+      `SELECT hourly_rate
+       FROM tutor_profiles
+       WHERE user_id = $1
+       LIMIT 1`,
+      [tutorId]
+    );
+
+    const hourlyRate = Number(profileResult.rows[0]?.hourly_rate || 0);
+    const lessonResult = await pool.query(
+      `SELECT
+         b.id,
+         b.student_id AS "studentId",
+         COALESCE(b.child_name, b.student_name, s.full_name, 'Student') AS "studentName",
+         b.child_name AS "childName",
+         b.subject,
+         to_char(b.lesson_date, 'YYYY-MM-DD') AS date,
+         b.time_slot AS "timeSlot",
+         b.status AS "bookingStatus",
+         a.status AS "attendanceStatus",
+         a.note AS "attendanceNote",
+         a.marked_at AS "markedAt"
+       FROM bookings b
+       LEFT JOIN users s ON s.id = b.student_id
+       LEFT JOIN attendance a ON a.booking_id = b.id
+       WHERE b.tutor_id = $1
+         AND b.status = 'Approved'
+       ORDER BY b.lesson_date DESC, b.time_slot DESC`,
+      [tutorId]
+    );
+
+    const lessons = lessonResult.rows.map((lesson) => {
+      const attendance = lesson.attendanceStatus || "awaiting_attendance";
+      const isPayable = attendance === "present";
+      const isPending = attendance === "awaiting_attendance";
+      const amount = isPayable ? hourlyRate : 0;
+
+      return {
+        ...lesson,
+        attendanceStatus: attendance,
+        paymentStatus: isPayable ? "earned" : isPending ? "pending_attendance" : "no_charge",
+        amount,
+      };
+    });
+
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const monthOf = (value) => {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    };
+
+    const earnedLessons = lessons.filter((lesson) => lesson.paymentStatus === "earned");
+    const pendingLessons = lessons.filter((lesson) => lesson.paymentStatus === "pending_attendance");
+    const noChargeLessons = lessons.filter((lesson) => lesson.paymentStatus === "no_charge");
+    const monthLessons = earnedLessons.filter((lesson) => monthOf(lesson.date) === monthKey);
+
+    const monthlyBreakdown = [];
+    for (let i = 5; i >= 0; i -= 1) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const items = earnedLessons.filter((lesson) => monthOf(lesson.date) === key);
+      monthlyBreakdown.push({
+        month: key,
+        label: date.toLocaleString("en-US", { month: "short" }),
+        amount: items.reduce((sum, lesson) => sum + lesson.amount, 0),
+        lessons: items.length,
+      });
+    }
+
+    const totalEarned = earnedLessons.reduce((sum, lesson) => sum + lesson.amount, 0);
+    const thisMonthEarned = monthLessons.reduce((sum, lesson) => sum + lesson.amount, 0);
+    const pendingAmount = pendingLessons.length * hourlyRate;
+
+    return res.json({
+      hourlyRate,
+      currency: "VND",
+      summary: {
+        thisMonthEarned,
+        totalEarned,
+        pendingAmount,
+        completedLessons: earnedLessons.length,
+        pendingLessons: pendingLessons.length,
+        noChargeLessons: noChargeLessons.length,
+      },
+      monthlyBreakdown,
+      transactions: lessons,
+    });
+  } catch (error) {
+    console.error("Get tutor earnings error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
   app.listen(port, () => {
     console.log(`🚀 Server is running on http://localhost:${port}`);
   });
