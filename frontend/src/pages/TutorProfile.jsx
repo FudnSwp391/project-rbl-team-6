@@ -1,833 +1,591 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../AuthContext';
-import {
-  getTutorDetail,
-  getTutorAvailability,
-  getOrCreateConversation,
-  createTrialBooking,
-  getReviewEligibility,
-  submitTutorReview,
-} from '../services/api';
+import { useState, useEffect } from 'react'
 
-const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const JS_DAY_TO_NAME = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
-function toDateKey(date) {
-  const value = new Date(date);
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+// ─── Mock extended profiles ───────────────────────────────────────────────────
+const BASE_PROFILE = {
+  full_name: 'Nguyễn Thị Hương',
+  title: 'Gia sư Toán - Luyện thi THPT Quốc gia',
+  picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCXSWk4apMr3IzYvtncJ0aXLJKYQHTWlrtSF2YL2ibUD-XC_mNTDoY7Z3m6oxnKVRA1HNZp_rDtYYIQpuAuQr4EcMcFNaoq5B8ApEsaoOChwewphyG4iSlU3dN8o7SWM2M3rii5R3sUEnVMGLeaL4yN_PD7KZqLGGvki4YDThYhOoMYkLyvxDdSE8URnYNkAuJbWmtakbS84ZdjH3LnvD0AFkv4cSMp3mRxYij_yHfqg55WITF2Mxqc_7hJdFxmmIJ-jlFYMkduVPA',
+  city: 'Đà Nẵng',
+  experience_years: 8,
+  hourly_rate: 180000,
+  avg_r: 4.8,
+  review_count: 128,
+  subjects: 'Toán học, Vật lý, Luyện thi THPT, Học sinh mất gốc',
+  completedLessons: 245,
+  onTimeRate: '98%',
+  responseRate: '96%',
+  studentsCount: 150,
+  teachingFormatShort: 'Online / Offline',
+  bio: 'Với hơn 8 năm kinh nghiệm giảng dạy Toán học cấp THPT và luyện thi Đại học, tôi luôn tâm niệm rằng mỗi học sinh đều có một cách tiếp thu riêng. Phương pháp của tôi tập trung vào việc khơi gợi sự hứng thú, xây dựng nền tảng vững chắc và rèn luyện tư duy logic thay vì học vẹt.',
+  teachingMethods: [
+    'Kiểm tra năng lực đầu vào để xác định điểm mạnh và điểm yếu của học sinh',
+    'Xây dựng lộ trình học riêng phù hợp với mục tiêu của từng học sinh',
+    'Giảng bài từ cơ bản đến nâng cao, đảm bảo học sinh nắm vững từng bước',
+    'Theo dõi và đánh giá tiến bộ định kỳ, điều chỉnh phương pháp khi cần',
+  ],
+  suitableFor: [
+    'Học sinh mất gốc môn Toán',
+    'Học sinh cần cải thiện điểm kiểm tra thường xuyên',
+    'Học sinh ôn thi THPT Quốc gia',
+    'Học sinh muốn học nâng cao, tham gia Olympic Toán',
+    'Học sinh cần người kèm sát tiến độ học tập',
+  ],
+  degrees: [
+    { title: 'Cử nhân Sư phạm Toán — Đại học Sư phạm Đà Nẵng', status: 'verified' },
+    { title: 'Chứng chỉ nghiệp vụ sư phạm', status: 'verified' },
+    { title: 'Chứng chỉ luyện thi THPT Quốc gia', status: 'pending' },
+    { title: 'Xác minh danh tính', status: 'verified' },
+  ],
+  teachingFormats: [
+    { icon: 'videocam', label: 'Online qua Google Meet / Zoom' },
+    { icon: 'home', label: 'Dạy trực tiếp tại nhà học sinh' },
+    { icon: 'apartment', label: 'Dạy trực tiếp tại nhà gia sư' },
+    { icon: 'store', label: 'Dạy tại địa điểm công cộng' },
+  ],
+  availableSchedule: [
+    { day: 'T2', slots: ['18:00–20:00', '20:00–22:00'] },
+    { day: 'T3', slots: ['19:00–21:00'] },
+    { day: 'T4', slots: ['18:00–20:00'] },
+    { day: 'T5', slots: ['20:00–22:00'] },
+    { day: 'T6', slots: ['18:00–20:00'] },
+    { day: 'T7', slots: ['08:00–10:00', '14:00–16:00'] },
+    { day: 'CN', slots: ['09:00–11:00'] },
+  ],
+  studentReviews: [
+    { id: 1, name: 'Minh Anh', subject: 'Toán lớp 12', lessonCount: 12, rating: 5.0, comment: 'Cô dạy rất dễ hiểu, có lộ trình rõ ràng. Sau vài buổi em đã tự tin hơn khi làm bài toán vận dụng.', initials: 'MA', bg: '#dde1ff', color: '#00288e' },
+    { id: 2, name: 'Quốc Bảo', subject: 'Toán lớp 9',  lessonCount: 8,  rating: 5.0, comment: 'Gia sư kiên nhẫn, đúng giờ và luôn chữa bài rất kỹ. Phù hợp với học sinh mất gốc.', initials: 'QB', bg: '#e2e2e2', color: '#444653' },
+    { id: 3, name: 'Hà My',    subject: 'Luyện thi THPT', lessonCount: 15, rating: 4.8, comment: 'Cách dạy dễ hiểu, có nhiều mẹo làm bài nhanh và bám sát đề thi.', initials: 'HM', bg: '#d4e3ff', color: '#003564' },
+  ],
+  verifiedBadges: [
+    { label: 'Đã xác minh', className: 'bg-green-100 text-green-800', icon: 'verified' },
+    { label: 'Bằng cấp đã kiểm tra', className: 'bg-blue-100 text-blue-800', icon: 'school' },
+    { label: 'EduX duyệt', className: 'bg-purple-100 text-purple-800', icon: 'workspace_premium' },
+  ],
+  policies: {
+    trial: 'Hỗ trợ buổi tư vấn ngắn 15–20 phút miễn phí để thầy/cô và học sinh hiểu nhau trước khi bắt đầu.',
+    cancellation: 'Hủy trước 24h: hoàn tiền 100%. Hủy trong 24h: hoàn 50%. Không báo trước: không hoàn tiền.',
+  },
 }
 
-function getTrialRange() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const end = new Date(today);
-  end.setDate(today.getDate() + 20);
-  return { from: toDateKey(today), to: toDateKey(end) };
+function getMockProfile(id) {
+  return { ...BASE_PROFILE, id }
 }
 
-function buildTrialOptions(availability = {}, bookedSlots = {}) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const options = [];
-  for (let offset = 0; offset < 21; offset += 1) {
-    const date = new Date(today);
-    date.setDate(today.getDate() + offset);
-    const dayName = JS_DAY_TO_NAME[date.getDay()];
-    const dateKey = toDateKey(date);
-    const slots = availability[dayName] || [];
-    const bookedForDay = bookedSlots[dateKey] || [];
-    for (const slot of slots) {
-      if (bookedForDay.some((booked) => booked.timeSlot === slot)) continue;
-      options.push({
-        date: dateKey,
-        timeSlot: slot,
-        label: `${date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} - ${slot}`,
-      });
-    }
-  }
-  return options.slice(0, 16);
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function fmtPrice(val) {
+  if (!val) return 'Thỏa thuận'
+  const n = Number(val)
+  if (n >= 1000) return new Intl.NumberFormat('vi-VN').format(n) + 'đ'
+  return `$${n}`
 }
 
-/**
- * TutorProfile Page Component
- * Displays tutor bio, subjects, schedule, education, experience, reviews.
- * Uses only vanilla CSS / inline styles — no Tailwind.
- */
-export default function TutorProfile({ tutorId, onGoHome }) {
-  const { user } = useAuth();
-  const [tutor, setTutor] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [msgLoading, setMsgLoading] = useState(false);
-  const [trialSlot, setTrialSlot] = useState('');
-  const [trialNotes, setTrialNotes] = useState('');
-  const [trialChildName, setTrialChildName] = useState('');
-  const [trialBookedSlots, setTrialBookedSlots] = useState({});
-  const [trialLoading, setTrialLoading] = useState(false);
-  const [trialMessage, setTrialMessage] = useState(null);
-  const [reviewEligibility, setReviewEligibility] = useState({ canReview: false, booking: null });
-  const [reviewForm, setReviewForm] = useState({ rating: 5, comment: '' });
-  const [reviewSaving, setReviewSaving] = useState(false);
-  const [reviewError, setReviewError] = useState('');
+function StarRating({ value, size = 14 }) {
+  const rounded = Math.round(value * 2) / 2
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map(i => (
+        <span key={i} className="material-symbols-outlined text-[#FFB800]"
+          style={{ fontSize: size, fontVariationSettings: i <= rounded ? "'FILL' 1" : "'FILL' 0" }}>
+          star
+        </span>
+      ))}
+    </span>
+  )
+}
 
-  const handleMessageTutor = async () => {
-    if (!user) { window.location.hash = '/signin'; return; }
-    if (!tutor) return;
-    setMsgLoading(true);
-    try {
-      const tutorUserId = tutor.user_id || tutor.tutor_id || tutor.id;
-      const conv = await getOrCreateConversation(tutorUserId);
-      window.location.hash = `/messages/${conv.id}`;
-    } catch {
-      // Fallback: vào trang messages chung
-      alert('Không thể mở chat. Vui lòng kiểm tra gia sư này đã có tài khoản tutor thật trong Supabase chưa.');
-    } finally {
-      setMsgLoading(false);
-    }
-  };
+function SectionCard({ icon, title, children }) {
+  return (
+    <section className="bg-white rounded-2xl p-6 tutor-profile-card">
+      <h2 className="text-xl font-semibold text-[#191c1e] mb-4 flex items-center gap-2">
+        <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 22 }}>{icon}</span>
+        {title}
+      </h2>
+      {children}
+    </section>
+  )
+}
 
-  useEffect(() => {
-    let active = true;
-    async function load() {
-      if (!tutorId) { setError('No Tutor ID provided.'); setLoading(false); return; }
-      setLoading(true); setError(null);
-      try {
-        const data = await getTutorDetail(tutorId);
-        let hydratedTutor = data;
-        let bookedSlots = {};
-        try {
-          const availabilityData = await getTutorAvailability(data.user_id || data.id || tutorId, getTrialRange());
-          if (availabilityData?.availability) {
-            hydratedTutor = { ...data, availability: availabilityData.availability };
-            bookedSlots = availabilityData.bookedSlots || {};
-          }
-        } catch (availabilityError) {
-          console.warn('[TutorProfile] Trial availability check failed; using profile availability.', availabilityError);
-        }
-        if (active) {
-          setTutor(hydratedTutor);
-          setTrialBookedSlots(bookedSlots);
-          const firstTrialOption = buildTrialOptions(hydratedTutor.availability || {}, bookedSlots)[0];
-          setTrialSlot(firstTrialOption ? `${firstTrialOption.date}|${firstTrialOption.timeSlot}` : '');
-          if (user?.role === 'parent') setTrialChildName('');
-          setLoading(false);
-        }
-      } catch (err) {
-        if (active) { setError(err.message || 'Failed to load tutor profile.'); setLoading(false); }
-      }
-    }
-    load();
-    return () => { active = false; };
-  }, [tutorId, user?.role]);
-
-  useEffect(() => {
-    let active = true;
-    async function loadReviewEligibility() {
-      if (!user || !tutor?.id) return;
-      try {
-        const data = await getReviewEligibility(tutor.id);
-        if (active) setReviewEligibility(data);
-      } catch {
-        if (active) setReviewEligibility({ canReview: false, booking: null });
-      }
-    }
-    loadReviewEligibility();
-    return () => { active = false; };
-  }, [user, tutor?.id]);
-
-  useEffect(() => {
-    if (!tutor?.isNewTutor) return;
-    const focusId = sessionStorage.getItem('edux_focus_trial_class');
-    const tutorIds = [
-      tutor.id,
-      tutor.profile_id,
-      tutor.profileId,
-      tutor.user_id,
-      tutor.userId,
-      tutor.tutor_id,
-      tutor.tutorId,
-    ].filter(Boolean).map(String);
-    const shouldFocusTrial = focusId && tutorIds.includes(String(focusId));
-    if (!shouldFocusTrial) return;
-    sessionStorage.removeItem('edux_focus_trial_class');
-    window.setTimeout(() => {
-      document.getElementById('trial-class-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 280);
-  }, [tutor?.id, tutor?.isNewTutor]);
-
-  const handleBookSession = () => {
-    if (tutor) window.location.hash = `/booking-calendar/${tutor.id}`;
-  };
-
-  const handleWatchDemo = () => {
-    document.getElementById('demo-teaching-video')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
-
-  const handleTrialBooking = async () => {
-    if (!user) { window.location.hash = '/signin'; return; }
-    if (!tutor || !trialSlot) return;
-    if (user.role === 'parent' && !trialChildName.trim()) {
-      setTrialMessage({ type: 'error', text: 'Please enter the student name for this trial class.' });
-      return;
-    }
-    const [date, timeSlot] = trialSlot.split('|');
-    setTrialLoading(true);
-    setTrialMessage(null);
-    try {
-      await createTrialBooking({
-        tutorId: tutor.user_id || tutor.id,
-        date,
-        timeSlot,
-        subject: tutor.subjects?.[0] || 'Trial class',
-        notes: trialNotes || 'Trial class request from EduX NEW tutor campaign.',
-        childName: user.role === 'parent' ? trialChildName.trim() : null,
-        studentName: user.name || user.email?.split('@')[0] || 'Student',
-      });
-      const nextBookedSlots = {
-        ...trialBookedSlots,
-        [date]: [...(trialBookedSlots[date] || []), { timeSlot, status: 'Pending' }],
-      };
-      setTrialBookedSlots(nextBookedSlots);
-      const nextTrialOption = buildTrialOptions(tutor.availability || {}, nextBookedSlots)[0];
-      setTrialSlot(nextTrialOption ? `${nextTrialOption.date}|${nextTrialOption.timeSlot}` : '');
-      setTrialMessage({ type: 'success', text: 'Trial class request sent. The tutor will review it in Pending Requests.' });
-    } catch (err) {
-      setTrialMessage({ type: 'error', text: err.message || 'Could not send trial class request.' });
-    } finally {
-      setTrialLoading(false);
-    }
-  };
-
-  const handleSubmitReview = async (e) => {
-    e.preventDefault();
-    if (!reviewEligibility.canReview || !reviewEligibility.booking) return;
-    setReviewSaving(true);
-    setReviewError('');
-    try {
-      const created = await submitTutorReview(tutor.id, {
-        bookingId: reviewEligibility.booking.id,
-        rating: Number(reviewForm.rating),
-        comment: reviewForm.comment,
-      });
-      setTutor(prev => {
-        const nextReviews = [created, ...(prev.reviews || [])];
-        const nextRating = Number((nextReviews.reduce((sum, item) => sum + Number(item.rating || 0), 0) / nextReviews.length).toFixed(1));
-        return { ...prev, reviews: nextReviews, reviewsCount: nextReviews.length, rating: nextRating };
-      });
-      setReviewForm({ rating: 5, comment: '' });
-      setReviewEligibility({ canReview: false, booking: null });
-    } catch (err) {
-      setReviewError(err.message || 'Could not submit review.');
-    } finally {
-      setReviewSaving(false);
-    }
-  };
-
-  /* ── Loading ── */
-  if (loading) return (
-    <div style={S.page}>
-      <Header onBack={onGoHome} backLabel="Back to Tutors" />
-      <div style={S.center}>
-        <div style={S.spinner} />
-        <p style={{ color: 'var(--on-surface-variant)', marginTop: 16 }}>Loading tutor profile…</p>
+// ─── Loading / Not found ──────────────────────────────────────────────────────
+function LoadingScreen() {
+  return (
+    <div className="bg-[#f8f9fb] min-h-screen flex items-center justify-center">
+      <div className="flex flex-col items-center gap-3 text-[#444653]">
+        <span className="material-symbols-outlined text-5xl text-[#00288e] animate-spin">progress_activity</span>
+        <p className="text-base font-medium">Đang tải hồ sơ...</p>
       </div>
     </div>
-  );
+  )
+}
 
-  /* ── Error ── */
-  if (error) return (
-    <div style={S.page}>
-      <Header onBack={onGoHome} backLabel="Back to Tutors" />
-      <div style={S.center}>
-        <div style={S.errorCard}>
-          <span className="material-symbols-outlined" style={{ fontSize: 56, color: '#dc2626' }}>error_outline</span>
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--on-surface)' }}>Failed to Load Profile</h2>
-          <p style={{ color: 'var(--on-surface-variant)', fontSize: 14 }}>{error}</p>
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-            <button onClick={() => window.location.reload()} style={S.btnPrimary}>Retry</button>
-            <button onClick={onGoHome} style={S.btnOutline}>Back to Home</button>
-          </div>
-        </div>
+function NotFoundScreen() {
+  return (
+    <div className="bg-[#f8f9fb] min-h-screen flex items-center justify-center px-6">
+      <div className="text-center">
+        <span className="material-symbols-outlined text-6xl text-[#c4c5d5]">person_search</span>
+        <h1 className="text-2xl font-bold text-[#191c1e] mt-4">Không tìm thấy gia sư</h1>
+        <p className="text-[#444653] mt-2">Hồ sơ này không tồn tại hoặc đã bị xóa.</p>
+        <a href="#/find-tutors"
+          className="inline-flex items-center gap-2 mt-6 bg-[#00288e] text-white px-6 py-3 rounded-xl font-semibold hover:bg-[#1e40af] transition-colors">
+          <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+          Quay lại danh sách gia sư
+        </a>
       </div>
     </div>
-  );
+  )
+}
 
-  if (!tutor) return null;
+// ─── Main Component ───────────────────────────────────────────────────────────
+export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) {
+  const [tutor, setTutor] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [notFound, setNotFound] = useState(false)
 
-  const trialOptions = buildTrialOptions(tutor.availability || {}, trialBookedSlots);
+  useEffect(() => {
+    window.scrollTo(0, 0)
+    setLoading(true)
+    setNotFound(false)
+
+    // ── Step 1: Read basic data saved from FindTutors listing ──────────────────
+    let saved = null
+    try {
+      const raw = sessionStorage.getItem('viewingTutor')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        // Only use if IDs match
+        if (String(parsed.id) === String(tutorId)) saved = parsed
+      }
+    } catch {}
+
+    const buildTutor = (apiData) => {
+      const base = saved || {}
+      const data = apiData || {}
+      const teachingMethodsFromDB = Array.isArray(data.teaching_methods) && data.teaching_methods.length > 0
+        ? data.teaching_methods
+        : null
+      const suitableForFromDB = Array.isArray(data.suitable_students) && data.suitable_students.length > 0
+        ? data.suitable_students
+        : null
+      return {
+        ...BASE_PROFILE,              // extended mock fields (schedule, reviews, etc.)
+        ...base,                      // real basic fields from FindTutors listing
+        ...data,                      // real extended fields from API (overwrites if exist)
+        // Resolve avatar: prefer profile_photo from API > listing picture > mock
+        picture: data.profile_photo_url || data.picture || base.profile_photo_url || base.picture || BASE_PROFILE.picture,
+        // Resolve title: headline from API > bio snippet > base bio snippet > mock title
+        title: data.headline || base.headline
+          || (data.bio ? data.bio.slice(0, 80) : null)
+          || (base.bio ? base.bio.slice(0, 80) : null)
+          || BASE_PROFILE.title,
+        // Use structured DB data if available, otherwise fall back to mock
+        teachingMethods: teachingMethodsFromDB || BASE_PROFILE.teachingMethods,
+        suitableFor: suitableForFromDB || BASE_PROFILE.suitableFor,
+      }
+    }
+
+    // ── Step 2: Show immediately with saved data (no spinner wait) ─────────────
+    if (saved) {
+      setTutor(buildTutor(null))
+      setLoading(false)
+    }
+
+    // ── Step 3: Fetch full profile from API (enhance what's shown) ─────────────
+    // Always try to fetch from API. If it's a mock card, the API will return 404 and we'll fallback to saved data.
+    if (!saved) {
+      // Show loading if we don't have saved data to render immediately
+      setLoading(true)
+    }
+
+    fetch(`${API_BASE}/api/tutors/${tutorId}`)
+      .then(async r => {
+        if (r.status === 404) {
+          if (!saved) { setNotFound(true); setLoading(false) }
+          return
+        }
+        const data = r.ok ? await r.json() : null
+        setTutor(buildTutor(data))
+        if (!saved) setLoading(false)
+      })
+      .catch(() => {
+        if (!saved) {
+          setTutor(buildTutor(null))
+          setLoading(false)
+        }
+      })
+  }, [tutorId])
+
+  if (loading) return <LoadingScreen />
+  if (notFound) return <NotFoundScreen />
+  if (!tutor) return <NotFoundScreen />
+
+  const subjectList = tutor.subjects
+    ? tutor.subjects.split(',').map(s => s.trim()).filter(Boolean)
+    : []
+
+  const priceDisplay = fmtPrice(tutor.hourly_rate)
 
   return (
-    <div style={S.page}>
-      <Header onBack={onGoHome} backLabel="Back to Tutors" />
+    <div className="bg-[#f8f9fb] text-[#191c1e] min-h-screen font-sans">
+      <style>{`
+        .tutor-profile-card {
+          box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05);
+        }
+      `}</style>
 
-      <main style={S.main}>
-
-        {/* ── Hero Banner ── */}
-        <div style={S.heroBanner}>
-          <img src={tutor.avatar} alt={tutor.name} style={S.heroAvatar} />
-
-          <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-              <span style={S.featuredBadge}>Featured Tutor</span>
-              {tutor.verified && (
-                <span style={S.verifiedBadge}>
-                  <span className="material-symbols-outlined icon-fill" style={{ fontSize: 15 }}>verified</span>
-                  Verified by EduX
-                </span>
-              )}
-            </div>
-            <h1 style={S.heroName}>
-              {tutor.name}
-              {tutor.isNewTutor && (
-                <span style={S.newBadge} title="New tutor on EduX">
-                  NEW
-                </span>
-              )}
-              {tutor.verified && (
-                <span
-                  className="material-symbols-outlined icon-fill"
-                  style={{ fontSize: 28, color: '#16a34a', marginLeft: 10, verticalAlign: 'middle' }}
-                  title="Verified Tutor — Approved by EduX Admin"
-                >
-                  verified
-                </span>
-              )}
-            </h1>
-            {tutor.headline && (
-              <p style={{ fontSize: 15, color: 'var(--on-surface-variant)', fontWeight: 600, margin: '0 0 10px' }}>
-                {tutor.headline}
-              </p>
-            )}
-
-            <div style={S.tagRow}>
-              {tutor.subjects.map(s => (
-                <span key={s} style={S.subjectTag}>{s}</span>
-              ))}
-            </div>
-
-            <div style={S.metaRow}>
-              <span style={S.metaItem}>
-                <span className="material-symbols-outlined icon-fill" style={{ fontSize: 18, color: '#f59e0b' }}>star</span>
-                <strong style={{ color: 'var(--on-surface)' }}>{tutor.rating}</strong>
-                <span>({tutor.reviewsCount} reviews)</span>
-              </span>
-              <span style={S.metaItem}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>school</span>
-                <span>Level: <strong>{tutor.level}</strong></span>
-              </span>
-              {tutor.location && (
-                <span style={S.metaItem}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>location_on</span>
-                  <span>{tutor.location}</span>
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Rate + CTA box */}
-          <div style={S.ctaBox}>
-            <div>
-              <span style={{ fontSize: 12, color: 'var(--on-surface-variant)' }}>Hourly Rate</span>
-              <p style={S.rateText}><strong>${tutor.rate}</strong><span style={{ fontSize: 14, fontWeight: 400 }}>/hr</span></p>
-            </div>
-            <button onClick={handleBookSession} style={S.btnPrimary}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>calendar_today</span>
-              Book Session
-            </button>
-            {tutor.isNewTutor && (
-              <button
-                onClick={() => document.getElementById('trial-class-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
-                style={S.btnTrial}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>workspace_premium</span>
-                Book Free Trial
+      {/* ── Navbar ── */}
+      <header className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
+        <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">
+          <a href="#/" className="flex items-center gap-2 text-2xl font-bold text-[#00288e] hover:opacity-80 transition-opacity z-10">
+            <span className="material-symbols-outlined text-[28px]" style={{ fontVariationSettings: "'FILL' 1" }}>school</span>
+            EduX
+          </a>
+          <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
+            <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
+          </nav>
+          <div className="flex items-center gap-4 z-10">
+            {user ? (
+              <button onClick={() => {
+                if (user.role === 'admin') window.location.hash = '/admin'
+                else if (user.role === 'tutor') window.location.hash = '/tutor'
+                else window.location.hash = '/dashboard'
+              }} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">
+                Bảng Điều Khiển
               </button>
+            ) : (
+              <>
+                <button onClick={onGoSignIn} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Đăng Nhập</button>
+                <button onClick={onGoSignUp} className="bg-[#00288e] text-white px-6 py-2.5 rounded-lg font-semibold text-sm hover:bg-[#1e40af] transition-all active:scale-95 shadow-sm">
+                  Tham Gia Miễn Phí
+                </button>
+              </>
             )}
-            {tutor.demo_video_url && (
-              <button onClick={handleWatchDemo} style={S.btnDemo}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>play_circle</span>
-                Watch Demo Video
-              </button>
-            )}
-            <button onClick={handleMessageTutor} disabled={msgLoading} style={S.btnOutline}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>chat</span>
-              {msgLoading ? 'Opening...' : 'Nhắn tin với Gia sư'}
-            </button>
           </div>
         </div>
+      </header>
 
-        {/* ── 2-column grid ── */}
-        <div style={S.grid}>
+      <main className="pt-20 pb-16 max-w-[1280px] mx-auto px-4 md:px-6">
 
-          {/* LEFT */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {/* ── Back link ── */}
+        <div className="py-4">
+          <a href="#/find-tutors" className="inline-flex items-center gap-1 text-[#00288e] text-sm font-semibold hover:underline">
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            Quay lại danh sách gia sư
+          </a>
+        </div>
 
-            {/* Bio */}
-            <section style={S.card}>
-              <h2 style={S.cardTitle}>
-                <span className="material-symbols-outlined" style={S.cardIcon}>person</span>
-                About Me
-              </h2>
-              <p style={S.bodyText}>{tutor.bio}</p>
-            </section>
+        {/* ── Two-column layout ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_370px] gap-6 items-start">
 
-            {tutor.isNewTutor && (
-              <section id="trial-class-card" style={S.trialCard}>
-                <div style={S.trialRibbon}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>campaign</span>
-                  Học thử miễn phí cho gia sư mới được EduX duyệt
+          {/* ════ LEFT COLUMN ════ */}
+          <div className="space-y-5 min-w-0">
+
+            {/* Hero card */}
+            <section className="bg-white rounded-2xl p-6 tutor-profile-card flex flex-col md:flex-row items-center md:items-start gap-6">
+              {/* Avatar */}
+              <div className="relative shrink-0">
+                <div className="w-28 h-28 rounded-full overflow-hidden border-4 border-white shadow-md bg-[#dde1ff]">
+                  {tutor.profile_photo_url || tutor.picture ? (
+                    <img src={tutor.profile_photo_url || tutor.picture} alt={tutor.full_name}
+                      className="w-full h-full object-cover"
+                      onError={e => { e.target.style.display = 'none' }} />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <span className="material-symbols-outlined text-5xl text-[#00288e]/40">person</span>
+                    </div>
+                  )}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <div className="absolute bottom-0 right-0 w-7 h-7 bg-[#10B981] rounded-full border-2 border-white flex items-center justify-center">
+                  <span className="material-symbols-outlined text-white" style={{ fontSize: 14, fontVariationSettings: "'FILL' 1" }}>check</span>
+                </div>
+              </div>
+
+              {/* Info */}
+              <div className="flex-1 text-center md:text-left space-y-3">
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
                   <div>
-                    <span style={S.trialKicker}>NEW tutor campaign</span>
-                    <h2 style={{ ...S.cardTitle, marginBottom: 8 }}>
-                      <span className="material-symbols-outlined" style={S.cardIcon}>workspace_premium</span>
-                      Free Trial Class / Lớp học thử
-                    </h2>
-                    <p style={{ ...S.bodyText, marginBottom: 0 }}>
-                      Học sinh hoặc phụ huynh có thể đăng ký 1 buổi học thử với gia sư New trước khi đặt lịch dài hạn.
-                      Sau khi gia sư accept và điểm danh có mặt, học sinh mới được đánh giá gia sư này.
-                    </p>
+                    <h1 className="text-2xl font-bold text-[#191c1e]">{tutor.full_name}</h1>
+                    <p className="text-[#444653] text-base mt-0.5">{tutor.title || tutor.bio?.slice(0, 60)}</p>
                   </div>
-                  <span style={S.newBadge}>NEW</span>
+                  <div className="flex flex-wrap gap-2 justify-center md:justify-end shrink-0">
+                    {(tutor.verifiedBadges || BASE_PROFILE.verifiedBadges).map((b, i) => (
+                      <span key={i} className={`${b.className} text-xs px-3 py-1 rounded-full flex items-center gap-1 font-medium`}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{b.icon}</span>
+                        {b.label}
+                      </span>
+                    ))}
+                  </div>
                 </div>
 
-                <div style={S.trialSteps}>
-                  {[
-                    ['event_available', 'Chọn slot còn trống'],
-                    ['task_alt', 'Gia sư accept request'],
-                    ['rate_review', 'Học thử xong mới review'],
-                  ].map(([icon, text]) => (
-                    <div key={text} style={S.trialStep}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{icon}</span>
-                      {text}
-                    </div>
+                {/* Subject chips */}
+                <div className="flex flex-wrap gap-2 justify-center md:justify-start">
+                  {subjectList.map(s => (
+                    <span key={s} className="bg-[#d4e3ff] text-[#00288e] text-xs px-3 py-1 rounded-lg font-medium">{s}</span>
                   ))}
                 </div>
 
-                <div style={S.trialGrid}>
-                  <div style={S.formGroupInline}>
-                    <label style={S.fieldLabel}>Trial slot / Lịch học thử</label>
-                    {trialOptions.length > 0 ? (
-                      <select
-                        value={trialSlot}
-                        onChange={(e) => setTrialSlot(e.target.value)}
-                        style={S.fieldInput}
-                      >
-                        {trialOptions.map((option) => (
-                          <option key={`${option.date}-${option.timeSlot}`} value={`${option.date}|${option.timeSlot}`}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <p style={S.emptyTrial}>This tutor has not opened available slots yet.</p>
-                    )}
-                  </div>
-                  {user?.role === 'parent' && (
-                    <div style={S.formGroupInline}>
-                      <label style={S.fieldLabel}>Student name</label>
-                      <input
-                        value={trialChildName}
-                        onChange={(e) => setTrialChildName(e.target.value)}
-                        placeholder="Enter your child's name"
-                        style={S.fieldInput}
-                      />
-                    </div>
+                {/* Meta row */}
+                <div className="flex flex-wrap gap-4 justify-center md:justify-start text-sm text-[#444653]">
+                  {tutor.city && (
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[16px] text-[#00288e]">location_on</span>
+                      {tutor.city}
+                    </span>
                   )}
-                  <div style={S.formGroupInline}>
-                    <label style={S.fieldLabel}>Notes / Nội dung muốn học thử</label>
-                    <input
-                      value={trialNotes}
-                      onChange={(e) => setTrialNotes(e.target.value)}
-                      placeholder="What do you want to try learning?"
-                      style={S.fieldInput}
-                    />
-                  </div>
-                </div>
-
-                {trialMessage && (
-                  <div style={trialMessage.type === 'success' ? S.successNotice : S.errorNotice}>
-                    {trialMessage.text}
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  disabled={trialLoading || trialOptions.length === 0 || !trialSlot}
-                  onClick={handleTrialBooking}
-                  style={(trialLoading || trialOptions.length === 0 || !trialSlot) ? S.btnDisabled : S.btnTrialWide}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>send</span>
-                  {trialLoading ? 'Sending...' : 'Request Free Trial Class'}
-                </button>
-              </section>
-            )}
-
-            {tutor.demo_video_url && (
-              <section id="demo-teaching-video" style={S.videoCard}>
-                <h2 style={S.cardTitle}>
-                  <span className="material-symbols-outlined" style={S.cardIcon}>play_circle</span>
-                  Demo Teaching Video
-                </h2>
-                <p style={{ ...S.bodyText, marginBottom: 14 }}>
-                  Watch this short demo before booking to understand the tutor's voice, teaching pace, and explanation style.
-                </p>
-                <video src={tutor.demo_video_url} controls preload="metadata" style={S.demoVideo} />
-              </section>
-            )}
-
-            {tutor.courses?.length > 0 && (
-              <section style={S.card}>
-                <h2 style={S.cardTitle}>
-                  <span className="material-symbols-outlined" style={S.cardIcon}>video_library</span>
-                  Self-paced Courses
-                </h2>
-                <p style={{ ...S.bodyText, marginBottom: 16 }}>
-                  Buy a recorded course from this tutor and learn anytime with lesson progress tracking.
-                </p>
-                <div style={S.courseGrid}>
-                  {tutor.courses.map((course) => (
-                    <article key={course.id} style={S.courseCard}>
-                      {course.thumbnailUrl ? (
-                        <img src={course.thumbnailUrl} alt={course.title} style={S.courseThumb} />
-                      ) : (
-                        <div style={S.courseThumbFallback}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 36 }}>play_lesson</span>
-                        </div>
-                      )}
-                      <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {course.subject && <span style={S.courseChip}>{course.subject}</span>}
-                          {course.level && <span style={S.courseChipMuted}>{course.level}</span>}
-                        </div>
-                        <h3 style={S.courseTitle}>{course.title}</h3>
-                        <p style={S.courseDesc}>{course.description || 'Recorded lessons prepared by this tutor.'}</p>
-                        <div style={S.courseFooter}>
-                          <span style={S.coursePrice}>{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(Number(course.price || 0))}</span>
-                          <span style={S.courseLessons}>{course.lessonCount || 0} lessons</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => { window.location.hash = `/course/${course.id}` }}
-                          style={S.courseButton}
-                        >
-                          View Course
-                        </button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {tutor.teaching_style && (
-              <section style={S.card}>
-                <h2 style={S.cardTitle}>
-                  <span className="material-symbols-outlined" style={S.cardIcon}>psychology</span>
-                  Teaching Style
-                </h2>
-                <p style={S.bodyText}>{tutor.teaching_style}</p>
-              </section>
-            )}
-
-            {/* Education & Certs */}
-            {((tutor.education?.length > 0) || (tutor.certificates?.length > 0)) && (
-              <section style={S.card}>
-                <h2 style={S.cardTitle}>
-                  <span className="material-symbols-outlined" style={S.cardIcon}>menu_book</span>
-                  Education &amp; Qualifications
-                </h2>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20 }}>
-                  {tutor.education?.length > 0 && (
-                    <div>
-                      <h3 style={S.subTitle}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--primary)' }}>school</span>
-                        Degrees
-                      </h3>
-                      <ul style={S.list}>
-                        {tutor.education.map((e, i) => (
-                          <li key={i} style={S.listItem}><span style={{ color: 'var(--primary)' }}>•</span> {e}</li>
-                        ))}
-                      </ul>
-                    </div>
+                  {tutor.experience_years > 0 && (
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[16px] text-[#00288e]">work_history</span>
+                      {tutor.experience_years} năm kinh nghiệm
+                    </span>
                   )}
-                  {tutor.certificates?.length > 0 && (
-                    <div>
-                      <h3 style={S.subTitle}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--primary)' }}>verified</span>
-                        Certificates
-                      </h3>
-                      <ul style={S.list}>
-                        {tutor.certificates.map((c, i) => (
-                          <li key={i} style={S.listItem}><span style={{ color: '#16a34a' }}>✓</span> {c}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+                  <span className="flex items-center gap-1 font-semibold text-[#00288e]">
+                    <span className="material-symbols-outlined text-[16px]">payments</span>
+                    {priceDisplay}/giờ
+                  </span>
                 </div>
-              </section>
-            )}
-
-            {/* Experience */}
-            {tutor.experience?.length > 0 && (
-              <section style={S.card}>
-                <h2 style={S.cardTitle}>
-                  <span className="material-symbols-outlined" style={S.cardIcon}>work</span>
-                  Teaching Experience
-                </h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {tutor.experience.map((exp, i) => (
-                    <div key={i} style={S.expItem}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 20, color: 'var(--primary)', flexShrink: 0 }}>history_edu</span>
-                      <span style={S.bodyText}>{exp}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Reviews */}
-            <section style={S.card}>
-              <h2 style={S.cardTitle}>
-                <span className="material-symbols-outlined" style={S.cardIcon}>forum</span>
-                Student Reviews ({tutor.reviewsCount})
-              </h2>
-              {reviewEligibility.canReview && (
-                <form onSubmit={handleSubmitReview} style={S.reviewForm}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div>
-                      <h3 style={{ fontSize: 15, fontWeight: 800, margin: 0, color: 'var(--on-surface)' }}>
-                        Review your trial class
-                      </h3>
-                      <p style={{ ...S.bodyText, margin: '4px 0 0' }}>
-                        Eligible from {reviewEligibility.booking?.date} at {reviewEligibility.booking?.timeSlot}.
-                      </p>
-                    </div>
-                    <select
-                      value={reviewForm.rating}
-                      onChange={(e) => setReviewForm((prev) => ({ ...prev, rating: Number(e.target.value) }))}
-                      style={{ ...S.fieldInput, width: 130 }}
-                    >
-                      {[5, 4, 3, 2, 1].map((value) => (
-                        <option key={value} value={value}>{value} stars</option>
-                      ))}
-                    </select>
-                  </div>
-                  <textarea
-                    value={reviewForm.comment}
-                    onChange={(e) => setReviewForm((prev) => ({ ...prev, comment: e.target.value }))}
-                    placeholder="Share how the trial class went..."
-                    rows={3}
-                    style={S.reviewTextarea}
-                  />
-                  {reviewError && <p style={{ color: '#dc2626', fontSize: 13, fontWeight: 700 }}>{reviewError}</p>}
-                  <button
-                    type="submit"
-                    disabled={reviewSaving || !reviewForm.comment.trim()}
-                    style={(reviewSaving || !reviewForm.comment.trim()) ? S.btnDisabled : S.btnPrimary}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>rate_review</span>
-                    {reviewSaving ? 'Submitting...' : 'Submit Review'}
-                  </button>
-                </form>
-              )}
-              {tutor.reviews?.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  {tutor.reviews.map((rev) => (
-                    <div key={rev.id} style={S.reviewItem}>
-                      <div style={S.reviewHeader}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div style={S.avatar}>{rev.studentName.charAt(0)}</div>
-                          <div>
-                            <p style={{ fontWeight: 600, fontSize: 14, color: 'var(--on-surface)' }}>{rev.studentName}</p>
-                            <p style={{ fontSize: 11, color: 'var(--outline)' }}>{rev.date}</p>
-                          </div>
-                        </div>
-                        <StarRating rating={rev.rating} />
-                      </div>
-                      <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', fontStyle: 'italic', lineHeight: 1.6 }}>
-                        "{rev.comment}"
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', fontStyle: 'italic' }}>No reviews yet.</p>
-              )}
-            </section>
-          </div>
-
-          {/* RIGHT: Schedule sticky */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-            {/* Weekly Schedule */}
-            <section style={S.card}>
-              <h2 style={S.cardTitle}>
-                <span className="material-symbols-outlined" style={S.cardIcon}>calendar_month</span>
-                Weekly Availability
-              </h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {DAY_ORDER.map(day => {
-                  const slots = tutor.availability?.[day] || [];
-                  return (
-                    <div key={day} style={S.dayRow}>
-                      <span style={{ ...S.dayLabel, color: slots.length > 0 ? 'var(--on-surface)' : 'var(--outline)' }}>{day}</span>
-                      {slots.length > 0 ? (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                          {slots.map(slot => (
-                            <span key={slot} style={S.slotChip}>{slot}</span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: 12, color: 'var(--outline)' }}>Unavailable</span>
-                      )}
-                    </div>
-                  );
-                })}
               </div>
             </section>
 
-            {/* CTA Card */}
-            <div style={S.ctaCard}>
-              <span className="material-symbols-outlined" style={{ fontSize: 44 }}>event_upcoming</span>
-              <h3 style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.3 }}>Ready to start learning?</h3>
-              <p style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.6 }}>
-                Choose a time that fits your schedule. You only pay once the tutor approves.
-              </p>
-              <button onClick={handleBookSession} style={S.ctaCardBtn}>Schedule Now</button>
+            {/* Trust stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {[
+                { value: tutor.completedLessons ?? 245, label: 'Buổi học', color: 'text-[#00288e]' },
+                { value: tutor.onTimeRate ?? '98%',     label: 'Đúng giờ',  color: 'text-green-600' },
+                { value: tutor.responseRate ?? '96%',   label: 'Phản hồi',  color: 'text-blue-600' },
+                { value: Number(tutor.avg_r || 4.8).toFixed(1), label: 'Đánh giá', color: 'text-[#FFB800]' },
+                { value: tutor.studentsCount ?? '150+', label: 'Học sinh',  color: 'text-indigo-800' },
+              ].map(stat => (
+                <div key={stat.label} className="bg-white rounded-xl p-3 tutor-profile-card flex flex-col items-center text-center">
+                  <span className={`text-2xl font-bold ${stat.color}`}>{stat.value}</span>
+                  <span className="text-xs text-[#444653] mt-0.5">{stat.label}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Giới thiệu */}
+            <SectionCard icon="person" title="Giới thiệu">
+              <p className="text-[#444653] leading-relaxed">{tutor.bio}</p>
+            </SectionCard>
+
+            {/* Phương pháp */}
+            <SectionCard icon="lightbulb" title="Phương pháp giảng dạy">
+              <ol className="space-y-3">
+                {(tutor.teachingMethods || BASE_PROFILE.teachingMethods).map((m, i) => (
+                  <li key={i} className="flex gap-3">
+                    <span className="w-6 h-6 rounded-full bg-[#dde1ff] text-[#00288e] text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                    <span className="text-[#444653]">{m}</span>
+                  </li>
+                ))}
+              </ol>
+            </SectionCard>
+
+            {/* Phù hợp với */}
+            <SectionCard icon="group" title="Phù hợp với học sinh">
+              <ul className="space-y-2">
+                {(tutor.suitableFor || BASE_PROFILE.suitableFor).map((s, i) => (
+                  <li key={i} className="flex items-start gap-2 text-[#444653]">
+                    <span className="material-symbols-outlined text-[#10B981] shrink-0 mt-0.5" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </SectionCard>
+
+            {/* Bằng cấp & xác minh */}
+            <SectionCard icon="verified_user" title="Bằng cấp & xác minh">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {(tutor.degrees || BASE_PROFILE.degrees).map((d, i) => (
+                  <div key={i} className="flex items-center justify-between p-3 bg-[#f8f9fb] rounded-lg border border-[#e1e2e4]">
+                    <span className="text-sm font-medium text-[#191c1e]">{d.title}</span>
+                    {d.status === 'verified'
+                      ? <span className="material-symbols-outlined text-green-600 shrink-0 ml-2" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>verified</span>
+                      : <span className="material-symbols-outlined text-blue-500 shrink-0 ml-2" style={{ fontSize: 18 }}>fact_check</span>
+                    }
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+
+            {/* Hình thức giảng dạy */}
+            <SectionCard icon="devices" title="Hình thức giảng dạy">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {(tutor.teachingFormats || BASE_PROFILE.teachingFormats).map((f, i) => (
+                  <div key={i} className="flex items-center gap-3 p-3 bg-[#f8f9fb] rounded-lg border border-[#e1e2e4]">
+                    <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 20 }}>{f.icon}</span>
+                    <span className="text-sm text-[#444653]">{f.label}</span>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+
+            {/* Lịch dạy */}
+            <SectionCard icon="event_available" title="Lịch dạy khả dụng">
+              <div className="space-y-3">
+                {(tutor.availableSchedule || BASE_PROFILE.availableSchedule).map((row, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div className="w-8 text-sm font-semibold text-[#444653] shrink-0 pt-1">{row.day}</div>
+                    <div className="flex flex-wrap gap-2">
+                      {row.slots.map(slot => (
+                        <span key={slot} className="bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-1 rounded-full font-medium">
+                          {slot}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+
+            {/* Đánh giá */}
+            <SectionCard icon="star" title={`Đánh giá từ học sinh (${tutor.review_count || (tutor.studentReviews || BASE_PROFILE.studentReviews).length})`}>
+              <div className="flex items-center gap-4 mb-5 p-4 bg-[#f8f9fb] rounded-xl">
+                <span className="text-5xl font-bold text-[#00288e]">{Number(tutor.avg_r || 4.8).toFixed(1)}</span>
+                <div>
+                  <StarRating value={Number(tutor.avg_r || 4.8)} size={20} />
+                  <p className="text-sm text-[#444653] mt-1">{tutor.review_count || 128} đánh giá</p>
+                </div>
+              </div>
+              <div className="space-y-4">
+                {(tutor.studentReviews || BASE_PROFILE.studentReviews).map(r => (
+                  <div key={r.id} className="p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
+                        style={{ background: r.bg, color: r.color }}>
+                        {r.initials}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between flex-wrap gap-1">
+                          <span className="font-semibold text-[#191c1e] text-sm">{r.name}</span>
+                          <StarRating value={r.rating} size={13} />
+                        </div>
+                        <p className="text-xs text-[#757684] mt-0.5">{r.subject} · Đã học {r.lessonCount} buổi</p>
+                        <p className="text-sm text-[#444653] mt-2 leading-relaxed">"{r.comment}"</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+
+            {/* Chính sách */}
+            <SectionCard icon="policy" title="Chính sách học thử & hủy lịch">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]">
+                  <h4 className="font-semibold text-[#00288e] mb-1 text-sm">Buổi học thử</h4>
+                  <p className="text-xs text-[#444653] leading-relaxed">{(tutor.policies || BASE_PROFILE.policies).trial}</p>
+                </div>
+                <div className="p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]">
+                  <h4 className="font-semibold text-[#00288e] mb-1 text-sm">Chính sách hủy lịch</h4>
+                  <p className="text-xs text-[#444653] leading-relaxed">{(tutor.policies || BASE_PROFILE.policies).cancellation}</p>
+                </div>
+              </div>
+            </SectionCard>
+
+            {/* Report */}
+            <div className="flex justify-center py-4">
+              <button
+                onClick={() => alert('Tính năng báo cáo sẽ được phát triển sau.')}
+                className="text-red-500 text-sm hover:underline flex items-center gap-1"
+              >
+                <span className="material-symbols-outlined text-[16px]">flag</span>
+                Báo cáo hồ sơ này
+              </button>
             </div>
           </div>
+
+          {/* ════ RIGHT COLUMN (sticky booking card) ════ */}
+          <aside className="hidden lg:block">
+            <div className="sticky top-[88px] space-y-4">
+              <div className="bg-white rounded-2xl p-6 tutor-profile-card border border-[#e1e2e4]">
+                <p className="text-xs font-semibold text-[#757684] uppercase tracking-wide mb-4">Thông tin đặt lịch</p>
+
+                {/* Price */}
+                <div className="flex items-baseline gap-1 mb-5">
+                  <span className="text-3xl font-bold text-[#00288e]">{priceDisplay}</span>
+                  <span className="text-[#444653] text-sm">/giờ</span>
+                </div>
+
+                {/* Meta list */}
+                <div className="space-y-3 mb-6">
+                  <div className="flex items-center gap-2 text-[#444653] text-sm">
+                    <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>star</span>
+                    <span className="font-semibold text-[#191c1e]">{Number(tutor.avg_r || 4.8).toFixed(1)}</span>
+                    <span>({tutor.review_count || 128} đánh giá)</span>
+                  </div>
+                  {tutor.experience_years > 0 && (
+                    <div className="flex items-center gap-2 text-[#444653] text-sm">
+                      <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 18 }}>work_history</span>
+                      {tutor.experience_years} năm kinh nghiệm
+                    </div>
+                  )}
+                  {tutor.city && (
+                    <div className="flex items-center gap-2 text-[#444653] text-sm">
+                      <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 18 }}>location_on</span>
+                      {tutor.city} (Online/Offline)
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 text-[#444653] text-sm">
+                    <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 18 }}>devices</span>
+                    {tutor.teachingFormatShort || 'Online / Offline'}
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div className="space-y-3">
+                  <button
+                    onClick={() => alert('Tính năng đặt lịch sẽ được phát triển sau.')}
+                    className="w-full bg-[#00288e] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#1e40af] transition-colors shadow-md flex items-center justify-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">calendar_month</span>
+                    Đặt Lịch Học
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!user) return onGoSignIn();
+                      alert('Để nhắn tin, bạn cần tham gia khóa học của gia sư này. Nếu đã đăng ký, vui lòng vào Bảng điều khiển -> Tin nhắn để trao đổi.');
+                    }}
+                    className="w-full bg-white border border-[#c4c5d5] text-[#00288e] py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#f8f9fb] transition-colors flex items-center justify-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">chat</span>
+                    Nhắn Tin Với Gia Sư
+                  </button>
+                </div>
+
+                {/* Trust notice */}
+                <div className="mt-5 pt-4 border-t border-[#e1e2e4] text-xs text-[#757684] text-center leading-relaxed">
+                  <span className="material-symbols-outlined text-green-600 align-middle mr-1" style={{ fontSize: 16 }}>shield_check</span>
+                  Thanh toán an toàn qua EduX. Tiền chỉ giải ngân cho gia sư sau khi buổi học được xác nhận hoàn thành.
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        {/* ── Mobile booking bar (fixed bottom) ── */}
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e1e2e4] px-4 py-3 flex items-center gap-3 z-40 shadow-lg">
+          <div className="flex-1">
+            <span className="text-xl font-bold text-[#00288e]">{priceDisplay}</span>
+            <span className="text-xs text-[#444653]">/giờ</span>
+          </div>
+          <button
+            onClick={() => {
+              if (!user) return onGoSignIn();
+              alert('Để nhắn tin, bạn cần tham gia khóa học của gia sư này. Nếu đã đăng ký, vui lòng vào Bảng điều khiển -> Tin nhắn để trao đổi.');
+            }}
+            className="px-4 py-2.5 border border-[#00288e] text-[#00288e] rounded-xl text-sm font-semibold"
+          >
+            Nhắn Tin
+          </button>
+          <button
+            onClick={() => alert('Tính năng đặt lịch sẽ được phát triển sau.')}
+            className="px-5 py-2.5 bg-[#00288e] text-white rounded-xl text-sm font-semibold hover:bg-[#1e40af] transition-colors"
+          >
+            Đặt Lịch
+          </button>
         </div>
       </main>
-
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
     </div>
-  );
+  )
 }
-
-/* ── Sub-components ── */
-function Header({ onBack, backLabel }) {
-  return (
-    <header className="site-header">
-      <div className="container header-inner">
-        <a href="#/" className="brand">
-          <span className="material-symbols-outlined icon-fill">school</span>
-          <span className="brand-name">EduX</span>
-        </a>
-        <button type="button" onClick={onBack} style={S.backBtn}>
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
-          {backLabel}
-        </button>
-      </div>
-    </header>
-  );
-}
-
-function StarRating({ rating }) {
-  return (
-    <div style={{ display: 'flex', gap: 1 }}>
-      {[1,2,3,4,5].map(i => (
-        <span key={i} className={`material-symbols-outlined ${i <= Math.floor(rating) ? 'icon-fill' : ''}`}
-          style={{ fontSize: 15, color: i <= Math.floor(rating) ? '#f59e0b' : '#d1d5db' }}>star</span>
-      ))}
-    </div>
-  );
-}
-
-/* ── Styles ── */
-const S = {
-  page: { minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--background)' },
-  main: { flex: 1, padding: '32px 24px 60px', maxWidth: 1180, margin: '0 auto', width: '100%' },
-  center: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40 },
-  spinner: {
-    width: 48, height: 48, borderRadius: '50%',
-    border: '4px solid #e5e7eb', borderTopColor: 'var(--primary)',
-    animation: 'spin 0.8s linear infinite'
-  },
-  errorCard: {
-    background: '#fff', borderRadius: 20, padding: 40, maxWidth: 400, width: '100%',
-    textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 16,
-    boxShadow: '0 4px 20px rgba(0,0,0,0.08)'
-  },
-  /* Hero */
-  heroBanner: {
-    background: 'linear-gradient(135deg, #eef1ff 0%, #f5f5ff 50%, #eaf3ff 100%)',
-    borderRadius: 24, padding: '32px 36px', border: '1px solid rgba(0,40,142,0.08)',
-    display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'center',
-    marginBottom: 32, boxShadow: '0 2px 12px rgba(0,40,142,0.06)',
-    animation: 'fadeIn 0.4s ease'
-  },
-  heroAvatar: { width: 130, height: 130, borderRadius: 18, objectFit: 'cover', border: '4px solid #fff', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', flexShrink: 0 },
-  featuredBadge: { display: 'inline-block', background: 'var(--primary)', color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', borderRadius: 999, padding: '3px 12px', marginBottom: 6 },
-  verifiedBadge: { display: 'inline-flex', alignItems: 'center', gap: 4, background: '#dcfce7', color: '#16a34a', fontSize: 11, fontWeight: 700, borderRadius: 999, padding: '3px 10px', border: '1px solid #bbf7d0' },
-  newBadge: { display: 'inline-flex', alignItems: 'center', marginLeft: 10, verticalAlign: 'middle', background: '#fef3c7', color: '#b45309', border: '1px solid #fcd34d', borderRadius: 999, padding: '4px 9px', fontSize: 11, fontWeight: 900, letterSpacing: '0.05em', lineHeight: 1 },
-  heroName: { fontSize: 30, fontWeight: 800, color: 'var(--on-surface)', margin: '6px 0 10px', letterSpacing: '-0.01em' },
-  tagRow: { display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  subjectTag: { background: '#fff', color: 'var(--primary)', fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '4px 14px', border: '1px solid rgba(0,40,142,0.15)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
-  metaRow: { display: 'flex', flexWrap: 'wrap', gap: '8px 24px', alignItems: 'center' },
-  metaItem: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 14, color: 'var(--on-surface-variant)', fontWeight: 500 },
-  ctaBox: { background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(8px)', borderRadius: 18, padding: '20px 24px', border: '1px solid rgba(196,197,213,0.3)', display: 'flex', flexDirection: 'column', gap: 16, minWidth: 200, boxShadow: '0 2px 10px rgba(0,0,0,0.07)' },
-  rateText: { fontSize: 28, fontWeight: 800, color: 'var(--primary)', margin: '4px 0 0', display: 'flex', alignItems: 'baseline', gap: 4 },
-  /* Grid */
-  grid: { display: 'grid', gridTemplateColumns: '1fr minmax(280px, 340px)', gap: 28, alignItems: 'start' },
-  /* Card */
-  card: { background: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(6px)', borderRadius: 20, padding: '24px 28px', border: '1px solid rgba(196,197,213,0.25)', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', animation: 'fadeIn 0.4s ease' },
-  cardTitle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 17, fontWeight: 700, color: 'var(--on-surface)', marginBottom: 16 },
-  cardIcon: { color: 'var(--primary)', fontSize: 22 },
-  bodyText: { fontSize: 14, color: 'var(--on-surface-variant)', lineHeight: 1.7 },
-  subTitle: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--on-surface)', marginBottom: 10 },
-  list: { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 },
-  listItem: { display: 'flex', gap: 8, fontSize: 13, color: 'var(--on-surface-variant)', lineHeight: 1.5 },
-  expItem: { display: 'flex', gap: 12, alignItems: 'flex-start', padding: '10px 14px', background: 'rgba(248,249,251,0.5)', borderRadius: 12, border: '1px solid rgba(196,197,213,0.15)' },
-  /* Reviews */
-  reviewItem: { display: 'flex', flexDirection: 'column', gap: 8, padding: '14px 0', borderTop: '1px solid rgba(196,197,213,0.2)' },
-  reviewHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  avatar: { width: 36, height: 36, borderRadius: '50%', background: 'rgba(0,40,142,0.08)', color: 'var(--primary)', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 },
-  /* Schedule */
-  dayRow: { display: 'flex', alignItems: 'flex-start', gap: 12, padding: '8px 0', borderBottom: '1px solid rgba(196,197,213,0.15)' },
-  dayLabel: { fontSize: 13, fontWeight: 600, minWidth: 90, paddingTop: 2 },
-  slotChip: { fontSize: 11, fontWeight: 600, background: 'rgba(0,40,142,0.07)', color: 'var(--primary)', borderRadius: 8, padding: '3px 10px' },
-  /* CTA Card */
-  ctaCard: { background: 'linear-gradient(135deg, var(--primary) 0%, #1a46c4 100%)', color: '#fff', borderRadius: 20, padding: 24, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', boxShadow: '0 6px 24px rgba(0,40,142,0.3)' },
-  ctaCardBtn: { width: '100%', height: 44, background: '#fff', color: 'var(--primary)', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
-  /* Buttons */
-  btnPrimary: { display: 'flex', alignItems: 'center', gap: 8, height: 46, padding: '0 22px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 14, fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', width: '100%', justifyContent: 'center' },
-  btnDemo: { display: 'flex', alignItems: 'center', gap: 8, height: 44, padding: '0 18px', background: '#eef4ff', color: 'var(--primary)', border: '1px solid rgba(0,40,142,0.18)', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', width: '100%', justifyContent: 'center' },
-  btnTrial: { display: 'flex', alignItems: 'center', gap: 8, height: 44, padding: '0 18px', background: '#f59e0b', color: '#fff', border: '1px solid #d97706', borderRadius: 12, fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit', width: '100%', justifyContent: 'center' },
-  btnTrialWide: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, height: 46, width: '100%', background: '#f59e0b', color: '#fff', border: '1px solid #d97706', borderRadius: 14, fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit', marginTop: 14 },
-  btnDisabled: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, height: 46, width: '100%', background: '#e5e7eb', color: '#9ca3af', border: 'none', borderRadius: 14, fontSize: 14, fontWeight: 700, cursor: 'not-allowed', fontFamily: 'inherit', marginTop: 10 },
-  btnOutline: { height: 44, padding: '0 18px', background: 'transparent', color: 'var(--on-surface-variant)', border: '1px solid rgba(196,197,213,0.6)', borderRadius: 12, fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' },
-  trialCard: { background: 'linear-gradient(135deg, #fff7ed 0%, #ffffff 58%, #eff6ff 100%)', borderRadius: 20, padding: '24px 28px', border: '1px solid #fed7aa', boxShadow: '0 8px 24px rgba(245,158,11,0.12)', animation: 'fadeIn 0.4s ease', scrollMarginTop: 96 },
-  trialRibbon: { display: 'inline-flex', alignItems: 'center', gap: 8, background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa', borderRadius: 999, padding: '7px 12px', fontSize: 12, fontWeight: 900, marginBottom: 14 },
-  trialKicker: { display: 'inline-flex', background: '#fffbeb', color: '#b45309', border: '1px solid #fcd34d', borderRadius: 999, padding: '4px 10px', fontSize: 11, fontWeight: 900, textTransform: 'uppercase', marginBottom: 10 },
-  trialSteps: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginTop: 18 },
-  trialStep: { minHeight: 42, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.78)', color: '#92400e', border: '1px solid #fde68a', borderRadius: 12, padding: '8px 10px', fontSize: 12, fontWeight: 800 },
-  trialGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginTop: 18 },
-  formGroupInline: { display: 'flex', flexDirection: 'column', gap: 6 },
-  fieldLabel: { fontSize: 12, fontWeight: 800, color: 'var(--on-surface)' },
-  fieldInput: { height: 42, width: '100%', border: '1px solid rgba(196,197,213,0.6)', borderRadius: 12, padding: '0 12px', background: '#fff', color: 'var(--on-surface)', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' },
-  emptyTrial: { minHeight: 42, display: 'flex', alignItems: 'center', margin: 0, color: '#92400e', fontSize: 13, fontWeight: 700 },
-  successNotice: { marginTop: 14, border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#15803d', borderRadius: 12, padding: '10px 12px', fontSize: 13, fontWeight: 700 },
-  errorNotice: { marginTop: 14, border: '1px solid #fecaca', background: '#fef2f2', color: '#dc2626', borderRadius: 12, padding: '10px 12px', fontSize: 13, fontWeight: 700 },
-  reviewForm: { border: '1px solid rgba(0,40,142,0.14)', background: 'rgba(0,40,142,0.035)', borderRadius: 16, padding: 16, marginBottom: 18, display: 'flex', flexDirection: 'column', gap: 12 },
-  reviewTextarea: { width: '100%', minHeight: 92, border: '1px solid rgba(196,197,213,0.6)', borderRadius: 12, padding: 12, background: '#fff', color: 'var(--on-surface)', fontSize: 14, fontFamily: 'inherit', resize: 'vertical', outline: 'none', boxSizing: 'border-box', lineHeight: 1.5 },
-  videoCard: { background: 'rgba(255,255,255,0.86)', backdropFilter: 'blur(6px)', borderRadius: 20, padding: '24px 28px', border: '1px solid rgba(0,40,142,0.14)', boxShadow: '0 8px 24px rgba(0,40,142,0.08)', animation: 'fadeIn 0.4s ease', scrollMarginTop: 96 },
-  demoVideo: { width: '100%', maxHeight: 460, borderRadius: 16, background: '#000', border: '1px solid rgba(0,0,0,0.08)', boxShadow: '0 10px 24px rgba(0,0,0,0.12)' },
-  courseGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 },
-  courseCard: { display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff', border: '1px solid rgba(196,197,213,0.35)', borderRadius: 16, boxShadow: '0 6px 18px rgba(0,40,142,0.06)' },
-  courseThumb: { width: '100%', height: 140, objectFit: 'cover', background: '#0f172a' },
-  courseThumbFallback: { height: 140, background: 'linear-gradient(135deg, #eef4ff, #f8fafc)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  courseChip: { fontSize: 11, fontWeight: 800, color: 'var(--primary)', background: 'rgba(0,40,142,0.07)', borderRadius: 999, padding: '3px 8px' },
-  courseChipMuted: { fontSize: 11, fontWeight: 800, color: '#64748b', background: '#f1f5f9', borderRadius: 999, padding: '3px 8px' },
-  courseTitle: { margin: 0, fontSize: 16, fontWeight: 900, color: 'var(--on-surface)', lineHeight: 1.35 },
-  courseDesc: { margin: 0, color: 'var(--on-surface-variant)', fontSize: 13, lineHeight: 1.5, minHeight: 40 },
-  courseFooter: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 'auto' },
-  coursePrice: { color: 'var(--primary)', fontSize: 16, fontWeight: 900 },
-  courseLessons: { color: '#64748b', fontSize: 12, fontWeight: 700 },
-  courseButton: { height: 40, border: 0, borderRadius: 12, background: 'var(--primary)', color: '#fff', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' },
-  backBtn: { display: 'flex', alignItems: 'center', gap: 6, height: 40, padding: '0 16px', background: 'transparent', color: 'var(--on-surface-variant)', border: '1px solid rgba(196,197,213,0.5)', borderRadius: 12, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' },
-};

@@ -1,11 +1,14 @@
-﻿const express = require("express");
+const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const nodemailer = require("nodemailer");          // NEW: email notifications
+const nodemailer = require("nodemailer");          // email notifications
+const multer = require("multer");                  // NEW: file uploads
+const { GoogleAuth } = require("google-auth-library");
 const { OAuth2Client } = require("google-auth-library");
 const pool = require("./db");
+const { generateQuizQuestions, chatWithAI, gradeEssayAnswer } = require("./gemini");
 
 dotenv.config();
 
@@ -16,11 +19,11 @@ const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
 const jwtSecret = process.env.JWT_SECRET || "dev_jwt_secret_change_me";
 const googleClient = new OAuth2Client(googleClientId);
 
-// â”€â”€â”€ Middleware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ΓöÇΓöÇΓöÇ Middleware ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 app.use(cors({ origin: frontendOrigin }));
-app.use(express.json({ limit: "120mb" }));
+app.use(express.json());
 
-// â”€â”€â”€ Helper: táº¡o JWT token â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ΓöÇΓöÇΓöÇ Helper: tß║ío JWT token ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 function createToken(user) {
   return jwt.sign(
     {
@@ -35,7 +38,7 @@ function createToken(user) {
   );
 }
 
-// â”€â”€â”€ Middleware: verifyToken â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ΓöÇΓöÇΓöÇ Middleware: verifyToken ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Reads the Authorization header, verifies the JWT, and attaches decoded
 // user info to req.user. Returns 401 if the token is missing or invalid.
 function verifyToken(req, res, next) {
@@ -56,7 +59,7 @@ function verifyToken(req, res, next) {
   }
 }
 
-// â”€â”€â”€ Middleware: requireAdmin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ΓöÇΓöÇΓöÇ Middleware: requireAdmin ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Must be used AFTER verifyToken. Returns 403 if the user is not an admin.
 function requireAdmin(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -65,509 +68,427 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function getSupabaseProjectUrl() {
-  if (process.env.SUPABASE_URL) return process.env.SUPABASE_URL.replace(/\/$/, "");
-  const match = (process.env.DATABASE_URL || "").match(/postgres\.([a-z0-9]+)@/i);
-  return match ? `https://${match[1]}.supabase.co` : "";
-}
-
-function dataUrlToBuffer(dataUrl) {
-  const match = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl || "");
-  if (!match) return null;
-  return {
-    mimeType: match[1],
-    buffer: Buffer.from(match[2], "base64"),
-  };
-}
-
-function safeFileName(name) {
-  return String(name || "file")
-    .toLowerCase()
-    .replace(/[^a-z0-9.]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-async function uploadToSupabaseStorage({ folder, fileName, mimeType, buffer }) {
-  const supabaseUrl = getSupabaseProjectUrl();
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-  const bucket = process.env.SUPABASE_STORAGE_BUCKET || "edux-media";
-
-  if (!supabaseUrl || !supabaseKey) {
-    throw new Error("Missing SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY in backend .env.");
-  }
-
-  const path = `${folder}/${Date.now()}-${safeFileName(fileName)}`;
-  const endpoint = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`;
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      apikey: supabaseKey,
-      Authorization: `Bearer ${supabaseKey}`,
-      "Content-Type": mimeType,
-      "Cache-Control": "3600",
-    },
-    body: buffer,
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Supabase upload failed with status ${response.status}`);
-  }
-
-  return `${supabaseUrl}/storage/v1/object/public/${bucket}/${path}`;
-}
-
-async function ensureTutorProfile(userId) {
-  await ensureTutorProfileSchema();
-
-  const existing = await pool.query(
-    "SELECT * FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
-    [userId]
-  );
-
-  if (existing.rows.length > 0) {
-    return existing.rows[0];
-  }
-
-  const created = await pool.query(
-    `INSERT INTO tutor_profiles (user_id, status)
-     VALUES ($1, 'draft')
-     RETURNING *`,
-    [userId]
-  );
-
-  return created.rows[0];
-}
-
-async function ensureTutorProfileSchema() {
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS headline TEXT");
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS phone TEXT");
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS location TEXT");
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS teaching_style TEXT");
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS demo_video_url TEXT");
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS hourly_rate INT DEFAULT 0");
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS experience_years INT DEFAULT 0");
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS reject_reason TEXT");
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ");
-  await pool.query("ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query(`
-    UPDATE tutor_profiles
-    SET approved_at = COALESCE(updated_at, created_at, NOW())
-    WHERE status = 'approved'
-      AND approved_at IS NULL
-  `);
-}
-
-async function ensureBookingSchema() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS bookings (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      tutor_name TEXT,
-      student_name TEXT,
-      child_name TEXT,
-      subject TEXT,
-      lesson_date DATE NOT NULL,
-      time_slot TEXT NOT NULL,
-      note TEXT,
-      booking_type TEXT NOT NULL DEFAULT 'regular'
-        CHECK (booking_type IN ('regular', 'trial')),
-      status TEXT NOT NULL DEFAULT 'Pending'
-        CHECK (status IN ('Pending', 'Approved', 'Declined')),
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-
-  await pool.query("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tutor_name TEXT");
-  await pool.query("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS student_name TEXT");
-  await pool.query("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS child_name TEXT");
-  await pool.query("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS note TEXT");
-  await pool.query("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS booking_type TEXT DEFAULT 'regular'");
-  await pool.query("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query("UPDATE bookings SET booking_type = 'regular' WHERE booking_type IS NULL OR booking_type NOT IN ('regular', 'trial')");
-  await pool.query(`
-    DO $$
-    DECLARE
-      constraint_record RECORD;
-    BEGIN
-      FOR constraint_record IN
-        SELECT con.conname
-        FROM pg_constraint con
-        JOIN pg_class rel ON rel.oid = con.conrelid
-        JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
-        WHERE rel.relname = 'bookings'
-          AND con.contype = 'c'
-          AND att.attname = 'booking_type'
-      LOOP
-        EXECUTE format('ALTER TABLE bookings DROP CONSTRAINT IF EXISTS %I', constraint_record.conname);
-      END LOOP;
-    END $$;
-  `);
-  await pool.query("ALTER TABLE bookings ALTER COLUMN booking_type SET DEFAULT 'regular'");
-  await pool.query("ALTER TABLE bookings ALTER COLUMN booking_type SET NOT NULL");
-  await pool.query(`
-    ALTER TABLE bookings
-    ADD CONSTRAINT bookings_booking_type_check
-    CHECK (booking_type IN ('regular', 'trial'))
-  `);
-  await pool.query(`
-    DO $$
-    DECLARE
-      constraint_record RECORD;
-    BEGIN
-      FOR constraint_record IN
-        SELECT con.conname
-        FROM pg_constraint con
-        JOIN pg_class rel ON rel.oid = con.conrelid
-        JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
-        WHERE rel.relname = 'bookings'
-          AND con.contype = 'c'
-          AND att.attname = 'status'
-      LOOP
-        EXECUTE format('ALTER TABLE bookings DROP CONSTRAINT IF EXISTS %I', constraint_record.conname);
-      END LOOP;
-    END $$;
-  `);
-  await pool.query(`
-    UPDATE bookings
-    SET status = CASE LOWER(status)
-      WHEN 'pending' THEN 'Pending'
-      WHEN 'approved' THEN 'Approved'
-      WHEN 'accepted' THEN 'Approved'
-      WHEN 'confirmed' THEN 'Approved'
-      WHEN 'declined' THEN 'Declined'
-      WHEN 'rejected' THEN 'Declined'
-      WHEN 'cancelled' THEN 'Declined'
-      WHEN 'canceled' THEN 'Declined'
-      ELSE 'Pending'
-    END
-  `);
-  await pool.query("ALTER TABLE bookings ALTER COLUMN status SET DEFAULT 'Pending'");
-  await pool.query(`
-    ALTER TABLE bookings
-    ADD CONSTRAINT bookings_status_check
-    CHECK (status IN ('Pending', 'Approved', 'Declined'))
-  `);
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_bookings_tutor_id ON bookings(tutor_id)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_bookings_student_id ON bookings(student_id)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_bookings_lesson_date ON bookings(lesson_date)");
-  try {
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_bookings_active_slot
-      ON bookings(tutor_id, lesson_date, time_slot)
-      WHERE status IN ('Pending', 'Approved')
-    `);
-  } catch (error) {
-    console.warn("[Bookings] Could not create unique slot index. Existing duplicate active bookings may need cleanup.", error.message);
-  }
-
-  const hasNotesColumn = await pool.query(
-    `SELECT 1
-     FROM information_schema.columns
-     WHERE table_name = 'bookings'
-       AND column_name = 'notes'
-     LIMIT 1`
-  );
-  if (hasNotesColumn.rows.length > 0) {
-    await pool.query("UPDATE bookings SET note = COALESCE(note, notes) WHERE note IS NULL");
-  }
-}
-
-function optionalToken(req, _res, next) {
-  const authHeader = req.headers["authorization"] || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-
-  if (token) {
-    try {
-      req.user = jwt.verify(token, jwtSecret);
-    } catch {
-      req.user = null;
-    }
+function requireTutor(req, res, next) {
+  if (req.user?.role !== "tutor") {
+    return res.status(403).json({ message: "Forbidden: tutor access only." });
   }
   next();
 }
 
-async function ensureTutorReviewSchema() {
-  await ensureBookingSchema();
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS tutor_reviews (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      booking_id UUID NOT NULL UNIQUE REFERENCES bookings(id) ON DELETE CASCADE,
-      rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
-      comment TEXT NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_tutor_reviews_tutor_id ON tutor_reviews(tutor_id)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_tutor_reviews_student_id ON tutor_reviews(student_id)");
-}
+// ΓöÇΓöÇΓöÇ Nodemailer: email helper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Gß╗¡i email th├┤ng b├ío kß║┐t quß║ú kiß╗âm duyß╗çt hß╗ô s╞í gia s╞░.
+// Nß║┐u SMTP ch╞░a cß║Ñu h├¼nh ΓåÆ log warning v├á bß╗Å qua (kh├┤ng crash server).
 
-async function ensureCourseSchema() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS courses (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      description TEXT,
-      subject TEXT,
-      level TEXT,
-      price INT NOT NULL DEFAULT 0 CHECK (price >= 0),
-      thumbnail_url TEXT,
-      learning_outcomes JSONB NOT NULL DEFAULT '[]'::jsonb,
-      requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
-      status TEXT NOT NULL DEFAULT 'draft'
-        CHECK (status IN ('draft', 'pending_review', 'published', 'rejected', 'archived')),
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS tutor_id UUID REFERENCES users(id) ON DELETE CASCADE");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS title TEXT");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS description TEXT");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS subject TEXT");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS level TEXT");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS price INT DEFAULT 0");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS thumbnail_url TEXT");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS learning_outcomes JSONB DEFAULT '[]'::jsonb");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS requirements JSONB DEFAULT '[]'::jsonb");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft'");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query("UPDATE courses SET status = 'draft' WHERE status IS NULL OR status NOT IN ('draft', 'pending_review', 'published', 'rejected', 'archived')");
-  await pool.query("UPDATE courses SET price = 0 WHERE price IS NULL OR price < 0");
-  await pool.query("UPDATE courses SET learning_outcomes = '[]'::jsonb WHERE learning_outcomes IS NULL");
-  await pool.query("UPDATE courses SET requirements = '[]'::jsonb WHERE requirements IS NULL");
-  await pool.query(`
-    DO $$
-    DECLARE constraint_record RECORD;
-    BEGIN
-      FOR constraint_record IN
-        SELECT con.conname
-        FROM pg_constraint con
-        JOIN pg_class rel ON rel.oid = con.conrelid
-        JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
-        WHERE rel.relname = 'courses'
-          AND con.contype = 'c'
-          AND att.attname IN ('status', 'price')
-      LOOP
-        EXECUTE format('ALTER TABLE courses DROP CONSTRAINT IF EXISTS %I', constraint_record.conname);
-      END LOOP;
-    END $$;
-  `);
-  await pool.query("ALTER TABLE courses ALTER COLUMN status SET DEFAULT 'draft'");
-  await pool.query("ALTER TABLE courses ALTER COLUMN price SET DEFAULT 0");
-  await pool.query("ALTER TABLE courses ADD CONSTRAINT courses_status_check CHECK (status IN ('draft', 'pending_review', 'published', 'rejected', 'archived'))");
-  await pool.query("ALTER TABLE courses ADD CONSTRAINT courses_price_check CHECK (price >= 0)");
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS course_lessons (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      course_id UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      description TEXT,
-      video_url TEXT,
-      material_url TEXT,
-      duration_label TEXT,
-      is_preview BOOLEAN NOT NULL DEFAULT false,
-      position INT NOT NULL DEFAULT 1,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS course_id UUID REFERENCES courses(id) ON DELETE CASCADE");
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS title TEXT");
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS description TEXT");
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS video_url TEXT");
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS material_url TEXT");
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS duration_label TEXT");
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS is_preview BOOLEAN DEFAULT false");
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS position INT DEFAULT 1");
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS course_enrollments (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      course_id UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-      student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      student_name TEXT,
-      child_name TEXT,
-      status TEXT NOT NULL DEFAULT 'active'
-        CHECK (status IN ('active', 'refunded', 'cancelled')),
-      purchased_at TIMESTAMPTZ DEFAULT NOW(),
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(course_id, student_id)
-    );
-  `);
-  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS course_id UUID REFERENCES courses(id) ON DELETE CASCADE");
-  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS student_id UUID REFERENCES users(id) ON DELETE CASCADE");
-  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS student_name TEXT");
-  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS child_name TEXT");
-  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'");
-  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS purchased_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query("UPDATE course_enrollments SET status = 'active' WHERE status IS NULL OR status NOT IN ('active', 'refunded', 'cancelled')");
-  await pool.query(`
-    DO $$
-    DECLARE constraint_record RECORD;
-    BEGIN
-      FOR constraint_record IN
-        SELECT con.conname
-        FROM pg_constraint con
-        JOIN pg_class rel ON rel.oid = con.conrelid
-        JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
-        WHERE rel.relname = 'course_enrollments'
-          AND con.contype = 'c'
-          AND att.attname = 'status'
-      LOOP
-        EXECUTE format('ALTER TABLE course_enrollments DROP CONSTRAINT IF EXISTS %I', constraint_record.conname);
-      END LOOP;
-    END $$;
-  `);
-  await pool.query("ALTER TABLE course_enrollments ALTER COLUMN status SET DEFAULT 'active'");
-  await pool.query("ALTER TABLE course_enrollments ADD CONSTRAINT course_enrollments_status_check CHECK (status IN ('active', 'refunded', 'cancelled'))");
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS course_progress (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      enrollment_id UUID NOT NULL REFERENCES course_enrollments(id) ON DELETE CASCADE,
-      lesson_id UUID NOT NULL REFERENCES course_lessons(id) ON DELETE CASCADE,
-      watched_seconds INT NOT NULL DEFAULT 0,
-      is_completed BOOLEAN NOT NULL DEFAULT false,
-      completed_at TIMESTAMPTZ,
-      updated_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(enrollment_id, lesson_id)
-    );
-  `);
-  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS enrollment_id UUID REFERENCES course_enrollments(id) ON DELETE CASCADE");
-  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS lesson_id UUID REFERENCES course_lessons(id) ON DELETE CASCADE");
-  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS watched_seconds INT DEFAULT 0");
-  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS is_completed BOOLEAN DEFAULT false");
-  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ");
-  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_courses_tutor_id ON courses(tutor_id)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_course_lessons_course_id ON course_lessons(course_id)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_course_enrollments_student_id ON course_enrollments(student_id)");
-  try {
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_course_enrollments_course_student
-      ON course_enrollments(course_id, student_id)
-    `);
-  } catch (error) {
-    console.warn("[Courses] Could not create unique enrollment index. Existing duplicate enrollments may need cleanup.", error.message);
-  }
-  try {
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_course_progress_enrollment_lesson
-      ON course_progress(enrollment_id, lesson_id)
-    `);
-  } catch (error) {
-    console.warn("[Courses] Could not create unique progress index. Existing duplicate progress rows may need cleanup.", error.message);
-  }
-}
+// Create transporter once (singleton)
+const emailTransporter = (() => {
+  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) return null;
+  return nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: Number(SMTP_PORT || 587),
+    secure: Number(SMTP_PORT) === 465,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+  });
+})();
 
-// â”€â”€â”€ Nodemailer: email helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Sends a notification email to a tutor after their application is reviewed.
-// If SMTP env variables are missing, it logs a warning and skips sending.
-async function sendTutorReviewEmail(to, status, reason) {
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM } = process.env;
-
-  // Skip gracefully if SMTP is not configured
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    console.log(`[Email] SMTP not configured â€” skipping email to ${to}`);
+async function sendTutorReviewEmail(to, status, reason, notes) {
+  if (!emailTransporter) {
+    console.log(`[Email] SMTP ch╞░a cß║Ñu h├¼nh ΓÇö bß╗Å qua email tß╗¢i ${to}`);
     return;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT || 587),
-    secure: Number(SMTP_PORT) === 465,   // true for port 465, false for others
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
-  });
-
   const isApproved = status === "approved";
+
+  // NO emoji in subject ΓÇö major spam trigger when sending GmailΓåÆGmail via SMTP
   const subject = isApproved
-    ? "đŸ‰ Your EduX tutor application has been approved!"
-    : "Your EduX tutor application was not approved";
+    ? "[EduX] Ho so gia su cua ban da duoc chap thuan"
+    : "[EduX] Thong bao ket qua xet duyet ho so gia su";
+
+  const frontendUrl = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
 
   const html = isApproved
-    ? `<p>Congratulations! Your tutor application on <strong>EduX</strong> has been <strong style="color:green">approved</strong>. You can now start accepting students.</p>`
-    : `<p>Thank you for applying to <strong>EduX</strong>. Unfortunately, your application was <strong style="color:red">rejected</strong>.</p>
-       <p><strong>Reason:</strong> ${reason || "No specific reason provided."}</p>
-       <p>You may re-apply after addressing the issues mentioned above.</p>`;
+    ? `<!DOCTYPE html>
+<html lang="vi">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#00288e 0%,#1e40af 100%);padding:40px 40px 32px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-0.5px;">EduX</h1>
+            <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px;">Nen tang ket noi gia su chuyen nghiep</p>
+          </td>
+        </tr>
+        <!-- Spam notice -->
+        <tr>
+          <td style="padding:12px 40px;background:#fffbeb;border-bottom:1px solid #fde68a;text-align:center;">
+            <p style="margin:0;color:#92400e;font-size:12px;line-height:1.5;">
+              <strong>Neu email nay nam trong thu rac (Spam),</strong> vui long nhan <strong>"Khong phai thu rac"</strong> de nhan duoc thong bao tiep theo.<br/>
+              If this email is in your Spam folder, please click <strong>"Not spam"</strong> to receive future notifications.
+            </p>
+          </td>
+        </tr>
+        <!-- Success icon -->
+        <tr>
+          <td style="padding:40px 40px 0;text-align:center;">
+            <div style="width:80px;height:80px;background:#dcfce7;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:24px;">
+              <span style="font-size:40px;">Γ£à</span>
+            </div>
+            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Ch├║c mß╗½ng! Hß╗ô s╞í ─æ├ú ─æ╞░ß╗úc duyß╗çt</h2>
+            <p style="margin:0;color:#444653;font-size:16px;line-height:1.6;">
+              Hß╗ô s╞í ─æ─âng k├╜ gia s╞░ cß╗ºa bß║ín tr├¬n <strong>EduX</strong> ─æ├ú ─æ╞░ß╗úc <strong style="color:#16a34a;">chß║Ñp thuß║¡n</strong>.
+              T├ái khoß║ún gia s╞░ cß╗ºa bß║ín hiß╗çn ─æ├ú <strong>hoß║ít ─æß╗Öng ─æß║ºy ─æß╗º</strong>.
+            </p>
+          </td>
+        </tr>
+        <!-- What's next -->
+        <tr>
+          <td style="padding:32px 40px;">
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:24px;">
+              <h3 style="margin:0 0 16px;color:#15803d;font-size:16px;font-weight:700;">Bß║ín c├│ thß╗â l├ám g├¼ tiß║┐p theo?</h3>
+              <table cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td style="padding:8px 0;color:#444653;font-size:15px;">
+                    <span style="color:#16a34a;font-weight:bold;margin-right:8px;">ΓåÆ</span>─É─âng nhß║¡p v├á ho├án thiß╗çn hß╗ô s╞í gia s╞░
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;color:#444653;font-size:15px;">
+                    <span style="color:#16a34a;font-weight:bold;margin-right:8px;">ΓåÆ</span>Bß║»t ─æß║ºu nhß║¡n y├¬u cß║ºu tß╗½ hß╗ìc sinh
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;color:#444653;font-size:15px;">
+                    <span style="color:#16a34a;font-weight:bold;margin-right:8px;">ΓåÆ</span>Thiß║┐t lß║¡p lß╗ïch dß║íy v├á mß╗⌐c hß╗ìc ph├¡
+                  </td>
+                </tr>
+              </table>
+            </div>
+          </td>
+        </tr>
+        <!-- Notes from admin (optional) -->
+        ${notes ? `
+        <tr>
+          <td style="padding:0 40px 24px;">
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:20px 24px;">
+              <p style="margin:0 0 8px;color:#1d4ed8;font-size:14px;font-weight:700;">≡ƒô¥ Ghi ch├║ tß╗½ Ban Quß║ún Trß╗ï:</p>
+              <p style="margin:0;color:#1e3a5f;font-size:15px;line-height:1.6;white-space:pre-line;">${notes}</p>
+            </div>
+          </td>
+        </tr>` : ''}
+        <!-- CTA Button -->
+        <tr>
+          <td style="padding:0 40px 40px;text-align:center;">
+            <a href="${frontendUrl}#/tutor"
+               style="display:inline-block;background:linear-gradient(135deg,#00288e,#1e40af);color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:16px 40px;border-radius:12px;box-shadow:0 4px 12px rgba(0,40,142,0.3);">
+              V├áo Dashboard Gia S╞░ ΓåÆ
+            </a>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8f9fb;padding:24px 40px;text-align:center;border-top:1px solid #e1e2e4;">
+            <p style="margin:0;color:#757684;font-size:13px;">┬⌐ 2024 EduX. Mß╗ìi thß║»c mß║»c xin li├¬n hß╗ç <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+    : `<!DOCTYPE html>
+<html lang="vi">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#00288e 0%,#1e40af 100%);padding:40px 40px 32px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-0.5px;">EduX</h1>
+            <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px;">Nen tang ket noi gia su chuyen nghiep</p>
+          </td>
+        </tr>
+        <!-- Spam notice -->
+        <tr>
+          <td style="padding:12px 40px;background:#fffbeb;border-bottom:1px solid #fde68a;text-align:center;">
+            <p style="margin:0;color:#92400e;font-size:12px;line-height:1.5;">
+              <strong>Neu email nay nam trong thu rac (Spam),</strong> vui long nhan <strong>"Khong phai thu rac"</strong> de nhan duoc thong bao tiep theo.<br/>
+              If this email is in your Spam folder, please click <strong>"Not spam"</strong> to receive future notifications.
+            </p>
+          </td>
+        </tr>
+        <!-- Icon -->
+
+        <tr>
+          <td style="padding:40px 40px 0;text-align:center;">
+            <div style="width:80px;height:80px;background:#fef2f2;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:24px;">
+              <span style="font-size:40px;">Γ¥î</span>
+            </div>
+            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Hß╗ô s╞í ch╞░a ─æ╞░ß╗úc chß║Ñp thuß║¡n</h2>
+            <p style="margin:0;color:#444653;font-size:16px;line-height:1.6;">
+              Cß║úm ╞ín bß║ín ─æ├ú ─æ─âng k├╜ l├ám gia s╞░ tr├¬n <strong>EduX</strong>.
+              Sau khi xem x├⌐t, hß╗ô s╞í cß╗ºa bß║ín hiß╗çn ch╞░a ─æ├íp ß╗⌐ng ─æß╗º ─æiß╗üu kiß╗çn.
+            </p>
+          </td>
+        </tr>
+        <!-- Reject reason -->
+        ${reason ? `
+        <tr>
+          <td style="padding:24px 40px 0;">
+            <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:20px 24px;">
+              <p style="margin:0 0 8px;color:#991b1b;font-size:14px;font-weight:700;">≡ƒôï L├╜ do tß╗½ chß╗æi:</p>
+              <p style="margin:0;color:#b91c1c;font-size:15px;line-height:1.6;">${reason}</p>
+            </div>
+          </td>
+        </tr>` : ''}
+        <!-- Re-apply info -->
+        <tr>
+          <td style="padding:24px 40px;">
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:20px 24px;">
+              <h3 style="margin:0 0 12px;color:#1d4ed8;font-size:15px;font-weight:700;">≡ƒÆí Bß║ín c├│ thß╗â l├ám g├¼?</h3>
+              <p style="margin:0;color:#444653;font-size:15px;line-height:1.6;">
+                H├úy xem x├⌐t lß║íi c├íc th├┤ng tin v├á t├ái liß╗çu trong hß╗ô s╞í, sau ─æ├│ chß╗ënh sß╗¡a v├á nß╗Öp lß║íi ─æß╗â ─æ╞░ß╗úc xem x├⌐t lß║ºn tiß║┐p theo.
+              </p>
+            </div>
+          </td>
+        </tr>
+        <!-- Notes from admin (optional) -->
+        ${notes ? `
+        <tr>
+          <td style="padding:0 40px 24px;">
+            <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:20px 24px;">
+              <p style="margin:0 0 8px;color:#9a3412;font-size:14px;font-weight:700;">≡ƒô¥ Ghi ch├║ tß╗½ Ban Quß║ún Trß╗ï:</p>
+              <p style="margin:0;color:#7c2d12;font-size:15px;line-height:1.6;white-space:pre-line;">${notes}</p>
+            </div>
+          </td>
+        </tr>` : ''}
+        <!-- CTA -->
+        <tr>
+          <td style="padding:0 40px 40px;text-align:center;">
+            <a href="${frontendUrl}#/tutor-profile"
+               style="display:inline-block;background:linear-gradient(135deg,#00288e,#1e40af);color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:16px 40px;border-radius:12px;box-shadow:0 4px 12px rgba(0,40,142,0.3);">
+              Chß╗ënh sß╗¡a &amp; Nß╗Öp lß║íi hß╗ô s╞í ΓåÆ
+            </a>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8f9fb;padding:24px 40px;text-align:center;border-top:1px solid #e1e2e4;">
+            <p style="margin:0;color:#757684;font-size:13px;">┬⌐ 2024 EduX. Mß╗ìi thß║»c mß║»c xin li├¬n hß╗ç <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const isApprovedStatus = status === "approved";
+  const plainText = isApprovedStatus
+    ? `Ch├║c mß╗½ng! Hß╗ô s╞í gia s╞░ cß╗ºa bß║ín tr├¬n EduX ─æ├ú ─æ╞░ß╗úc CHß║ñP THUß║¼N.\n\nT├ái khoß║ún gia s╞░ cß╗ºa bß║ín hiß╗çn ─æ├ú hoß║ít ─æß╗Öng ─æß║ºy ─æß╗º.\n${notes ? `\nGhi ch├║ tß╗½ Ban Quß║ún Trß╗ï:\n${notes}\n` : ''}\nTruy cß║¡p: ${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}#/tutor\n\nEduX ΓÇö support@edux.com`
+    : `Hß╗ô s╞í gia s╞░ cß╗ºa bß║ín tr├¬n EduX CH╞»A ─æ╞░ß╗úc chß║Ñp thuß║¡n.\n\nL├╜ do: ${reason || 'Kh├┤ng ─æ├íp ß╗⌐ng ─æß╗º ─æiß╗üu kiß╗çn'}\n${notes ? `\nGhi ch├║ tß╗½ Ban Quß║ún Trß╗ï:\n${notes}\n` : ''}\nBß║ín c├│ thß╗â chß╗ënh sß╗¡a v├á nß╗Öp lß║íi: ${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}#/tutor-profile\n\nEduX ΓÇö support@edux.com`;
 
   try {
-    await transporter.sendMail({
-      from: SMTP_FROM || SMTP_USER,
+    await emailTransporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
       to,
+      replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
       subject,
+      text: plainText,   // plain-text fallback helps avoid spam filters
       html,
+      headers: {
+        'X-Mailer': 'EduX Notification System',
+        'X-Priority': '1',
+        'Importance': 'high',
+      },
     });
-    console.log(`[Email] Sent ${status} notification to ${to}`);
+    console.log(`[Email] Γ£à ─É├ú gß╗¡i email ${status} tß╗¢i ${to}`);
   } catch (err) {
-    // Log the error but do NOT crash the server
-    console.error(`[Email] Failed to send email to ${to}:`, err.message);
+    console.error(`[Email] Γ¥î Gß╗¡i email thß║Ñt bß║íi tß╗¢i ${to}:`, err.message);
   }
 }
 
-// â”€â”€â”€ GET / â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.get("/", (req, res) => {
-  res.send("EduX Backend is running âœ…");
+async function sendPasswordResetEmail(to, otp) {
+  if (!emailTransporter) {
+    console.log(`[Email] SMTP ch╞░a cß║Ñu h├¼nh ΓÇö bß╗Å qua email tß╗¢i ${to}`);
+    return;
+  }
+
+  const subject = "[EduX] Ma OTP khoi phuc mat khau";
+  const html = `<!DOCTYPE html>
+<html lang="vi">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#00288e 0%,#1e40af 100%);padding:40px 40px 32px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-0.5px;">EduX</h1>
+            <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px;">Nß╗ün tß║úng kß║┐t nß╗æi gia s╞░ chuy├¬n nghiß╗çp</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px;text-align:center;">
+            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Kh├┤i phß╗Ñc mß║¡t khß║⌐u</h2>
+            <p style="margin:0;color:#444653;font-size:16px;line-height:1.6;">
+              M├ú x├íc thß╗▒c OTP (d├╣ng mß╗Öt lß║ºn) cß╗ºa bß║ín l├á:
+            </p>
+            <div style="margin:32px 0;background:#f0fdf4;border:2px dashed #bbf7d0;border-radius:12px;padding:24px;display:inline-block;">
+              <span style="font-size:36px;font-weight:800;color:#16a34a;letter-spacing:8px;">${otp}</span>
+            </div>
+            <p style="margin:0;color:#757684;font-size:14px;line-height:1.6;">
+              M├ú n├áy sß║╜ hß║┐t hß║ín sau <strong>10 ph├║t</strong>. Vui l├▓ng kh├┤ng chia sß║╗ m├ú n├áy cho bß║Ñt kß╗│ ai.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f8f9fb;padding:24px 40px;text-align:center;border-top:1px solid #e1e2e4;">
+            <p style="margin:0;color:#757684;font-size:13px;">┬⌐ 2024 EduX. Mß╗ìi thß║»c mß║»c xin li├¬n hß╗ç <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const plainText = `M├ú OTP kh├┤i phß╗Ñc mß║¡t khß║⌐u cß╗ºa bß║ín l├á: ${otp}\n\nM├ú n├áy sß║╜ hß║┐t hß║ín sau 10 ph├║t.`;
+
+  try {
+    await emailTransporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
+      subject,
+      text: plainText,
+      html,
+      headers: {
+        'X-Mailer': 'EduX Notification System',
+        'X-Priority': '1',
+        'Importance': 'high',
+      },
+    });
+    console.log(`[Email] Γ£à ─É├ú gß╗¡i email OTP reset mß║¡t khß║⌐u tß╗¢i ${to}`);
+  } catch (err) {
+    console.error(`[Email] Γ¥î Gß╗¡i email OTP thß║Ñt bß║íi tß╗¢i ${to}:`, err.message);
+  }
+}
+
+
+// ΓöÇΓöÇΓöÇ Multer Configuration ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files are allowed!"), false);
+    }
+  },
 });
 
-app.post("/api/uploads", verifyToken, async (req, res) => {
+// ΓöÇΓöÇΓöÇ Supabase Storage Helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
+
+async function uploadFileToStorage(file, path) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    throw new Error("Supabase Storage credentials missing in backend.");
+  }
+  const url = `${SUPABASE_URL}/storage/v1/object/tutor-documents/${path}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+      "Content-Type": file.mimetype,
+    },
+    body: file.buffer,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Failed to upload file to Supabase.");
+  return path; // Return the path within the bucket
+}
+
+async function createSignedUrl(path) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return null;
+  const url = `${SUPABASE_URL}/storage/v1/object/sign/tutor-documents/${path}`;
+  console.log(`[Storage] Creating signed URL for path: ${path}`);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ expiresIn: 3600 }), // 1 hour
+  });
+  const data = await response.json();
+  console.log(`[Storage] Supabase sign response:`, JSON.stringify(data));
+  if (!response.ok) throw new Error(data.message || data.error || "Failed to create signed URL.");
+  // Supabase returns signedURL as a relative path.
+  // Two observed formats:
+  //   1. "/object/sign/tutor-documents/..." (missing /storage/v1)
+  //   2. "/storage/v1/object/sign/tutor-documents/..."
+  // We need a full absolute URL for the frontend.
+  const rawSigned = data.signedURL || data.signedUrl || (data.data && data.data.signedUrl) || null;
+  if (!rawSigned) return null;
+  // Already a full absolute URL ΓÇö return as-is
+  if (rawSigned.startsWith('http://') || rawSigned.startsWith('https://')) {
+    return rawSigned;
+  }
+  // Supabase returned "/object/sign/..." ΓÇö prepend base + /storage/v1
+  if (rawSigned.startsWith('/object/')) {
+    return `${SUPABASE_URL}/storage/v1${rawSigned}`;
+  }
+  // Already has /storage/v1 prefix or other format ΓÇö just prepend base URL
+  return `${SUPABASE_URL}${rawSigned}`;
+}
+
+
+// ΓöÇΓöÇΓöÇ GET / ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+app.get("/", (req, res) => {
+  res.send("EduX Backend is running Γ£à");
+});
+
+// ─É─ö POST /api/auth/check-email ─É─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö
+// Kiểm tra email đã tồn tại chưa (dùng trước khi đăng ký để báo lỗi sớm)
+app.post("/api/auth/check-email", async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ message: "Email is required." });
+
   try {
-    const { fileName, mimeType, dataUrl, folder = "general" } = req.body || {};
-    const parsed = dataUrlToBuffer(dataUrl);
-
-    if (!fileName || !parsed) {
-      return res.status(400).json({ message: "A valid base64 dataUrl and fileName are required." });
+    const result = await pool.query(
+      "SELECT id, google_id FROM users WHERE email = $1",
+      [email.toLowerCase().trim()]
+    );
+    if (result.rows.length === 0) {
+      return res.json({ available: true });
     }
-
-    const finalMimeType = mimeType || parsed.mimeType;
-    const allowed = [
-      "image/jpeg",
-      "image/jpg",
-      "image/png",
-      "image/webp",
-      "application/pdf",
-      "video/mp4",
-      "video/webm",
-      "video/quicktime",
-    ];
-
-    if (!allowed.includes(finalMimeType)) {
-      return res.status(400).json({ message: "Unsupported file type." });
+    if (result.rows[0].google_id) {
+      return res.status(409).json({
+        available: false,
+        isGoogleAccount: true,
+        message: "Email này đã được đăng ký qua Google. Vui lòng đăng nhập bằng Google.",
+      });
     }
-
-    const maxBytes = finalMimeType.startsWith("video/") ? 100 * 1024 * 1024 : 10 * 1024 * 1024;
-    if (parsed.buffer.length > maxBytes) {
-      return res.status(400).json({ message: "File is too large." });
-    }
-
-    const publicUrl = await uploadToSupabaseStorage({
-      folder: `${folder}/${req.user.userId}`,
-      fileName,
-      mimeType: finalMimeType,
-      buffer: parsed.buffer,
+    return res.status(409).json({
+      available: false,
+      isGoogleAccount: false,
+      message: "Email này đã được đăng ký. Vui lòng đăng nhập.",
     });
-
-    return res.status(201).json({ url: publicUrl });
-  } catch (error) {
-    console.error("Upload error:", error.message);
-    return res.status(500).json({ message: error.message || "Upload failed." });
+  } catch (err) {
+    console.error("check-email error:", err);
+    return res.status(500).json({ message: "Server error." });
   }
 });
 
-// â”€â”€â”€ POST /api/auth/register â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// ÄÄƒng kĂ½ báº±ng email + password
+// ΓöÇΓöÇΓöÇ POST /api/auth/register ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// ─É─âng k├╜ bß║▒ng email + password
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { fullName, email, password, role } = req.body || {};
@@ -587,12 +508,18 @@ app.post("/api/auth/register", async (req, res) => {
     const allowedRoles = ["student", "parent", "tutor"];
     const userRole = allowedRoles.includes(role) ? role : "student";
 
-    // Kiá»ƒm tra email Ä‘Ă£ tá»“n táº¡i chÆ°a
+    // Kiß╗âm tra email ─æ├ú tß╗ôn tß║íi ch╞░a
     const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
+      "SELECT id, google_id FROM users WHERE email = $1",
       [email.toLowerCase().trim()]
     );
     if (existing.rows.length > 0) {
+      if (existing.rows[0].google_id) {
+        return res.status(409).json({
+          message: "Email này đã được đăng ký qua Google. Vui lòng đăng nhập bằng Google.",
+          isGoogleAccount: true,
+        });
+      }
       return res
         .status(409)
         .json({ message: "Email already registered. Please sign in." });
@@ -601,7 +528,7 @@ app.post("/api/auth/register", async (req, res) => {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Táº¡o user má»›i
+    // Tß║ío user mß╗¢i
     const result = await pool.query(
       `INSERT INTO users (full_name, email, password_hash, role)
        VALUES ($1, $2, $3, $4)
@@ -628,8 +555,88 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-// â”€â”€â”€ POST /api/auth/login â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// ÄÄƒng nháº­p báº±ng email + password
+// ΓöÇΓöÇΓöÇ POST /api/auth/forgot-password/request-otp ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+app.post("/api/auth/forgot-password/request-otp", async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) {
+      return res.status(400).json({ message: "Email is required." });
+    }
+
+    const result = await pool.query("SELECT id, email FROM users WHERE email = $1", [email.toLowerCase().trim()]);
+    if (result.rows.length === 0) {
+      // Don't reveal if email exists or not, just return success
+      return res.json({ message: "Nß║┐u email tß╗ôn tß║íi, OTP ─æ├ú ─æ╞░ß╗úc gß╗¡i." });
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await pool.query(
+      "UPDATE users SET reset_otp = $1, reset_otp_expiry = $2 WHERE email = $3",
+      [otp, expiry, result.rows[0].email]
+    );
+
+    // Send email without blocking
+    sendPasswordResetEmail(result.rows[0].email, otp).catch(console.error);
+
+    return res.json({ message: "OTP ─æ├ú ─æ╞░ß╗úc gß╗¡i ─æß║┐n email cß╗ºa bß║ín." });
+  } catch (error) {
+    console.error("Request OTP error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ΓöÇΓöÇΓöÇ POST /api/auth/forgot-password/reset ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+app.post("/api/auth/forgot-password/reset", async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body || {};
+    if (!email || !otp || !newPassword) {
+      return res.status(400).json({ message: "Thiß║┐u th├┤ng tin y├¬u cß║ºu." });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ message: "Mß║¡t khß║⌐u phß║úi d├ái ├¡t nhß║Ñt 8 k├╜ tß╗▒." });
+    }
+
+    const result = await pool.query(
+      "SELECT id, reset_otp, reset_otp_expiry FROM users WHERE email = $1",
+      [email.toLowerCase().trim()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: "OTP kh├┤ng hß╗úp lß╗ç hoß║╖c ─æ├ú hß║┐t hß║ín." });
+    }
+
+    const user = result.rows[0];
+
+    if (!user.reset_otp || user.reset_otp !== otp.trim()) {
+      return res.status(400).json({ message: "M├ú OTP kh├┤ng ch├¡nh x├íc." });
+    }
+
+    if (new Date() > new Date(user.reset_otp_expiry)) {
+      return res.status(400).json({ message: "M├ú OTP ─æ├ú hß║┐t hß║ín. Vui l├▓ng y├¬u cß║ºu lß║íi." });
+    }
+
+    // OTP hß╗úp lß╗ç, tiß║┐n h├ánh ─æß╗òi mß║¡t khß║⌐u
+    const saltRounds = 12;
+    const passwordHash = await bcrypt.hash(newPassword, saltRounds);
+
+    await pool.query(
+      "UPDATE users SET password_hash = $1, reset_otp = NULL, reset_otp_expiry = NULL WHERE id = $2",
+      [passwordHash, user.id]
+    );
+
+    return res.json({ message: "─Éß║╖t lß║íi mß║¡t khß║⌐u th├ánh c├┤ng!" });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ΓöÇΓöÇΓöÇ POST /api/auth/login ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// ─É─âng nhß║¡p bß║▒ng email + password
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body || {};
@@ -640,9 +647,9 @@ app.post("/api/auth/login", async (req, res) => {
         .json({ message: "Email and password are required." });
     }
 
-    // TĂ¬m user theo email
+    // T├¼m user theo email
     const result = await pool.query(
-      "SELECT id, full_name, email, password_hash, google_id, role, picture FROM users WHERE email = $1",
+      "SELECT id, full_name, email, password_hash, role, picture FROM users WHERE email = $1",
       [email.toLowerCase().trim()]
     );
 
@@ -654,25 +661,23 @@ app.post("/api/auth/login", async (req, res) => {
 
     const user = result.rows[0];
 
-    // User Ä‘Äƒng kĂ½ báº±ng Google, khĂ´ng cĂ³ password
+    // User ─æ─âng k├╜ bß║▒ng Google, kh├┤ng c├│ password
     if (!user.password_hash) {
-      if (user.google_id) {
-        return res.status(401).json({
-          message: "This account uses Google sign-in. Please use Google to log in.",
-        });
-      }
-
       return res.status(401).json({
-        message: "This account does not have a password yet. Please reset or set a password.",
+        message: "This account uses Google sign-in. Please use Google to log in.",
       });
     }
-    // Kiá»ƒm tra password
+
+    // Kiß╗âm tra password
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid email or password." });
     }
 
     const token = createToken(user);
+
+    const ip = getClientIP(req);
+    const suspicious = await logLoginAttempt(user.id, ip, req.headers['user-agent']);
 
     return res.json({
       token,
@@ -683,6 +688,8 @@ app.post("/api/auth/login", async (req, res) => {
         role: user.role,
         picture: user.picture,
       },
+      suspiciousLogin: suspicious,
+      loginIP: ip,
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -690,8 +697,8 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// â”€â”€â”€ POST /api/auth/google â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// ÄÄƒng nháº­p / Ä‘Äƒng kĂ½ báº±ng Google OAuth â€” lÆ°u vĂ o DB
+// ΓöÇΓöÇΓöÇ POST /api/auth/google ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// ─É─âng nhß║¡p / ─æ─âng k├╜ bß║▒ng Google OAuth ΓÇö l╞░u v├áo DB
 app.post("/api/auth/google", async (req, res) => {
   try {
     const { credential } = req.body || {};
@@ -721,7 +728,7 @@ app.post("/api/auth/google", async (req, res) => {
     const name = payload.name || "";
     const picture = payload.picture || "";
 
-    // TĂ¬m user Ä‘Ă£ cĂ³ chÆ°a (theo google_id hoáº·c email)
+    // T├¼m user ─æ├ú c├│ ch╞░a (theo google_id hoß║╖c email)
     let userResult = await pool.query(
       "SELECT id, full_name, email, role, picture FROM users WHERE google_id = $1 OR email = $2",
       [googleId, email]
@@ -729,7 +736,7 @@ app.post("/api/auth/google", async (req, res) => {
 
     let user;
     if (userResult.rows.length > 0) {
-      // ÄĂ£ cĂ³ â†’ cáº­p nháº­t google_id vĂ  picture náº¿u cáº§n
+      // ─É├ú c├│ ΓåÆ cß║¡p nhß║¡t google_id v├á picture nß║┐u cß║ºn
       user = userResult.rows[0];
       await pool.query(
         "UPDATE users SET google_id = $1, picture = $2 WHERE id = $3",
@@ -737,7 +744,7 @@ app.post("/api/auth/google", async (req, res) => {
       );
       user.picture = picture;
     } else {
-      // ChÆ°a cĂ³ â†’ táº¡o má»›i vá»›i role máº·c Ä‘á»‹nh 'student'
+      // Ch╞░a c├│ ΓåÆ tß║ío mß╗¢i vß╗¢i role mß║╖c ─æß╗ïnh 'student'
       const insertResult = await pool.query(
         `INSERT INTO users (full_name, email, google_id, picture, role)
          VALUES ($1, $2, $3, $4, 'student')
@@ -749,6 +756,9 @@ app.post("/api/auth/google", async (req, res) => {
 
     const token = createToken(user);
 
+    const ip = getClientIP(req);
+    const suspicious = await logLoginAttempt(user.id, ip, req.headers['user-agent']);
+
     return res.json({
       token,
       user: {
@@ -758,6 +768,8 @@ app.post("/api/auth/google", async (req, res) => {
         role: user.role,
         picture: user.picture,
       },
+      suspiciousLogin: suspicious,
+      loginIP: ip,
     });
   } catch (error) {
     console.error("Google auth error:", error);
@@ -765,286 +777,193 @@ app.post("/api/auth/google", async (req, res) => {
   }
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// â”€â”€ ADMIN APIs (all protected by verifyToken + requireAdmin) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+// ΓöÇΓöÇ TUTOR APIs ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 
-// â”€â”€â”€ GET /api/admin/tutors/stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Returns count of pending / approved / rejected tutor profiles
-// Public tutor list used by the home/search flow.
-app.get("/api/tutors", async (req, res) => {
+app.get("/api/tutor/profile", verifyToken, async (req, res) => {
   try {
-    await ensureTutorProfileSchema();
-    await ensureTutorReviewSchema();
-
     const result = await pool.query(
-      `SELECT
-         u.id AS id,
-         u.id AS user_id,
-         tp.id AS profile_id,
-         u.id AS account_id,
-         u.full_name AS name,
-         u.picture AS avatar,
-         tp.bio AS description,
-         tp.subjects,
-         tp.headline,
-         tp.location,
-         tp.teaching_style,
-         tp.demo_video_url,
-         tp.experience_years,
-         tp.hourly_rate AS rate,
-         tp.approved_at,
-         tp.status,
-         COALESCE(review_stats.avg_rating, 5) AS rating,
-         COALESCE(review_stats.review_count, 0) AS reviews_count,
-         COALESCE(tp.status = 'approved', false) AS verified,
-         COALESCE(tp.status = 'approved' AND COALESCE(tp.approved_at, tp.updated_at, tp.created_at) >= NOW() - INTERVAL '30 days', false) AS is_new_tutor
-       FROM tutor_profiles tp
-       JOIN users u ON u.id = tp.user_id
-       LEFT JOIN LATERAL (
-         SELECT ROUND(AVG(rating)::numeric, 1) AS avg_rating, COUNT(*)::int AS review_count
-         FROM tutor_reviews
-         WHERE tutor_id = u.id
-       ) review_stats ON true
-       WHERE u.role = 'tutor'
-         AND tp.status = 'approved'
-       ORDER BY tp.updated_at DESC, tp.created_at DESC`
+      "SELECT * FROM tutor_profiles WHERE user_id = $1",
+      [req.user.userId]
     );
-
-    return res.json(result.rows.map((row) => ({
-      ...row,
-      avatar: row.avatar || "",
-      subjects: row.subjects
-        ? row.subjects.split(",").map((subject) => subject.trim()).filter(Boolean)
-        : [],
-      level: `${row.experience_years || 0}+ years experience`,
-      rating: Number(row.rating) || 5,
-      reviewsCount: Number(row.reviews_count) || 0,
-      description: row.description || row.headline || "EduX verified tutor.",
-      rate: row.rate || 0,
-      isNewTutor: row.is_new_tutor,
-    })));
+    if (result.rows.length === 0) return res.status(404).json({ message: "Profile not found." });
+    return res.json(result.rows[0]);
   } catch (error) {
-    console.error("Get tutors error:", error);
+    console.error("Get tutor profile error:", error);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-// Public tutor profile used by TutorProfile page. The id may be tutor_profiles.id
-// or users.id; returned id is always the tutor user's id for chat/booking flows.
-app.get("/api/tutors/:id", async (req, res) => {
-  try {
-    await ensureTutorProfileSchema();
-    await ensureTutorReviewSchema();
-
-    const { id } = req.params;
-
-    const profileResult = await pool.query(
-      `SELECT
-         u.id AS id,
-         u.id AS user_id,
-         tp.id AS profile_id,
-         u.id AS account_id,
-         u.full_name AS name,
-         u.picture AS avatar,
-         tp.bio,
-         tp.subjects,
-         tp.headline,
-         tp.phone,
-         tp.location,
-         tp.teaching_style,
-         tp.demo_video_url,
-         tp.experience_years,
-         tp.hourly_rate AS rate,
-         tp.approved_at,
-         tp.status,
-         COALESCE(tp.status = 'approved', false) AS verified,
-         COALESCE(tp.status = 'approved' AND COALESCE(tp.approved_at, tp.updated_at, tp.created_at) >= NOW() - INTERVAL '30 days', false) AS is_new_tutor
-       FROM tutor_profiles tp
-       JOIN users u ON u.id = tp.user_id
-       WHERE (tp.id::text = $1 OR u.id::text = $1)
-         AND u.role = 'tutor'
-         AND tp.status = 'approved'
-       LIMIT 1`,
-      [id]
-    );
-
-    if (profileResult.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor not found." });
+// Upload profile data along with images
+app.post(
+  "/api/tutor/profile",
+  verifyToken,
+  // Khai b├ío ─æß╗º 3 file fields ─æß╗â multer kh├┤ng n├⌐m LIMIT_UNEXPECTED_FILE
+  upload.fields([
+    { name: "profile_photo",  maxCount: 1  },
+    { name: "certificates",   maxCount: 10 },
+    { name: "cccd",           maxCount: 1  },
+  ]),
+  // ΓöÇΓöÇ Multer error handler: trß║ú JSON thay v├¼ HTML ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  (err, req, res, next) => {
+    if (err) {
+      return res.status(400).json({ message: err.message || "File upload error." });
     }
-
-    const profile = profileResult.rows[0];
-
-    const credResult = await pool.query(
-      `SELECT type, title
-       FROM tutor_credentials
-       WHERE tutor_id = (
-         SELECT id FROM tutor_profiles WHERE user_id = $1 LIMIT 1
-       )
-         AND status = 'approved'
-       ORDER BY created_at ASC`,
-      [profile.user_id]
-    );
-
-    const availResult = await pool.query(
-      `SELECT day_of_week, time_slot
-       FROM tutor_availability
-       WHERE tutor_id = (
-         SELECT id FROM tutor_profiles WHERE user_id = $1 LIMIT 1
-       )
-       ORDER BY day_of_week, time_slot`,
-      [profile.user_id]
-    );
-
-    const availability = {};
-    for (const row of availResult.rows) {
-      if (!availability[row.day_of_week]) availability[row.day_of_week] = [];
-      availability[row.day_of_week].push(row.time_slot);
-    }
-
-    const reviewResult = await pool.query(
-      `SELECT
-         r.id,
-         r.rating,
-         r.comment,
-         to_char(r.created_at, 'YYYY-MM-DD') AS date,
-         COALESCE(u.full_name, 'Student') AS "studentName"
-       FROM tutor_reviews r
-       LEFT JOIN users u ON u.id = r.student_id
-       WHERE r.tutor_id = $1
-       ORDER BY r.created_at DESC`,
-      [profile.user_id]
-    );
-    const reviews = reviewResult.rows;
-    const rating = reviews.length
-      ? Number((reviews.reduce((sum, item) => sum + Number(item.rating || 0), 0) / reviews.length).toFixed(1))
-      : 5;
-
-    let courses = [];
+    next();
+  },
+  async (req, res) => {
     try {
-      await ensureCourseSchema();
-      const courseResult = await pool.query(
-        `SELECT
-           c.id,
-           c.title,
-           c.description,
-           c.subject,
-           c.level,
-           c.price,
-           c.thumbnail_url AS "thumbnailUrl",
-           c.learning_outcomes AS "learningOutcomes",
-           c.requirements,
-           c.status,
-           COUNT(l.id)::int AS "lessonCount",
-           COUNT(e.id)::int AS "enrollmentCount"
-         FROM courses c
-         LEFT JOIN course_lessons l ON l.course_id = c.id
-         LEFT JOIN course_enrollments e ON e.course_id = c.id AND e.status = 'active'
-         WHERE c.tutor_id = $1
-           AND c.status = 'published'
-         GROUP BY c.id
-         ORDER BY c.updated_at DESC, c.created_at DESC`,
-        [profile.user_id]
+      const {
+        bio, subjects, experience_years,
+        first_name, last_name, display_name,
+        birthday, gender, country, city, phone,
+        education, language, hourly_rate,
+        teaching_style, qualifications,
+        teaching_methods, suitable_students, cert_metadata,
+      } = req.body;
+      const userId = req.user.userId;
+
+      let parsedTeachingMethods = [];
+      let parsedSuitableStudents = [];
+      let parsedCertMetadata = [];
+      try { parsedTeachingMethods = JSON.parse(teaching_methods || '[]'); } catch {}
+      try { parsedSuitableStudents = JSON.parse(suitable_students || '[]'); } catch {}
+      try { parsedCertMetadata = JSON.parse(cert_metadata || '[]'); } catch {}
+
+      const files = req.files || {};
+      const photoFile = files["profile_photo"] ? files["profile_photo"][0] : null;
+      const certFiles = files["certificates"]  || [];
+      const cccdFile  = files["cccd"]          ? files["cccd"][0]          : null;
+
+      let photoPath = null;
+      let cccdPath  = null;
+
+      if (photoFile) {
+        const ext = photoFile.originalname.split('.').pop();
+        photoPath = await uploadFileToStorage(photoFile, `profile_photos/${userId}_${Date.now()}.${ext}`);
+      }
+      if (cccdFile) {
+        const ext = cccdFile.originalname.split('.').pop();
+        cccdPath = await uploadFileToStorage(cccdFile, `cccds/${userId}_${Date.now()}.${ext}`);
+      }
+
+      const existing = await pool.query(
+        "SELECT id FROM tutor_profiles WHERE user_id = $1",
+        [userId]
       );
-      courses = courseResult.rows;
-    } catch (courseError) {
-      console.warn("[Tutor detail] Course data skipped:", courseError.message);
-    }
 
-    return res.json({
-      ...profile,
-      avatar: profile.avatar || "",
-      subjects: profile.subjects
-        ? profile.subjects.split(",").map((subject) => subject.trim()).filter(Boolean)
-        : [],
-      rating,
-      reviewsCount: reviews.length,
-      level: `${profile.experience_years || 0}+ years experience`,
-      description: profile.bio || profile.headline || "EduX verified tutor.",
-      isNewTutor: profile.is_new_tutor,
-      education: credResult.rows.filter((item) => item.type === "education").map((item) => item.title),
-      certificates: credResult.rows.filter((item) => item.type === "certificate").map((item) => item.title),
-      experience: credResult.rows.filter((item) => item.type === "experience").map((item) => item.title),
-      availability,
-      reviews,
-      courses,
-    });
-  } catch (error) {
-    console.error("Get tutor detail error:", error);
-    return res.status(500).json({ message: "Server error." });
+      let result;
+      if (existing.rows.length > 0) {
+        // ΓöÇΓöÇ UPDATE ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+        let values = [
+          bio, subjects, parseInt(experience_years) || 0,
+          first_name, last_name, display_name,
+          birthday || null, gender, country, city, phone,
+          education, language, parseFloat(hourly_rate) || null,
+          teaching_style, qualifications,
+          "pending", userId,
+        ];
+        let query = `UPDATE tutor_profiles SET
+          bio = $1, subjects = $2, experience_years = $3,
+          first_name = $4, last_name = $5, display_name = $6,
+          birthday = $7, gender = $8, country = $9, city = $10, phone = $11,
+          education = $12, language = $13, hourly_rate = $14,
+          teaching_style = $15, qualifications = $16,
+          status = $17, reject_reason = NULL`;
+
+        let idx = 19; // $18 = userId
+        if (photoPath) { query += `, profile_photo_url = $${idx}`; values.push(photoPath); idx++; }
+        if (cccdPath)  { query += `, cccd_url = $${idx}`;          values.push(cccdPath);  idx++; }
+
+        query += ` WHERE user_id = $18 RETURNING *`;
+        result = await pool.query(query, values);
+      } else {
+        result = await pool.query(
+          `INSERT INTO tutor_profiles (
+            user_id, bio, subjects, experience_years,
+            first_name, last_name, display_name,
+            birthday, gender, country, city, phone,
+            education, language, hourly_rate,
+            teaching_style, qualifications,
+            profile_photo_url, cccd_url,
+            status
+          ) VALUES (
+            $1, $2, $3, $4,
+            $5, $6, $7,
+            $8, $9, $10, $11, $12,
+            $13, $14, $15,
+            $16, $17,
+            $18, $19,
+            'pending'
+          ) RETURNING *`,
+          [
+            userId, bio, subjects, parseInt(experience_years) || 0,
+            first_name, last_name, display_name,
+            birthday || null, gender, country, city, phone,
+            education, language, parseFloat(hourly_rate) || null,
+            teaching_style, qualifications,
+            photoPath, cccdPath,
+          ]
+        );
+      }
+
+      // Optional: save structured fields (separate query, non-fatal if columns not ready)
+      try {
+        await pool.query(
+          `UPDATE tutor_profiles SET
+            teaching_methods  = $1::jsonb,
+            suitable_students = $2::jsonb
+           WHERE id = $3`,
+          [
+            JSON.stringify(parsedTeachingMethods),
+            JSON.stringify(parsedSuitableStudents),
+            result.rows[0].id,
+          ]
+        );
+      } catch (structErr) {
+        console.warn("[Profile] structured fields save skipped:", structErr.message);
+      }
+
+      // Insert new certificates into tutor_certificates table (with metadata)
+      if (certFiles.length > 0) {
+        const profileId = result.rows[0].id;
+        await pool.query("DELETE FROM tutor_certificates WHERE tutor_profile_id = $1", [profileId]);
+        for (let i = 0; i < certFiles.length; i++) {
+          const f = certFiles[i];
+          const meta = parsedCertMetadata[i] || {};
+          const ext = f.originalname.split('.').pop();
+          const certPath = await uploadFileToStorage(f, `certificates/${userId}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
+          try {
+            await pool.query(
+              "INSERT INTO tutor_certificates (tutor_profile_id, name, url, cert_type, issuer, issue_year) VALUES ($1, $2, $3, $4, $5, $6)",
+              [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
+            );
+          } catch (certExtErr) {
+            // Fall back to basic insert if extended cert columns don't exist yet
+            await pool.query(
+              "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
+              [profileId, meta.name || f.originalname, certPath]
+            );
+          }
+        }
+      }
+
+      return res.status(200).json(result.rows[0]);
+    } catch (error) {
+      console.error("Tutor profile upload error:", error);
+      return res.status(500).json({ message: error.message || "Server error." });
+    }
   }
-});
+);
 
-app.get("/api/tutors/:id/availability", async (req, res) => {
-  try {
-    await ensureBookingSchema();
-    const { id } = req.params;
-    const from = req.query.from || new Date().toISOString().slice(0, 10);
-    const to = req.query.to || null;
 
-    const profileResult = await pool.query(
-      `SELECT tp.id, u.id AS user_id
-       FROM tutor_profiles tp
-       JOIN users u ON u.id = tp.user_id
-       WHERE (tp.id::text = $1 OR u.id::text = $1)
-         AND u.role = 'tutor'
-         AND tp.status = 'approved'
-       LIMIT 1`,
-      [id]
-    );
+// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+// ΓöÇΓöÇ ADMIN APIs (all protected by verifyToken + requireAdmin) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 
-    if (profileResult.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor not found." });
-    }
-
-    const availResult = await pool.query(
-      `SELECT day_of_week, time_slot
-       FROM tutor_availability
-       WHERE tutor_id = $1
-       ORDER BY day_of_week, time_slot`,
-      [profileResult.rows[0].id]
-    );
-
-    const availability = {};
-    for (const row of availResult.rows) {
-      if (!availability[row.day_of_week]) availability[row.day_of_week] = [];
-      availability[row.day_of_week].push(row.time_slot);
-    }
-
-    const params = [profileResult.rows[0].user_id, from];
-    let dateFilter = "b.lesson_date >= $2";
-    if (to) {
-      params.push(to);
-      dateFilter += " AND b.lesson_date <= $3";
-    }
-
-    const bookingResult = await pool.query(
-      `SELECT to_char(b.lesson_date, 'YYYY-MM-DD') AS date, b.time_slot AS "timeSlot", b.status
-       FROM bookings b
-       WHERE b.tutor_id = $1
-         AND ${dateFilter}
-         AND b.status IN ('Pending', 'Approved')
-       ORDER BY b.lesson_date ASC, b.time_slot ASC`,
-      params
-    );
-
-    const bookedSlots = {};
-    for (const row of bookingResult.rows) {
-      const dateKey = row.date;
-      if (!bookedSlots[dateKey]) bookedSlots[dateKey] = [];
-      bookedSlots[dateKey].push({
-        timeSlot: row.timeSlot,
-        status: row.status,
-      });
-    }
-
-    return res.json({ availability, bookedSlots });
-  } catch (error) {
-    console.error("Get tutor availability error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
+// ΓöÇΓöÇΓöÇ GET /api/admin/tutors/stats ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Returns count of pending / approved / rejected tutor profiles
 app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -1066,30 +985,40 @@ app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) =
   }
 });
 
-// â”€â”€â”€ GET /api/admin/tutors/pending â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ΓöÇΓöÇΓöÇ GET /api/admin/document-url ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Generates a signed URL for a given storage path so admins can view documents
+app.get("/api/admin/document-url", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { path } = req.query;
+    if (!path) return res.status(400).json({ message: "Path is required." });
+    
+    // Convert path to signed URL via Supabase Storage REST API
+    const signedUrl = await createSignedUrl(path);
+    if (!signedUrl) return res.status(500).json({ message: "Failed to generate URL. Check Supabase config." });
+    
+    return res.json({ signedUrl });
+  } catch (error) {
+    console.error("Document URL error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ΓöÇΓöÇΓöÇ GET /api/admin/tutors/pending ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Returns all tutor_profiles with status = 'pending', joined with users
 app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        tp.id,
-        tp.user_id,
-        u.full_name,
-        u.email,
-        tp.bio,
-        tp.subjects,
-        tp.headline,
-        tp.phone,
-        tp.location,
-        tp.teaching_style,
-        tp.demo_video_url,
-        tp.experience_years,
-        tp.hourly_rate,
-        tp.certificate_url,
-        tp.cccd_url,
-        tp.status,
-        tp.reject_reason,
-        tp.created_at
+        tp.id, tp.user_id, u.full_name, u.email,
+        tp.bio, tp.subjects, tp.experience_years,
+        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
+        tp.created_at, tp.profile_photo_url, tp.hourly_rate,
+        tp.teaching_methods, tp.suitable_students,
+        COALESCE(
+          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
+           FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
+          '[]'::json
+        ) AS certificates
       FROM tutor_profiles tp
       JOIN users u ON u.id = tp.user_id
       WHERE tp.status = 'pending'
@@ -1102,22 +1031,160 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
   }
 });
 
-// â”€â”€â”€ PATCH /api/admin/tutors/:id/approve â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Approves a tutor application and optionally sends them an email
+app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { notes } = req.body || {};   // optional admin notes included in email
+  try {
+    const result = await pool.query(
+      `UPDATE tutor_profiles
+       SET status = 'approved', reject_reason = NULL
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Tutor profile not found." });
+    }
+
+    const profile = result.rows[0];
+
+    // Also update the user's role to 'tutor' (if not already)
+    await pool.query(
+      `UPDATE users SET role = 'tutor' WHERE id = $1 AND role != 'admin'`,
+      [profile.user_id]
+    );
+
+    // Fetch user email to send notification
+    const userResult = await pool.query(
+      "SELECT email FROM users WHERE id = $1",
+      [profile.user_id]
+    );
+    if (userResult.rows.length > 0) {
+      // await so errors are visible in server logs
+      try {
+        await sendTutorReviewEmail(userResult.rows[0].email, "approved", null, notes || '');
+      } catch (emailErr) {
+        console.error("[Approve] Email error (non-fatal):", emailErr.message);
+      }
+    }
+
+    return res.json(profile);
+  } catch (error) {
+    console.error("Approve error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ΓöÇΓöÇΓöÇ PATCH /api/admin/tutors/:id/reject ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Rejects a tutor application with a reason and optionally sends them an email
+app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { reason, notes } = req.body || {};   // notes = optional context for email
+
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ message: "Reject reason is required." });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE tutor_profiles
+       SET status = 'rejected', reject_reason = $1
+       WHERE id = $2
+       RETURNING *`,
+      [reason.trim(), id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Tutor profile not found." });
+    }
+
+    const profile = result.rows[0];
+
+    // Fetch user email to send notification
+    const userResult = await pool.query(
+      "SELECT email FROM users WHERE id = $1",
+      [profile.user_id]
+    );
+    if (userResult.rows.length > 0) {
+      try {
+        await sendTutorReviewEmail(userResult.rows[0].email, "rejected", reason, notes || '');
+      } catch (emailErr) {
+        console.error("[Reject] Email error (non-fatal):", emailErr.message);
+      }
+    }
+
+    return res.json(profile);
+  } catch (error) {
+    console.error("Reject error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── ADMIN APIs (all protected by verifyToken + requireAdmin) ──────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── GET /api/admin/tutors/stats ──────────────────────────────────────────────
+// Returns count of pending / approved / rejected tutor profiles
+app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'pending')  AS pending,
+        COUNT(*) FILTER (WHERE status = 'approved') AS approved,
+        COUNT(*) FILTER (WHERE status = 'rejected') AS rejected
+      FROM tutor_profiles
+    `);
+    const row = result.rows[0];
+    return res.json({
+      pending:  Number(row.pending),
+      approved: Number(row.approved),
+      rejected: Number(row.rejected),
+    });
+  } catch (error) {
+    console.error("Stats error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── GET /api/admin/tutors/pending (duplicate route kept for compatibility) ───
+app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        tp.id, tp.user_id, u.full_name, u.email,
+        tp.bio, tp.subjects, tp.experience_years,
+        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
+        tp.created_at, tp.profile_photo_url, tp.hourly_rate,
+        tp.teaching_methods, tp.suitable_students,
+        COALESCE(
+          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
+           FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
+          '[]'::json
+        ) AS certificates
+      FROM tutor_profiles tp
+      JOIN users u ON u.id = tp.user_id
+      WHERE tp.status = 'pending'
+      ORDER BY tp.created_at ASC
+    `);
+    return res.json(result.rows);
+  } catch (error) {
+    console.error("Pending tutors error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── PATCH /api/admin/tutors/:id/approve ─────────────────────────────────────
 // Approves a tutor application and optionally sends them an email
 app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
   try {
-    await ensureTutorProfileSchema();
-
     const result = await pool.query(
       `UPDATE tutor_profiles
-       SET status = 'approved',
-           approved_at = CASE
-             WHEN status IS DISTINCT FROM 'approved' THEN NOW()
-             ELSE COALESCE(approved_at, NOW())
-           END,
-           reject_reason = NULL,
-           updated_at = NOW()
+       SET status = 'approved', reject_reason = NULL
        WHERE id = $1
        RETURNING *`,
       [id]
@@ -1151,7 +1218,7 @@ app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req
   }
 });
 
-// â”€â”€â”€ PATCH /api/admin/tutors/:id/reject â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── PATCH /api/admin/tutors/:id/reject ──────────────────────────────────────
 // Rejects a tutor application with a reason and optionally sends them an email
 app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -1192,1725 +1259,1971 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
   }
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// â”€â”€ TUTOR PROFILE APIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+const classRoutes = require("./routes/classRoutes");
+const materialRoutes = require("./routes/materialRoutes");
+const assignmentRoutes = require("./routes/assignmentRoutes");
+const discussionRoutes = require("./routes/discussionRoutes");
+const lessonRoutes = require("./routes/lessonRoutes");
+const learningPathRoutes = require("./routes/learningPathRoutes");
 
-// â”€â”€â”€ GET /api/tutor/profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Láº¥y profile Ä‘áº§y Ä‘á»§ cá»§a gia sÆ° hiá»‡n táº¡i (bao gá»“m credentials + availability)
-app.get("/api/tutor/profile", verifyToken, async (req, res) => {
+app.use("/api/classes/:classId/materials", materialRoutes);
+app.use("/api/classes", classRoutes);
+app.use("/", assignmentRoutes);
+app.use("/", discussionRoutes);
+app.use("/", lessonRoutes);
+app.use("/", learningPathRoutes);
+
+// ── GET /api/admin/users ──────────────────────────────────────────────────────
+app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
+  const { search = "", role = "all", page = "1", limit = "20" } = req.query;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  const conditions = [];
+  const values = [];
+  let idx = 1;
+
+  if (search.trim()) {
+    conditions.push(`(u.full_name ILIKE $${idx} OR u.email ILIKE $${idx})`);
+    values.push(`%${search.trim()}%`);
+    idx++;
+  }
+  if (role !== "all") {
+    conditions.push(`u.role = $${idx}`);
+    values.push(role);
+    idx++;
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
   try {
-    const userId = req.user.userId;
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM users u ${where}`,
+      values
+    );
+    const total = parseInt(countResult.rows[0].count);
 
-    // Láº¥y tutor_profile
-    const profileResult = await pool.query(
-      `SELECT tp.*, u.full_name, u.email, u.picture
-       FROM tutor_profiles tp
-       JOIN users u ON u.id = tp.user_id
-       WHERE tp.user_id = $1`,
-      [userId]
+    const result = await pool.query(
+      `SELECT u.id, u.full_name, u.email, u.role, u.picture,
+              COALESCE(u.is_banned, false) AS is_banned, u.created_at
+       FROM users u
+       ${where}
+       ORDER BY u.created_at DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, parseInt(limit), offset]
     );
 
-    let profile = profileResult.rows[0];
-    if (!profile) {
-      const created = await pool.query(
-        `INSERT INTO tutor_profiles (user_id, status)
-         VALUES ($1, 'draft')
-         RETURNING *`,
-        [userId]
+    return res.json({ users: result.rows, total, page: parseInt(page), limit: parseInt(limit) });
+  } catch (err) {
+    console.error("GET /api/admin/users error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── GET /api/admin/users/:id ─────────────────────────────────────────────────
+// Returns full profile of one user. Includes tutor_profiles data if role = tutor.
+app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const userResult = await pool.query(
+      `SELECT id, full_name, email, role, picture,
+              COALESCE(is_banned, false) AS is_banned, created_at
+       FROM users WHERE id = $1`,
+      [id]
+    );
+    if (!userResult.rows.length) return res.status(404).json({ message: "User not found." });
+
+    const user = userResult.rows[0];
+
+    if (user.role === "tutor") {
+      const tpResult = await pool.query(
+        `SELECT bio, subjects, experience_years, hourly_rate,
+                certificate_url, cccd_url, status AS approval_status,
+                reject_reason, profile_photo_url, phone, city, country
+         FROM tutor_profiles WHERE user_id = $1 LIMIT 1`,
+        [id]
       );
-      const userResult = await pool.query(
-        "SELECT full_name, email, picture FROM users WHERE id = $1",
-        [userId]
+      user.tutor_profile = tpResult.rows[0] || null;
+    }
+
+    if (user.role === "student") {
+      const attemptsResult = await pool.query(
+        `SELECT COUNT(*) FROM quiz_attempts WHERE student_id = $1`,
+        [id]
       );
-      profile = { ...created.rows[0], ...(userResult.rows[0] || {}) };
+      user.quiz_attempts = parseInt(attemptsResult.rows[0].count);
     }
 
-    // Láº¥y credentials
-    const credResult = await pool.query(
-      `SELECT * FROM tutor_credentials WHERE tutor_id = $1 ORDER BY created_at ASC`,
-      [profile.id]
+    // Lịch sử đăng nhập gần nhất (10 lần)
+    const logsResult = await pool.query(
+      `SELECT ip_address, user_agent, is_suspicious, created_at
+       FROM login_logs WHERE user_id = $1
+       ORDER BY created_at DESC LIMIT 10`,
+      [id]
     );
+    user.login_logs = logsResult.rows;
 
-    // Láº¥y availability
-    const availResult = await pool.query(
-      `SELECT day_of_week, time_slot FROM tutor_availability WHERE tutor_id = $1 ORDER BY day_of_week, time_slot`,
-      [profile.id]
-    );
-
-    // Group availability theo ngĂ y
-    const availability = {};
-    for (const row of availResult.rows) {
-      if (!availability[row.day_of_week]) availability[row.day_of_week] = [];
-      availability[row.day_of_week].push(row.time_slot);
-    }
-
-    const isNewTutor =
-      profile.status === "approved" &&
-      new Date(profile.approved_at || profile.updated_at || profile.created_at || 0).getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000;
-
-    return res.json({
-      ...profile,
-      isNewTutor,
-      is_new_tutor: isNewTutor,
-      credentials: credResult.rows,
-      availability,
-    });
-  } catch (error) {
-    console.error("Get tutor profile error:", error);
+    return res.json(user);
+  } catch (err) {
+    console.error("GET /api/admin/users/:id error:", err);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-// â”€â”€â”€ PATCH /api/tutor/profile/bio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Gia sÆ° cáº­p nháº­t bio trá»±c tiáº¿p â€” khĂ´ng cáº§n admin duyá»‡t
-app.patch("/api/tutor/profile/bio", verifyToken, async (req, res) => {
+// ── PATCH /api/admin/users/:id/ban ───────────────────────────────────────────
+// Bans or unbans a user. Cannot ban admin accounts.
+// Body: { "banned": true | false }
+app.patch("/api/admin/users/:id/ban", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { banned } = req.body;
+
+  if (typeof banned !== "boolean") {
+    return res.status(400).json({ message: "'banned' must be a boolean." });
+  }
+
   try {
-    const userId = req.user.userId;
-    const { bio } = req.body || {};
-
-    if (!bio || !bio.trim()) {
-      return res.status(400).json({ message: "Bio content is required." });
+    // Prevent banning admin accounts
+    const check = await pool.query("SELECT role FROM users WHERE id = $1", [id]);
+    if (!check.rows.length) return res.status(404).json({ message: "User not found." });
+    if (check.rows[0].role === "admin") {
+      return res.status(403).json({ message: "Cannot ban an admin account." });
     }
-
-    await ensureTutorProfile(userId);
 
     const result = await pool.query(
-      `UPDATE tutor_profiles
-       SET bio = $1, bio_pending = NULL, bio_status = 'approved', updated_at = NOW()
-       WHERE user_id = $2
-       RETURNING id, bio, bio_status`,
-      [bio.trim(), userId]
+      `UPDATE users SET is_banned = $1 WHERE id = $2
+       RETURNING id, full_name, email, role, is_banned, created_at`,
+      [banned, id]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor profile not found." });
-    }
-
     return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Update bio error:", error);
+  } catch (err) {
+    console.error("PATCH /api/admin/users/:id/ban error:", err);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-// â”€â”€â”€ PATCH /api/tutor/profile/avatar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Gia sÆ° cáº­p nháº­t avatar URL (khĂ´ng cáº§n duyá»‡t)
-app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
+// ── PATCH /api/admin/users/:id/role ──────────────────────────────────────────
+// Changes a user's role. Cannot change admin accounts.
+// Body: { "role": "student" | "tutor" | "parent" }
+app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body;
+  const allowed = ["student", "tutor", "parent"];
+
+  if (!allowed.includes(role)) {
+    return res.status(400).json({ message: `role must be one of: ${allowed.join(", ")}` });
+  }
+
   try {
-    const userId = req.user.userId;
-    const {
-      full_name,
-      bio,
-      subjects,
-      headline,
-      phone,
-      location,
-      teaching_style,
-      demo_video_url,
-      hourly_rate,
-      experience_years,
-    } = req.body || {};
-
-    if (full_name?.trim()) {
-      await pool.query(
-        "UPDATE users SET full_name = $1, updated_at = NOW() WHERE id = $2",
-        [full_name.trim(), userId]
-      );
+    const check = await pool.query("SELECT role FROM users WHERE id = $1", [id]);
+    if (!check.rows.length) return res.status(404).json({ message: "User not found." });
+    if (check.rows[0].role === "admin") {
+      return res.status(403).json({ message: "Cannot change role of an admin account." });
     }
-
-    await ensureTutorProfile(userId);
 
     const result = await pool.query(
-      `UPDATE tutor_profiles
-       SET bio = $1,
-           subjects = $2,
-           headline = $3,
-           phone = $4,
-           location = $5,
-           teaching_style = $6,
-           demo_video_url = $7,
-           hourly_rate = $8,
-           experience_years = $9,
-           status = 'draft',
-           reject_reason = NULL,
-           updated_at = NOW()
-       WHERE user_id = $10
-       RETURNING *`,
-      [
-        bio?.trim() || null,
-        subjects?.trim() || null,
-        headline?.trim() || null,
-        phone?.trim() || null,
-        location?.trim() || null,
-        teaching_style?.trim() || null,
-        demo_video_url?.trim() || null,
-        Number(hourly_rate) || 0,
-        Number(experience_years) || 0,
-        userId,
-      ]
+      `UPDATE users SET role = $1 WHERE id = $2
+       RETURNING id, full_name, email, role, is_banned, created_at`,
+      [role, id]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor profile not found." });
-    }
-
     return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Update tutor CV error:", error);
+  } catch (err) {
+    console.error("PATCH /api/admin/users/:id/role error:", err);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-app.patch("/api/tutor/profile/submit", verifyToken, async (req, res) => {
+// ══════════════════════════════════════════════════════════════════════════════
+//  QUIZ APIs
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ─── GET /api/quizzes ─────────────────────────────────────────────────────────
+app.get('/api/quizzes', verifyToken, async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const profile = await ensureTutorProfile(userId);
-
-    await pool.query(
-      `UPDATE tutor_credentials
-       SET status = 'approved',
-           reject_reason = NULL,
-           updated_at = NOW()
-       WHERE tutor_id = $1`,
-      [profile.id]
-    );
-
-    const result = await pool.query(
-      `UPDATE tutor_profiles
-       SET status = 'pending',
-           reject_reason = NULL,
-           updated_at = NOW()
-       WHERE id = $1
-         AND NULLIF(TRIM(COALESCE(bio, '')), '') IS NOT NULL
-         AND NULLIF(TRIM(COALESCE(subjects, '')), '') IS NOT NULL
-       RETURNING *`,
-      [profile.id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(400).json({ message: "Please complete your bio and subjects before submitting." });
-    }
-
-    return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Submit tutor profile error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
+    const result = await pool.query(`
+      SELECT 
+        q.id, q.title, q.subject, q.description, q.duration_minutes, q.total_questions, q.created_at,
+        (SELECT status FROM quiz_attempts qa WHERE qa.quiz_id = q.id AND qa.student_id = $1 ORDER BY submitted_at DESC NULLS LAST, created_at DESC LIMIT 1) as attempt_status,
+        (SELECT id FROM quiz_attempts qa WHERE qa.quiz_id = q.id AND qa.student_id = $1 ORDER BY submitted_at DESC NULLS LAST, created_at DESC LIMIT 1) as attempt_id,
+        (SELECT score FROM quiz_attempts qa WHERE qa.quiz_id = q.id AND qa.student_id = $1 ORDER BY submitted_at DESC NULLS LAST, created_at DESC LIMIT 1) as attempt_score
+      FROM quizzes q
+      ORDER BY q.created_at DESC
+    `, [req.user.userId]);
+    return res.json({ quizzes: result.rows });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-app.patch("/api/tutor/profile/avatar", verifyToken, async (req, res) => {
+// ─── GET /api/subjects ────────────────────────────────────────────────────────
+app.get('/api/subjects', verifyToken, async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { picture } = req.body || {};
-
-    if (!picture || !picture.trim()) {
-      return res.status(400).json({ message: "Picture URL is required." });
-    }
-
-    const result = await pool.query(
-      `UPDATE users SET picture = $1, updated_at = NOW()
-       WHERE id = $2
-       RETURNING id, full_name, email, role, picture`,
-      [picture.trim(), userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "User not found." });
-    }
-
-    return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Update avatar error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
+    const result = await pool.query(`SELECT DISTINCT subject FROM quizzes ORDER BY subject`);
+    return res.json({ subjects: result.rows.map(r => r.subject) });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// â”€â”€â”€ POST /api/tutor/credentials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// ThĂªm 1 credential má»›i (education/certificate/experience) â€” status = pending
-// proof_url báº¯t buá»™c vá»›i education vĂ  certificate
-app.post("/api/tutor/credentials", verifyToken, async (req, res) => {
+// ─── GET /api/quizzes/attempts/:attemptId ─────────────────────────────────────
+app.get('/api/quizzes/attempts/:attemptId', verifyToken, async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { type, title, description, proof_url } = req.body || {};
-
-    if (!type || !title) {
-      return res.status(400).json({ message: "type and title are required." });
-    }
-    if (!["education", "certificate", "experience"].includes(type)) {
-      return res.status(400).json({ message: "Invalid credential type." });
-    }
-    if (type !== "experience" && !proof_url) {
-      return res.status(400).json({ message: "proof_url (image/file) is required for education and certificate." });
-    }
-
-    // Láº¥y tutor_profile id
-    const profile = await ensureTutorProfile(userId);
-
-    const result = await pool.query(
-      `INSERT INTO tutor_credentials (tutor_id, type, title, description, proof_url, status)
-       VALUES ($1, $2, $3, $4, $5, 'approved')
-       RETURNING *`,
-      [profile.id, type, title.trim(), description?.trim() || null, proof_url?.trim() || null]
-    );
-
-    return res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error("Add credential error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
+    const { attemptId } = req.params;
+    const attempt = await pool.query(`SELECT * FROM quiz_attempts WHERE id=$1 AND student_id=$2`, [attemptId, req.user.userId]);
+    if (!attempt.rows.length) return res.status(404).json({ message: 'Not found.' });
+    const a = attempt.rows[0];
+    const quiz = await pool.query(`SELECT * FROM quizzes WHERE id=$1`, [a.quiz_id]);
+    const questions = await pool.query(`SELECT * FROM quiz_questions WHERE quiz_id=$1 ORDER BY question_order`, [a.quiz_id]);
+    return res.json({ attempt: a, quiz: quiz.rows[0], questions: questions.rows });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// â”€â”€â”€ DELETE /api/tutor/credentials/:id â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// XoĂ¡ 1 credential (chá»‰ Ä‘Æ°á»£c xoĂ¡ náº¿u chÆ°a approved)
-app.delete("/api/tutor/credentials/:id", verifyToken, async (req, res) => {
+// ─── GET /api/quizzes/:id/start ───────────────────────────────────────────────
+app.get('/api/quizzes/:id/start', verifyToken, async (req, res) => {
   try {
-    const userId = req.user.userId;
     const { id } = req.params;
-
-    // Kiá»ƒm tra ownership
-    const result = await pool.query(
-      `DELETE FROM tutor_credentials tc
-       USING tutor_profiles tp
-       WHERE tc.id = $1 AND tp.id = tc.tutor_id AND tp.user_id = $2
-       RETURNING tc.id`,
-      [id, userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Credential not found or not authorized." });
+    const studentId = req.user.userId;
+    const quiz = await pool.query(`SELECT * FROM quizzes WHERE id=$1`, [id]);
+    if (!quiz.rows.length) return res.status(404).json({ message: 'Quiz not found.' });
+    // Reuse in_progress attempt
+    let attempt = await pool.query(`SELECT * FROM quiz_attempts WHERE quiz_id=$1 AND student_id=$2 AND status='in_progress' LIMIT 1`, [id, studentId]);
+    if (!attempt.rows.length) {
+      attempt = await pool.query(`INSERT INTO quiz_attempts (quiz_id, student_id, status) VALUES ($1,$2,'in_progress') RETURNING *`, [id, studentId]);
     }
-
-    return res.json({ message: "Deleted successfully." });
-  } catch (error) {
-    console.error("Delete credential error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
+    const questions = await pool.query(`SELECT id, question_text, option_a, option_b, option_c, option_d, question_order FROM quiz_questions WHERE quiz_id=$1 ORDER BY question_order`, [id]);
+    return res.json({ quiz: quiz.rows[0], questions: questions.rows, attempt: attempt.rows[0] });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// â”€â”€â”€ PUT /api/tutor/availability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Cáº­p nháº­t toĂ n bá»™ lá»‹ch ráº£nh (replace all) â€” khĂ´ng cáº§n duyá»‡t
-app.put("/api/tutor/availability", verifyToken, async (req, res) => {
+// ─── POST /api/quizzes/:id/save-draft ─────────────────────────────────────────
+app.post('/api/quizzes/:id/save-draft', verifyToken, async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { availability } = req.body || {};
-    // availability = { Monday: ['09:00 AM', '10:30 AM'], Tuesday: [...], ... }
+    const { attemptId, answers, timeRemainingSeconds } = req.body;
+    await pool.query(`UPDATE quiz_attempts SET answers=$1, time_remaining_seconds=COALESCE($2, time_remaining_seconds) WHERE id=$3 AND student_id=$4`,
+      [JSON.stringify(answers), timeRemainingSeconds !== undefined ? timeRemainingSeconds : null, attemptId, req.user.userId]);
+    return res.json({ message: 'Draft saved.' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
 
-    if (!availability || typeof availability !== "object") {
-      return res.status(400).json({ message: "availability object is required." });
-    }
+// ─── POST /api/quizzes/:id/submit ─────────────────────────────────────────────
+app.post('/api/quizzes/:id/submit', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { attemptId, answers } = req.body;
+    const studentId = req.user.userId;
+    const attempt = await pool.query(`SELECT * FROM quiz_attempts WHERE id=$1 AND student_id=$2`, [attemptId, studentId]);
+    if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+    if (attempt.rows[0].status === 'submitted') return res.status(400).json({ message: 'Already submitted.' });
 
-    const profile = await ensureTutorProfile(userId);
-    const tutorId = profile.id;
+    const questions = await pool.query(`SELECT * FROM quiz_questions WHERE quiz_id=$1`, [id]);
+    let correct = 0;
+    let totalScore = 0;
+    const feedbackObj = {};
 
-    // XoĂ¡ táº¥t cáº£ slot cÅ© rá»“i insert láº¡i
-    await pool.query("DELETE FROM tutor_availability WHERE tutor_id = $1", [tutorId]);
-
-    const validDays = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-    const inserts = [];
-    for (const day of validDays) {
-      const slots = availability[day] || [];
-      for (const slot of slots) {
-        if (typeof slot === "string" && slot.trim()) {
-          inserts.push({ day, slot: slot.trim() });
+    for (let q of questions.rows) {
+      const studentAnswer = answers[q.id] || '';
+      if (q.question_type === 'essay') {
+        const aiResult = await gradeEssayAnswer(q.question_text, q.suggested_answer, studentAnswer);
+        feedbackObj[q.id] = { score: aiResult.score, feedback: aiResult.feedback };
+        totalScore += aiResult.score;
+      } else {
+        if (studentAnswer.toLowerCase() === (q.correct_answer || 'a').toLowerCase()) {
+          correct++;
+          totalScore += 100;
         }
       }
     }
 
-    if (inserts.length > 0) {
-      const values = inserts.map((_, i) => `($1, $${i * 2 + 2}, $${i * 2 + 3})`).join(", ");
-      const params = [tutorId, ...inserts.flatMap(r => [r.day, r.slot])];
-      await pool.query(
-        `INSERT INTO tutor_availability (tutor_id, day_of_week, time_slot) VALUES ${values}
-         ON CONFLICT DO NOTHING`,
-        params
-      );
-    }
-
-    return res.json({ message: "Availability updated.", slots: inserts.length });
-  } catch (error) {
-    console.error("Update availability error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// â”€â”€ ADMIN: duyá»‡t credentials + bio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-// â”€â”€â”€ GET /api/admin/credentials/pending â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Láº¥y táº¥t cáº£ credentials Ä‘ang chá» duyá»‡t
-app.get("/api/admin/credentials/pending", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT tc.*, u.full_name, u.email
-      FROM tutor_credentials tc
-      JOIN tutor_profiles tp ON tp.id = tc.tutor_id
-      JOIN users u ON u.id = tp.user_id
-      WHERE tc.status = 'pending'
-      ORDER BY tc.created_at ASC
-    `);
-    return res.json(result.rows);
-  } catch (error) {
-    console.error("Get pending credentials error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â”€â”€â”€ PATCH /api/admin/credentials/:id/approve â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.patch("/api/admin/credentials/:id/approve", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
+    const total = questions.rows.length;
+    const score = total > 0 ? Math.round(totalScore / total) : 0;
     const result = await pool.query(
-      `UPDATE tutor_credentials SET status = 'approved', reject_reason = NULL, updated_at = NOW()
-       WHERE id = $1 RETURNING *`,
-      [id]
+      `UPDATE quiz_attempts SET answers=$1, score=$2, total_correct=$3, tutor_feedback=$4, status='submitted', submitted_at=NOW() WHERE id=$5 RETURNING *`,
+      [JSON.stringify(answers), score, correct, JSON.stringify(feedbackObj), attemptId]
     );
-    if (result.rows.length === 0) return res.status(404).json({ message: "Not found." });
-    return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Approve credential error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
+    return res.json({ score, total_correct: correct, total_questions: total, attempt: result.rows[0], feedback: feedbackObj });
+  } catch (e) { console.error('Quiz submit:', e); res.status(500).json({ message: 'Server error.' }); }
 });
 
-// â”€â”€â”€ PATCH /api/admin/credentials/:id/reject â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.patch("/api/admin/credentials/:id/reject", verifyToken, requireAdmin, async (req, res) => {
+// ══════════════════════════════════════════════════════════════════════════════
+//  PRACTICE / AI APIs
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ─── POST /api/practice/generate ──────────────────────────────────────────────
+app.post('/api/practice/generate', verifyToken, async (req, res) => {
   try {
-    const { id } = req.params;
-    const { reason } = req.body || {};
-    if (!reason?.trim()) return res.status(400).json({ message: "Reason is required." });
-    const result = await pool.query(
-      `UPDATE tutor_credentials SET status = 'rejected', reject_reason = $1, updated_at = NOW()
-       WHERE id = $2 RETURNING *`,
-      [reason.trim(), id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ message: "Not found." });
-    return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Reject credential error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â”€â”€â”€ GET /api/admin/bio/pending â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Láº¥y táº¥t cáº£ bio Ä‘ang chá» duyá»‡t
-app.get("/api/admin/bio/pending", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT tp.id, tp.bio, tp.bio_pending, tp.bio_status, u.full_name, u.email, u.picture
-      FROM tutor_profiles tp
-      JOIN users u ON u.id = tp.user_id
-      WHERE tp.bio_status = 'pending'
-      ORDER BY tp.updated_at ASC
-    `);
-    return res.json(result.rows);
-  } catch (error) {
-    console.error("Get pending bio error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â”€â”€â”€ PATCH /api/admin/bio/:id/approve â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.patch("/api/admin/bio/:id/approve", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const result = await pool.query(
-      `UPDATE tutor_profiles
-       SET bio = bio_pending, bio_pending = NULL, bio_status = 'approved', updated_at = NOW()
-       WHERE id = $1 RETURNING id, bio, bio_status`,
-      [id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ message: "Not found." });
-    return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Approve bio error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â”€â”€â”€ PATCH /api/admin/bio/:id/reject â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.patch("/api/admin/bio/:id/reject", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const result = await pool.query(
-      `UPDATE tutor_profiles
-       SET bio_pending = NULL, bio_status = 'rejected', updated_at = NOW()
-       WHERE id = $1 RETURNING id, bio, bio_status`,
-      [id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ message: "Not found." });
-    return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Reject bio error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-app.get("/api/tutors/:id/review-eligibility", verifyToken, async (req, res) => {
-  try {
-    await ensureTutorReviewSchema();
-    const { id } = req.params;
-    const studentId = req.user.userId;
-
-    const tutorResult = await pool.query(
-      `SELECT u.id AS user_id
-       FROM tutor_profiles tp
-       JOIN users u ON u.id = tp.user_id
-       WHERE (tp.id::text = $1 OR u.id::text = $1)
-         AND u.role = 'tutor'
-         AND tp.status = 'approved'
-       LIMIT 1`,
-      [id]
-    );
-
-    if (tutorResult.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor not found." });
+    const userId = req.user.userId;
+    const { topic, count = 10, difficulty = 'medium', timeLimitMins = null, questionType = 'multiple_choice' } = req.body;
+    if (!topic?.trim()) return res.status(400).json({ message: 'Topic is required.' });
+    const diff = ['easy','medium','hard'].includes(difficulty) ? difficulty : 'medium';
+    const questionCount = Math.min(Math.max(Number(count)||10,1),30);
+    const questions = await generateQuizQuestions(topic.trim(), questionCount, diff, questionType);
+    // Detect quota notice
+    if (questions.length > 0 && questions[0].question?.startsWith('⚠️')) {
+      return res.status(503).json({ message: 'AI_QUOTA_EXCEEDED', detail: 'Gemini và Groq đều đạt giới hạn. Thử lại sau hoặc dùng Đề thi có sẵn.' });
     }
-
-    const tutorId = tutorResult.rows[0].user_id;
+    const timeRemainingSeconds = timeLimitMins ? timeLimitMins * 60 : null;
     const result = await pool.query(
-      `SELECT
-         b.id,
-         to_char(b.lesson_date, 'YYYY-MM-DD') AS date,
-         b.time_slot AS "timeSlot",
-         b.subject
-       FROM bookings b
-       JOIN attendance a ON a.booking_id = b.id
-       LEFT JOIN tutor_reviews r ON r.booking_id = b.id
-       WHERE b.tutor_id = $1
-         AND b.student_id = $2
-         AND b.booking_type = 'trial'
-         AND b.status = 'Approved'
-         AND a.status = 'present'
-         AND r.id IS NULL
-       ORDER BY b.lesson_date DESC, b.time_slot DESC
-       LIMIT 1`,
-      [tutorId, studentId]
+      `INSERT INTO practice_sessions (student_id, topic, difficulty, questions, total_questions, time_limit_mins, time_remaining_seconds) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, topic, difficulty, total_questions, status, created_at, time_limit_mins, time_remaining_seconds`,
+      [userId, topic.trim(), diff, JSON.stringify(questions), questions.length, timeLimitMins, timeRemainingSeconds]
     );
-
-    return res.json({
-      canReview: result.rows.length > 0,
-      booking: result.rows[0] || null,
-    });
-  } catch (error) {
-    console.error("Review eligibility error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
+    const session = result.rows[0];
+    const safeQ = questions.map((q,i) => ({ index:i, question:q.question, question_type:q.question_type, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
+    return res.status(201).json({ session, questions: safeQ });
+  } catch (e) { console.error('Practice generate:', e); res.status(500).json({ message: e.message||'Server error.' }); }
 });
 
-app.post("/api/tutors/:id/reviews", verifyToken, async (req, res) => {
+// ─── GET /api/practice/history ────────────────────────────────────────────────
+app.get('/api/practice/history', verifyToken, async (req, res) => {
   try {
-    await ensureTutorReviewSchema();
-    const { id } = req.params;
-    const studentId = req.user.userId;
-    const { bookingId, rating, comment } = req.body || {};
-    const cleanRating = Number(rating);
-    const cleanComment = String(comment || "").trim();
-
-    if (!bookingId || !Number.isInteger(cleanRating) || cleanRating < 1 || cleanRating > 5 || !cleanComment) {
-      return res.status(400).json({ message: "Booking, rating from 1 to 5, and comment are required." });
-    }
-
-    const tutorResult = await pool.query(
-      `SELECT u.id AS user_id
-       FROM tutor_profiles tp
-       JOIN users u ON u.id = tp.user_id
-       WHERE (tp.id::text = $1 OR u.id::text = $1)
-         AND u.role = 'tutor'
-         AND tp.status = 'approved'
-       LIMIT 1`,
-      [id]
-    );
-
-    if (tutorResult.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor not found." });
-    }
-
-    const tutorId = tutorResult.rows[0].user_id;
-    const eligibleResult = await pool.query(
-      `SELECT b.id
-       FROM bookings b
-       JOIN attendance a ON a.booking_id = b.id
-       WHERE b.id = $1
-         AND b.tutor_id = $2
-         AND b.student_id = $3
-         AND b.booking_type = 'trial'
-         AND b.status = 'Approved'
-         AND a.status = 'present'
-       LIMIT 1`,
-      [bookingId, tutorId, studentId]
-    );
-
-    if (eligibleResult.rows.length === 0) {
-      return res.status(403).json({ message: "Only students who attended a trial class can review this tutor." });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO tutor_reviews (tutor_id, student_id, booking_id, rating, comment)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, rating, comment, to_char(created_at, 'YYYY-MM-DD') AS date`,
-      [tutorId, studentId, bookingId, cleanRating, cleanComment]
-    );
-
-    return res.status(201).json({
-      ...result.rows[0],
-      studentName: req.user.name || req.user.email?.split("@")[0] || "Student",
-    });
-  } catch (error) {
-    if (error.code === "23505") {
-      return res.status(409).json({ message: "This trial class has already been reviewed." });
-    }
-    console.error("Create tutor review error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// â”€â”€ CHAT APIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-// â”€â”€â”€ GET /api/conversations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Láº¥y danh sĂ¡ch conversations cá»§a user hiá»‡n táº¡i (kĂ¨m tin nháº¯n cuá»‘i + unread count)
-// BOOKINGS APIs
-// COURSE APIs
-app.get("/api/tutor/courses", verifyToken, async (req, res) => {
-  try {
-    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
-    await ensureCourseSchema();
-    const courses = await pool.query(
-      `SELECT c.*,
-              COUNT(DISTINCT l.id)::int AS "lessonCount",
-              COUNT(DISTINCT e.id)::int AS "enrollmentCount",
-              COALESCE(COUNT(DISTINCT e.id) FILTER (WHERE e.status = 'active') * c.price, 0)::int AS revenue
-       FROM courses c
-       LEFT JOIN course_lessons l ON l.course_id = c.id
-       LEFT JOIN course_enrollments e ON e.course_id = c.id
-       WHERE c.tutor_id = $1
-       GROUP BY c.id
-       ORDER BY c.updated_at DESC, c.created_at DESC`,
+    const r = await pool.query(
+      `SELECT id, topic, difficulty, score, total_questions, total_correct, status, created_at, submitted_at, time_limit_mins, time_remaining_seconds FROM practice_sessions WHERE student_id=$1 ORDER BY created_at DESC LIMIT 50`,
       [req.user.userId]
     );
-    const ids = courses.rows.map((course) => course.id);
-    const lessons = ids.length
-      ? await pool.query(
-          `SELECT *
-           FROM course_lessons
-           WHERE course_id = ANY($1::uuid[])
-           ORDER BY course_id, position ASC, created_at ASC`,
-          [ids]
-        )
-      : { rows: [] };
-    const lessonMap = lessons.rows.reduce((map, lesson) => {
-      if (!map[lesson.course_id]) map[lesson.course_id] = [];
-      map[lesson.course_id].push({
-        id: lesson.id,
-        title: lesson.title,
-        description: lesson.description || "",
-        videoUrl: lesson.video_url || "",
-        materialUrl: lesson.material_url || "",
-        durationLabel: lesson.duration_label || "",
-        isPreview: lesson.is_preview,
-        position: lesson.position,
-      });
-      return map;
-    }, {});
+    return res.json({ sessions: r.rows });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
 
-    return res.json(courses.rows.map((course) => ({
-      id: course.id,
-      title: course.title,
-      description: course.description || "",
-      subject: course.subject || "",
-      level: course.level || "",
-      price: course.price || 0,
-      thumbnailUrl: course.thumbnail_url || "",
-      learningOutcomes: Array.isArray(course.learning_outcomes) ? course.learning_outcomes : [],
-      requirements: Array.isArray(course.requirements) ? course.requirements : [],
-      status: course.status,
-      lessonCount: course.lessonCount,
-      enrollmentCount: course.enrollmentCount,
-      revenue: course.revenue || 0,
-      lessons: lessonMap[course.id] || [],
-      createdAt: course.created_at,
-      updatedAt: course.updated_at,
-    })));
+// ─── GET /api/practice/:sessionId/questions ───────────────────────────────────
+app.get('/api/practice/:sessionId/questions', verifyToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
+    const session = r.rows[0];
+    const questions = (session.questions || []).map((q,i) => ({ index:i, question:q.question, question_type:q.question_type, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
+    return res.json({ session: { id:session.id, topic:session.topic, difficulty:session.difficulty, total_questions:session.total_questions, status:session.status, answers:session.answers, time_limit_mins:session.time_limit_mins, time_remaining_seconds:session.time_remaining_seconds }, questions });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ─── POST /api/practice/chat ──────────────────────────────────────────────────
+app.post('/api/practice/chat', verifyToken, async (req, res) => {
+  try {
+    const { messages } = req.body;
+    if (!messages?.length) return res.status(400).json({ message: 'Messages required.' });
+    const result = await chatWithAI(messages);
+    return res.json(result);
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ─── POST /api/practice/:sessionId/save-progress ────────────────────────────────
+app.post('/api/practice/:sessionId/save-progress', verifyToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { answers, timeRemaining } = req.body;
+    const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
+    if (r.rows[0].status === 'submitted') return res.status(400).json({ message: 'Session already submitted.' });
+    
+    await pool.query(
+      `UPDATE practice_sessions SET answers=$1, time_remaining_seconds=$2 WHERE id=$3`,
+      [JSON.stringify(answers || {}), timeRemaining !== undefined ? timeRemaining : r.rows[0].time_remaining_seconds, sessionId]
+    );
+    return res.json({ message: 'Progress saved successfully.' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ─── POST /api/practice/:sessionId/submit ─────────────────────────────────────
+app.post('/api/practice/:sessionId/submit', verifyToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { answers } = req.body;
+    const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
+    if (r.rows[0].status === 'submitted') return res.status(400).json({ message: 'Session already submitted.' });
+    const session = r.rows[0];
+    const questions = session.questions || [];
+    let correct = 0;
+    let totalScore = 0;
+
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      const studentAnswer = answers[i] || '';
+      if (q.question_type === 'essay') {
+        const aiResult = await gradeEssayAnswer(q.question, q.suggested_answer, studentAnswer);
+        q.ai_score = aiResult.score;
+        q.ai_feedback = aiResult.feedback;
+        totalScore += aiResult.score;
+      } else {
+        if (studentAnswer.toUpperCase() === (q.correctAnswer||'A').toUpperCase()) {
+          correct++;
+          totalScore += 100;
+        }
+      }
+    }
+
+    const total = questions.length;
+    const score = total > 0 ? Math.round(totalScore / total) : 0;
+    const updated = await pool.query(
+      `UPDATE practice_sessions SET answers=$1, questions=$2, score=$3, total_correct=$4, status='submitted', submitted_at=NOW() WHERE id=$5 RETURNING *`,
+      [JSON.stringify(answers), JSON.stringify(questions), score, correct, sessionId]
+    );
+    return res.json({ score, total_correct:correct, total_questions:total, session: updated.rows[0] });
+  } catch (e) { console.error('Practice submit:', e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ─── GET /api/practice/:sessionId/result ──────────────────────────────────────
+app.get('/api/practice/:sessionId/result', verifyToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
+    return res.json({ session: r.rows[0] });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ─── DELETE /api/practice/:sessionId ──────────────────────────────────────────
+app.delete('/api/practice/:sessionId', verifyToken, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM practice_sessions WHERE id=$1 AND student_id=$2`, [req.params.sessionId, req.user.userId]);
+    return res.json({ message: 'Deleted.' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EXAM PAPERS APIs
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ─── Shuffle helpers ──────────────────────────────────────────────────────────
+function shuffleArray(arr) { const a=[...arr]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a; }
+function shuffleQuestionOptions(q) {
+  const orig={A:q.option_a,B:q.option_b,C:q.option_c,D:q.option_d};
+  const letters=shuffleArray(['A','B','C','D']);
+  const newOpts={option_a:orig[letters[0]],option_b:orig[letters[1]],option_c:orig[letters[2]],option_d:orig[letters[3]]};
+  const newCorrect=['A','B','C','D'][letters.indexOf(q.correct_answer)];
+  return {newOptions:newOpts, newCorrect, optionMap:letters};
+}
+
+app.get('/api/exam-papers', verifyToken, async (req, res) => {
+  try {
+    const { grade, subject, year } = req.query;
+    const studentId = req.user.userId;
+    let q = `SELECT ep.*, epa.id AS attempt_id, epa.status AS attempt_status, epa.score AS attempt_score FROM exam_papers ep LEFT JOIN exam_paper_attempts epa ON ep.id=epa.exam_paper_id AND epa.student_id=$1 WHERE ep.is_published=true`;
+    const params = [studentId]; let idx=2;
+    if (grade) { q+=` AND ep.grade=$${idx++}`; params.push(parseInt(grade)); }
+    if (subject) { q+=` AND ep.subject ILIKE $${idx++}`; params.push(`%${subject}%`); }
+    if (year) { q+=` AND ep.year=$${idx++}`; params.push(parseInt(year)); }
+    q += ' ORDER BY ep.created_at DESC';
+    const r = await pool.query(q, params);
+    return res.json({ papers: r.rows });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+app.get('/api/exam-papers/attempts/:attemptId', verifyToken, async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    const attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE id=$1 AND student_id=$2`, [attemptId, req.user.userId]);
+    if (!attempt.rows.length) return res.status(404).json({ message: 'Not found.' });
+    const a = attempt.rows[0];
+    const paper = await pool.query(`SELECT * FROM exam_papers WHERE id=$1`, [a.exam_paper_id]);
+    const questions = await pool.query(`SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1 ORDER BY question_order`, [a.exam_paper_id]);
+    return res.json({ attempt: a, paper: paper.rows[0], questions: questions.rows, shuffled_data: a.shuffled_data });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+app.get('/api/exam-papers/:paperId/start', verifyToken, async (req, res) => {
+  try {
+    const { paperId } = req.params;
+    const studentId = req.user.userId;
+    const paper = await pool.query(`SELECT * FROM exam_papers WHERE id=$1 AND is_published=true`, [paperId]);
+    if (!paper.rows.length) return res.status(404).json({ message: 'Exam not found.' });
+    let attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE exam_paper_id=$1 AND student_id=$2 AND status='in_progress' LIMIT 1`, [paperId, studentId]);
+    const questions = await pool.query(`SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1 ORDER BY question_order`, [paperId]);
+    const shuffledQs = shuffleArray(questions.rows);
+    const shuffledData = shuffledQs.map(q => { const {newOptions,newCorrect,optionMap}=shuffleQuestionOptions(q); return {id:q.id,...newOptions,question_type:q.question_type,question_text:q.question_text,newCorrect,optionMap}; });
+    if (!attempt.rows.length) {
+      attempt = await pool.query(`INSERT INTO exam_paper_attempts (exam_paper_id,student_id,shuffled_data) VALUES ($1,$2,$3) RETURNING *`, [paperId, studentId, JSON.stringify(shuffledData)]);
+    }
+    const safeQ = shuffledData.map(q => ({ id:q.id, question_type:q.question_type, question_text:q.question_text, option_a:q.option_a, option_b:q.option_b, option_c:q.option_c, option_d:q.option_d }));
+    return res.json({ paper: paper.rows[0], questions: safeQ, attempt: attempt.rows[0] });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ─── GET /api/exam-papers/attempts/:attemptId ──────────────────────────────────
+app.get('/api/exam-papers/attempts/:attemptId', verifyToken, async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    const attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE id=$1 AND student_id=$2`, [attemptId, req.user.userId]);
+    if (!attempt.rows.length) return res.status(404).json({ message: 'Not found.' });
+    const a = attempt.rows[0];
+    const paper = await pool.query(`SELECT * FROM exam_papers WHERE id=$1`, [a.exam_paper_id]);
+    
+    // Instead of querying exam_paper_questions, we return the shuffledData stored in the attempt
+    // which has the exact options the student saw, plus the mapped correct answer.
+    const shuffledData = a.shuffled_data || [];
+    const questions = shuffledData.map(q => ({
+      id: q.id,
+      question_text: q.question_text,
+      option_a: q.option_a,
+      option_b: q.option_b,
+      option_c: q.option_c,
+      option_d: q.option_d,
+      correct_answer: q.newCorrect, 
+      explanation: q.explanation // If explanation is not in shuffledData, we might need to join, but usually we don't strictly need explanation if not fetched. Wait! I should probably just return shuffledData.
+    }));
+    
+    return res.json({ attempt: a, paper: paper.rows[0], questions });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+// ─── POST /api/exam-papers/:paperId/save-draft ──────────────────────────────────
+app.post('/api/exam-papers/:paperId/save-draft', verifyToken, async (req, res) => {
+  try {
+    const { attemptId, answers, timeRemainingSeconds } = req.body;
+    await pool.query(`UPDATE exam_paper_attempts SET answers=$1, time_remaining_seconds=COALESCE($2, time_remaining_seconds) WHERE id=$3 AND student_id=$4`,
+      [JSON.stringify(answers), timeRemainingSeconds !== undefined ? timeRemainingSeconds : null, attemptId, req.user.userId]);
+    return res.json({ message: 'Draft saved.' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+app.post('/api/exam-papers/:paperId/submit', verifyToken, async (req, res) => {
+  try {
+    const { attemptId, answers } = req.body;
+    const studentId = req.user.userId;
+    const attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE id=$1 AND student_id=$2`, [attemptId, studentId]);
+    if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+    if (attempt.rows[0].status === 'submitted') return res.status(400).json({ message: 'Already submitted.' });
+
+    const shuffledData = attempt.rows[0].shuffled_data || [];
+    let correct = 0;
+    let totalScore = 0;
+    const feedbackObj = {};
+
+    const { paperId } = req.params;
+    const questionsRes = await pool.query(`SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1`, [paperId]);
+    const questionsMap = {};
+    questionsRes.rows.forEach(q => { questionsMap[q.id] = q; });
+
+    for (let sq of shuffledData) {
+      const q = questionsMap[sq.id];
+      if (!q) continue;
+      const studentAnswer = answers[q.id] || '';
+
+      if (q.question_type === 'essay') {
+        const aiResult = await gradeEssayAnswer(q.question_text, q.suggested_answer, studentAnswer);
+        feedbackObj[q.id] = { score: aiResult.score, feedback: aiResult.feedback };
+        totalScore += aiResult.score;
+      } else {
+        if (studentAnswer.toUpperCase() === (sq.newCorrect || 'A').toUpperCase()) {
+          correct++;
+          totalScore += 100;
+        }
+      }
+    }
+
+    const total = shuffledData.length;
+    const score = total > 0 ? Math.round(totalScore / total) : 0;
+    const updated = await pool.query(
+      `UPDATE exam_paper_attempts SET answers=$1,score=$2,total_correct=$3,tutor_feedback=$4,status='submitted',submitted_at=NOW() WHERE id=$5 RETURNING *`,
+      [JSON.stringify(answers), score, correct, JSON.stringify(feedbackObj), attemptId]
+    );
+    return res.json({ score, total_correct:correct, total_questions:total, attempt_id:attemptId, submitted_at:updated.rows[0].submitted_at, feedback: feedbackObj });
+  } catch (e) { console.error('Exam submit error:', e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PARENT DASHBOARD APIs
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/parent/overview
+// Returns: stats, recent quiz attempts, available tutors, practice sessions
+app.get("/api/parent/overview", verifyToken, async (req, res) => {
+  try {
+    // Total students in system
+    const studentsRes = await pool.query(
+      `SELECT COUNT(*) as count FROM users WHERE role='student'`
+    );
+    // Total quiz attempts (submitted)
+    const attemptsRes = await pool.query(
+      `SELECT COUNT(*) as count FROM quiz_attempts WHERE status='submitted'`
+    );
+    // Total practice sessions (submitted)
+    const practiceRes = await pool.query(
+      `SELECT COUNT(*) as count FROM practice_sessions WHERE status='submitted'`
+    );
+    // Approved tutors
+    const tutorsRes = await pool.query(
+      `SELECT COUNT(*) as count FROM tutor_profiles WHERE status='approved'`
+    );
+
+    // Recent quiz attempts with student & quiz info
+    const recentAttemptsRes = await pool.query(`
+      SELECT
+        qa.id,
+        qa.score,
+        qa.status,
+        qa.submitted_at,
+        u.full_name  AS student_name,
+        u.picture    AS student_picture,
+        q.title      AS quiz_title,
+        q.subject    AS quiz_subject,
+        q.total_questions
+      FROM quiz_attempts qa
+      JOIN users u ON qa.student_id = u.id
+      JOIN quizzes q ON qa.quiz_id = q.id
+      WHERE qa.status = 'submitted'
+      ORDER BY qa.submitted_at DESC
+      LIMIT 10
+    `);
+
+    // Recent practice sessions
+    const recentPracticeRes = await pool.query(`
+      SELECT
+        ps.id,
+        ps.topic,
+        ps.difficulty,
+        ps.score,
+        ps.total_questions,
+        ps.total_correct,
+        ps.status,
+        ps.submitted_at,
+        u.full_name AS student_name,
+        u.picture   AS student_picture
+      FROM practice_sessions ps
+      JOIN users u ON ps.student_id = u.id
+      WHERE ps.status = 'submitted'
+      ORDER BY ps.submitted_at DESC
+      LIMIT 10
+    `);
+
+    // Available tutors list
+    const availableTutorsRes = await pool.query(`
+      SELECT
+        u.id,
+        u.full_name,
+        u.picture,
+        u.email,
+        tp.subjects,
+        tp.hourly_rate,
+        tp.headline,
+        tp.bio,
+        tp.experience_years,
+        tp.location
+      FROM tutor_profiles tp
+      JOIN users u ON tp.user_id = u.id
+      WHERE tp.status = 'approved'
+      ORDER BY tp.created_at DESC
+      LIMIT 20
+    `);
+
+    // Exam paper attempts
+    const examAttemptsRes = await pool.query(`
+      SELECT
+        epa.id,
+        epa.score,
+        epa.status,
+        epa.submitted_at,
+        u.full_name  AS student_name,
+        u.picture    AS student_picture,
+        ep.title     AS exam_title,
+        ep.subject   AS exam_subject,
+        ep.grade,
+        ep.year,
+        ep.total_questions
+      FROM exam_paper_attempts epa
+      JOIN users u ON epa.student_id = u.id
+      JOIN exam_papers ep ON epa.exam_paper_id = ep.id
+      WHERE epa.status = 'submitted'
+      ORDER BY epa.submitted_at DESC
+      LIMIT 10
+    `);
+
+    return res.json({
+      stats: {
+        total_students: parseInt(studentsRes.rows[0].count),
+        total_quiz_attempts: parseInt(attemptsRes.rows[0].count),
+        total_practice_sessions: parseInt(practiceRes.rows[0].count),
+        total_tutors: parseInt(tutorsRes.rows[0].count),
+      },
+      recent_quiz_attempts: recentAttemptsRes.rows,
+      recent_practice_sessions: recentPracticeRes.rows,
+      available_tutors: availableTutorsRes.rows,
+      recent_exam_attempts: examAttemptsRes.rows,
+    });
   } catch (error) {
-    console.error("Get tutor courses error:", error);
+    console.error("Parent overview error:", error);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-async function saveCourseLessons(client, courseId, lessons = []) {
-  await client.query("DELETE FROM course_lessons WHERE course_id = $1", [courseId]);
-  const cleanLessons = Array.isArray(lessons)
-    ? lessons
-        .map((lesson, index) => ({
-          title: String(lesson.title || "").trim(),
-          description: String(lesson.description || "").trim(),
-          videoUrl: String(lesson.videoUrl || lesson.video_url || "").trim(),
-          materialUrl: String(lesson.materialUrl || lesson.material_url || "").trim(),
-          durationLabel: String(lesson.durationLabel || lesson.duration_label || "").trim(),
-          isPreview: Boolean(lesson.isPreview || lesson.is_preview),
-          position: Number(lesson.position || index + 1),
-        }))
-        .filter((lesson) => lesson.title)
-    : [];
-
-  for (const lesson of cleanLessons) {
-    await client.query(
-      `INSERT INTO course_lessons
-         (course_id, title, description, video_url, material_url, duration_label, is_preview, position)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [courseId, lesson.title, lesson.description || null, lesson.videoUrl || null, lesson.materialUrl || null, lesson.durationLabel || null, lesson.isPreview, lesson.position]
-    );
+// GET /api/parent/students
+// Returns list of all students with their quiz/practice stats
+app.get("/api/parent/students", verifyToken, async (req, res) => {
+  try {
+    const studentsRes = await pool.query(`
+      SELECT
+        u.id,
+        u.full_name,
+        u.email,
+        u.picture,
+        u.created_at,
+        (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS quiz_attempts_count,
+        (SELECT COUNT(*) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS practice_count,
+        (SELECT ROUND(AVG(qa.score),1) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS avg_quiz_score,
+        (SELECT ROUND(AVG(ps.score),1) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS avg_practice_score,
+        (SELECT qa.submitted_at FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted' ORDER BY qa.submitted_at DESC LIMIT 1) AS last_activity
+      FROM users u
+      WHERE u.role = 'student'
+      ORDER BY last_activity DESC NULLS LAST
+    `);
+    return res.json({ students: studentsRes.rows });
+  } catch (error) {
+    console.error("Parent students error:", error);
+    return res.status(500).json({ message: "Server error." });
   }
+});
+
+// GET /api/parent/tutors
+// Returns all approved tutors with detailed profile
+app.get("/api/parent/tutors", verifyToken, async (req, res) => {
+  try {
+    const res2 = await pool.query(`
+      SELECT
+        u.id,
+        u.full_name,
+        u.email,
+        u.picture,
+        tp.subjects,
+        tp.hourly_rate,
+        tp.headline,
+        tp.bio,
+        tp.experience_years,
+        tp.location,
+        tp.teaching_style,
+        tp.status,
+        tp.created_at
+      FROM tutor_profiles tp
+      JOIN users u ON tp.user_id = u.id
+      WHERE tp.status = 'approved'
+      ORDER BY tp.created_at DESC
+    `);
+    return res.json({ tutors: res2.rows });
+  } catch (error) {
+    console.error("Parent tutors error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// GET /api/parent/activity
+// Returns all quiz + practice + exam activity across all students
+app.get("/api/parent/activity", verifyToken, async (req, res) => {
+  try {
+    const quizRes = await pool.query(`
+      SELECT
+        'quiz' AS type,
+        qa.id,
+        qa.score,
+        qa.submitted_at AS timestamp,
+        u.full_name  AS student_name,
+        u.picture    AS student_picture,
+        q.title      AS title,
+        q.subject    AS subject,
+        q.total_questions
+      FROM quiz_attempts qa
+      JOIN users u ON qa.student_id=u.id
+      JOIN quizzes q ON qa.quiz_id=q.id
+      WHERE qa.status='submitted'
+      ORDER BY qa.submitted_at DESC
+      LIMIT 50
+    `);
+
+    const practiceRes = await pool.query(`
+      SELECT
+        'practice' AS type,
+        ps.id,
+        ps.score,
+        ps.submitted_at AS timestamp,
+        u.full_name  AS student_name,
+        u.picture    AS student_picture,
+        ps.topic     AS title,
+        ps.difficulty AS subject,
+        ps.total_questions
+      FROM practice_sessions ps
+      JOIN users u ON ps.student_id=u.id
+      WHERE ps.status='submitted'
+      ORDER BY ps.submitted_at DESC
+      LIMIT 50
+    `);
+
+    const examRes = await pool.query(`
+      SELECT
+        'exam' AS type,
+        epa.id,
+        epa.score,
+        epa.submitted_at AS timestamp,
+        u.full_name  AS student_name,
+        u.picture    AS student_picture,
+        ep.title     AS title,
+        ep.subject   AS subject,
+        ep.total_questions
+      FROM exam_paper_attempts epa
+      JOIN users u ON epa.student_id=u.id
+      JOIN exam_papers ep ON epa.exam_paper_id=ep.id
+      WHERE epa.status='submitted'
+      ORDER BY epa.submitted_at DESC
+      LIMIT 50
+    `);
+
+    // Merge and sort by timestamp
+    const all = [
+      ...quizRes.rows,
+      ...practiceRes.rows,
+      ...examRes.rows,
+    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    return res.json({ activities: all.slice(0, 50) });
+  } catch (error) {
+    console.error("Parent activity error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PARENT-STUDENT LINKING APIs
+// ══════════════════════════════════════════════════════════════════════════════
+
+function generateLinkCode() {
+  const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code='';
+  for(let i=0;i<8;i++) code+=chars[Math.floor(Math.random()*chars.length)];
+  return code;
 }
 
-async function upsertTutorCourse(req, res, courseId = null) {
-  if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
-  await ensureCourseSchema();
-  const { title, description, subject, level, price, thumbnailUrl, status, lessons, learningOutcomes, requirements } = req.body || {};
-  const cleanTitle = String(title || "").trim();
-  const cleanStatus = ["draft", "pending_review", "published", "rejected", "archived"].includes(status) ? status : "draft";
-  const cleanLessons = Array.isArray(lessons) ? lessons.filter((lesson) => String(lesson.title || "").trim()) : [];
-  const cleanOutcomes = Array.isArray(learningOutcomes) ? learningOutcomes.map((item) => String(item || "").trim()).filter(Boolean) : [];
-  const cleanRequirements = Array.isArray(requirements) ? requirements.map((item) => String(item || "").trim()).filter(Boolean) : [];
-  if (!cleanTitle) return res.status(400).json({ message: "Course title is required." });
-  if (cleanStatus === "published" && cleanLessons.length === 0) {
-    return res.status(400).json({ message: "Add at least one lesson before publishing." });
-  }
+// Student: get permanent link code
+app.get('/api/student/link-code', verifyToken, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    const existing = await pool.query('SELECT code, created_at FROM student_link_codes WHERE student_id=$1', [studentId]);
+    if (existing.rows.length) return res.json(existing.rows[0]);
+    let code, tries=0;
+    do { code=generateLinkCode(); tries++; } while (tries<10 && (await pool.query('SELECT id FROM student_link_codes WHERE code=$1',[code])).rows.length>0);
+    const r = await pool.query('INSERT INTO student_link_codes (student_id,code) VALUES ($1,$2) RETURNING code,created_at', [studentId,code]);
+    return res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
 
-  if (courseId) {
-    const owner = await pool.query("SELECT id FROM courses WHERE id = $1 AND tutor_id = $2", [courseId, req.user.userId]);
-    if (owner.rows.length === 0) return res.status(404).json({ message: "Course not found." });
-  }
+// Student: view parents monitoring them
+app.get('/api/student/parents', verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT pc.id,pc.linked_at,pc.nickname,u.full_name AS parent_name,u.email AS parent_email,u.picture AS parent_picture
+       FROM parent_children pc JOIN users u ON pc.parent_id=u.id WHERE pc.student_id=$1 ORDER BY pc.linked_at DESC`,
+      [req.user.userId]
+    );
+    return res.json({ parents: r.rows });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
 
+// Parent: list linked children + stats
+app.get('/api/parent/children', verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT pc.id AS link_id,pc.linked_at,pc.nickname,u.id AS student_id,u.full_name AS student_name,u.email AS student_email,u.picture AS student_picture,
+       (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS quiz_count,
+       (SELECT COUNT(*) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS practice_count,
+       (SELECT COUNT(*) FROM exam_paper_attempts epa WHERE epa.student_id=u.id AND epa.status='submitted') AS exam_count,
+       (SELECT ROUND(AVG(qa.score),1) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS avg_quiz_score,
+       (SELECT ROUND(AVG(ps.score),1) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS avg_practice_score,
+       (SELECT qa.submitted_at FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted' ORDER BY qa.submitted_at DESC LIMIT 1) AS last_quiz_at
+       FROM parent_children pc JOIN users u ON pc.student_id=u.id WHERE pc.parent_id=$1 ORDER BY pc.linked_at DESC`,
+      [req.user.userId]
+    );
+    return res.json({ children: r.rows });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// Parent: link via code
+app.post('/api/parent/link-child', verifyToken, async (req, res) => {
+  try {
+    const parentId = req.user.userId;
+    const { code, nickname } = req.body;
+    if (!code || code.trim().length!==8) return res.status(400).json({ message: 'Mã liên kết phải đúng 8 ký tự.' });
+    const codeRes = await pool.query('SELECT student_id FROM student_link_codes WHERE code=$1', [code.trim().toUpperCase()]);
+    if (!codeRes.rows.length) return res.status(404).json({ message: 'Mã liên kết không hợp lệ.' });
+    const studentId = codeRes.rows[0].student_id;
+    if (studentId===parentId) return res.status(400).json({ message: 'Bạn không thể liên kết với chính mình.' });
+    const dup = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [parentId,studentId]);
+    if (dup.rows.length) return res.status(409).json({ message: 'Học sinh này đã được liên kết rồi.' });
+    await pool.query('INSERT INTO parent_children (parent_id,student_id,nickname) VALUES ($1,$2,$3)', [parentId,studentId,nickname?.trim()||null]);
+    const student = await pool.query('SELECT id,full_name,email,picture FROM users WHERE id=$1', [studentId]);
+    return res.status(201).json({ message: 'Liên kết thành công!', student: student.rows[0] });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// Parent: create new student account + auto-link
+app.post('/api/parent/create-child', verifyToken, async (req, res) => {
+  try {
+    const parentId = req.user.userId;
+    const { full_name, email, password, nickname } = req.body;
+    if (!full_name?.trim()||!email?.trim()||!password) return res.status(400).json({ message: 'Vui lòng điền đầy đủ thông tin.' });
+    if (password.length<6) return res.status(400).json({ message: 'Mật khẩu phải ít nhất 6 ký tự.' });
+    const exists = await pool.query('SELECT id FROM users WHERE email=$1', [email.trim().toLowerCase()]);
+    if (exists.rows.length) return res.status(409).json({ message: 'Email đã tồn tại. Dùng mã liên kết nếu đây là con bạn.' });
+    const bcrypt = require('bcryptjs');
+    const hash = await bcrypt.hash(password, 10);
+    const student = await pool.query(`INSERT INTO users (full_name,email,password_hash,role) VALUES ($1,$2,$3,'student') RETURNING id,full_name,email,role`, [full_name.trim(),email.trim().toLowerCase(),hash]);
+    const s = student.rows[0];
+    await pool.query('INSERT INTO parent_children (parent_id,student_id,nickname) VALUES ($1,$2,$3)', [parentId,s.id,nickname?.trim()||null]);
+    let code, tries=0;
+    do { code=generateLinkCode(); tries++; } while (tries<10 && (await pool.query('SELECT id FROM student_link_codes WHERE code=$1',[code])).rows.length>0);
+    await pool.query('INSERT INTO student_link_codes (student_id,code) VALUES ($1,$2)', [s.id,code]);
+    return res.status(201).json({ message: 'Tạo tài khoản thành công!', student: s });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// Parent: unlink
+app.delete('/api/parent/children/:studentId', verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query('DELETE FROM parent_children WHERE parent_id=$1 AND student_id=$2 RETURNING id', [req.user.userId, req.params.studentId]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Không tìm thấy liên kết.' });
+    return res.json({ message: 'Đã hủy liên kết.' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// Parent: get child's detailed progress
+app.get('/api/parent/children/:studentId/progress', verifyToken, async (req, res) => {
+  try {
+    const parentId = req.user.userId;
+    const { studentId } = req.params;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [parentId,studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Bạn không có quyền xem học sinh này.' });
+    const [quiz, practice, exam] = await Promise.all([
+      pool.query(`SELECT qa.id,qa.score,qa.submitted_at,q.title,q.subject,q.total_questions,qa.total_correct FROM quiz_attempts qa JOIN quizzes q ON qa.quiz_id=q.id WHERE qa.student_id=$1 AND qa.status='submitted' ORDER BY qa.submitted_at DESC LIMIT 20`, [studentId]),
+      pool.query(`SELECT id,topic,difficulty,score,total_questions,total_correct,submitted_at FROM practice_sessions WHERE student_id=$1 AND status='submitted' ORDER BY submitted_at DESC LIMIT 20`, [studentId]),
+      pool.query(`SELECT epa.id,epa.score,epa.submitted_at,epa.total_correct,ep.title,ep.subject,ep.grade,ep.year,ep.total_questions FROM exam_paper_attempts epa JOIN exam_papers ep ON epa.exam_paper_id=ep.id WHERE epa.student_id=$1 AND epa.status='submitted' ORDER BY epa.submitted_at DESC LIMIT 20`, [studentId])
+    ]);
+    return res.json({ quiz_attempts:quiz.rows, practice_sessions:practice.rows, exam_attempts:exam.rows });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PARENT EXTENDED APIs — Schedule, Reviews, Invoices, Notifications
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/parent/children/:studentId/schedule
+app.get('/api/parent/children/:studentId/schedule', verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+
+    const sessions = await pool.query(`
+      SELECT ts.id, ts.subject, ts.scheduled_at, ts.duration_mins, ts.status, ts.leave_reason, ts.notes,
+             u.id AS tutor_id, u.full_name AS tutor_name, u.picture AS tutor_picture
+      FROM tutor_sessions ts
+      JOIN users u ON ts.tutor_id = u.id
+      WHERE ts.student_id = $1 AND ts.scheduled_at >= NOW() - INTERVAL '7 days'
+      ORDER BY ts.scheduled_at ASC LIMIT 20
+    `, [studentId]);
+
+    const absences = await pool.query(`
+      SELECT COUNT(*) AS count FROM tutor_sessions
+      WHERE student_id=$1 AND status IN ('absent','late') AND scheduled_at >= date_trunc('month', NOW())
+    `, [studentId]);
+
+    return res.json({ sessions: sessions.rows, absences_this_month: parseInt(absences.rows[0].count) });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// POST /api/parent/children/:studentId/schedule/:sessionId/leave
+app.post('/api/parent/children/:studentId/schedule/:sessionId/leave', verifyToken, async (req, res) => {
+  try {
+    const { studentId, sessionId } = req.params;
+    const { reason } = req.body;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+
+    const updated = await pool.query(`
+      UPDATE tutor_sessions SET status='cancelled', leave_reason=$1, updated_at=NOW()
+      WHERE id=$2 AND student_id=$3 AND status='scheduled' RETURNING *
+    `, [reason || null, sessionId, studentId]);
+
+    if (!updated.rows.length) return res.status(404).json({ message: 'Không tìm thấy buổi học hoặc đã không thể hủy.' });
+
+    const session = updated.rows[0];
+    const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [studentId]);
+    await pool.query(`
+      INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+      VALUES ($1, 'student_absent', 'Học sinh xin nghỉ', $2, 'event_busy', $3, 'session')
+    `, [
+      session.tutor_id,
+      `${studentRes.rows[0]?.full_name || 'Học sinh'} xin nghỉ buổi ${session.subject} ngày ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. Lý do: ${reason || 'Không có lý do.'}`,
+      sessionId
+    ]);
+
+    return res.json({ message: 'Đã gửi yêu cầu nghỉ phép.' });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/parent/children/:studentId/reviews
+app.get('/api/parent/children/:studentId/reviews', verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+
+    const reviews = await pool.query(`
+      SELECT tr.id, tr.subject, tr.period_label, tr.content, tr.rating, tr.created_at,
+             u.full_name AS tutor_name, u.picture AS tutor_picture
+      FROM tutor_reviews tr
+      JOIN users u ON tr.tutor_id = u.id
+      WHERE tr.student_id=$1 ORDER BY tr.created_at DESC LIMIT 20
+    `, [studentId]);
+
+    return res.json({ reviews: reviews.rows });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// POST /api/tutor/reviews — gia sư tạo nhận xét định kỳ
+app.post('/api/tutor/reviews', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { student_id, subject, period_label, content, rating } = req.body;
+    if (!student_id || !subject || !period_label || !content)
+      return res.status(400).json({ message: 'Thiếu thông tin bắt buộc.' });
+
+    const review = await pool.query(`
+      INSERT INTO tutor_reviews (student_id, tutor_id, subject, period_label, content, rating)
+      VALUES ($1,$2,$3,$4,$5,$6) RETURNING *
+    `, [student_id, req.user.userId, subject, period_label, content, rating || 3]);
+
+    const parents = await pool.query('SELECT parent_id FROM parent_children WHERE student_id=$1', [student_id]);
+    const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [student_id]);
+    for (const p of parents.rows) {
+      await pool.query(`
+        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+        VALUES ($1,'tutor_review',$2,$3,'rate_review',$4,'review')
+      `, [p.parent_id, `Nhận xét mới từ gia sư — ${subject}`,
+          `Gia sư vừa gửi nhận xét định kỳ cho ${studentRes.rows[0]?.full_name || 'học sinh'} (${period_label}).`,
+          review.rows[0].id]);
+    }
+    return res.status(201).json({ review: review.rows[0] });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/parent/invoices
+app.get('/api/parent/invoices', verifyToken, async (req, res) => {
+  try {
+    const parentId = req.user.userId;
+    await pool.query(`UPDATE invoices SET status='overdue' WHERE parent_id=$1 AND status='pending' AND due_date < CURRENT_DATE`, [parentId]);
+
+    const [pending, paid] = await Promise.all([
+      pool.query(`
+        SELECT i.*, u.full_name AS student_name, t.full_name AS tutor_name
+        FROM invoices i JOIN users u ON i.student_id=u.id LEFT JOIN users t ON i.tutor_id=t.id
+        WHERE i.parent_id=$1 AND i.status IN ('pending','overdue') ORDER BY i.due_date ASC NULLS LAST
+      `, [parentId]),
+      pool.query(`
+        SELECT i.*, u.full_name AS student_name, t.full_name AS tutor_name
+        FROM invoices i JOIN users u ON i.student_id=u.id LEFT JOIN users t ON i.tutor_id=t.id
+        WHERE i.parent_id=$1 AND i.status='paid' ORDER BY i.paid_at DESC LIMIT 50
+      `, [parentId])
+    ]);
+
+    const totalDebt = pending.rows.reduce((s, i) => s + parseInt(i.amount), 0);
+    const totalPaid = paid.rows.reduce((s, i) => s + parseInt(i.amount), 0);
+    const overdueCount = pending.rows.filter(i => i.status === 'overdue').length;
+
+    return res.json({ pending: pending.rows, paid: paid.rows,
+      summary: { total_debt: totalDebt, total_paid: totalPaid, overdue_count: overdueCount } });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/notifications
+app.get('/api/notifications', verifyToken, async (req, res) => {
+  try {
+    const notifs = await pool.query(
+      `SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
+      [req.user.userId]
+    );
+    const unreadCount = notifs.rows.filter(n => !n.is_read).length;
+    return res.json({ notifications: notifs.rows, unread_count: unreadCount });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// PUT /api/notifications/read-all
+app.put('/api/notifications/read-all', verifyToken, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=TRUE WHERE user_id=$1', [req.user.userId]);
+    return res.json({ message: 'OK' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// PUT /api/notifications/:id/read
+app.put('/api/notifications/:id/read', verifyToken, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=TRUE WHERE id=$1 AND user_id=$2', [req.params.id, req.user.userId]);
+    return res.json({ message: 'OK' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+
+
+
+const { createClient } = require('@supabase/supabase-js');
+
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL || '',
+  process.env.SUPABASE_SERVICE_KEY || ''
+);
+const BUCKET = 'chat-files';
+
+// Multer: lưu file vào bộ nhớ tạm
+const chatUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      'image/', 'video/', 'audio/',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument',
+      'application/zip', 'application/x-zip',
+      'text/plain',
+    ];
+    const ok = allowed.some(t => file.mimetype.startsWith(t));
+    if (!ok) return cb(new Error('Loại file không được hỗ trợ'));
+    cb(null, true);
+  }
+});
+
+// ── chat_messages table ──
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        sender_id    UUID NOT NULL REFERENCES users(id),
+        receiver_id  UUID NOT NULL REFERENCES users(id),
+        content      TEXT,
+        msg_type     VARCHAR(20) DEFAULT 'text',
+        file_url     TEXT,
+        file_name    TEXT,
+        file_size    INTEGER,
+        file_mime    TEXT,
+        is_read      BOOLEAN DEFAULT false,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ chat_messages table ready');
+  } catch (e) { console.error('chat_messages table error:', e.message); }
+})();
+
+// GET /api/chat/conversations — danh sách hội thoại
+app.get('/api/chat/conversations', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await pool.query(`
+      SELECT DISTINCT ON (other_id)
+        other_id, other_name, other_email, other_picture, other_role,
+        last_message, last_msg_type, last_message_at, unread_count
+      FROM (
+        SELECT
+          CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END AS other_id,
+          CASE WHEN m.sender_id=$1 THEN ru.full_name  ELSE su.full_name  END AS other_name,
+          CASE WHEN m.sender_id=$1 THEN ru.email      ELSE su.email      END AS other_email,
+          CASE WHEN m.sender_id=$1 THEN ru.picture    ELSE su.picture    END AS other_picture,
+          CASE WHEN m.sender_id=$1 THEN ru.role       ELSE su.role       END AS other_role,
+          COALESCE(m.content, m.file_name, '[File]')  AS last_message,
+          m.msg_type                                   AS last_msg_type,
+          m.created_at                                 AS last_message_at,
+          (SELECT COUNT(*) FROM chat_messages um
+           WHERE um.sender_id != $1 AND um.receiver_id=$1 AND um.is_read=false
+             AND um.sender_id = CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END
+          ) AS unread_count
+        FROM chat_messages m
+        JOIN users su ON su.id=m.sender_id
+        JOIN users ru ON ru.id=m.receiver_id
+        WHERE m.sender_id=$1 OR m.receiver_id=$1
+        ORDER BY m.created_at DESC
+      ) sub
+      ORDER BY other_id, last_message_at DESC
+    `, [userId]);
+    return res.json({ conversations: result.rows });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/chat/contacts — danh sách liên hệ để nhắn tin (dựa theo role)
+// ⚠️ MUST be before /api/chat/:otherId to avoid wildcard match
+app.get('/api/chat/contacts', verifyToken, async (req, res) => {
+  try {
+    const role = req.user.role;
+    const userId = req.user.userId;
+    let result;
+
+    if (role === 'student') {
+      result = await pool.query(`
+        SELECT DISTINCT u.id, u.full_name, u.email, u.picture, u.role,
+               tp.headline, tp.subjects, tp.hourly_rate
+        FROM users u
+        LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+        WHERE 
+          (u.role = 'tutor' AND tp.status = 'approved' AND u.id IN (
+            SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1
+          ))
+          OR
+          (u.role = 'parent' AND u.id IN (
+            SELECT parent_id FROM parent_children WHERE student_id = $1
+          ))
+        ORDER BY u.full_name
+      `, [userId]);
+    } else if (role === 'parent') {
+      result = await pool.query(`
+        SELECT DISTINCT u.id, u.full_name, u.email, u.picture, u.role,
+               tp.headline, tp.subjects, tp.hourly_rate
+        FROM users u
+        LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+        WHERE 
+          (u.role = 'student' AND u.id IN (
+            SELECT student_id FROM parent_children WHERE parent_id = $1
+          ))
+          OR
+          (u.role = 'tutor' AND tp.status = 'approved' AND u.id IN (
+            SELECT c.tutor_id FROM classes c 
+            JOIN class_members cm ON c.id = cm.class_id 
+            JOIN parent_children pc ON cm.student_id = pc.student_id 
+            WHERE pc.parent_id = $1
+          ))
+        ORDER BY u.full_name
+      `, [userId]);
+    } else if (role === 'tutor') {
+      result = await pool.query(`
+        SELECT DISTINCT u.id, u.full_name, u.email, u.picture, u.role
+        FROM users u
+        WHERE 
+          (u.role = 'student' AND u.id IN (
+            SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1
+          ))
+          OR
+          (u.role = 'parent' AND u.id IN (
+            SELECT pc.parent_id FROM parent_children pc 
+            JOIN class_members cm ON pc.student_id = cm.student_id
+            JOIN classes c ON c.id = cm.class_id
+            WHERE c.tutor_id = $1
+          ))
+        ORDER BY u.full_name
+      `, [userId]);
+    } else {
+      result = { rows: [] };
+    }
+    return res.json({ contacts: result.rows });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+async function checkChatPermission(userId, userRole, otherId) {
+  if (userRole === 'admin') return true; // admin can chat with anyone
+  // For simplicity, we just check if otherId is in the allowed contacts list.
+  // This isn't the most efficient (fetches full list) but it's safe and DRY enough for now.
+  let allowed = false;
+  if (userRole === 'student') {
+    const res = await pool.query(`
+      SELECT 1 FROM users u WHERE u.id = $2 AND (
+        (u.role = 'tutor' AND u.id IN (SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1))
+        OR
+        (u.role = 'parent' AND u.id IN (SELECT parent_id FROM parent_children WHERE student_id = $1))
+      )
+    `, [userId, otherId]);
+    allowed = res.rowCount > 0;
+  } else if (userRole === 'parent') {
+    const res = await pool.query(`
+      SELECT 1 FROM users u WHERE u.id = $2 AND (
+        (u.role = 'student' AND u.id IN (SELECT student_id FROM parent_children WHERE parent_id = $1))
+        OR
+        (u.role = 'tutor' AND u.id IN (SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id JOIN parent_children pc ON cm.student_id = pc.student_id WHERE pc.parent_id = $1))
+      )
+    `, [userId, otherId]);
+    allowed = res.rowCount > 0;
+  } else if (userRole === 'tutor') {
+    const res = await pool.query(`
+      SELECT 1 FROM users u WHERE u.id = $2 AND (
+        (u.role = 'student' AND u.id IN (SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1))
+        OR
+        (u.role = 'parent' AND u.id IN (SELECT pc.parent_id FROM parent_children pc JOIN class_members cm ON pc.student_id = cm.student_id JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1))
+      )
+    `, [userId, otherId]);
+    allowed = res.rowCount > 0;
+  }
+  return allowed;
+}
+
+// GET /api/chat/:otherId — lịch sử tin nhắn + đánh dấu đã đọc
+app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+    const { otherId } = req.params;
+
+    const allowed = await checkChatPermission(userId, userRole, otherId);
+    if (!allowed) {
+      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+    }
+
+    await pool.query(
+      `UPDATE chat_messages SET is_read=true WHERE sender_id=$1 AND receiver_id=$2 AND is_read=false`,
+      [otherId, userId]
+    );
+    const result = await pool.query(`
+      SELECT m.*, u.full_name AS sender_name, u.picture AS sender_picture
+      FROM chat_messages m
+      JOIN users u ON u.id=m.sender_id
+      WHERE (m.sender_id=$1 AND m.receiver_id=$2)
+         OR (m.sender_id=$2 AND m.receiver_id=$1)
+      ORDER BY m.created_at ASC
+      LIMIT 300
+    `, [userId, otherId]);
+    const other = await pool.query(
+      `SELECT id, full_name, email, picture, role FROM users WHERE id=$1`, [otherId]
+    );
+    return res.json({ messages: result.rows, other: other.rows[0] || null });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// POST /api/chat — gửi tin nhắn text
+app.post('/api/chat', verifyToken, async (req, res) => {
+  try {
+    const senderId = req.user.userId;
+    const { receiver_id, content } = req.body;
+    if (!receiver_id || !content?.trim())
+      return res.status(400).json({ message: 'receiver_id và content là bắt buộc.' });
+    
+    const userRole = req.user.role;
+    const allowed = await checkChatPermission(senderId, userRole, receiver_id);
+    if (!allowed) {
+      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+    }
+
+    const receiver = await pool.query(`SELECT id FROM users WHERE id=$1`, [receiver_id]);
+    if (!receiver.rows.length) return res.status(404).json({ message: 'Người nhận không tồn tại.' });
+    const msg = await pool.query(
+      `INSERT INTO chat_messages (sender_id, receiver_id, content, msg_type)
+       VALUES ($1,$2,$3,'text') RETURNING *`,
+      [senderId, receiver_id, content.trim()]
+    );
+    return res.status(201).json({ message: msg.rows[0] });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// POST /api/chat/upload — upload file (ảnh/video/tệp) lên Supabase Storage
+app.post('/api/chat/upload', verifyToken, (req, res, next) => {
+  chatUpload.single('file')(req, res, function (err) {
+    if (err) return res.status(400).json({ message: err.message || 'File upload error.' });
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const senderId = req.user.userId;
+    const { receiver_id } = req.body;
+    if (!receiver_id) return res.status(400).json({ message: 'receiver_id là bắt buộc.' });
+    if (!req.file) return res.status(400).json({ message: 'Không có file được gửi lên.' });
+
+    const userRole = req.user.role;
+    const allowed = await checkChatPermission(senderId, userRole, receiver_id);
+    if (!allowed) {
+      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+    }
+
+    const { originalname, mimetype, size, buffer } = req.file;
+    const ext = originalname.includes('.') ? '.' + originalname.split('.').pop() : '';
+    const safeName = `${Date.now()}_${Math.random().toString(36).slice(2,8)}${ext}`;
+    const storagePath = `${senderId}/${safeName}`;
+
+    // Xác định msg_type
+    let msgType = 'file';
+    if (mimetype.startsWith('image/')) msgType = 'image';
+    else if (mimetype.startsWith('video/')) msgType = 'video';
+
+    // Upload lên Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabaseAdmin
+      .storage.from(BUCKET)
+      .upload(storagePath, buffer, { contentType: mimetype, upsert: false });
+
+    if (uploadError) {
+      console.error('Storage upload error:', uploadError);
+      return res.status(500).json({ message: 'Lỗi upload file: ' + uploadError.message });
+    }
+
+    // Lấy public URL
+    const { data: urlData } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(storagePath);
+    const fileUrl = urlData?.publicUrl || '';
+
+    // Lưu tin nhắn vào DB
+    const msg = await pool.query(
+      `INSERT INTO chat_messages
+         (sender_id, receiver_id, msg_type, file_url, file_name, file_size, file_mime, content)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [senderId, receiver_id, msgType, fileUrl, originalname, size, mimetype, null]
+    );
+    return res.status(201).json({ message: msg.rows[0] });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error: ' + e.message }); }
+});
+
+// ─── Background Job: Cleanup Abandoned Practice Sessions ─────────
+const cleanupAbandonedPracticeSessions = async () => {
+  try {
+    const res = await pool.query(`
+      UPDATE practice_sessions
+      SET status = 'submitted', score = 0, total_correct = 0, submitted_at = NOW()
+      WHERE status = 'in_progress' AND created_at < NOW() - INTERVAL '24 hours'
+    `);
+    if (res.rowCount > 0) {
+      console.log(`🧹 Cleaned up ${res.rowCount} abandoned practice sessions.`);
+    }
+  } catch (err) {
+    console.error('Error cleaning up practice sessions:', err);
+  }
+};
+// Run once on startup, then every hour
+cleanupAbandonedPracticeSessions();
+setInterval(cleanupAbandonedPracticeSessions, 60 * 60 * 1000);
+
+app.post('/api/tutor/grade-attempt', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { attemptId, type, tutorScore, tutorFeedback } = req.body;
+    if (type === 'quiz') {
+      const attempt = await pool.query(`SELECT * FROM quiz_attempts WHERE id=$1`, [attemptId]);
+      if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+      
+      const quiz = await pool.query(`SELECT * FROM quizzes WHERE id=$1`, [attempt.rows[0].quiz_id]);
+      if (quiz.rows[0].created_by !== req.user.userId) return res.status(403).json({ message: 'Not authorized to grade this quiz.' });
+
+      const updated = await pool.query(
+        `UPDATE quiz_attempts SET tutor_score=$1, tutor_feedback=$2 WHERE id=$3 RETURNING *`,
+        [tutorScore, JSON.stringify(tutorFeedback), attemptId]
+      );
+      return res.json({ attempt: updated.rows[0] });
+    } else if (type === 'exam') {
+      const attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE id=$1`, [attemptId]);
+      if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+
+      const paper = await pool.query(`SELECT * FROM exam_papers WHERE id=$1`, [attempt.rows[0].exam_paper_id]);
+      if (paper.rows[0].uploaded_by !== req.user.userId) return res.status(403).json({ message: 'Not authorized to grade this exam paper.' });
+
+      const updated = await pool.query(
+        `UPDATE exam_paper_attempts SET tutor_score=$1, tutor_feedback=$2 WHERE id=$3 RETURNING *`,
+        [tutorScore, JSON.stringify(tutorFeedback), attemptId]
+      );
+      return res.json({ attempt: updated.rows[0] });
+    } else if (type === 'practice') {
+      const attempt = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1`, [attemptId]);
+      if (!attempt.rows.length) return res.status(404).json({ message: 'Attempt not found.' });
+
+      const updated = await pool.query(
+        `UPDATE practice_sessions SET tutor_score=$1, tutor_feedback=$2 WHERE id=$3 RETURNING *`,
+        [tutorScore, JSON.stringify(tutorFeedback), attemptId]
+      );
+      return res.json({ attempt: updated.rows[0] });
+    } else {
+      return res.status(400).json({ message: 'Invalid type.' });
+    }
+  } catch (e) {
+    console.error('Tutor grade error:', e);
+    return res.status(500).json({ message: 'Server error.' });
+  }
+});
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  TUTOR ASSESSMENT MANAGEMENT APIs
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/tutor/assessments
+app.get('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const exams = await pool.query(
+      `SELECT * FROM exam_papers WHERE uploaded_by=$1 ORDER BY created_at DESC`,
+      [req.user.userId]
+    );
+    // get question counts
+    const paperIds = exams.rows.map(e => e.id);
+    let counts = {};
+    if (paperIds.length > 0) {
+      const qRes = await pool.query(
+        `SELECT exam_paper_id, COUNT(*) as c FROM exam_paper_questions WHERE exam_paper_id = ANY($1) GROUP BY exam_paper_id`,
+        [paperIds]
+      );
+      qRes.rows.forEach(r => { counts[r.exam_paper_id] = parseInt(r.c); });
+    }
+    const result = exams.rows.map(e => ({ ...e, question_count: counts[e.id] || 0 }));
+    res.json(result);
+  } catch (e) {
+    console.error('Tutor GET assessments error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST /api/tutor/assessments
+app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) => {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-    let id = courseId;
-    if (id) {
+    await client.query('BEGIN');
+    const { title, subject, grade, duration_minutes, description, questions } = req.body;
+    
+    // Create exam_paper
+    const insertPaperRes = await client.query(
+      `INSERT INTO exam_papers (title, subject, grade, duration_minutes, description, uploaded_by, total_questions)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [title, subject, grade, duration_minutes, description, req.user.userId, questions.length]
+    );
+    const paper = insertPaperRes.rows[0];
+
+    // Create questions
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
       await client.query(
-        `UPDATE courses
-         SET title = $1, description = $2, subject = $3, level = $4, price = $5,
-             thumbnail_url = $6, status = $7, learning_outcomes = $8, requirements = $9, updated_at = NOW()
-         WHERE id = $10 AND tutor_id = $11`,
-        [cleanTitle, String(description || "").trim() || null, String(subject || "").trim() || null, String(level || "").trim() || null, Math.max(Number(price || 0), 0), String(thumbnailUrl || "").trim() || null, cleanStatus, JSON.stringify(cleanOutcomes), JSON.stringify(cleanRequirements), id, req.user.userId]
+        `INSERT INTO exam_paper_questions (exam_paper_id, question_text, option_a, option_b, option_c, option_d, correct_answer, explanation, question_order, question_type, suggested_answer)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          paper.id,
+          q.question_text,
+          q.option_a || '',
+          q.option_b || '',
+          q.option_c || '',
+          q.option_d || '',
+          q.correct_answer || 'A',
+          q.explanation || '',
+          i + 1,
+          q.question_type || 'multiple_choice',
+          q.suggested_answer || null
+        ]
       );
-    } else {
-      const created = await client.query(
-        `INSERT INTO courses (tutor_id, title, description, subject, level, price, thumbnail_url, status, learning_outcomes, requirements)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id`,
-        [req.user.userId, cleanTitle, String(description || "").trim() || null, String(subject || "").trim() || null, String(level || "").trim() || null, Math.max(Number(price || 0), 0), String(thumbnailUrl || "").trim() || null, cleanStatus, JSON.stringify(cleanOutcomes), JSON.stringify(cleanRequirements)]
-      );
-      id = created.rows[0].id;
     }
-    await saveCourseLessons(client, id, cleanLessons);
-    await client.query("COMMIT");
-    return res.status(courseId ? 200 : 201).json({ message: "Course saved.", id });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
+    
+    await client.query('COMMIT');
+    res.status(201).json({ message: 'Assessment created successfully', paper });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('Tutor POST assessments error:', e);
+    res.status(500).json({ message: 'Server error' });
   } finally {
     client.release();
   }
-}
+});
 
-app.post("/api/tutor/courses", verifyToken, async (req, res) => {
+// GET /api/tutor/grading-queue
+app.get('/api/tutor/grading-queue', verifyToken, requireTutor, async (req, res) => {
   try {
-    return await upsertTutorCourse(req, res);
-  } catch (error) {
-    console.error("Create course error:", error);
-    return res.status(500).json({ message: error.message || "Server error." });
+    // Lấy các exam_paper do tutor upload
+    const attempts = await pool.query(`
+      SELECT a.id as attempt_id, a.score, a.status, a.submitted_at,
+             a.tutor_score,
+             p.id as paper_id, p.title as paper_title, p.subject,
+             u.full_name as student_name, u.picture as student_picture
+      FROM exam_paper_attempts a
+      JOIN exam_papers p ON a.exam_paper_id = p.id
+      JOIN users u ON a.student_id = u.id
+      WHERE p.uploaded_by = $1 AND a.status = 'submitted'
+      ORDER BY a.submitted_at DESC
+    `, [req.user.userId]);
+
+    // Cũng lấy các quiz attempts nếu có
+    const quizAttempts = await pool.query(`
+      SELECT a.id as attempt_id, a.score, a.status, a.submitted_at,
+             a.tutor_score,
+             q.id as paper_id, q.title as paper_title, q.subject,
+             u.full_name as student_name, u.picture as student_picture
+      FROM quiz_attempts a
+      JOIN quizzes q ON a.quiz_id = q.id
+      JOIN users u ON a.student_id = u.id
+      WHERE q.created_by = $1 AND a.status = 'submitted'
+      ORDER BY a.submitted_at DESC
+    `, [req.user.userId]);
+
+    // Cũng lấy các practice sessions (AI generated, any tutor can grade)
+    const practiceAttempts = await pool.query(`
+      SELECT p.id as attempt_id, p.score, p.status, p.submitted_at,
+             p.tutor_score,
+             p.id as paper_id, p.topic as paper_title, p.difficulty as subject,
+             u.full_name as student_name, u.picture as student_picture
+      FROM practice_sessions p
+      JOIN users u ON p.student_id = u.id
+      WHERE p.status = 'submitted'
+      ORDER BY p.submitted_at DESC
+    `);
+
+    const result = [
+      ...attempts.rows.map(r => ({ ...r, type: 'exam' })),
+      ...quizAttempts.rows.map(r => ({ ...r, type: 'quiz' })),
+      ...practiceAttempts.rows.map(r => ({ ...r, type: 'practice' }))
+    ].sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+
+    res.json(result);
+  } catch (e) {
+    console.error('Tutor GET grading-queue error:', e);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-app.patch("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+// GET /api/tutor/grading-queue/:type/:attemptId
+app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, async (req, res) => {
   try {
-    return await upsertTutorCourse(req, res, req.params.id);
-  } catch (error) {
-    console.error("Update course error:", error);
-    return res.status(500).json({ message: error.message || "Server error." });
+    const { type, attemptId } = req.params;
+    let attemptRes, questionsRes, paperRes;
+
+    if (type === 'exam') {
+      attemptRes = await pool.query('SELECT * FROM exam_paper_attempts WHERE id=$1', [attemptId]);
+      if (!attemptRes.rows.length) return res.status(404).json({ message: 'Not found' });
+      
+      const paperId = attemptRes.rows[0].exam_paper_id;
+      paperRes = await pool.query('SELECT * FROM exam_papers WHERE id=$1', [paperId]);
+      if (paperRes.rows[0].uploaded_by !== req.user.userId) return res.status(403).json({ message: 'Forbidden' });
+
+      questionsRes = await pool.query('SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1 ORDER BY question_order', [paperId]);
+    } else if (type === 'quiz') {
+      attemptRes = await pool.query('SELECT * FROM quiz_attempts WHERE id=$1', [attemptId]);
+      if (!attemptRes.rows.length) return res.status(404).json({ message: 'Not found' });
+      
+      const paperId = attemptRes.rows[0].quiz_id;
+      paperRes = await pool.query('SELECT * FROM quizzes WHERE id=$1', [paperId]);
+      if (paperRes.rows[0].created_by !== req.user.userId) return res.status(403).json({ message: 'Forbidden' });
+
+      questionsRes = await pool.query('SELECT * FROM quiz_questions WHERE quiz_id=$1', [paperId]);
+    } else if (type === 'practice') {
+      attemptRes = await pool.query('SELECT * FROM practice_sessions WHERE id=$1', [attemptId]);
+      if (!attemptRes.rows.length) return res.status(404).json({ message: 'Not found' });
+      paperRes = { rows: [{ title: attemptRes.rows[0].topic, subject: attemptRes.rows[0].difficulty }] };
+      questionsRes = { rows: (attemptRes.rows[0].questions || []).map((q, i) => ({ id: i, question_type: q.question_type || 'multiple_choice', question_text: q.question, option_a: q.optionA, option_b: q.optionB, option_c: q.optionC, option_d: q.optionD, correct_answer: q.correctAnswer, suggested_answer: q.suggested_answer, explanation: q.explanation })) };
+    } else {
+      return res.status(400).json({ message: 'Invalid type' });
+    }
+
+    const studentRes = await pool.query('SELECT full_name, picture FROM users WHERE id=$1', [attemptRes.rows[0].student_id]);
+
+    res.json({
+      attempt: attemptRes.rows[0],
+      paper: paperRes.rows[0],
+      questions: questionsRes.rows,
+      student: studentRes.rows[0]
+    });
+
+  } catch (e) {
+    console.error('Tutor GET grading-attempt error:', e);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-app.delete("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+
+// ── GET /api/tutors (public) ──────────────────────────────────────────────────
+// Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
+app.get("/api/tutors", async (req, res) => {
+  const { search = "", subjects = "", sort = "rating", page = "1", limit = "12" } = req.query;
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+  const offset = (pageNum - 1) * limitNum;
+
+  const conditions = ["tp.status = 'approved'"];
+  const values = [];
+  let idx = 1;
+
+  if (search.trim()) {
+    conditions.push(`(u.full_name ILIKE $${idx} OR tp.subjects ILIKE $${idx} OR tp.bio ILIKE $${idx})`);
+    values.push(`%${search.trim()}%`);
+    idx++;
+  }
+
+  if (subjects.trim()) {
+    const subjectList = subjects.split(",").map(s => s.trim()).filter(Boolean);
+    if (subjectList.length > 0) {
+      const subConds = subjectList.map(() => `tp.subjects ILIKE $${idx++}`);
+      conditions.push(`(${subConds.join(" OR ")})`);
+      subjectList.forEach(s => values.push(`%${s}%`));
+    }
+  }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+
+  const orderMap = {
+    rating:     "tp.experience_years DESC NULLS LAST",
+    price_asc:  "tp.hourly_rate ASC NULLS LAST",
+    price_desc: "tp.hourly_rate DESC NULLS LAST",
+    experience: "tp.experience_years DESC NULLS LAST",
+    newest:     "tp.created_at DESC",
+  };
+  const orderBy = orderMap[sort] || orderMap.newest;
+
   try {
-    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
-    await ensureCourseSchema();
-    const result = await pool.query(
-      "UPDATE courses SET status = 'archived', updated_at = NOW() WHERE id = $1 AND tutor_id = $2 RETURNING id",
-      [req.params.id, req.user.userId]
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM tutor_profiles tp JOIN users u ON tp.user_id = u.id ${where}`,
+      values
     );
-    if (result.rows.length === 0) return res.status(404).json({ message: "Course not found." });
-    return res.json({ message: "Course archived." });
-  } catch (error) {
-    console.error("Archive course error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
+    const total = parseInt(countRes.rows[0].count);
 
-app.get("/api/courses", optionalToken, async (req, res) => {
-  try {
-    await ensureCourseSchema();
-    const q = String(req.query.q || "").trim();
-    const subject = String(req.query.subject || "").trim();
-    const params = [];
-    const where = ["c.status = 'published'"];
-
-    if (q) {
-      params.push(`%${q}%`);
-      where.push(`(
-        c.title ILIKE $${params.length}
-        OR c.description ILIKE $${params.length}
-        OR c.subject ILIKE $${params.length}
-        OR c.level ILIKE $${params.length}
-        OR u.full_name ILIKE $${params.length}
-      )`);
-    }
-
-    if (subject) {
-      params.push(`%${subject}%`);
-      where.push(`c.subject ILIKE $${params.length}`);
-    }
-
-    const result = await pool.query(
-      `SELECT c.id,
-              c.title,
-              c.description,
-              c.subject,
-              c.level,
-              c.price,
-              c.thumbnail_url AS "thumbnailUrl",
-              c.learning_outcomes AS "learningOutcomes",
-              c.requirements,
-              c.created_at AS "createdAt",
-              c.updated_at AS "updatedAt",
-              u.id AS "tutorId",
-              u.full_name AS "tutorName",
-              u.picture AS "tutorAvatar",
-              COALESCE(tp.status = 'approved', false) AS "tutorVerified",
-              COALESCE(tp.status = 'approved' AND COALESCE(tp.approved_at, tp.updated_at, tp.created_at) >= NOW() - INTERVAL '30 days', false) AS "isNewTutor",
-              COUNT(DISTINCT l.id)::int AS "lessonCount",
-              COUNT(DISTINCT l.id) FILTER (WHERE l.is_preview = true)::int AS "previewLessonCount",
-              COUNT(DISTINCT e.id) FILTER (WHERE e.status = 'active')::int AS "studentsBought",
-              COALESCE(COUNT(DISTINCT e.id) FILTER (WHERE e.status = 'active') * c.price, 0)::int AS revenue
-       FROM courses c
-       JOIN users u ON u.id = c.tutor_id
-       LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
-       LEFT JOIN course_lessons l ON l.course_id = c.id
-       LEFT JOIN course_enrollments e ON e.course_id = c.id
-       WHERE ${where.join(" AND ")}
-       GROUP BY c.id, u.id, tp.id
-       ORDER BY c.updated_at DESC, c.created_at DESC
-       LIMIT 60`,
-      params
-    );
-
-    return res.json(result.rows.map((course) => ({
-      ...course,
-      price: course.price || 0,
-      description: course.description || "",
-      subject: course.subject || "",
-      level: course.level || "",
-      thumbnailUrl: course.thumbnailUrl || "",
-      learningOutcomes: Array.isArray(course.learningOutcomes) ? course.learningOutcomes : [],
-      requirements: Array.isArray(course.requirements) ? course.requirements : [],
-      rating: 4.8,
-    })));
-  } catch (error) {
-    console.error("Get public courses error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-app.get("/api/courses/:id", optionalToken, async (req, res) => {
-  try {
-    await ensureCourseSchema();
-    const courseResult = await pool.query(
-      `SELECT c.*,
-              u.full_name AS "tutorName",
-              u.picture AS "tutorAvatar",
-              COALESCE(tp.approved_at >= NOW() - INTERVAL '30 days', false) AS "isNewTutor"
-       FROM courses c
-       JOIN users u ON u.id = c.tutor_id
-       LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
-       WHERE c.id = $1 AND c.status <> 'archived'
-       LIMIT 1`,
-      [req.params.id]
-    );
-    if (courseResult.rows.length === 0) return res.status(404).json({ message: "Course not found." });
-
-    const course = courseResult.rows[0];
-    const isOwner = req.user?.userId === course.tutor_id;
-    if (course.status !== "published" && !isOwner) {
-      return res.status(404).json({ message: "Course not found." });
-    }
-    let enrollment = null;
-    if (req.user?.userId && !isOwner) {
-      const enrollmentResult = await pool.query(
-        "SELECT * FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active' LIMIT 1",
-        [course.id, req.user.userId]
-      );
-      enrollment = enrollmentResult.rows[0] || null;
-    }
-    const canAccess = isOwner || Boolean(enrollment);
-    const lessonResult = await pool.query(
-      `SELECT l.*, cp.is_completed, cp.watched_seconds
-       FROM course_lessons l
-       LEFT JOIN course_progress cp ON cp.lesson_id = l.id AND cp.enrollment_id = $2
-       WHERE l.course_id = $1
-       ORDER BY l.position ASC, l.created_at ASC`,
-      [course.id, enrollment?.id || null]
+    const tutorsRes = await pool.query(
+      `SELECT
+         u.id, u.full_name, u.picture,
+         tp.bio, tp.subjects, tp.experience_years,
+         tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
+         0 AS avg_r,
+         0 AS review_count
+       FROM tutor_profiles tp
+       JOIN users u ON tp.user_id = u.id
+       ${where}
+       ORDER BY ${orderBy}
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, limitNum, offset]
     );
 
     return res.json({
-      id: course.id,
-      tutorId: course.tutor_id,
-      tutorName: course.tutorName,
-      tutorAvatar: course.tutorAvatar || "",
-      title: course.title,
-      description: course.description || "",
-      subject: course.subject || "",
-      level: course.level || "",
-      price: course.price || 0,
-      thumbnailUrl: course.thumbnail_url || "",
-      learningOutcomes: Array.isArray(course.learning_outcomes) ? course.learning_outcomes : [],
-      requirements: Array.isArray(course.requirements) ? course.requirements : [],
-      status: course.status,
-      isNewTutor: course.isNewTutor,
-      isOwner,
-      isEnrolled: canAccess,
-      enrollmentId: enrollment?.id || null,
-      lessons: lessonResult.rows.map((lesson) => {
-        const lessonAccessible = canAccess || lesson.is_preview;
-        return {
-          id: lesson.id,
-          title: lesson.title,
-          description: lesson.description || "",
-          videoUrl: lessonAccessible ? (lesson.video_url || "") : "",
-          materialUrl: lessonAccessible ? (lesson.material_url || "") : "",
-          durationLabel: lesson.duration_label || "",
-          isPreview: lesson.is_preview,
-          isLocked: !lessonAccessible,
-          isCompleted: Boolean(lesson.is_completed),
-          watchedSeconds: lesson.watched_seconds || 0,
-          position: lesson.position,
-        };
-      }),
+      tutors: tutorsRes.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
     });
-  } catch (error) {
-    console.error("Get course detail error:", error);
-    return res.status(500).json({ message: "Server error." });
+  } catch (err) {
+    console.error("GET /api/tutors error:", err.message);
+    return res.status(500).json({ message: "Server error.", detail: err.message });
   }
 });
 
-app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
+// ── GET /api/tutors/:id ───────────────────────────────────────────────────────
+// Trả về hồ sơ chi tiết của một gia sư theo user ID (public, không cần auth)
+app.get("/api/tutors/:id", async (req, res) => {
+  const { id } = req.params;
   try {
-    if (req.user.role === "tutor" || req.user.role === "admin") {
-      return res.status(403).json({ message: "Only students or parents can buy courses." });
-    }
-    await ensureCourseSchema();
-    const course = await pool.query("SELECT id FROM courses WHERE id = $1 AND status = 'published' LIMIT 1", [req.params.id]);
-    if (course.rows.length === 0) return res.status(404).json({ message: "Course not found or not published." });
-    const { childName, studentName } = req.body || {};
-    const userResult = await pool.query("SELECT full_name FROM users WHERE id = $1", [req.user.userId]);
-    const finalStudentName = String(studentName || userResult.rows[0]?.full_name || req.user.email?.split("@")[0] || "Student").trim();
-    const result = await pool.query(
-      `INSERT INTO course_enrollments (course_id, student_id, student_name, child_name, status)
-       VALUES ($1, $2, $3, $4, 'active')
-       ON CONFLICT (course_id, student_id)
-       DO UPDATE SET status = 'active', child_name = EXCLUDED.child_name, updated_at = NOW()
-       RETURNING *`,
-      [req.params.id, req.user.userId, finalStudentName, String(childName || "").trim() || null]
-    );
-    return res.status(201).json({ message: "Course purchased.", enrollment: result.rows[0] });
-  } catch (error) {
-    console.error("Enroll course error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-app.get("/api/my/courses", verifyToken, async (req, res) => {
-  try {
-    await ensureCourseSchema();
-    const result = await pool.query(
-      `SELECT e.id AS "enrollmentId",
-              e.purchased_at AS "purchasedAt",
-              c.id, c.title, c.subject, c.level, c.price,
-              c.thumbnail_url AS "thumbnailUrl",
-              u.full_name AS "tutorName",
-              COUNT(l.id)::int AS "lessonCount",
-              COUNT(cp.id) FILTER (WHERE cp.is_completed)::int AS "completedLessons"
-       FROM course_enrollments e
-       JOIN courses c ON c.id = e.course_id
-       JOIN users u ON u.id = c.tutor_id
-       LEFT JOIN course_lessons l ON l.course_id = c.id
-       LEFT JOIN course_progress cp ON cp.enrollment_id = e.id AND cp.lesson_id = l.id
-       WHERE e.student_id = $1 AND e.status = 'active'
-       GROUP BY e.id, c.id, u.id
-       ORDER BY e.purchased_at DESC`,
-      [req.user.userId]
-    );
-    return res.json(result.rows);
-  } catch (error) {
-    console.error("Get my courses error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-app.patch("/api/courses/:courseId/lessons/:lessonId/progress", verifyToken, async (req, res) => {
-  try {
-    await ensureCourseSchema();
-    const { courseId, lessonId } = req.params;
-    const { watchedSeconds, isCompleted } = req.body || {};
-    const enrollmentResult = await pool.query(
-      `SELECT id FROM course_enrollments
-       WHERE course_id = $1 AND student_id = $2 AND status = 'active'
-       LIMIT 1`,
-      [courseId, req.user.userId]
-    );
-    if (enrollmentResult.rows.length === 0) {
-      return res.status(403).json({ message: "Buy this course before tracking progress." });
-    }
-    const lessonResult = await pool.query("SELECT id FROM course_lessons WHERE id = $1 AND course_id = $2", [lessonId, courseId]);
-    if (lessonResult.rows.length === 0) return res.status(404).json({ message: "Lesson not found." });
-    const result = await pool.query(
-      `INSERT INTO course_progress (enrollment_id, lesson_id, watched_seconds, is_completed, completed_at, updated_at)
-       VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END, NOW())
-       ON CONFLICT (enrollment_id, lesson_id)
-       DO UPDATE SET watched_seconds = GREATEST(course_progress.watched_seconds, EXCLUDED.watched_seconds),
-                     is_completed = EXCLUDED.is_completed,
-                     completed_at = CASE WHEN EXCLUDED.is_completed THEN COALESCE(course_progress.completed_at, NOW()) ELSE NULL END,
-                     updated_at = NOW()
-       RETURNING *`,
-      [enrollmentResult.rows[0].id, lessonId, Math.max(Number(watchedSeconds || 0), 0), Boolean(isCompleted)]
-    );
-    return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Update course progress error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-app.get("/api/bookings", verifyToken, async (req, res) => {
-  try {
-    await ensureBookingSchema();
-    const userId = req.user.userId;
-    const role = req.user.role;
-    const filter = role === "tutor" ? "b.tutor_id = $1" : "b.student_id = $1";
-
     const result = await pool.query(
       `SELECT
-         b.id,
-         b.student_id AS "studentId",
-         COALESCE(b.student_name, s.full_name) AS "studentName",
-         b.child_name AS "childName",
-         b.tutor_id AS "tutorId",
-         COALESCE(t.full_name, b.tutor_name) AS "tutorName",
-         t.picture AS "tutorAvatar",
-         b.subject,
-         to_char(b.lesson_date, 'YYYY-MM-DD') AS date,
-         b.time_slot AS "timeSlot",
-         b.note AS notes,
-         b.booking_type AS "bookingType",
-         b.status,
-         a.status AS "attendanceStatus",
-         a.note AS "attendanceNote",
-         a.marked_at AS "attendanceMarkedAt",
-         b.created_at AS "createdAt"
-       FROM bookings b
-       LEFT JOIN users s ON s.id = b.student_id
-       LEFT JOIN users t ON t.id = b.tutor_id
-       LEFT JOIN attendance a ON a.booking_id = b.id
-       WHERE ${filter}
-       ORDER BY b.lesson_date ASC, b.time_slot ASC, b.created_at DESC`,
-      [userId]
-    );
-
-    return res.json(result.rows);
-  } catch (error) {
-    console.error("Get bookings error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-app.post("/api/bookings", verifyToken, async (req, res) => {
-  try {
-    await ensureBookingSchema();
-    const userId = req.user.userId;
-    const { tutorId, date, timeSlot, sessions, subject, notes, childName, studentName, bookingType } = req.body || {};
-    const normalizedBookingType = bookingType === "trial" ? "trial" : "regular";
-
-    const requestedSessions = Array.isArray(sessions) && sessions.length > 0
-      ? sessions
-      : [{ date, timeSlot }];
-    const cleanSessions = [];
-    const seenSessions = new Set();
-
-    for (const session of requestedSessions) {
-      const sessionDate = String(session?.date || "").trim();
-      const sessionTime = String(session?.timeSlot || "").trim();
-      const key = `${sessionDate}|${sessionTime}`;
-      if (!sessionDate || !sessionTime || seenSessions.has(key)) continue;
-      seenSessions.add(key);
-      cleanSessions.push({ date: sessionDate, timeSlot: sessionTime });
-    }
-
-    if (!tutorId || cleanSessions.length === 0) {
-      return res.status(400).json({ message: "Tutor, date, and time slot are required." });
-    }
-
-    if (normalizedBookingType === "trial" && cleanSessions.length > 1) {
-      return res.status(400).json({ message: "A trial class can only include one session." });
-    }
-
-    const tutorResult = await pool.query(
-      `SELECT
-         u.id,
-         u.full_name,
-         u.picture,
-         tp.id AS profile_id,
-         COALESCE(tp.approved_at >= NOW() - INTERVAL '30 days', false) AS is_new_tutor
-       FROM users u
-       LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
-       WHERE (u.id::text = $1 OR tp.id::text = $1)
-         AND u.role = 'tutor'
-         AND COALESCE(tp.status = 'approved', true)
+         u.id, u.full_name, u.picture, u.email,
+         tp.bio, tp.subjects, tp.experience_years,
+         tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
+         tp.education, tp.language, tp.teaching_style, tp.qualifications,
+         tp.first_name, tp.last_name, tp.display_name, tp.phone,
+         tp.headline, tp.teaching_methods, tp.suitable_students,
+         COALESCE(
+           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.reviewer_id = u.id),
+           0
+         ) AS avg_r,
+         COALESCE(
+           (SELECT COUNT(*) FROM reviews r WHERE r.reviewer_id = u.id),
+           0
+         ) AS review_count
+       FROM tutor_profiles tp
+       JOIN users u ON tp.user_id = u.id
+       WHERE u.id = $1 AND tp.status = 'approved'
        LIMIT 1`,
-      [String(tutorId)]
-    );
-
-    if (tutorResult.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor not found." });
-    }
-
-    const tutor = tutorResult.rows[0];
-    if (!tutor.profile_id) {
-      return res.status(400).json({ message: "This tutor has not completed an approved teaching profile yet." });
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const availabilityResult = await pool.query(
-      `SELECT day_of_week, time_slot
-       FROM tutor_availability
-       WHERE tutor_id = $1`,
-      [tutor.profile_id]
-    );
-    const availableSlotSet = new Set(
-      availabilityResult.rows.map((row) => `${row.day_of_week}|${row.time_slot}`)
-    );
-
-    for (const session of cleanSessions) {
-      const sessionDate = new Date(`${session.date}T00:00:00`);
-      if (Number.isNaN(sessionDate.getTime())) {
-        return res.status(400).json({ message: "Invalid lesson date." });
-      }
-      if (sessionDate < today) {
-        return res.status(400).json({ message: "Cannot book a past date." });
-      }
-      const dayName = dayNames[sessionDate.getDay()];
-      if (!availableSlotSet.has(`${dayName}|${session.timeSlot}`)) {
-        return res.status(400).json({ message: `The tutor is not available on ${session.date} at ${session.timeSlot}.` });
-      }
-    }
-
-    if (normalizedBookingType === "trial" && !tutor.is_new_tutor) {
-      return res.status(400).json({ message: "Trial classes are only available for new tutors." });
-    }
-
-    if (normalizedBookingType === "trial") {
-      const existingTrial = await pool.query(
-        `SELECT id
-         FROM bookings
-         WHERE tutor_id = $1
-           AND student_id = $2
-           AND booking_type = 'trial'
-           AND status IN ('Pending', 'Approved')
-         LIMIT 1`,
-        [tutor.id, userId]
-      );
-      if (existingTrial.rows.length > 0) {
-        return res.status(409).json({ message: "You already have an active trial class request with this tutor." });
-      }
-    }
-
-    const studentResult = await pool.query("SELECT full_name FROM users WHERE id = $1", [userId]);
-    const finalStudentName =
-      studentName?.trim() ||
-      studentResult.rows[0]?.full_name ||
-      req.user.email?.split("@")[0] ||
-      "Student";
-
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      for (const session of cleanSessions) {
-        const existingSlot = await client.query(
-          `SELECT id, status
-           FROM bookings
-           WHERE tutor_id = $1
-             AND lesson_date = $2
-             AND time_slot = $3
-             AND status IN ('Pending', 'Approved')
-           LIMIT 1`,
-          [tutor.id, session.date, session.timeSlot]
-        );
-
-        if (existingSlot.rows.length > 0) {
-          await client.query("ROLLBACK");
-          return res.status(409).json({
-            message: `The slot ${session.date} at ${session.timeSlot} has already been booked. Please choose another slot.`,
-          });
-        }
-      }
-
-      const createdBookings = [];
-      for (const session of cleanSessions) {
-        const result = await client.query(
-          `INSERT INTO bookings
-             (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, booking_type, status, child_name, student_name)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Pending', $9, $10)
-           RETURNING id, student_id AS "studentId", tutor_id AS "tutorId",
-                     tutor_name AS "tutorName", subject, to_char(lesson_date, 'YYYY-MM-DD') AS date,
-                     time_slot AS "timeSlot", note AS notes, booking_type AS "bookingType", status,
-                     child_name AS "childName", student_name AS "studentName",
-                     created_at AS "createdAt"`,
-          [
-            userId,
-            tutor.id,
-            tutor.full_name,
-            subject?.trim() || "General",
-            session.date,
-            session.timeSlot,
-            notes?.trim() || null,
-            normalizedBookingType,
-            childName?.trim() || null,
-            finalStudentName,
-          ]
-        );
-        createdBookings.push({
-          ...result.rows[0],
-          tutorAvatar: tutor.picture || "",
-        });
-      }
-
-      await client.query("COMMIT");
-
-      return res.status(201).json({
-        ...createdBookings[0],
-        bookings: createdBookings,
-        count: createdBookings.length,
-      });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    if (error.code === "23505") {
-      return res.status(409).json({ message: "This time slot has already been booked. Please choose another slot." });
-    }
-    console.error("Create booking error:", error);
-    return res.status(500).json({ message: error.message || "Server error." });
-  }
-});
-
-app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
-  try {
-    await ensureBookingSchema();
-    const userId = req.user.userId;
-    const { id } = req.params;
-    const { status } = req.body || {};
-    const valid = ["Pending", "Approved", "Declined"];
-
-    if (!valid.includes(status)) {
-      return res.status(400).json({ message: "Invalid booking status." });
-    }
-
-    const result = await pool.query(
-      `UPDATE bookings
-       SET status = $1, updated_at = NOW()
-       WHERE id = $2 AND tutor_id = $3
-       RETURNING id, student_id AS "studentId", tutor_id AS "tutorId",
-                 tutor_name AS "tutorName", subject, to_char(lesson_date, 'YYYY-MM-DD') AS date,
-                 time_slot AS "timeSlot", note AS notes, booking_type AS "bookingType", status,
-                 child_name AS "childName", student_name AS "studentName",
-                 created_at AS "createdAt"`,
-      [status, id, userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Booking not found or not authorized." });
-    }
-
-    return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Update booking error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-// TUTOR STUDENT MANAGEMENT APIs
-app.get("/api/tutor/students", verifyToken, async (req, res) => {
-  try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
-
-    const tutorId = req.user.userId;
-    const result = await pool.query(
-      `SELECT
-         b.id AS "bookingId",
-         b.student_id AS "studentId",
-         COALESCE(b.child_name, b.student_name, s.full_name, 'Student') AS "studentName",
-         s.email AS "studentEmail",
-         s.picture AS "studentAvatar",
-         b.child_name AS "childName",
-         b.subject,
-         to_char(b.lesson_date, 'YYYY-MM-DD') AS date,
-         b.time_slot AS "timeSlot",
-         b.note AS notes,
-         b.booking_type AS "bookingType",
-         b.status AS "bookingStatus",
-         a.status AS "attendanceStatus",
-         a.note AS "attendanceNote",
-         a.marked_at AS "markedAt"
-       FROM bookings b
-       LEFT JOIN users s ON s.id = b.student_id
-       LEFT JOIN attendance a ON a.booking_id = b.id
-       WHERE b.tutor_id = $1
-         AND b.status IN ('Approved', 'Pending')
-       ORDER BY b.lesson_date DESC, b.time_slot DESC`,
-      [tutorId]
-    );
-
-    const grouped = new Map();
-    for (const row of result.rows) {
-      const key = `${row.studentId}:${row.childName || ''}`;
-      if (!grouped.has(key)) {
-        grouped.set(key, {
-          studentId: row.studentId,
-          studentName: row.studentName,
-          studentEmail: row.studentEmail,
-          studentAvatar: row.studentAvatar,
-          childName: row.childName,
-          subjects: new Set(),
-          lessons: [],
-        });
-      }
-      const student = grouped.get(key);
-      if (row.subject) student.subjects.add(row.subject);
-      student.lessons.push(row);
-    }
-
-    const students = Array.from(grouped.values()).map((student) => {
-      const approvedLessons = student.lessons.filter((lesson) => lesson.bookingStatus === 'Approved');
-      const marked = approvedLessons.filter((lesson) => lesson.attendanceStatus);
-      const absences = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'absent');
-      const present = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'present');
-      const upcoming = approvedLessons
-        .filter((lesson) => new Date(`${lesson.date}T00:00:00`) >= new Date(new Date().toDateString()))
-        .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.timeSlot).localeCompare(String(b.timeSlot)))[0] || null;
-
-      return {
-        ...student,
-        subjects: Array.from(student.subjects),
-        totalLessons: approvedLessons.length,
-        pendingRequests: student.lessons.filter((lesson) => lesson.bookingStatus === 'Pending').length,
-        markedLessons: marked.length,
-        absentCount: absences.length,
-        presentCount: present.length,
-        attendanceRate: marked.length ? Math.round((present.length / marked.length) * 100) : null,
-        nextLesson: upcoming,
-      };
-    });
-
-    return res.json(students);
-  } catch (error) {
-    console.error("Get tutor students error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
-  try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
-
-    const tutorId = req.user.userId;
-    const { id } = req.params;
-    const { status, note } = req.body || {};
-    const allowed = ["present", "absent", "excused"];
-
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ message: "Invalid attendance status." });
-    }
-
-    const bookingResult = await pool.query(
-      `SELECT id, tutor_id, student_id
-       FROM bookings
-       WHERE id = $1 AND tutor_id = $2 AND status = 'Approved'
-       LIMIT 1`,
-      [id, tutorId]
-    );
-
-    if (bookingResult.rows.length === 0) {
-      return res.status(404).json({ message: "Approved booking not found." });
-    }
-
-    const booking = bookingResult.rows[0];
-    const result = await pool.query(
-      `INSERT INTO attendance (booking_id, tutor_id, student_id, status, note, marked_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (booking_id)
-       DO UPDATE SET status = EXCLUDED.status,
-                     note = EXCLUDED.note,
-                     marked_at = NOW(),
-                     updated_at = NOW()
-       RETURNING id, booking_id AS "bookingId", status, note, marked_at AS "markedAt"`,
-      [booking.id, booking.tutor_id, booking.student_id, status, note?.trim() || null]
-    );
-
-    return res.json(result.rows[0]);
-  } catch (error) {
-    console.error("Update attendance error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
-  try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
-
-    const tutorId = req.user.userId;
-    const profileResult = await pool.query(
-      `SELECT hourly_rate
-       FROM tutor_profiles
-       WHERE user_id = $1
-       LIMIT 1`,
-      [tutorId]
-    );
-
-    const hourlyRate = Number(profileResult.rows[0]?.hourly_rate || 0);
-    const lessonResult = await pool.query(
-      `SELECT
-         b.id,
-         b.student_id AS "studentId",
-         COALESCE(b.child_name, b.student_name, s.full_name, 'Student') AS "studentName",
-         b.child_name AS "childName",
-         b.subject,
-         to_char(b.lesson_date, 'YYYY-MM-DD') AS date,
-         b.time_slot AS "timeSlot",
-         b.status AS "bookingStatus",
-         a.status AS "attendanceStatus",
-         a.note AS "attendanceNote",
-         a.marked_at AS "markedAt"
-       FROM bookings b
-       LEFT JOIN users s ON s.id = b.student_id
-       LEFT JOIN attendance a ON a.booking_id = b.id
-       WHERE b.tutor_id = $1
-         AND b.status = 'Approved'
-       ORDER BY b.lesson_date DESC, b.time_slot DESC`,
-      [tutorId]
-    );
-
-    const lessons = lessonResult.rows.map((lesson) => {
-      const attendance = lesson.attendanceStatus || "awaiting_attendance";
-      const isPayable = attendance === "present";
-      const isPending = attendance === "awaiting_attendance";
-      const amount = isPayable ? hourlyRate : 0;
-
-      return {
-        ...lesson,
-        attendanceStatus: attendance,
-        paymentStatus: isPayable ? "earned" : isPending ? "pending_attendance" : "no_charge",
-        amount,
-      };
-    });
-
-    const now = new Date();
-    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-    const monthOf = (value) => {
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return "";
-      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-    };
-
-    const earnedLessons = lessons.filter((lesson) => lesson.paymentStatus === "earned");
-    const pendingLessons = lessons.filter((lesson) => lesson.paymentStatus === "pending_attendance");
-    const noChargeLessons = lessons.filter((lesson) => lesson.paymentStatus === "no_charge");
-    const monthLessons = earnedLessons.filter((lesson) => monthOf(lesson.date) === monthKey);
-
-    const monthlyBreakdown = [];
-    for (let i = 5; i >= 0; i -= 1) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      const items = earnedLessons.filter((lesson) => monthOf(lesson.date) === key);
-      monthlyBreakdown.push({
-        month: key,
-        label: date.toLocaleString("en-US", { month: "short" }),
-        amount: items.reduce((sum, lesson) => sum + lesson.amount, 0),
-        lessons: items.length,
-      });
-    }
-
-    const totalEarned = earnedLessons.reduce((sum, lesson) => sum + lesson.amount, 0);
-    const thisMonthEarned = monthLessons.reduce((sum, lesson) => sum + lesson.amount, 0);
-    const pendingAmount = pendingLessons.length * hourlyRate;
-
-    return res.json({
-      hourlyRate,
-      currency: "VND",
-      summary: {
-        thisMonthEarned,
-        totalEarned,
-        pendingAmount,
-        completedLessons: earnedLessons.length,
-        pendingLessons: pendingLessons.length,
-        noChargeLessons: noChargeLessons.length,
-      },
-      monthlyBreakdown,
-      transactions: lessons,
-    });
-  } catch (error) {
-    console.error("Get tutor earnings error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-app.get("/api/conversations", verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const result = await pool.query(`
-      SELECT
-        c.id,
-        c.student_id,
-        c.tutor_id,
-        c.updated_at,
-        -- ThĂ´ng tin student
-        s.full_name  AS student_name,
-        s.picture    AS student_picture,
-        -- ThĂ´ng tin tutor
-        t.full_name  AS tutor_name,
-        t.picture    AS tutor_picture,
-        -- Tin nháº¯n cuá»‘i
-        last_msg.content      AS last_message,
-        last_msg.created_at   AS last_message_at,
-        last_msg.sender_id    AS last_sender_id,
-        -- Sá»‘ tin chÆ°a Ä‘á»c
-        (
-          SELECT COUNT(*) FROM messages m2
-          WHERE m2.conversation_id = c.id
-            AND m2.receiver_id = $1
-            AND m2.is_read = false
-        ) AS unread_count
-      FROM conversations c
-      JOIN users s ON s.id = c.student_id
-      JOIN users t ON t.id = c.tutor_id
-      LEFT JOIN LATERAL (
-        SELECT content, created_at, sender_id
-        FROM messages
-        WHERE conversation_id = c.id
-        ORDER BY created_at DESC
-        LIMIT 1
-      ) last_msg ON true
-      WHERE c.student_id = $1 OR c.tutor_id = $1
-      ORDER BY COALESCE(last_msg.created_at, c.created_at) DESC
-    `, [userId]);
-    return res.json(result.rows);
-  } catch (error) {
-    console.error("Get conversations error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â”€â”€â”€ POST /api/conversations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Táº¡o hoáº·c láº¥y conversation giá»¯a student vĂ  tutor
-app.post("/api/conversations", verifyToken, async (req, res) => {
-  try {
-    const { tutor_id } = req.body || {};
-    const student_id   = req.user.userId;
-
-    if (req.user.role !== "student") {
-      return res.status(403).json({ message: "Only students can start a tutor conversation." });
-    }
-
-    if (!tutor_id) {
-      return res.status(400).json({ message: "tutor_id is required." });
-    }
-
-    if (tutor_id === student_id) {
-      return res.status(400).json({ message: "Cannot create a conversation with yourself." });
-    }
-
-    const tutorCheck = await pool.query(
-      "SELECT id FROM users WHERE id = $1 AND role = 'tutor'",
-      [tutor_id]
-    );
-    if (tutorCheck.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor not found." });
-    }
-
-    // Upsert â€” táº¡o má»›i náº¿u chÆ°a cĂ³, tráº£ vá» existing náº¿u Ä‘Ă£ cĂ³
-    const result = await pool.query(`
-      INSERT INTO conversations (student_id, tutor_id)
-      VALUES ($1, $2)
-      ON CONFLICT (student_id, tutor_id) DO UPDATE SET updated_at = NOW()
-      RETURNING *
-    `, [student_id, tutor_id]);
-
-    return res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error("Create conversation error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â”€â”€â”€ GET /api/conversations/:id/messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Láº¥y tin nháº¯n cá»§a 1 conversation (chá»‰ participants má»›i Ä‘Æ°á»£c xem)
-app.get("/api/conversations/:id/messages", verifyToken, async (req, res) => {
-  try {
-    const { id }  = req.params;
-    const userId  = req.user.userId;
-
-    // Kiá»ƒm tra user cĂ³ trong conversation khĂ´ng
-    const check = await pool.query(
-      "SELECT id FROM conversations WHERE id = $1 AND (student_id = $2 OR tutor_id = $2)",
-      [id, userId]
-    );
-    if (check.rows.length === 0) {
-      return res.status(403).json({ message: "Access denied." });
-    }
-
-    const result = await pool.query(`
-      SELECT m.*, u.full_name AS sender_name, u.picture AS sender_picture
-      FROM messages m
-      JOIN users u ON u.id = m.sender_id
-      WHERE m.conversation_id = $1
-      ORDER BY m.created_at ASC
-    `, [id]);
-
-    return res.json(result.rows);
-  } catch (error) {
-    console.error("Get messages error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â”€â”€â”€ POST /api/conversations/:id/messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Gá»­i tin nháº¯n má»›i
-app.post("/api/conversations/:id/messages", verifyToken, async (req, res) => {
-  try {
-    const { id }     = req.params;
-    const senderId   = req.user.userId;
-    const { content } = req.body || {};
-
-    if (!content || !content.trim()) {
-      return res.status(400).json({ message: "Message content cannot be empty." });
-    }
-
-    // Kiá»ƒm tra & láº¥y receiver_id
-    const conv = await pool.query(
-      "SELECT student_id, tutor_id FROM conversations WHERE id = $1 AND (student_id = $2 OR tutor_id = $2)",
-      [id, senderId]
-    );
-    if (conv.rows.length === 0) {
-      return res.status(403).json({ message: "Access denied." });
-    }
-
-    const { student_id, tutor_id } = conv.rows[0];
-    const receiverId = senderId === student_id ? tutor_id : student_id;
-
-    // Insert message
-    const msgResult = await pool.query(`
-      INSERT INTO messages (conversation_id, sender_id, receiver_id, content)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *
-    `, [id, senderId, receiverId, content.trim()]);
-
-    // Update conversation updated_at
-    await pool.query(
-      "UPDATE conversations SET updated_at = NOW() WHERE id = $1",
       [id]
     );
-
-    // KĂ¨m sender info
-    const senderResult = await pool.query(
-      "SELECT full_name, picture FROM users WHERE id = $1",
-      [senderId]
-    );
-    const sender = senderResult.rows[0] || {};
-
-    return res.status(201).json({
-      ...msgResult.rows[0],
-      sender_name:    sender.full_name,
-      sender_picture: sender.picture,
-    });
-  } catch (error) {
-    console.error("Send message error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// â”€â”€â”€ PATCH /api/conversations/:id/read â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// ÄĂ¡nh dáº¥u táº¥t cáº£ tin nháº¯n lĂ  Ä‘Ă£ Ä‘á»c
-app.patch("/api/conversations/:id/read", verifyToken, async (req, res) => {
-  try {
-    const { id }  = req.params;
-    const userId  = req.user.userId;
-
-    const check = await pool.query(
-      "SELECT id FROM conversations WHERE id = $1 AND (student_id = $2 OR tutor_id = $2)",
-      [id, userId]
-    );
-    if (check.rows.length === 0) {
-      return res.status(403).json({ message: "Access denied." });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Tutor not found." });
     }
-
-    await pool.query(
-      "UPDATE messages SET is_read = true WHERE conversation_id = $1 AND receiver_id = $2 AND is_read = false",
-      [id, userId]
-    );
-
-    return res.json({ message: "Marked as read." });
-  } catch (error) {
-    console.error("Mark read error:", error);
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error("GET /api/tutors/:id error:", err.message);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-// â”€â”€â”€ GET /api/messages/unread-count â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Láº¥y tá»•ng sá»‘ tin nháº¯n chÆ°a Ä‘á»c cá»§a user
-app.get("/api/messages/unread-count", verifyToken, async (req, res) => {
+// ── GET /api/reviews/featured ─────────────────────────────────────────────────
+// Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)
+app.get("/api/reviews/featured", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 12, 30);
   try {
-    const userId = req.user.userId;
     const result = await pool.query(
-      "SELECT COUNT(*) AS count FROM messages WHERE receiver_id = $1 AND is_read = false",
+      `SELECT r.id, r.reviewer_name, r.reviewer_role, r.reviewer_picture,
+              r.rating, r.subject, r.content, r.created_at,
+              u.picture AS user_picture, u.full_name AS user_full_name
+       FROM reviews r
+       LEFT JOIN users u ON u.id = r.reviewer_id
+       WHERE r.rating = 5
+       ORDER BY r.created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/reviews/featured error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── POST /api/reviews ──────────────────────────────────────────────────────────
+// Người dùng đã đăng nhập gửi đánh giá mới
+app.post("/api/reviews", verifyToken, async (req, res) => {
+  const { rating, subject, content } = req.body || {};
+  if (!rating || !content) {
+    return res.status(400).json({ message: "rating và content là bắt buộc." });
+  }
+  if (rating < 1 || rating > 5) {
+    return res.status(400).json({ message: "rating phải từ 1 đến 5." });
+  }
+  try {
+    const userResult = await pool.query(
+      "SELECT full_name, role, picture FROM users WHERE id = $1",
+      [req.user.userId]
+    );
+    if (!userResult.rows.length) return res.status(404).json({ message: "User not found." });
+    const u = userResult.rows[0];
+
+    const result = await pool.query(
+      `INSERT INTO reviews (reviewer_id, reviewer_name, reviewer_role, reviewer_picture, rating, subject, content)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [req.user.userId, u.full_name, u.role, u.picture || null, rating, subject || null, content]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("POST /api/reviews error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// Helper: lấy IP thực của client (hỗ trợ proxy/Nginx)
+function getClientIP(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+// Helper: ghi log đăng nhập + trả về flag suspicious nếu IP lạ
+async function logLoginAttempt(userId, ip, userAgent) {
+  try {
+    // Lấy IP của lần đăng nhập cuối cùng trong 30 ngày
+    const recent = await pool.query(
+      `SELECT ip_address FROM login_logs
+       WHERE user_id = $1 AND created_at > NOW() - INTERVAL '30 days'
+       ORDER BY created_at DESC LIMIT 5`,
       [userId]
     );
-    return res.json({ count: Number(result.rows[0].count) });
-  } catch (error) {
-    console.error("Unread count error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
+    const recentIPs = recent.rows.map(r => r.ip_address);
+    const suspicious = recentIPs.length > 0 && !recentIPs.includes(ip);
 
-// â”€â”€â”€ Start server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-ensureBookingSchema()
-  .then(() => {
-    app.listen(port, () => {
-      console.log(`Server is running on http://localhost:${port}`);
-    });
-  })
-  .catch((error) => {
-    console.error("Failed to prepare database schema:", error);
-    process.exit(1);
+    await pool.query(
+      `INSERT INTO login_logs (user_id, ip_address, user_agent, is_suspicious)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, ip, userAgent || null, suspicious]
+    );
+    return suspicious;
+  } catch (err) {
+    console.error("logLoginAttempt error:", err.message);
+    return false;
+  }
+}
+
+async function startServer() {
+  // Auto-migrate: add is_banned column if it doesn't exist yet
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    console.log("✅ DB migration: users.is_banned ready");
+  } catch (err) {
+    console.error("⚠️  DB migration warning:", err.message);
+  }
+
+  // Auto-migrate: create login_logs table
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS login_logs (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        ip_address    TEXT NOT NULL,
+        user_agent    TEXT,
+        is_suspicious BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_login_logs_user_id ON login_logs(user_id);
+      CREATE INDEX IF NOT EXISTS idx_login_logs_created_at ON login_logs(created_at);
+    `);
+    console.log("✅ DB migration: login_logs table ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (login_logs) warning:", err.message);
+  }
+
+  // Auto-migrate: tutor_profiles extra columns
+  try {
+    await pool.query(`
+      ALTER TABLE tutor_profiles
+        ADD COLUMN IF NOT EXISTS hourly_rate       NUMERIC(10,2),
+        ADD COLUMN IF NOT EXISTS profile_photo_url TEXT,
+        ADD COLUMN IF NOT EXISTS city              TEXT,
+        ADD COLUMN IF NOT EXISTS country           TEXT,
+        ADD COLUMN IF NOT EXISTS phone             TEXT,
+        ADD COLUMN IF NOT EXISTS headline          TEXT,
+        ADD COLUMN IF NOT EXISTS reject_reason     TEXT
+    `);
+    console.log("✅ DB migration: tutor_profiles extra columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (tutor_profiles cols) warning:", err.message);
+  }
+
+  // Auto-migrate: tutor_certificates table (multiple certs per tutor)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_certificates (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tutor_profile_id UUID NOT NULL REFERENCES tutor_profiles(id) ON DELETE CASCADE,
+        name             TEXT,
+        url              TEXT NOT NULL,
+        created_at       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_tutor_certs_profile ON tutor_certificates(tutor_profile_id)`);
+    console.log("✅ DB migration: tutor_certificates table ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (tutor_certificates) warning:", err.message);
+  }
+
+  // Auto-migrate: teaching_methods & suitable_students columns on tutor_profiles
+  try {
+    await pool.query(`
+      ALTER TABLE tutor_profiles
+        ADD COLUMN IF NOT EXISTS teaching_methods  JSONB NOT NULL DEFAULT '[]',
+        ADD COLUMN IF NOT EXISTS suitable_students JSONB NOT NULL DEFAULT '[]'
+    `);
+    console.log("✅ DB migration: teaching_methods & suitable_students columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (teaching_methods) warning:", err.message);
+  }
+
+  // Auto-migrate: cert_type, issuer, issue_year on tutor_certificates
+  try {
+    await pool.query(`
+      ALTER TABLE tutor_certificates
+        ADD COLUMN IF NOT EXISTS cert_type  TEXT DEFAULT 'Chứng chỉ',
+        ADD COLUMN IF NOT EXISTS issuer     TEXT,
+        ADD COLUMN IF NOT EXISTS issue_year INTEGER
+    `);
+    console.log("✅ DB migration: tutor_certificates extended columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (cert extended cols) warning:", err.message);
+  }
+
+  // Auto-migrate: create reviews table
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reviews (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reviewer_id      UUID REFERENCES users(id) ON DELETE SET NULL,
+        reviewer_name    TEXT NOT NULL,
+        reviewer_role    TEXT NOT NULL DEFAULT 'student',
+        reviewer_picture TEXT,
+        rating           INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        subject          TEXT,
+        content          TEXT NOT NULL,
+        created_at       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log("✅ DB migration: reviews table ready");
+
+    // Seed 5-star reviews nếu bảng còn trống
+    const { rows } = await pool.query("SELECT COUNT(*) FROM reviews");
+    if (parseInt(rows[0].count) === 0) {
+      await pool.query(`
+        INSERT INTO reviews (reviewer_name, reviewer_role, rating, subject, content, created_at) VALUES
+        ('Nguyễn Văn An',   'student', 5, 'Toán Cao Cấp',       'Gia sư giải thích rất rõ ràng, từng bước một. Tôi đã hiểu được tích phân bội sau 3 buổi học. Cực kỳ khuyến khích!',                                      NOW() - INTERVAL ''2 minutes''),
+        ('Trần Thị Bích',   'parent',  5, 'Tiếng Anh IELTS',    'Con tôi tăng từ 5.5 lên 7.0 chỉ sau 3 tháng. Gia sư rất tận tâm, có phương pháp riêng cho từng học sinh. Cảm ơn EduX rất nhiều!',                         NOW() - INTERVAL ''18 minutes''),
+        ('Lê Minh Châu',    'student', 5, 'Lập Trình Python',   'Từ chỗ không biết gì về code, giờ tôi đã tự viết được ứng dụng Flask đầu tiên. Gia sư hướng dẫn thực chiến, không dạy lý thuyết suông.',                  NOW() - INTERVAL ''1 hour''),
+        ('Phạm Hoàng Duy',  'student', 5, 'Vật Lý Đại Cương',   'Bài giảng sinh động, có nhiều ví dụ thực tế. Điểm thi cuối kỳ của tôi từ 5 lên 9. Thầy rất nhiệt tình và kiên nhẫn.',                                     NOW() - INTERVAL ''3 hours''),
+        ('Nguyễn Thị Hoa',  'parent',  5, 'Toán Tiểu Học',      'Con tôi 9 tuổi rất thích học, không còn sợ môn Toán nữa. Gia sư biết cách tạo hứng thú cho các em nhỏ. Sẽ tiếp tục đăng ký dài hạn.',                    NOW() - INTERVAL ''5 hours''),
+        ('Đỗ Văn Khoa',     'student', 5, 'Hóa Hữu Cơ',         'Môn Hóa luôn là cơn ác mộng nhưng nhờ gia sư tôi đã vượt qua kỳ thi tốt nghiệp với điểm 8.5. Phương pháp ghi nhớ cực hay!',                              NOW() - INTERVAL ''8 hours''),
+        ('Vũ Thị Lan',      'student', 5, 'Tiếng Nhật N3',       'Sau 6 tháng học, tôi thi đậu JLPT N3 lần đầu tiên. Gia sư bản ngữ, phát âm chuẩn, giáo trình được thiết kế rất khoa học.',                               NOW() - INTERVAL ''1 day''),
+        ('Bùi Minh Long',   'parent',  5, 'Toán THPT',           'Điểm thi thử đại học của con tôi tăng vọt từ 6 lên 8.5 điểm. Gia sư không chỉ dạy kiến thức mà còn rèn kỹ năng làm bài thi hiệu quả.',                   NOW() - INTERVAL ''2 days''),
+        ('Hoàng Thị Mai',   'student', 5, 'Luyện Thi THPT QG',  'Thi thử lần đầu được 18/30, sau 2 tháng ôn với gia sư tôi đạt 26/30. Rất biết ơn sự tận tâm và kinh nghiệm của thầy.',                                    NOW() - INTERVAL ''3 days''),
+        ('Đinh Văn Nam',    'student', 5, 'Tin Học Văn Phòng',   'Học Excel và Word từ cơ bản đến nâng cao, giờ làm việc nhanh hơn rất nhiều. Gia sư dạy đúng những gì thực tế cần dùng, không mất thời gian lý thuyết dài.' , NOW() - INTERVAL ''4 days'')
+      `);
+      console.log("✅ DB seed: 10 sample reviews inserted");
+    }
+  } catch (err) {
+    console.error("⚠️  DB migration (reviews) warning:", err.message);
+  }
+
+  app.listen(port, () => {
+    console.log(`🚀 Server is running on http://localhost:${port}`);
   });
+}
+
+startServer();
 

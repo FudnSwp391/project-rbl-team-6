@@ -1,740 +1,1607 @@
 /**
  * ParentDashboard.jsx
  * ─────────────────────────────────────────────────────────────────────────────
- * Dashboard dành cho phụ huynh (role: parent).
- * Hiển thị: tiến độ học của con, thanh toán sắp tới, phản hồi từ gia sư.
+ * Dashboard phụ huynh — dữ liệu thật từ API.
+ * Sections: Tổng quan | Học sinh | Gia sư | Lịch sử hoạt động | Tài chính | Cài đặt
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
-import { getBookings, getTutors } from './services/api'
+import MessagesSection from './components/MessagesSection'
 
-// ─── Mock data ────────────────────────────────────────────────────────────────
-const CHILDREN = [
-  {
-    id: 1,
-    name: 'Alex Davis',
-    avatar:
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuBuMktFHbA_xeGRdOLHAf7zcvZmmbyJMksBvQFmdyKGmu1XwAzxIi_xfpPDYhSTNp45C4iWTdaaD44Yk-StUo2pr0vRy_MPzgf0eBNNuXVQEQGRdeZVQbXPPQ3tnzGMzU-fe9t_A178n4kWoaVIxf6n0CHbveM9aGE1JZ7tx2nWH3dRa7FE4TKSfsDvBLtXTGPwxrw_87sSeARTCSPQqVSrJ1WWqCLjmh2dh9OMGGWN-T5oVI0l_9BQVPr_knNbn-6RqCkNANX0ro4',
-  },
-  {
-    id: 2,
-    name: 'Mia Davis',
-    avatar:
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuCi2hMtGOQZD9DCJ6Yr6eFKurJ_-XYlSBrvnmGtrDa4WGzcFbHWCetheUwVLB9yO2wb4KrMa4_j0TD5zWPA7kcAqQKF-YYX_6Ik3J2OvwnBfPwR64hlrETT4fXFo5qxWROLxcwkG9MqCmTSLhKYi3KoX1kVzReNBEkto17lTSz-A0VqNMaDKUku--nQZi_uz3Xjdlqyg7q7pA6kx3QqODRCbuB2a4IV6PLV_t8EvlW4OuKTzhuRxlOVNbXnKWJg8uuMCfK982l6vR4',
-  },
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+
+const NAV = [
+  { key: 'overview',  icon: 'dashboard',       label: 'Tổng quan' },
+  { key: 'students',  icon: 'group',            label: 'Học sinh' },
+  { key: 'tutors',    icon: 'school',           label: 'Gia sư' },
+  { key: 'messages',  icon: 'chat',             label: 'Tin nhắn' },
+  { key: 'activity',  icon: 'analytics',        label: 'Hoạt động' },
+  { key: 'finance',   icon: 'account_balance_wallet', label: 'Tài chính' },
+  { key: 'settings',  icon: 'settings',         label: 'Cài đặt' },
 ]
 
-const PROGRESS_ITEMS = [
-  {
-    id: 1,
-    subject: 'Advanced Mathematics',
-    percent: 85,
-    icon: 'check_circle',
-    detail: 'Mastering Calculus Fundamentals',
-  },
-  {
-    id: 2,
-    subject: 'Physics',
-    percent: 92,
-    icon: 'emoji_events',
-    detail: 'Top 10% in class this week',
-  },
-]
-
-const FEEDBACKS = [
-  {
-    id: 1,
-    initials: 'SW',
-    name: 'Dr. Sarah Wilson',
-    role: 'Mathematics Tutor',
-    child: 'Alex',
-    bg: 'bg-tertiary-fixed',
-    text: '"Alex showed excellent problem-solving skills during our session on integrals today. Needs a bit more practice on word problems, but overall great progress."',
-  },
-  {
-    id: 2,
-    initials: 'PJ',
-    name: 'Prof. James',
-    role: 'Physics Tutor',
-    child: 'Alex',
-    bg: 'bg-secondary-fixed',
-    text: '"Very engaged in the thermodynamics lab. Alex asked insightful questions regarding heat transfer mechanisms."',
-  },
-]
-
-const NAV_ITEMS = [
-  { icon: 'dashboard', label: 'Overview' },
-  { icon: 'calendar_today', label: 'Schedule & Bookings' },
-  { icon: 'analytics', label: "Children's Progress" },
-  { icon: 'payments', label: 'Billing & Payments' },
-  { icon: 'mail', label: 'Messages' },
-  { icon: 'settings', label: 'Settings' },
-]
-
-export default function ParentDashboard() {
-  const { user, logout } = useAuth()
-  const [activeChild, setActiveChild] = useState(CHILDREN[0])
-  const [childDropdown, setChildDropdown] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState('Overview')
-  const [bookings, setBookings] = useState([])
-  const [bookingsLoading, setBookingsLoading] = useState(true)
-  const [availableTutors, setAvailableTutors] = useState([])
-
-  // Fetch bookings
-  useEffect(() => {
-    async function loadBookings() {
-      try {
-        const data = await getBookings()
-        setBookings(data)
-      } catch (err) {
-        console.error("Error loading parent bookings:", err)
-      } finally {
-        setBookingsLoading(false)
-      }
-    }
-    loadBookings()
-  }, [])
-
-  useEffect(() => {
-    let active = true
-    getTutors()
-      .then((data) => {
-        if (active && Array.isArray(data)) setAvailableTutors(data)
-      })
-      .catch(() => {})
-    return () => { active = false }
-  }, [])
-
-
-  const displayName = user?.name || user?.email?.split('@')[0] || 'Parent'
-  const initials = displayName
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
-
+// ─── helpers ──────────────────────────────────────────────────────────────────
+function fmtDate(d) {
+  if (!d) return '—'
+  return new Date(d).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+function fmtTime(d) {
+  if (!d) return '—'
+  return new Date(d).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+function scoreColor(s) {
+  if (s === null || s === undefined) return 'text-on-surface-variant'
+  if (s >= 80) return 'text-green-600'
+  if (s >= 60) return 'text-amber-600'
+  return 'text-red-500'
+}
+function scoreBg(s) {
+  if (s === null || s === undefined) return 'bg-surface-container'
+  if (s >= 80) return 'bg-green-50 border-green-200'
+  if (s >= 60) return 'bg-amber-50 border-amber-200'
+  return 'bg-red-50 border-red-200'
+}
+function Avatar({ src, name, size = 10 }) {
+  const initials = (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+  if (src) return <img src={src} alt={name} className={`w-${size} h-${size} rounded-full object-cover border border-outline-variant/30 shrink-0`} />
   return (
-    <div className="bg-background text-on-background font-body-md min-h-screen flex">
-
-      {/* ── Mobile overlay ── */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      {/* ══════════════════════════════════════════
-          SIDEBAR
-      ══════════════════════════════════════════ */}
-      <nav
-        className={`
-          h-screen w-64 fixed left-0 top-0 bg-surface-container-low
-          flex flex-col py-md px-sm z-50 shadow-sm
-          transition-transform duration-300
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          md:translate-x-0
-        `}
-      >
-        {/* Logo + parent avatar */}
-        <div className="mb-lg px-sm">
-          <div className="flex items-center gap-sm">
-            {user?.picture ? (
-              <img
-                src={user.picture}
-                alt={displayName}
-                className="w-10 h-10 rounded-full object-cover border border-outline-variant"
-              />
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-on-primary font-bold text-sm">
-                {initials}
-              </div>
-            )}
-            <div>
-              <h1 className="font-headline-md text-headline-md font-bold text-primary leading-tight">
-                EduX
-              </h1>
-              <p className="font-label-sm text-label-sm text-on-surface-variant">
-                Parent Portal
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Nav links */}
-        <div className="flex flex-col gap-xs flex-grow">
-          {NAV_ITEMS.map((item) => {
-            const isActive = item.label === activeTab;
-            return (
-              <a
-                key={item.label}
-                href="#"
-                onClick={(e) => { e.preventDefault(); setActiveTab(item.label); setSidebarOpen(false) }}
-                className={`
-                  flex items-center gap-sm px-sm py-sm rounded-lg
-                  transition-colors duration-200
-                  ${
-                    isActive
-                      ? 'text-primary font-bold border-r-4 border-primary bg-primary/5'
-                      : 'text-on-secondary-fixed-variant hover:bg-secondary-container'
-                  }
-                `}
-              >
-                <span
-                  className="material-symbols-outlined"
-                  style={isActive ? { fontVariationSettings: "'FILL' 1" } : {}}
-                >
-                  {item.icon}
-                </span>
-                <span className="font-label-md text-label-md">{item.label}</span>
-              </a>
-            );
-          })}
-
-          {/* Logout */}
-          <a
-            href="#"
-            onClick={(e) => { e.preventDefault(); logout() }}
-            className="flex items-center gap-sm px-sm py-sm rounded-lg text-on-secondary-fixed-variant hover:bg-secondary-container transition-colors duration-200 mt-2"
-          >
-            <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Logout</span>
-          </a>
-        </div>
-
-        {/* CTA */}
-        <div className="mt-auto px-sm pt-md">
-          <button className="w-full h-12 bg-primary text-on-primary font-label-md text-label-md rounded-lg flex items-center justify-center gap-xs hover:bg-primary-container transition-colors duration-200 shadow-sm">
-            <span className="material-symbols-outlined text-[20px]">add</span>
-            Add Student
-          </button>
-        </div>
-      </nav>
-
-      {/* ══════════════════════════════════════════
-          MAIN WRAPPER
-      ══════════════════════════════════════════ */}
-      <div className="flex-1 md:ml-64 flex flex-col min-h-screen">
-
-        {/* ── Top Bar ── */}
-        <header className="fixed top-0 right-0 w-full md:w-[calc(100%-16rem)] h-16 bg-surface-bright shadow-sm flex items-center justify-between px-md z-40">
-
-          {/* Mobile hamburger */}
-          <button
-            className="md:hidden w-10 h-10 flex items-center justify-center text-on-surface-variant hover:text-primary rounded-full transition-colors mr-2"
-            onClick={() => setSidebarOpen(true)}
-            aria-label="Open menu"
-          >
-            <span className="material-symbols-outlined">menu</span>
-          </button>
-
-          {/* Search */}
-          <div className="flex items-center w-full max-w-md">
-            <div className="relative w-full hidden sm:block">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">
-                search
-              </span>
-              <input
-                className="w-full pl-10 pr-4 h-10 rounded-lg border border-outline-variant bg-surface-container-lowest text-on-surface focus:border-primary focus:ring-2 focus:ring-tertiary-fixed-dim/50 focus:outline-none transition-all duration-200 font-body-md text-body-md placeholder:text-on-surface-variant"
-                placeholder="Search courses, tutors..."
-                type="text"
-              />
-            </div>
-          </div>
-
-          {/* Right actions */}
-          <div className="flex items-center gap-md">
-            <div className="flex items-center gap-xs">
-              {/* Notifications */}
-              <button className="p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 rounded-full hover:bg-surface-container relative">
-                <span className="material-symbols-outlined">notifications</span>
-                <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full" />
-              </button>
-              {/* Help */}
-              <button className="p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 rounded-full hover:bg-surface-container">
-                <span className="material-symbols-outlined">help</span>
-              </button>
-            </div>
-
-            <div className="w-px h-8 bg-outline-variant opacity-50" />
-
-            {/* Switch Child dropdown */}
-            <div className="relative">
-              <button
-                className="flex items-center gap-sm cursor-pointer"
-                onClick={() => setChildDropdown((v) => !v)}
-              >
-                <div className="flex flex-col items-end hidden sm:flex">
-                  <span className="font-label-md text-label-md text-on-surface">
-                    {activeChild.name}
-                  </span>
-                  <span className="font-label-sm text-label-sm text-primary">Switch Child</span>
-                </div>
-                <img
-                  src={activeChild.avatar}
-                  alt={activeChild.name}
-                  className="w-10 h-10 rounded-full object-cover border border-outline-variant"
-                />
-                <span className="material-symbols-outlined text-on-surface-variant">
-                  arrow_drop_down
-                </span>
-              </button>
-
-              {/* Dropdown */}
-              {childDropdown && (
-                <div className="absolute top-full right-0 mt-2 w-48 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg z-50">
-                  <div className="p-2 flex flex-col gap-1">
-                    {CHILDREN.map((child) => (
-                      <button
-                        key={child.id}
-                        className="flex items-center gap-sm p-2 hover:bg-surface-container rounded-md transition-colors w-full text-left"
-                        onClick={() => {
-                          setActiveChild(child)
-                          setChildDropdown(false)
-                        }}
-                      >
-                        <img
-                          src={child.avatar}
-                          alt={child.name}
-                          className="w-6 h-6 rounded-full object-cover"
-                        />
-                        <span className="font-label-md text-label-md text-on-surface">
-                          {child.name}
-                        </span>
-                        {activeChild.id === child.id && (
-                          <span className="material-symbols-outlined text-primary text-[16px] ml-auto">
-                            check
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {/* ── Main content ── */}
-        <main className="flex-grow pt-24 pb-lg px-gutter lg:px-lg max-w-container-max mx-auto w-full">
-
-          {/* Welcome */}
-          <div className="mb-lg">
-            <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs">
-              Good Morning, {displayName} 👋
-            </h2>
-            <p className="font-body-lg text-body-lg text-on-surface-variant">
-              Here's what's happening with {activeChild.name} today.
-            </p>
-          </div>
-
-          {activeTab === 'Overview' ? (
-            /* ── Bento Grid ── */
-            <div className="grid grid-cols-12 gap-gutter">
-
-              {/* ── Child Progress (8 cols) ── */}
-              <div className="col-span-12 lg:col-span-8 glass-card p-6 flex flex-col">
-                <div className="flex justify-between items-center mb-md flex-wrap gap-2">
-                  <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-sm">
-                    <span className="material-symbols-outlined text-primary">trending_up</span>
-                    {activeChild.name}'s Recent Progress
-                  </h3>
-                  <a
-                    href="#"
-                    className="text-primary font-label-md text-label-md hover:underline flex items-center gap-xs"
-                  >
-                    View Full Report
-                    <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
-                  </a>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-md mt-auto">
-                  {PROGRESS_ITEMS.map((item) => (
-                    <ProgressCard key={item.id} item={item} />
-                  ))}
-                </div>
-              </div>
-
-              {/* ── Upcoming Payment (4 cols) ── */}
-              <div className="col-span-12 lg:col-span-4 glass-card p-6 flex flex-col justify-between">
-                <div>
-                  <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-sm mb-md">
-                    <span className="material-symbols-outlined text-primary">account_balance_wallet</span>
-                    Upcoming Payment
-                  </h3>
-                  <div className="bg-primary/5 p-md rounded-lg border border-primary/20 mb-md text-center">
-                    <p className="font-label-sm text-label-sm text-on-surface-variant mb-xs uppercase tracking-wider">
-                      Due Nov 15
-                    </p>
-                    <p className="text-[48px] leading-[56px] font-bold text-primary mb-sm tracking-tight">
-                      $450.00
-                    </p>
-                    <p className="font-label-sm text-label-sm text-on-surface-variant">
-                      Fall Semester Tutoring — {activeChild.name}
-                    </p>
-                  </div>
-                </div>
-                <button className="w-full h-12 bg-primary text-on-primary font-label-md text-label-md rounded-lg flex items-center justify-center gap-sm hover:bg-primary-container transition-colors duration-200 shadow-sm">
-                  <span className="material-symbols-outlined">credit_card</span>
-                  Pay Now
-                </button>
-              </div>
-
-              {/* ── Tutor Feedback (full width) ── */}
-              <div className="col-span-12 glass-card p-6">
-                <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-sm mb-md">
-                  <span className="material-symbols-outlined text-primary">forum</span>
-                  Recent Tutor Feedback
-                </h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-md">
-                  {FEEDBACKS.map((fb) => (
-                    <FeedbackCard key={fb.id} feedback={fb} />
-                  ))}
-
-                  {/* View all CTA */}
-                  <div className="flex flex-col items-center justify-center gap-sm p-md rounded-lg border border-dashed border-outline-variant/50 hover:bg-surface-container-low transition-colors duration-200 cursor-pointer min-h-[140px]">
-                    <span className="material-symbols-outlined text-outline text-[32px]">history</span>
-                    <p className="font-label-md text-label-md text-on-surface-variant">
-                      View all past feedback
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          ) : activeTab === 'Schedule & Bookings' ? (
-            /* ── Bookings & Schedule View ── */
-            <div className="space-y-6">
-              <div className="flex justify-between items-center flex-wrap gap-2">
-                <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-sm">
-                  <span className="material-symbols-outlined text-primary">calendar_today</span>
-                  {activeChild.name}'s Tutoring Schedule
-                </h3>
-                <a 
-                  href="#/"
-                  className="h-11 px-4 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:bg-primary/95 transition-colors flex items-center gap-1 shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[18px]">person_search</span>
-                  Find &amp; Book Tutor
-                </a>
-              </div>
-
-              <div className="glass-card p-5 bg-white/70">
-                <div className="flex items-center justify-between gap-3 mb-4">
-                  <div>
-                    <h4 className="font-headline-md text-headline-md text-on-surface">Book a New Lesson</h4>
-                    <p className="text-[13px] text-on-surface-variant">
-                      Select a tutor, then use the calendar UI to choose a date and time for {activeChild.name}.
-                    </p>
-                  </div>
-                  <span className="material-symbols-outlined text-primary">calendar_month</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {availableTutors.slice(0, 6).map((tutor) => (
-                    <ParentBookingTutorCard key={tutor.id} tutor={tutor} />
-                  ))}
-                </div>
-              </div>
-
-              {!bookingsLoading && bookings.filter(b => b.childName === activeChild.name).length > 0 && (
-                <ParentAttendanceSummary bookings={bookings.filter(b => b.childName === activeChild.name)} childName={activeChild.name} />
-              )}
-
-              {bookingsLoading ? (
-                <div className="glass-card p-12 text-center flex flex-col items-center justify-center space-y-3">
-                  <svg className="animate-spin h-8 w-8 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                  </svg>
-                  <p className="font-label-md text-label-md text-on-surface-variant">Loading child's bookings...</p>
-                </div>
-              ) : bookings.filter(b => b.childName === activeChild.name).length === 0 ? (
-                <div className="glass-card p-12 text-center flex flex-col items-center justify-center space-y-4 bg-white/50">
-                  <div className="w-20 h-20 rounded-full bg-primary/5 flex items-center justify-center">
-                    <span className="material-symbols-outlined text-[40px] text-primary/50">event_busy</span>
-                  </div>
-                  <div className="space-y-1">
-                    <h4 className="font-headline-md text-headline-md text-on-surface">No Scheduled Lessons</h4>
-                    <p className="font-body-md text-body-md text-on-surface-variant max-w-sm mx-auto">
-                      No lessons scheduled for <strong>{activeChild.name}</strong> yet. Browse tutors and book a session.
-                    </p>
-                  </div>
-                  <a
-                    href="#/"
-                    className="h-11 px-6 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:bg-primary/95 transition-colors flex items-center gap-2 shadow-sm"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">search</span>
-                    Browse Tutors
-                  </a>
-                </div>
-              ) : (
-                <div className="glass-card overflow-hidden shadow-md divide-y divide-outline-variant/10 bg-white/70">
-                  {bookings
-                    .filter(b => b.childName === activeChild.name)
-                    .map((booking) => (
-                      <div key={booking.id} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-surface-container-lowest/50 transition-colors">
-                        <div className="flex items-center gap-4">
-                          <img src={booking.tutorAvatar} alt={booking.tutorName} className="w-14 h-14 rounded-full object-cover border-2 border-surface bg-surface-container-low shadow-sm" />
-                          <div className="space-y-0.5">
-                            <h4 className="font-label-md text-[17px] text-on-surface font-semibold">{booking.tutorName}</h4>
-                            <p className="font-body-sm text-[14px] text-on-surface-variant flex items-center gap-1.5 flex-wrap">
-                              <span className="px-2 py-0.5 rounded bg-primary/5 text-primary text-[11.5px] font-bold border border-primary/5">
-                                {booking.subject}
-                              </span>
-                              {booking.bookingType === 'trial' && (
-                                <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 text-[11px] font-bold border border-amber-200">
-                                  Trial
-                                </span>
-                              )}
-                              <span>•</span>
-                              <span className="flex items-center gap-0.5">
-                                <span className="material-symbols-outlined text-[15px]">calendar_today</span>
-                                {booking.date}
-                              </span>
-                              <span>•</span>
-                              <span className="flex items-center gap-0.5">
-                                <span className="material-symbols-outlined text-[15px]">schedule</span>
-                                {booking.timeSlot}
-                              </span>
-                            </p>
-                            {booking.notes && (
-                              <p className="text-[13px] text-outline italic mt-1 truncate max-w-md">Topics to cover: "{booking.notes}"</p>
-                            )}
-                            {booking.attendanceStatus && (
-                              <p className="text-[12px] text-on-surface-variant mt-1 flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[14px]">fact_check</span>
-                                Attendance: <strong>{booking.attendanceStatus}</strong>
-                                {booking.attendanceNote ? ` - ${booking.attendanceNote}` : ''}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-3 self-end sm:self-center">
-                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                            booking.status === 'Approved'
-                              ? 'bg-[#dcfce7] text-[#16a34a] border border-[#bbf7d0]'
-                              : booking.status === 'Declined'
-                              ? 'bg-error-container text-error border border-red-200'
-                              : 'bg-amber-50 text-amber-700 border border-amber-200'
-                          }`}>
-                            {booking.status}
-                          </span>
-                          
-                          {booking.status === 'Approved' ? (
-                            booking.bookingType === 'trial' && booking.attendanceStatus === 'present' ? (
-                              <a href={`#/tutor-profile/${booking.tutorId}`} className="h-10 px-4 bg-amber-500 text-white rounded-lg font-label-sm text-label-sm hover:bg-amber-600 transition-colors shadow-sm flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[16px]">rate_review</span>
-                                Review Trial
-                              </a>
-                            ) : (
-                              <button className="h-10 px-4 bg-primary text-on-primary rounded-lg font-label-sm text-label-sm hover:bg-primary/95 transition-colors shadow-sm flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[16px]">videocam</span>
-                                Join Session
-                              </button>
-                            )
-                          ) : (
-                            <button className="h-10 px-4 border border-outline-variant text-on-surface-variant rounded-lg font-label-sm text-label-sm hover:bg-surface-container-high transition-colors">
-                              Contact
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            /* ── Other tabs placeholder ── */
-            <div className="glass-card p-12 text-center py-20 bg-white/50">
-              <span className="material-symbols-outlined text-4xl text-outline mb-2">construction</span>
-              <h3 className="font-headline-md text-headline-md text-on-surface">Tab "{activeTab}" Under Construction</h3>
-              <p className="text-on-surface-variant mt-2">This view is currently under development.</p>
-            </div>
-          )}
-        </main>
-      </div>
-
-      {/* Glassmorphism style injected inline for cross-component use */}
-      <style>{`
-        .glass-card {
-          background-color: rgba(255, 255, 255, 0.7);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          border: 1px solid rgba(255, 255, 255, 0.3);
-          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
-          border-radius: 1rem;
-        }
-      `}</style>
+    <div className={`w-${size} h-${size} rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center text-sm shrink-0`}>
+      {initials}
     </div>
   )
 }
-
-// ─── Progress Card ─────────────────────────────────────────────────────────────
-function ProgressCard({ item }) {
-  return (
-    <div className="bg-surface-container-low p-md rounded-lg border border-outline-variant/30">
-      <div className="flex justify-between items-center mb-sm">
-        <span className="font-label-md text-label-md text-on-surface">{item.subject}</span>
-        <span className="font-headline-md text-headline-md text-primary">{item.percent}%</span>
-      </div>
-
-      {/* Progress bar */}
-      <div className="w-full bg-surface-container-highest rounded-full h-2 mb-sm overflow-hidden">
-        <div
-          className="bg-primary h-2 rounded-full transition-all duration-700 ease-out"
-          style={{ width: `${item.percent}%` }}
-        />
-      </div>
-
-      <p className="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-xs">
-        <span className="material-symbols-outlined text-[16px] text-primary">{item.icon}</span>
-        {item.detail}
-      </p>
-    </div>
-  )
-}
-
-// ─── Feedback Card ─────────────────────────────────────────────────────────────
-function FeedbackCard({ feedback }) {
-  return (
-    <div className="flex flex-col gap-sm p-md rounded-lg border border-outline-variant/30 hover:shadow-md transition-shadow duration-200 bg-surface-container-lowest">
-      <div className="flex items-center gap-sm">
-        <div
-          className={`w-10 h-10 rounded-full ${feedback.bg} flex items-center justify-center font-bold font-label-md text-label-md text-on-surface flex-shrink-0`}
-        >
-          {feedback.initials}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="font-label-md text-label-md text-on-surface truncate">{feedback.name}</p>
-          <p className="font-label-sm text-label-sm text-on-surface-variant truncate">{feedback.role}</p>
-        </div>
-        <span className="bg-tertiary-fixed-dim/20 text-primary font-label-sm text-label-sm px-2 py-1 rounded-md whitespace-nowrap flex-shrink-0">
-          {feedback.child}
-        </span>
-      </div>
-      <p className="font-body-md text-body-md text-on-surface-variant mt-xs leading-relaxed italic">
-        {feedback.text}
-      </p>
-    </div>
-  )
-}
-
-function ParentBookingTutorCard({ tutor }) {
-  const subject = Array.isArray(tutor.subjects) ? tutor.subjects[0] : tutor.subject || 'General'
-  const bookingTutorId = tutor.profile_id || tutor.profileId || tutor.id || tutor.user_id || tutor.userId || tutor.tutor_id || tutor.tutorId
-  const handleTrialClick = () => {
-    sessionStorage.setItem('edux_focus_trial_class', String(bookingTutorId))
+function TypeBadge({ type }) {
+  const map = {
+    quiz:     { label: 'Bài Kiểm Tra', cls: 'bg-blue-100 text-blue-700',   icon: 'quiz' },
+    practice: { label: 'Luyện tập',  cls: 'bg-purple-100 text-purple-700', icon: 'psychology' },
+    exam:     { label: 'Đề thi',     cls: 'bg-orange-100 text-orange-700', icon: 'description' },
   }
+  const m = map[type] || map.quiz
   return (
-    <div className={`rounded-xl border bg-white/85 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${tutor.isNewTutor ? 'border-amber-200 ring-1 ring-amber-100' : 'border-outline-variant/20'}`}>
-      <div className="flex items-center gap-3">
-        {tutor.avatar ? (
-          <img src={tutor.avatar} alt={tutor.name} className="w-12 h-12 rounded-full object-cover border border-outline-variant/30" />
-        ) : (
-          <div className="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">
-            {(tutor.name || 'T').charAt(0)}
-          </div>
-        )}
-        <div className="min-w-0 flex-1">
-          <h4 className="font-label-md text-label-md text-on-surface truncate flex items-center gap-1.5">
-            <span className="truncate">{tutor.name}</span>
-            {tutor.isNewTutor && <NewTutorBadge />}
-          </h4>
-          <p className="text-[12px] text-on-surface-variant truncate">{subject}</p>
-          {tutor.isNewTutor && (
-            <p className="mt-1 text-[11px] font-bold text-amber-700">
-              Có lớp học thử miễn phí cho học sinh trước khi học dài hạn
-            </p>
-          )}
-        </div>
-      </div>
-      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {tutor.isNewTutor && (
-          <a
-            onClick={handleTrialClick}
-            href={`#/tutor-profile/${bookingTutorId}`}
-            className="h-9 px-3 rounded-lg bg-amber-500 text-white font-label-sm text-[12px] flex items-center justify-center gap-1 hover:bg-amber-600 transition-colors"
-          >
-            <span className="material-symbols-outlined text-[15px]">workspace_premium</span>
-            Học thử
-          </a>
-        )}
-        <a href={`#/booking-calendar/${bookingTutorId}`} className="h-9 px-3 rounded-lg bg-primary text-on-primary font-label-sm text-[12px] flex items-center justify-center gap-1 hover:bg-primary/90 transition-colors">
-          <span className="material-symbols-outlined text-[15px]">event_available</span>
-          Book
-        </a>
-      </div>
-    </div>
-  )
-}
-
-function NewTutorBadge() {
-  return (
-    <span className="inline-flex flex-shrink-0 items-center rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700">
-      New
+    <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium ${m.cls}`}>
+      <span className="material-symbols-outlined text-[12px]">{m.icon}</span>
+      {m.label}
     </span>
   )
 }
 
-function ParentAttendanceSummary({ bookings, childName }) {
-  const approved = bookings.filter((booking) => booking.status === 'Approved')
-  const marked = approved.filter((booking) => booking.attendanceStatus)
-  const present = marked.filter((booking) => booking.attendanceStatus === 'present')
-  const absent = marked.filter((booking) => booking.attendanceStatus === 'absent')
-  const excused = marked.filter((booking) => booking.attendanceStatus === 'excused')
-  const rate = marked.length ? Math.round((present.length / marked.length) * 100) : null
+// ─── Notification Dropdown ─────────────────────────────────────────────────────
+const NOTIF_ICON_MAP = {
+  payment:        { icon: 'payments',     color: 'text-red-500',    bg: 'bg-red-50' },
+  tutor_review:   { icon: 'rate_review',  color: 'text-purple-600', bg: 'bg-purple-50' },
+  student_absent: { icon: 'event_busy',   color: 'text-amber-600',  bg: 'bg-amber-50' },
+  quiz_result:    { icon: 'grading',      color: 'text-blue-600',   bg: 'bg-blue-50' },
+  practice_report:{ icon: 'psychology',   color: 'text-purple-600', bg: 'bg-purple-50' },
+  system:         { icon: 'info',         color: 'text-on-surface-variant', bg: 'bg-surface-container' },
+}
+function notifStyle(type) { return NOTIF_ICON_MAP[type] || NOTIF_ICON_MAP.system }
+
+function timeAgo(dateStr) {
+  if (!dateStr) return ''
+  const diff = (Date.now() - new Date(dateStr)) / 1000
+  if (diff < 3600)  return `${Math.floor(diff / 60)} phút trước`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`
+  if (diff < 604800) return `${Math.floor(diff / 86400)} ngày trước`
+  return new Date(dateStr).toLocaleDateString('vi-VN')
+}
+
+function NotificationDropdown({ token }) {
+  const [open, setOpen] = useState(false)
+  const [notifications, setNotifications] = useState([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const dropdownRef = useRef(null)
+
+  const fetchNotifs = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setNotifications(data.notifications || [])
+      setUnreadCount(data.unread_count || 0)
+    } catch { /* silent */ }
+  }
+
+  useEffect(() => {
+    if (token) fetchNotifs()
+    // Poll every 30s for new notifications
+    const interval = setInterval(() => { if (token) fetchNotifs() }, 30000)
+    return () => clearInterval(interval)
+  }, [token])
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const markAllRead = async () => {
+    await fetch(`${API_BASE}/api/notifications/read-all`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}` }
+    })
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
+    setUnreadCount(0)
+  }
+
+  const markRead = async (id) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n))
+    setUnreadCount(prev => Math.max(0, prev - 1))
+    await fetch(`${API_BASE}/api/notifications/${id}/read`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}` }
+    })
+  }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div className="glass-card p-5 bg-white/70 lg:col-span-2">
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <div>
-            <h4 className="font-headline-md text-headline-md text-on-surface">{childName}'s Attendance</h4>
-            <p className="text-[13px] text-on-surface-variant">Attendance is updated by the tutor after each approved lesson.</p>
-          </div>
-          <span className="material-symbols-outlined text-primary">fact_check</span>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <ParentAttendanceMetric label="Rate" value={rate == null ? '--' : `${rate}%`} tone="primary" />
-          <ParentAttendanceMetric label="Present" value={present.length} tone="green" />
-          <ParentAttendanceMetric label="Absent" value={absent.length} tone="red" />
-          <ParentAttendanceMetric label="Excused" value={excused.length} tone="amber" />
-        </div>
-      </div>
-      <div className="glass-card p-5 bg-white/70">
-        <h4 className="font-headline-sm text-headline-sm text-on-surface mb-3">Absent Lessons</h4>
-        {absent.length === 0 ? (
-          <p className="text-[13px] text-on-surface-variant italic">No absences recorded.</p>
-        ) : (
-          <div className="space-y-2 max-h-40 overflow-auto">
-            {absent.map((booking) => (
-              <div key={booking.id} className="rounded-xl bg-red-50 border border-red-200 p-3">
-                <p className="text-[12px] font-bold text-red-700">{booking.date} - {booking.timeSlot}</p>
-                <p className="text-[12px] text-red-600">{booking.subject}{booking.attendanceNote ? ` - ${booking.attendanceNote}` : ''}</p>
-              </div>
-            ))}
-          </div>
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => { setOpen(v => !v) }}
+        className="relative p-2 text-on-surface-variant hover:text-primary rounded-full hover:bg-surface-container transition-colors"
+        aria-label="Thông báo"
+      >
+        <span className="material-symbols-outlined" style={unreadCount > 0 ? { fontVariationSettings: "'FILL' 1" } : {}}>
+          notifications
+        </span>
+        {unreadCount > 0 && (
+          <span className="absolute top-1 right-1 min-w-[18px] h-[18px] rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1 border-2 border-surface">
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </span>
         )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-80 bg-surface rounded-2xl shadow-xl border border-outline-variant/20 overflow-hidden z-50 animate-[fadeIn_0.15s_ease-out]">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/20">
+            <h4 className="font-headline-sm text-on-surface">Thông báo</h4>
+            {unreadCount > 0 && (
+              <button onClick={markAllRead} className="text-xs text-primary hover:underline font-medium">
+                Đánh dấu tất cả đã đọc
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-96 overflow-y-auto divide-y divide-outline-variant/10">
+            {notifications.length === 0 ? (
+              <div className="p-6 text-center text-on-surface-variant text-sm">Không có thông báo nào</div>
+            ) : (
+              notifications.map(n => {
+                const style = notifStyle(n.type)
+                return (
+                  <button
+                    key={n.id}
+                    onClick={() => markRead(n.id)}
+                    className={`w-full text-left flex items-start gap-3 p-3 hover:bg-surface-container-low transition-colors ${!n.is_read ? 'bg-primary/5' : ''}`}
+                  >
+                    <div className={`w-9 h-9 rounded-full ${style.bg} flex items-center justify-center shrink-0 mt-0.5`}>
+                      <span className={`material-symbols-outlined text-[18px] ${style.color}`} style={{ fontVariationSettings: "'FILL' 1" }}>
+                        {n.icon || style.icon}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1">
+                        <p className={`font-label-md text-on-surface truncate ${!n.is_read ? 'font-semibold' : ''}`}>{n.title}</p>
+                        {!n.is_read && <span className="w-2 h-2 rounded-full bg-primary shrink-0" />}
+                      </div>
+                      <p className="font-body-sm text-on-surface-variant text-xs leading-snug mt-0.5 line-clamp-2">{n.body}</p>
+                      <p className="text-[11px] text-on-surface-variant/70 mt-1">{timeAgo(n.created_at)}</p>
+                    </div>
+                  </button>
+                )
+              })
+            )}
+          </div>
+
+          <div className="px-4 py-2 border-t border-outline-variant/20 text-center">
+            <button className="text-xs text-primary hover:underline font-medium">Xem tất cả thông báo</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
+export default function ParentDashboard() {
+  const { user, token, logout } = useAuth()
+  const [section, setSection] = useState('overview')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  const displayName = user?.name || user?.email?.split('@')[0] || 'Phụ huynh'
+  const initials = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+
+  return (
+    <div className="bg-background text-on-background min-h-screen flex font-body-md">
+
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+
+      {/* ── Sidebar ── */}
+      <nav className={`
+        fixed left-0 top-0 h-screen w-64 bg-surface-container-low
+        flex flex-col py-md px-sm z-50 shadow-lg transition-transform duration-300
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0
+      `}>
+        {/* Brand */}
+        <div className="mb-lg px-sm flex items-center gap-sm">
+          <a href="#/" className="flex items-center gap-sm hover:opacity-80 transition-opacity no-underline">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-tertiary flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-white text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>family_restroom</span>
+            </div>
+            <div>
+              <h1 className="font-headline-md text-headline-md font-bold text-primary leading-tight m-0">EduX</h1>
+              <p className="font-label-sm text-label-sm text-on-surface-variant m-0">Phụ huynh</p>
+            </div>
+          </a>
+        </div>
+
+        {/* Nav */}
+        <div className="flex flex-col gap-xs flex-1">
+          {NAV.map(item => (
+            <button
+              key={item.key}
+              onClick={() => { setSection(item.key); setSidebarOpen(false) }}
+              className={`flex items-center gap-sm px-sm py-[10px] rounded-xl transition-all duration-200 text-left w-full
+                ${section === item.key
+                  ? 'bg-primary/10 text-primary font-semibold'
+                  : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
+                }`}
+            >
+              <span
+                className="material-symbols-outlined text-[22px]"
+                style={section === item.key ? { fontVariationSettings: "'FILL' 1" } : {}}
+              >
+                {item.icon}
+              </span>
+              <span className="font-label-md text-label-md">{item.label}</span>
+              {section === item.key && (
+                <span className="ml-auto w-1.5 h-5 rounded-full bg-primary" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* User + logout */}
+        <div className="mt-auto pt-md border-t border-outline-variant/30">
+          <div className="flex items-center gap-sm px-sm py-sm mb-sm">
+            {user?.picture
+              ? <img src={user.picture} alt={displayName} className="w-9 h-9 rounded-full object-cover border border-outline-variant/30" />
+              : <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-on-primary font-bold text-sm">{initials}</div>
+            }
+            <div className="flex-1 min-w-0">
+              <p className="font-label-md text-label-md text-on-surface truncate">{displayName}</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant truncate">{user?.email}</p>
+            </div>
+          </div>
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-sm px-sm py-sm rounded-xl text-error hover:bg-error/10 transition-colors text-left"
+          >
+            <span className="material-symbols-outlined text-[20px]">logout</span>
+            <span className="font-label-md text-label-md">Đăng xuất</span>
+          </button>
+        </div>
+      </nav>
+
+      {/* ── Main area ── */}
+      <div className="flex-1 md:ml-64 flex flex-col min-h-screen">
+        {/* Topbar */}
+        <header className="sticky top-0 h-16 bg-surface/90 backdrop-blur border-b border-outline-variant/20 flex items-center px-md gap-md z-20">
+          <button
+            className="md:hidden w-9 h-9 flex items-center justify-center text-on-surface-variant hover:bg-surface-container rounded-full"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <span className="material-symbols-outlined">menu</span>
+          </button>
+
+          <div className="flex-1">
+            <h2 className="font-headline-sm text-headline-sm text-on-surface">
+              {NAV.find(n => n.key === section)?.label || 'Tổng quan'}
+            </h2>
+            <p className="font-label-sm text-label-sm text-on-surface-variant">
+              Chào buổi {new Date().getHours() < 12 ? 'sáng' : new Date().getHours() < 18 ? 'chiều' : 'tối'}, {displayName} 👋
+            </p>
+          </div>
+
+          <NotificationDropdown token={token} />
+        </header>
+
+        {/* Content */}
+        <main className={`flex-1 overflow-y-auto ${section === 'messages' ? 'p-0' : 'p-md lg:p-lg'}`}>
+          {section === 'overview'  && <OverviewSection  token={token} />}
+          {section === 'students'  && <StudentsSection  token={token} />}
+          {section === 'tutors'    && <TutorsSection    token={token} />}
+          {section === 'messages'  && <MessagesSection  token={token} user={user} />}
+          {section === 'activity'  && <ActivitySection  token={token} />}
+          {section === 'finance'   && <FinanceSection   token={token} />}
+          {section === 'settings'  && <SettingsSection  user={user} displayName={displayName} />}
+        </main>
       </div>
     </div>
   )
 }
 
-function ParentAttendanceMetric({ label, value, tone }) {
-  const styles = {
-    primary: 'bg-primary/5 text-primary border-primary/10',
-    green: 'bg-[#dcfce7] text-[#16a34a] border-[#bbf7d0]',
-    red: 'bg-red-50 text-red-600 border-red-200',
-    amber: 'bg-amber-50 text-amber-700 border-amber-200',
-  }
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: OVERVIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+function OverviewSection({ token }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/parent/overview`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <LoadingSkeleton />
+
+  const stats = data?.stats || {}
+
   return (
-    <div className={`rounded-xl border p-3 ${styles[tone]}`}>
-      <p className="text-[11px] font-bold uppercase opacity-80">{label}</p>
-      <p className="text-2xl font-black">{value}</p>
+    <div className="flex flex-col gap-lg max-w-7xl mx-auto">
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-md">
+        <StatCard icon="group" label="Học sinh" value={stats.total_students ?? 0} color="blue" />
+        <StatCard icon="quiz" label="Bài quiz đã nộp" value={stats.total_quiz_attempts ?? 0} color="purple" />
+        <StatCard icon="psychology" label="Luyện tập AI" value={stats.total_practice_sessions ?? 0} color="green" />
+        <StatCard icon="school" label="Gia sư" value={stats.total_tutors ?? 0} color="orange" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-lg">
+        {/* Recent quiz activity */}
+        <div className="lg:col-span-2 bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          <div className="p-lg border-b border-outline-variant/10 flex items-center gap-sm">
+            <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>quiz</span>
+            <h3 className="font-headline-sm text-headline-sm text-on-surface">Kết quả quiz gần đây</h3>
+          </div>
+          {data?.recent_quiz_attempts?.length > 0 ? (
+            <div className="divide-y divide-outline-variant/10">
+              {data.recent_quiz_attempts.map(a => (
+                <div key={a.id} className="p-md flex items-center gap-md hover:bg-surface-container-low transition-colors">
+                  <Avatar src={a.student_picture} name={a.student_name} size={10} />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-label-md text-label-md text-on-surface truncate">{a.student_name}</p>
+                    <p className="font-label-sm text-label-sm text-on-surface-variant truncate">{a.quiz_title} • {a.quiz_subject}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className={`font-headline-sm text-headline-sm font-bold ${scoreColor(a.score)}`}>
+                      {a.score !== null ? `${Math.round(a.score)}%` : '—'}
+                    </p>
+                    <p className="font-label-sm text-label-sm text-on-surface-variant">{fmtTime(a.submitted_at)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState icon="quiz" text="Chưa có kết quả quiz nào" />
+          )}
+        </div>
+
+        {/* Tutors panel */}
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          <div className="p-lg border-b border-outline-variant/10 flex items-center gap-sm">
+            <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>school</span>
+            <h3 className="font-headline-sm text-headline-sm text-on-surface">Gia sư</h3>
+          </div>
+          {data?.available_tutors?.length > 0 ? (
+            <div className="p-md flex flex-col gap-sm">
+              {data.available_tutors.slice(0, 5).map(t => (
+                <div key={t.id} className="flex items-center gap-sm p-sm rounded-xl hover:bg-surface-container-low transition-colors">
+                  <Avatar src={t.picture} name={t.full_name} size={10} />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-label-md text-label-md text-on-surface truncate">{t.full_name}</p>
+                    <p className="font-label-sm text-label-sm text-on-surface-variant truncate">
+                      {t.headline || (t.subjects ? `Dạy: ${t.subjects}` : 'Gia sư')}
+                    </p>
+                  </div>
+                  {t.hourly_rate > 0 && (
+                    <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full whitespace-nowrap">
+                      {t.hourly_rate.toLocaleString('vi-VN')}đ/h
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState icon="school" text="Chưa có gia sư nào được duyệt" />
+          )}
+        </div>
+      </div>
+
+      {/* Practice sessions */}
+      {data?.recent_practice_sessions?.length > 0 && (
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          <div className="p-lg border-b border-outline-variant/10 flex items-center gap-sm">
+            <span className="material-symbols-outlined text-purple-600" style={{ fontVariationSettings: "'FILL' 1" }}>psychology</span>
+            <h3 className="font-headline-sm text-headline-sm text-on-surface">Luyện tập AI gần đây</h3>
+          </div>
+          <div className="p-md grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-md">
+            {data.recent_practice_sessions.map(ps => (
+              <div key={ps.id} className={`rounded-xl border p-md ${scoreBg(ps.score)}`}>
+                <div className="flex items-center gap-sm mb-sm">
+                  <Avatar src={ps.student_picture} name={ps.student_name} size={8} />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-label-md text-label-md text-on-surface truncate">{ps.student_name}</p>
+                    <p className="font-label-sm text-label-sm text-on-surface-variant">{fmtDate(ps.submitted_at)}</p>
+                  </div>
+                </div>
+                <p className="font-body-sm text-body-sm text-on-surface font-medium truncate mb-xs">{ps.topic}</p>
+                <div className="flex items-center justify-between">
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
+                    ps.difficulty === 'hard' ? 'bg-red-100 text-red-700' :
+                    ps.difficulty === 'easy' ? 'bg-green-100 text-green-700' :
+                    'bg-blue-100 text-blue-700'
+                  }`}>{ps.difficulty === 'easy' ? 'Dễ' : ps.difficulty === 'hard' ? 'Khó' : 'Trung bình'}</span>
+                  <span className={`font-headline-sm text-headline-sm font-bold ${scoreColor(ps.score)}`}>
+                    {ps.score !== null ? `${Math.round(ps.score)}%` : '—'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: STUDENTS (CHILDREN)
+// ═══════════════════════════════════════════════════════════════════════════════
+function StudentsSection({ token }) {
+  const [children, setChildren] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [selectedStudent, setSelectedStudent] = useState(null)
+
+  const fetchChildren = () => {
+    setLoading(true)
+    fetch(`${API_BASE}/api/parent/children`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(d => { setChildren(d.children || []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }
+
+  useEffect(() => { fetchChildren() }, [token])
+
+  const handleUnlink = async (studentId, studentName) => {
+    if (!window.confirm(`Bạn có chắc muốn hủy liên kết với học sinh ${studentName}?`)) return
+    try {
+      const res = await fetch(`${API_BASE}/api/parent/children/${studentId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) fetchChildren()
+      else alert('Lỗi khi hủy liên kết')
+    } catch { alert('Lỗi kết nối') }
+  }
+
+  if (loading) return <LoadingSkeleton />
+
+  // ── Detail view ──
+  if (selectedStudent) {
+    return (
+      <StudentDetailView
+        token={token}
+        student={selectedStudent}
+        onBack={() => setSelectedStudent(null)}
+      />
+    )
+  }
+
+  const filtered = children.filter(s =>
+    s.student_name?.toLowerCase().includes(search.toLowerCase()) ||
+    s.student_email?.toLowerCase().includes(search.toLowerCase()) ||
+    s.nickname?.toLowerCase().includes(search.toLowerCase())
+  )
+
+  return (
+    <div className="flex flex-col gap-lg max-w-5xl mx-auto">
+      {/* Header + search */}
+      <div className="flex items-center justify-between gap-md flex-wrap">
+        <div>
+          <h3 className="font-headline-md text-headline-md text-on-surface">Học sinh của tôi</h3>
+          <p className="font-body-sm text-body-sm text-on-surface-variant">Bạn đang quản lý {children.length} học sinh</p>
+        </div>
+        <div className="flex items-center gap-sm">
+          <div className="relative">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Tìm học sinh..."
+              className="pl-9 pr-4 h-10 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-body-sm"
+            />
+          </div>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="h-10 px-4 rounded-xl bg-primary text-on-primary font-label-md flex items-center gap-1 hover:bg-primary/90 transition-colors shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[20px]">person_add</span>
+            Thêm học sinh
+          </button>
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState icon="family_history" text="Chưa có học sinh nào được liên kết. Bấm 'Thêm học sinh' để bắt đầu." />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+          {filtered.map(s => (
+            <div
+              key={s.link_id}
+              className="bg-surface rounded-2xl border border-outline-variant/30 shadow-sm p-md flex flex-col gap-md relative overflow-hidden group hover:border-primary/30 hover:shadow-md transition-all cursor-pointer"
+              onClick={() => setSelectedStudent(s)}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-sm">
+                  <Avatar src={s.student_picture} name={s.student_name} size={12} />
+                  <div>
+                    <p className="font-headline-sm text-headline-sm text-on-surface font-semibold">{s.nickname || s.student_name}</p>
+                    {s.nickname && <p className="font-label-sm text-label-sm text-on-surface-variant">{s.student_name} • {s.student_email}</p>}
+                    {!s.nickname && <p className="font-label-sm text-label-sm text-on-surface-variant">{s.student_email}</p>}
+                  </div>
+                </div>
+                <button
+                  onClick={e => { e.stopPropagation(); handleUnlink(s.student_id, s.student_name) }}
+                  className="w-8 h-8 flex items-center justify-center rounded-full text-error opacity-0 group-hover:opacity-100 hover:bg-error/10 transition-all"
+                  title="Hủy liên kết"
+                >
+                  <span className="material-symbols-outlined text-[20px]">link_off</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-3 gap-sm bg-surface-container-low p-sm rounded-xl border border-outline-variant/20">
+                <div className="text-center">
+                  <p className="font-label-sm text-on-surface-variant mb-1">Bài Kiểm Tra</p>
+                  <p className="font-headline-sm font-semibold text-primary">{s.quiz_count || 0}</p>
+                  <p className={`text-xs mt-1 font-medium ${scoreColor(s.avg_quiz_score)}`}>{s.avg_quiz_score ? `${s.avg_quiz_score}% TB` : '—'}</p>
+                </div>
+                <div className="text-center border-x border-outline-variant/20">
+                  <p className="font-label-sm text-on-surface-variant mb-1">Luyện tập</p>
+                  <p className="font-headline-sm font-semibold text-purple-600">{s.practice_count || 0}</p>
+                  <p className={`text-xs mt-1 font-medium ${scoreColor(s.avg_practice_score)}`}>{s.avg_practice_score ? `${s.avg_practice_score}% TB` : '—'}</p>
+                </div>
+                <div className="text-center">
+                  <p className="font-label-sm text-on-surface-variant mb-1">Đề thi</p>
+                  <p className="font-headline-sm font-semibold text-orange-600">{s.exam_count || 0}</p>
+                  <p className="text-xs mt-1 font-medium text-on-surface-variant">—</p>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center text-xs text-on-surface-variant border-t border-outline-variant/20 pt-sm mt-auto">
+                <span>Liên kết ngày: {fmtDate(s.linked_at)}</span>
+                <span className="flex items-center gap-1 text-primary font-medium">
+                  Xem chi tiết
+                  <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showAddModal && <AddStudentModal token={token} onClose={() => setShowAddModal(false)} onAdded={fetchChildren} />}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  STUDENT DETAIL VIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const SUBJECT_COLORS = {
+  'Toán':      'bg-blue-100 text-blue-700 border-blue-200',
+  'Ngữ văn':   'bg-purple-100 text-purple-700 border-purple-200',
+  'Tiếng Anh': 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  'Vật lí':    'bg-orange-100 text-orange-700 border-orange-200',
+  'Hoá học':   'bg-red-100 text-red-700 border-red-200',
+  'Sinh học':  'bg-green-100 text-green-700 border-green-200',
+}
+function subjectColor(s) { return SUBJECT_COLORS[s] || 'bg-surface-container text-on-surface-variant border-outline-variant/30' }
+
+function StarRating({ value }) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {[1,2,3,4,5].map(i => (
+        <span key={i} className={`material-symbols-outlined text-[16px] ${i <= value ? 'text-amber-400' : 'text-outline-variant'}`}
+          style={{ fontVariationSettings: i <= value ? "'FILL' 1" : '' }}>star</span>
+      ))}
+    </div>
+  )
+}
+
+function fmtScheduleTime(dateStr, durationMins) {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  const dow = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][d.getDay()]
+  const date = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })
+  const startH = String(d.getHours()).padStart(2,'0')
+  const startM = String(d.getMinutes()).padStart(2,'0')
+  const end = new Date(d.getTime() + (durationMins || 120) * 60000)
+  const endH = String(end.getHours()).padStart(2,'0')
+  const endM = String(end.getMinutes()).padStart(2,'0')
+  return `${dow}, ${date} • ${startH}:${startM} – ${endH}:${endM}`
+}
+
+function StudentDetailView({ token, student, onBack }) {
+  const [schedule, setSchedule] = useState([])
+  const [reviews, setReviews] = useState([])
+  const [absences, setAbsences] = useState(0)
+  const [scheduleLoading, setScheduleLoading] = useState(true)
+  const [reviewsLoading, setReviewsLoading] = useState(true)
+  const [leaveModal, setLeaveModal] = useState(null)
+  const [messageModal, setMessageModal] = useState(null)
+
+  useEffect(() => {
+    // Fetch schedule + absences
+    fetch(`${API_BASE}/api/parent/children/${student.student_id}/schedule`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => {
+        setSchedule(d.sessions || [])
+        setAbsences(d.absences_this_month || 0)
+        setScheduleLoading(false)
+      })
+      .catch(() => setScheduleLoading(false))
+
+    // Fetch reviews
+    fetch(`${API_BASE}/api/parent/children/${student.student_id}/reviews`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => { setReviews(d.reviews || []); setReviewsLoading(false) })
+      .catch(() => setReviewsLoading(false))
+  }, [student.student_id, token])
+
+  const handleLeaveSubmit = async (sessionId, reason) => {
+    const res = await fetch(
+      `${API_BASE}/api/parent/children/${student.student_id}/schedule/${sessionId}/leave`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason })
+      }
+    )
+    if (!res.ok) throw new Error('Gửi yêu cầu thất bại')
+    // Update local state
+    setSchedule(prev => prev.map(s => s.id === sessionId ? { ...s, status: 'cancelled' } : s))
+  }
+
+  // Derived stats
+  const avgScore = ((parseFloat(student.avg_quiz_score) || 0) + (parseFloat(student.avg_practice_score) || 0)) / 2 || null
+  const totalAttempts = (parseInt(student.quiz_count) || 0) + (parseInt(student.practice_count) || 0) + (parseInt(student.exam_count) || 0)
+  const completionPct = totalAttempts > 0 ? Math.min(100, Math.round((totalAttempts / Math.max(totalAttempts, 10)) * 100)) : 0
+
+  return (
+    <div className="flex flex-col gap-lg max-w-5xl mx-auto">
+
+      {/* ── Back + Header ── */}
+      <div className="flex items-center gap-md">
+        <button onClick={onBack} className="w-10 h-10 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center transition-colors shrink-0">
+          <span className="material-symbols-outlined">arrow_back</span>
+        </button>
+        <div className="flex items-center gap-md flex-1">
+          <Avatar src={student.student_picture} name={student.student_name} size={14} />
+          <div>
+            <h3 className="font-headline-md text-headline-md text-on-surface">{student.nickname || student.student_name}</h3>
+            {student.nickname
+              ? <p className="font-body-sm text-on-surface-variant">{student.student_name} • {student.student_email}</p>
+              : <p className="font-body-sm text-on-surface-variant">{student.student_email}</p>
+            }
+          </div>
+        </div>
+      </div>
+
+      {/* ── 1. Mini Dashboard ── */}
+      <div>
+        <h4 className="font-headline-sm text-on-surface mb-md flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>dashboard</span>
+          Tổng quan
+        </h4>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-md">
+          {/* Điểm trung bình */}
+          <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="material-symbols-outlined text-[20px] text-blue-500" style={{ fontVariationSettings: "'FILL' 1" }}>grade</span>
+              <span className="text-[11px] font-medium text-on-surface-variant bg-surface-container px-2 py-0.5 rounded-full">Tổng hợp</span>
+            </div>
+            <p className={`font-display-sm text-display-sm font-black leading-none ${avgScore ? scoreColor(avgScore) : 'text-on-surface-variant'}`}>
+              {avgScore ? `${Math.round(avgScore)}%` : '—'}
+            </p>
+            <p className="font-label-sm text-on-surface-variant">Điểm trung bình</p>
+          </div>
+
+          {/* Buổi vắng/muộn */}
+          <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="material-symbols-outlined text-[20px] text-amber-500" style={{ fontVariationSettings: "'FILL' 1" }}>event_busy</span>
+              <span className="text-[11px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Tháng này</span>
+            </div>
+            <p className={`font-display-sm text-display-sm font-black leading-none ${absences > 2 ? 'text-red-500' : absences > 0 ? 'text-amber-600' : 'text-green-600'}`}>
+              {scheduleLoading ? '…' : absences}
+            </p>
+            <p className="font-label-sm text-on-surface-variant">Buổi vắng / muộn</p>
+          </div>
+
+          {/* % Hoàn thành */}
+          <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm col-span-2">
+            <div className="flex items-center justify-between">
+              <span className="material-symbols-outlined text-[20px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>task_alt</span>
+              <span className="text-[11px] font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">{totalAttempts} bài</span>
+            </div>
+            <div className="flex items-end justify-between gap-md">
+              <div>
+                <p className="font-display-sm text-display-sm font-black leading-none text-green-600">{completionPct}%</p>
+                <p className="font-label-sm text-on-surface-variant mt-1">Hoàn thành bài tập</p>
+              </div>
+              <div className="flex-1 max-w-[140px]">
+                <div className="flex justify-between text-xs text-on-surface-variant mb-1">
+                  <span>Quiz: {student.quiz_count || 0}</span>
+                  <span>Practice: {student.practice_count || 0}</span>
+                </div>
+                <div className="h-2.5 bg-surface-container-high rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-700" style={{ width: `${completionPct}%` }} />
+                </div>
+                <div className="h-2 bg-surface-container-high rounded-full overflow-hidden mt-1">
+                  <div className="h-full rounded-full bg-purple-400 transition-all duration-700"
+                    style={{ width: `${Math.min(100, ((parseInt(student.practice_count) || 0) / Math.max(totalAttempts, 1)) * 100)}%` }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── 2. Lịch học sắp tới ── */}
+      <div>
+        <h4 className="font-headline-sm text-on-surface mb-md flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>calendar_month</span>
+          Lịch học sắp tới
+        </h4>
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          {scheduleLoading ? (
+            <div className="p-md flex items-center gap-2 text-on-surface-variant"><div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /><span className="text-sm">Đang tải lịch học...</span></div>
+          ) : schedule.length === 0 ? (
+            <EmptyState icon="event_available" text="Chưa có buổi học nào sắp tới. Gia sư cần thêm lịch học trong hệ thống." />
+          ) : (
+            <div className="divide-y divide-outline-variant/10">
+              {schedule.map(item => {
+                const isCancelled = item.status === 'cancelled'
+                return (
+                  <div key={item.id} className={`flex items-center gap-md p-4 transition-colors ${isCancelled ? 'opacity-50 bg-surface-container-low' : 'hover:bg-surface-container-low/50'}`}>
+                    <div className={`shrink-0 px-3 py-1.5 rounded-xl border text-sm font-semibold ${subjectColor(item.subject)}`}>
+                      {item.subject}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-label-md text-on-surface flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[15px] text-on-surface-variant">schedule</span>
+                        {fmtScheduleTime(item.scheduled_at, item.duration_mins)}
+                      </p>
+                      <p className="font-label-sm text-on-surface-variant flex items-center gap-1 mt-0.5">
+                        <span className="material-symbols-outlined text-[14px]">person</span>
+                        {item.tutor_name}
+                        {isCancelled && <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">Đã hủy</span>}
+                      </p>
+                    </div>
+                    {!isCancelled && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => setLeaveModal(item)}
+                          className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">event_busy</span>
+                          Xin nghỉ
+                        </button>
+                        <button
+                          onClick={() => setMessageModal({ tutorId: item.tutor_id, tutorName: item.tutor_name })}
+                          className="h-8 px-3 rounded-lg border border-primary/30 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 transition-colors flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">chat</span>
+                          Nhắn gia sư
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── 3. Nhận xét định kỳ (Timeline) ── */}
+      <div>
+        <h4 className="font-headline-sm text-on-surface mb-md flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>rate_review</span>
+          Nhận xét định kỳ
+        </h4>
+        {reviewsLoading ? (
+          <div className="p-md flex items-center gap-2 text-on-surface-variant"><div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /><span className="text-sm">Đang tải nhận xét...</span></div>
+        ) : reviews.length === 0 ? (
+          <EmptyState icon="rate_review" text="Chưa có nhận xét nào từ gia sư" />
+        ) : (
+          <div className="relative">
+            <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-outline-variant/30" />
+            <div className="flex flex-col gap-md">
+              {reviews.map((review, idx) => (
+                <div key={review.id} className="flex gap-md pl-2">
+                  <div className="relative shrink-0 flex flex-col items-center" style={{ width: 24 }}>
+                    <div className={`w-4 h-4 rounded-full border-2 border-surface z-10 mt-1 ${idx === 0 ? 'bg-primary border-primary' : 'bg-surface-container-high border-outline-variant'}`} />
+                  </div>
+                  <div className="flex-1 bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-md mb-2">
+                    <div className="flex items-start justify-between gap-md mb-3">
+                      <div>
+                        <p className="font-label-sm text-on-surface-variant text-xs">{review.period_label}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${subjectColor(review.subject)}`}>{review.subject}</span>
+                          <span className="font-label-sm text-on-surface-variant text-xs flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px]">person</span>
+                            {review.tutor_name}
+                          </span>
+                        </div>
+                      </div>
+                      <StarRating value={review.rating} />
+                    </div>
+                    <p className="font-body-sm text-on-surface leading-relaxed">{review.content}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Modals */}
+      {leaveModal && (
+        <LeaveRequestModal
+          token={token}
+          studentId={student.student_id}
+          scheduleItem={leaveModal}
+          onClose={() => setLeaveModal(null)}
+          onSubmit={handleLeaveSubmit}
+        />
+      )}
+      {messageModal && (
+        <QuickMessageModal tutorName={messageModal.tutorName} onClose={() => setMessageModal(null)} />
+      )}
+    </div>
+  )
+}
+
+function LeaveRequestModal({ token, studentId, scheduleItem, onClose, onSubmit }) {
+  const [reason, setReason] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sent, setSent] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSend = async () => {
+    setSending(true)
+    setError('')
+    try {
+      await onSubmit(scheduleItem.id, reason)
+      setSent(true)
+      setTimeout(onClose, 1500)
+    } catch (e) {
+      setError(e.message || 'Có lỗi xảy ra. Vui lòng thử lại.')
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
+          <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
+            <span className="material-symbols-outlined text-amber-500">event_busy</span>
+            Xin nghỉ phép
+          </h3>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container">
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
+        </div>
+        <div className="p-4 flex flex-col gap-4">
+          {sent ? (
+            <div className="flex flex-col items-center gap-2 py-4 text-center">
+              <span className="material-symbols-outlined text-green-500 text-[40px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+              <p className="font-label-md text-on-surface">Đã gửi yêu cầu nghỉ phép!</p>
+              <p className="font-body-sm text-on-surface-variant">Gia sư {scheduleItem.tutor_name} sẽ nhận được thông báo.</p>
+            </div>
+          ) : (
+            <>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
+                <p className="font-medium text-amber-800">{scheduleItem.subject} — {fmtScheduleTime(scheduleItem.scheduled_at, scheduleItem.duration_mins)}</p>
+                <p className="text-amber-600 text-xs mt-0.5">Gia sư: {scheduleItem.tutor_name}</p>
+              </div>
+              {error && <p className="text-sm text-error bg-error/10 p-2 rounded-lg">{error}</p>}
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Lý do nghỉ (không bắt buộc)</label>
+                <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
+                  placeholder="VD: Bé bệnh, có việc gia đình..."
+                  className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
+                />
+              </div>
+              <button onClick={handleSend} disabled={sending}
+                className="h-11 w-full rounded-xl bg-amber-500 text-white font-medium hover:bg-amber-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {sending && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                {sending ? 'Đang gửi...' : 'Gửi yêu cầu nghỉ'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function QuickMessageModal({ tutorName, onClose }) {
+  const [message, setMessage] = useState('')
+  const [sent, setSent] = useState(false)
+
+  const handleSend = () => {
+    if (!message.trim()) return
+    setSent(true)
+    setTimeout(onClose, 1500)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
+          <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary">chat</span>
+            Nhắn gia sư {tutorName}
+          </h3>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container">
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
+        </div>
+        <div className="p-4 flex flex-col gap-4">
+          {sent ? (
+            <div className="flex flex-col items-center gap-2 py-4 text-center">
+              <span className="material-symbols-outlined text-green-500 text-[40px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+              <p className="font-label-md text-on-surface">Đã gửi tin nhắn!</p>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-on-surface-variant">Tin nhắn sẽ được gửi qua mục Tin nhắn trong hệ thống.</p>
+              <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4}
+                placeholder={`Nhắn cho ${tutorName}...`}
+                className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
+              />
+              <button onClick={handleSend} disabled={!message.trim()}
+                className="h-11 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                Gửi tin nhắn
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AddStudentModal({ token, onClose, onAdded }) {
+  const [tab, setTab] = useState('link') // 'link' | 'create'
+  
+  // Link state
+  const [code, setCode] = useState('')
+  const [linkNickname, setLinkNickname] = useState('')
+  const [linkError, setLinkError] = useState('')
+  const [linking, setLinking] = useState(false)
+
+  // Create state
+  const [form, setForm] = useState({ full_name: '', email: '', password: '', nickname: '' })
+  const [createError, setCreateError] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  const handleLink = async (e) => {
+    e.preventDefault()
+    setLinkError(''); setLinking(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/parent/link-child`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ code: code.toUpperCase(), nickname: linkNickname })
+      })
+      const data = await res.json()
+      if (res.ok) { onAdded(); onClose() }
+      else setLinkError(data.message || 'Lỗi liên kết')
+    } catch(err) { setLinkError('Lỗi kết nối server') }
+    setLinking(false)
+  }
+
+  const handleCreate = async (e) => {
+    e.preventDefault()
+    setCreateError(''); setCreating(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/parent/create-child`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(form)
+      })
+      const data = await res.json()
+      if (res.ok) { onAdded(); onClose() }
+      else setCreateError(data.message || 'Lỗi tạo tài khoản')
+    } catch(err) { setCreateError('Lỗi kết nối server') }
+    setCreating(false)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-surface w-full max-w-md rounded-3xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between p-md border-b border-outline-variant/20">
+          <h2 className="font-headline-sm text-on-surface">Thêm học sinh</h2>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container">
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div className="flex border-b border-outline-variant/20">
+          <button 
+            className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${tab === 'link' ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:bg-surface-container/50'}`}
+            onClick={() => setTab('link')}
+          >
+            Liên kết bằng mã
+          </button>
+          <button 
+            className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${tab === 'create' ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:bg-surface-container/50'}`}
+            onClick={() => setTab('create')}
+          >
+            Tạo tài khoản mới
+          </button>
+        </div>
+
+        <div className="p-md overflow-y-auto">
+          {tab === 'link' ? (
+            <form onSubmit={handleLink} className="flex flex-col gap-4">
+              <p className="text-sm text-on-surface-variant mb-2">Nhập mã liên kết 8 ký tự do học sinh cung cấp trong mục "Mã chia sẻ" của học sinh.</p>
+              {linkError && <p className="text-sm text-error bg-error/10 p-2 rounded-lg">{linkError}</p>}
+              
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Mã liên kết <span className="text-error">*</span></label>
+                <input required value={code} onChange={e=>setCode(e.target.value)} maxLength={8} placeholder="VD: A1B2C3D4" className="w-full h-12 px-4 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary uppercase tracking-widest text-center font-bold" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Tên gọi ở nhà (không bắt buộc)</label>
+                <input value={linkNickname} onChange={e=>setLinkNickname(e.target.value)} placeholder="VD: Tí, Tèo..." className="w-full h-12 px-4 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary" />
+              </div>
+
+              <button disabled={linking || code.length !== 8} type="submit" className="mt-4 h-12 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed">
+                {linking ? 'Đang liên kết...' : 'Liên kết ngay'}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleCreate} className="flex flex-col gap-4">
+              <p className="text-sm text-on-surface-variant mb-2">Tạo tài khoản học sinh mới. Hệ thống sẽ tự động liên kết tài khoản này với bạn.</p>
+              {createError && <p className="text-sm text-error bg-error/10 p-2 rounded-lg">{createError}</p>}
+              
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Họ và tên <span className="text-error">*</span></label>
+                <input required value={form.full_name} onChange={e=>setForm({...form, full_name: e.target.value})} placeholder="Nguyễn Văn A" className="w-full h-11 px-4 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Email <span className="text-error">*</span></label>
+                <input required type="email" value={form.email} onChange={e=>setForm({...form, email: e.target.value})} placeholder="student@example.com" className="w-full h-11 px-4 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Mật khẩu <span className="text-error">*</span></label>
+                <input required type="password" minLength={6} value={form.password} onChange={e=>setForm({...form, password: e.target.value})} placeholder="Ít nhất 6 ký tự" className="w-full h-11 px-4 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Tên gọi ở nhà (không bắt buộc)</label>
+                <input value={form.nickname} onChange={e=>setForm({...form, nickname: e.target.value})} placeholder="VD: Tí, Tèo..." className="w-full h-11 px-4 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary" />
+              </div>
+
+              <button disabled={creating || !form.full_name || !form.email || form.password.length < 6} type="submit" className="mt-2 h-12 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed">
+                {creating ? 'Đang tạo...' : 'Tạo tài khoản & Liên kết'}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: FINANCE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function fmtMoney(n) {
+  return Number(n).toLocaleString('vi-VN') + 'đ'
+}
+
+function FinanceSection({ token }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState('pending')
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/parent/invoices`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <LoadingSkeleton />
+
+  const pending = data?.pending || []
+  const paid    = data?.paid    || []
+  const summary = data?.summary || { total_debt: 0, total_paid: 0, overdue_count: 0 }
+  const overdueInvoices = pending.filter(i => i.status === 'overdue')
+
+  return (
+    <div className="flex flex-col gap-lg max-w-4xl mx-auto">
+      <div>
+        <h3 className="font-headline-md text-headline-md text-on-surface">Quản lý Tài chính</h3>
+        <p className="font-body-sm text-on-surface-variant">Theo dõi học phí và lịch sử thanh toán</p>
+      </div>
+
+      {/* Debt alert banner */}
+      {overdueInvoices.length > 0 && (
+        <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4 flex items-start gap-3">
+          <span className="material-symbols-outlined text-red-500 text-[28px] shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>warning</span>
+          <div className="flex-1">
+            <p className="font-headline-sm text-red-700 font-semibold">{overdueInvoices.length} hóa đơn đã quá hạn thanh toán!</p>
+            <p className="font-body-sm text-red-600 mt-1">
+              {overdueInvoices.map(i => `${i.invoice_no} (${i.student_name} — ${i.period})`).join(', ')}. Vui lòng thanh toán để tránh ảnh hưởng lịch học.
+            </p>
+          </div>
+          <span className="font-headline-sm text-red-700 font-black shrink-0">{fmtMoney(overdueInvoices.reduce((s,i) => s + parseInt(i.amount), 0))}</span>
+        </div>
+      )}
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-md">
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1">
+          <span className="material-symbols-outlined text-[22px] text-amber-500" style={{ fontVariationSettings: "'FILL' 1" }}>pending_actions</span>
+          <p className="font-headline-sm font-black text-amber-600">{fmtMoney(summary.total_debt)}</p>
+          <p className="font-label-sm text-on-surface-variant">Tổng chờ thanh toán</p>
+        </div>
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1">
+          <span className="material-symbols-outlined text-[22px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>payments</span>
+          <p className="font-headline-sm font-black text-green-600">{fmtMoney(summary.total_paid)}</p>
+          <p className="font-label-sm text-on-surface-variant">Đã thanh toán (lịch sử)</p>
+        </div>
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1 col-span-2 lg:col-span-1">
+          <span className="material-symbols-outlined text-[22px] text-red-500" style={{ fontVariationSettings: "'FILL' 1" }}>receipt_long</span>
+          <p className="font-headline-sm font-black text-red-500">{summary.overdue_count}</p>
+          <p className="font-label-sm text-on-surface-variant">Hóa đơn quá hạn</p>
+        </div>
+      </div>
+
+      {/* Tab switcher */}
+      <div className="flex bg-surface-container-high/60 rounded-xl p-1 gap-1">
+        {[
+          { key: 'pending', label: 'Chờ thanh toán', icon: 'pending_actions' },
+          { key: 'history', label: 'Lịch sử đã đóng', icon: 'receipt_long' },
+        ].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-lg font-label-md transition-all ${tab === t.key ? 'bg-surface shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+          >
+            <span className="material-symbols-outlined text-[18px]" style={tab === t.key ? { fontVariationSettings: "'FILL' 1" } : {}}>{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Pending invoices */}
+      {tab === 'pending' && (
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          {pending.length === 0 ? (
+            <EmptyState icon="check_circle" text="Không có hóa đơn nào đang chờ thanh toán 🎉" />
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface-container-low border-b border-outline-variant/20">
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Mã hóa đơn</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Học sinh</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm hidden md:table-cell">Môn / Kỳ</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Số tiền</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Hạn TT</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm text-right">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/10">
+                {pending.map(inv => (
+                  <tr key={inv.id} className={`hover:bg-surface-container-low/50 transition-colors ${inv.status === 'overdue' ? 'bg-red-50/40' : ''}`}>
+                    <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.invoice_no}</td>
+                    <td className="p-4 font-label-md text-on-surface">{inv.student_name}</td>
+                    <td className="p-4 font-body-sm text-on-surface-variant hidden md:table-cell">
+                      <p>{inv.subject}</p>
+                      <p className="text-xs">{inv.period}</p>
+                    </td>
+                    <td className="p-4 font-label-md text-on-surface font-semibold">{fmtMoney(inv.amount)}</td>
+                    <td className={`p-4 font-label-sm text-sm ${inv.status === 'overdue' ? 'text-red-600 font-semibold' : 'text-on-surface-variant'}`}>
+                      {inv.due_date ? new Date(inv.due_date).toLocaleDateString('vi-VN') : '—'}
+                    </td>
+                    <td className="p-4 text-right">
+                      {inv.status === 'overdue'
+                        ? <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold"><span className="material-symbols-outlined text-[12px]">error</span>Quá hạn</span>
+                        : <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold"><span className="material-symbols-outlined text-[12px]">schedule</span>Chờ TT</span>
+                      }
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Paid history */}
+      {tab === 'history' && (
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          {paid.length === 0 ? (
+            <EmptyState icon="receipt_long" text="Chưa có lịch sử thanh toán nào" />
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface-container-low border-b border-outline-variant/20">
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Mã hóa đơn</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Học sinh</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm hidden md:table-cell">Môn / Kỳ</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Số tiền</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Ngày TT</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm text-right hidden sm:table-cell">Hình thức</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/10">
+                {paid.map(inv => (
+                  <tr key={inv.id} className="hover:bg-surface-container-low/50 transition-colors">
+                    <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.invoice_no}</td>
+                    <td className="p-4 font-label-md text-on-surface">{inv.student_name}</td>
+                    <td className="p-4 font-body-sm text-on-surface-variant hidden md:table-cell">
+                      <p>{inv.subject}</p>
+                      <p className="text-xs">{inv.period}</p>
+                    </td>
+                    <td className="p-4 font-label-md text-on-surface font-semibold">{fmtMoney(inv.amount)}</td>
+                    <td className="p-4 font-label-sm text-green-600">{inv.paid_at ? new Date(inv.paid_at).toLocaleDateString('vi-VN') : '—'}</td>
+                    <td className="p-4 text-right hidden sm:table-cell">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-semibold">
+                        <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                        {inv.pay_method || 'Đã thanh toán'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: TUTORS
+// ═══════════════════════════════════════════════════════════════════════════════
+function TutorsSection({ token }) {
+  const [tutors, setTutors] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/parent/tutors`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(d => { setTutors(d.tutors || []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <LoadingSkeleton />
+
+  const filtered = tutors.filter(t =>
+    t.full_name?.toLowerCase().includes(search.toLowerCase()) ||
+    t.subjects?.toLowerCase().includes(search.toLowerCase()) ||
+    t.headline?.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const subjectColors = {
+    'Toán': 'bg-blue-100 text-blue-700',
+    'Vật lí': 'bg-orange-100 text-orange-700',
+    'Hoá học': 'bg-red-100 text-red-700',
+    'Sinh học': 'bg-green-100 text-green-700',
+    'Tiếng Anh': 'bg-emerald-100 text-emerald-700',
+    'Ngữ văn': 'bg-purple-100 text-purple-700',
+    'Lịch sử': 'bg-amber-100 text-amber-700',
+    'Địa lí': 'bg-teal-100 text-teal-700',
+  }
+
+  return (
+    <div className="flex flex-col gap-lg max-w-5xl mx-auto">
+      <div className="flex items-center gap-md flex-wrap">
+        <div className="flex-1">
+          <h3 className="font-headline-md text-headline-md text-on-surface">Gia sư đã được duyệt</h3>
+          <p className="font-body-sm text-body-sm text-on-surface-variant">{filtered.length} gia sư trong hệ thống</p>
+        </div>
+        <div className="relative">
+          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Tìm gia sư, môn học..."
+            className="pl-9 pr-4 h-10 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-body-sm"
+          />
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState icon="school" text="Chưa có gia sư nào được duyệt" />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
+          {filtered.map(t => {
+            const subjects = t.subjects ? t.subjects.split(',').map(s => s.trim()).filter(Boolean) : []
+            return (
+              <div key={t.id} className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-lg flex flex-col gap-md hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
+                <div className="flex items-start gap-md">
+                  <Avatar src={t.picture} name={t.full_name} size={12} />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-headline-sm text-headline-sm text-on-surface">{t.full_name}</p>
+                    <p className="font-body-sm text-body-sm text-on-surface-variant truncate">
+                      {t.headline || 'Gia sư tại EduX'}
+                    </p>
+                    {t.location && (
+                      <p className="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-xs mt-xs">
+                        <span className="material-symbols-outlined text-[14px]">location_on</span>
+                        {t.location}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {t.bio && (
+                  <p className="font-body-sm text-body-sm text-on-surface-variant line-clamp-2">{t.bio}</p>
+                )}
+
+                {subjects.length > 0 && (
+                  <div className="flex flex-wrap gap-xs">
+                    {subjects.map(s => (
+                      <span key={s} className={`text-xs px-2 py-0.5 rounded-full font-medium ${subjectColors[s] || 'bg-surface-container text-on-surface-variant'}`}>
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-sm border-t border-outline-variant/20">
+                  {t.experience_years > 0 && (
+                    <span className="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-xs">
+                      <span className="material-symbols-outlined text-[14px]">work</span>
+                      {t.experience_years} năm KN
+                    </span>
+                  )}
+                  {t.hourly_rate > 0 ? (
+                    <span className="font-label-md text-label-md text-primary font-semibold ml-auto">
+                      {t.hourly_rate.toLocaleString('vi-VN')}đ/giờ
+                    </span>
+                  ) : (
+                    <span className="font-label-sm text-label-sm text-on-surface-variant ml-auto">Liên hệ để biết giá</span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: ACTIVITY
+// ═══════════════════════════════════════════════════════════════════════════════
+function ActivitySection({ token }) {
+  const [activities, setActivities] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('all')
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/parent/activity`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(d => { setActivities(d.activities || []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <LoadingSkeleton />
+
+  const filtered = filter === 'all' ? activities : activities.filter(a => a.type === filter)
+
+  return (
+    <div className="flex flex-col gap-lg max-w-4xl mx-auto">
+      <div className="flex items-center gap-md flex-wrap">
+        <div className="flex-1">
+          <h3 className="font-headline-md text-headline-md text-on-surface">Lịch sử hoạt động</h3>
+          <p className="font-body-sm text-body-sm text-on-surface-variant">{filtered.length} hoạt động</p>
+        </div>
+        {/* Filter chips */}
+        <div className="flex gap-xs">
+          {[
+            { key: 'all',      label: 'Tất cả' },
+            { key: 'quiz',     label: 'Bài Kiểm Tra' },
+            { key: 'practice', label: 'Luyện tập' },
+            { key: 'exam',     label: 'Đề thi' },
+          ].map(f => (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              className={`px-3 py-1.5 rounded-full font-label-sm text-label-sm transition-all ${
+                filter === f.key
+                  ? 'bg-primary text-on-primary shadow-sm'
+                  : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState icon="analytics" text="Chưa có hoạt động nào" />
+      ) : (
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          <div className="divide-y divide-outline-variant/10">
+            {filtered.map((a, idx) => (
+              <div key={`${a.type}-${a.id}-${idx}`} className="p-md flex items-center gap-md hover:bg-surface-container-low/50 transition-colors">
+                <Avatar src={a.student_picture} name={a.student_name} size={10} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-xs mb-0.5 flex-wrap">
+                    <p className="font-label-md text-label-md text-on-surface">{a.student_name}</p>
+                    <TypeBadge type={a.type} />
+                  </div>
+                  <p className="font-body-sm text-body-sm text-on-surface-variant truncate">
+                    {a.title}
+                    {a.subject && a.subject !== a.title && ` • ${a.subject}`}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={`font-headline-sm text-headline-sm font-bold ${scoreColor(a.score)}`}>
+                    {a.score !== null ? `${Math.round(a.score)}%` : '—'}
+                  </p>
+                  <p className="font-label-sm text-label-sm text-on-surface-variant">{fmtTime(a.timestamp)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+function SettingsSection({ user, displayName }) {
+  const [notif, setNotif] = useState({ quiz: true, practice: true, tutor: false })
+
+  return (
+    <div className="flex flex-col gap-lg max-w-2xl mx-auto">
+      <h3 className="font-headline-md text-headline-md text-on-surface">Cài đặt tài khoản</h3>
+
+      {/* Profile info */}
+      <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-lg flex flex-col gap-md">
+        <h4 className="font-title-md text-title-md text-on-surface flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>person</span>
+          Thông tin cá nhân
+        </h4>
+        <div className="flex items-center gap-md">
+          {user?.picture
+            ? <img src={user.picture} alt={displayName} className="w-16 h-16 rounded-full object-cover border-2 border-primary/30" />
+            : <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-on-primary font-bold text-xl">
+                {displayName.charAt(0).toUpperCase()}
+              </div>
+          }
+          <div>
+            <p className="font-headline-sm text-headline-sm text-on-surface">{displayName}</p>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">{user?.email}</p>
+            <span className="inline-block mt-xs px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">Phụ huynh</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Notification settings */}
+      <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-lg flex flex-col gap-md">
+        <h4 className="font-title-md text-title-md text-on-surface flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>notifications</span>
+          Thông báo
+        </h4>
+        {[
+          { key: 'quiz',     label: 'Khi học sinh nộp quiz', desc: 'Nhận thông báo mỗi khi học sinh hoàn thành bài quiz' },
+          { key: 'practice', label: 'Khi học sinh luyện tập', desc: 'Nhận thông báo khi có phiên luyện tập AI mới' },
+          { key: 'tutor',    label: 'Cập nhật từ gia sư', desc: 'Nhận thông báo khi có gia sư mới được duyệt' },
+        ].map(n => (
+          <div key={n.key} className="flex items-center justify-between gap-md">
+            <div>
+              <p className="font-label-md text-label-md text-on-surface">{n.label}</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant">{n.desc}</p>
+            </div>
+            <button
+              onClick={() => setNotif(prev => ({ ...prev, [n.key]: !prev[n.key] }))}
+              className={`relative flex-shrink-0 w-12 h-6 rounded-full transition-colors duration-200 ${notif[n.key] ? 'bg-primary' : 'bg-surface-container-highest'}`}
+            >
+              <span className={`absolute top-[3px] left-[3px] w-[18px] h-[18px] rounded-full bg-white shadow-sm transition-transform duration-200 ${notif[n.key] ? 'translate-x-[21px]' : 'translate-x-0'}`} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Platform info */}
+      <div className="bg-surface-container-low rounded-2xl border border-outline-variant/20 p-lg">
+        <p className="font-label-sm text-label-sm text-on-surface-variant text-center">
+          EduX Cổng Phụ Huynh • Phiên bản 1.0 • Chương trình GDPT 2018
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function StatCard({ icon, label, value, color }) {
+  const colors = {
+    blue:   { bg: 'bg-blue-50',   icon: 'text-blue-600',   border: 'border-blue-100' },
+    purple: { bg: 'bg-purple-50', icon: 'text-purple-600', border: 'border-purple-100' },
+    green:  { bg: 'bg-green-50',  icon: 'text-green-600',  border: 'border-green-100' },
+    orange: { bg: 'bg-orange-50', icon: 'text-orange-600', border: 'border-orange-100' },
+  }
+  const c = colors[color] || colors.blue
+  return (
+    <div className={`rounded-2xl border ${c.border} ${c.bg} p-lg flex flex-col gap-sm`}>
+      <span className={`material-symbols-outlined text-[28px] ${c.icon}`} style={{ fontVariationSettings: "'FILL' 1" }}>
+        {icon}
+      </span>
+      <p className="font-display-sm text-display-sm text-on-surface font-bold leading-none">{value}</p>
+      <p className="font-label-sm text-label-sm text-on-surface-variant">{label}</p>
+    </div>
+  )
+}
+
+function EmptyState({ icon, text }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-xl gap-md text-center">
+      <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center">
+        <span className="material-symbols-outlined text-[32px] text-on-surface-variant">{icon}</span>
+      </div>
+      <p className="font-body-md text-body-md text-on-surface-variant">{text}</p>
+    </div>
+  )
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="flex flex-col gap-md animate-pulse">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-md">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-28 bg-surface-container rounded-2xl" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-md">
+        <div className="lg:col-span-2 h-64 bg-surface-container rounded-2xl" />
+        <div className="h-64 bg-surface-container rounded-2xl" />
+      </div>
     </div>
   )
 }

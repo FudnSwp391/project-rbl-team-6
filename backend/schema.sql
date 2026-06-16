@@ -9,18 +9,20 @@ CREATE TABLE IF NOT EXISTS users (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   full_name     TEXT,
   email         TEXT UNIQUE NOT NULL,
-  password_hash TEXT,
+  password_hash TEXT,          -- NULL nếu đăng nhập bằng Google
   role          TEXT NOT NULL DEFAULT 'student'
                 CHECK (role IN ('student', 'parent', 'tutor', 'admin')),
-  google_id     TEXT UNIQUE,
+  google_id     TEXT UNIQUE,   -- NULL nếu đăng ký bằng email/password
   picture       TEXT,
   created_at    TIMESTAMPTZ DEFAULT NOW(),
   updated_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Index tìm nhanh theo email và google_id
 CREATE INDEX IF NOT EXISTS idx_users_email     ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
 
+-- Tự động cập nhật updated_at khi UPDATE
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -34,330 +36,249 @@ BEFORE UPDATE ON users
 FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 
--- ── Bảng tutor_profiles ──────────────────────────────────────────────────────
+-- ── Bảng tutor_profiles (NEW) ────────────────────────────────────────────────
+-- Lưu hồ sơ đăng ký gia sư, gồm thông tin cá nhân, chứng chỉ và trạng thái duyệt
 CREATE TABLE IF NOT EXISTS tutor_profiles (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  bio              TEXT,
-  bio_status       TEXT NOT NULL DEFAULT 'approved'
-                   CHECK (bio_status IN ('pending', 'approved', 'rejected')),
-  bio_pending      TEXT,                   -- Nội dung bio đang chờ duyệt
-  subjects         TEXT,
-  headline         TEXT,
-  phone            TEXT,
-  location         TEXT,
-  teaching_style   TEXT,
-  demo_video_url   TEXT,
-  experience_years INT DEFAULT 0,
-  certificate_url  TEXT,
-  cccd_url         TEXT,
-  hourly_rate      INT DEFAULT 0,
-  status           TEXT NOT NULL DEFAULT 'draft'
-                   CHECK (status IN ('draft', 'pending', 'approved', 'rejected')),
-  reject_reason    TEXT,
-  approved_at      TIMESTAMPTZ,
+  bio              TEXT,                    -- Giới thiệu bản thân
+  subjects         TEXT,                    -- Môn dạy (có thể là chuỗi CSV hoặc JSON)
+  experience_years INT DEFAULT 0,           -- Số năm kinh nghiệm
+  certificate_url  TEXT,                   -- Link ảnh/file chứng chỉ
+  cccd_url         TEXT,                   -- Link ảnh CCCD/ID card
+  status           TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending', 'approved', 'rejected')),
+  reject_reason    TEXT,                   -- Lý do từ chối (nếu có)
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Index để query nhanh theo status và user_id
 CREATE INDEX IF NOT EXISTS idx_tutor_profiles_status  ON tutor_profiles(status);
 CREATE INDEX IF NOT EXISTS idx_tutor_profiles_user_id ON tutor_profiles(user_id);
 
-ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS headline TEXT;
-ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS phone TEXT;
-ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS location TEXT;
-ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS teaching_style TEXT;
-ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS demo_video_url TEXT;
-ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS hourly_rate INT DEFAULT 0;
-ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
-ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS bio_status TEXT DEFAULT 'approved';
-ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS bio_pending TEXT;
-ALTER TABLE tutor_profiles ALTER COLUMN status SET DEFAULT 'draft';
-
-DO $$
-BEGIN
-  ALTER TABLE tutor_profiles DROP CONSTRAINT IF EXISTS tutor_profiles_status_check;
-  ALTER TABLE tutor_profiles
-    ADD CONSTRAINT tutor_profiles_status_check
-    CHECK (status IN ('draft', 'pending', 'approved', 'rejected'));
-END $$;
-
+-- Trigger tự động cập nhật updated_at cho tutor_profiles
 CREATE OR REPLACE TRIGGER set_tutor_updated_at
 BEFORE UPDATE ON tutor_profiles
 FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+-- Note: reuses the update_updated_at() function defined above
 
 
--- ── Bảng tutor_credentials (bằng cấp, chứng chỉ, kinh nghiệm — cần duyệt) ───
--- Mỗi row là 1 mục (1 tấm bằng, 1 chứng chỉ, 1 vị trí kinh nghiệm)
--- Kèm ảnh/file minh chứng để admin xác nhận
-CREATE TABLE IF NOT EXISTS tutor_credentials (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tutor_id      UUID NOT NULL REFERENCES tutor_profiles(id) ON DELETE CASCADE,
-  type          TEXT NOT NULL CHECK (type IN ('education', 'certificate', 'experience')),
-  title         TEXT NOT NULL,             -- VD: "Ph.D. in Mathematics - Stanford"
-  description   TEXT,                     -- Mô tả thêm (tuỳ chọn)
-  proof_url     TEXT,                     -- URL ảnh/file minh chứng (bắt buộc với education/certificate)
-  status        TEXT NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('pending', 'approved', 'rejected')),
-  reject_reason TEXT,
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ DEFAULT NOW()
-);
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- ── PERSON 4: Class Workspace & AI Learning Path ─────────────────────────────
+-- ═══════════════════════════════════════════════════════════════════════════════
 
-CREATE INDEX IF NOT EXISTS idx_credentials_tutor_id ON tutor_credentials(tutor_id);
-CREATE INDEX IF NOT EXISTS idx_credentials_status   ON tutor_credentials(status);
-CREATE INDEX IF NOT EXISTS idx_credentials_type     ON tutor_credentials(type);
 
-CREATE OR REPLACE TRIGGER set_credentials_updated_at
-BEFORE UPDATE ON tutor_credentials
-FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
--- ── Bảng bookings (đặt lịch học giữa student/parent và tutor) ───────────────
-CREATE TABLE IF NOT EXISTS bookings (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tutor_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  student_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  tutor_name   TEXT,
-  student_name TEXT,
-  child_name   TEXT,
-  subject      TEXT,
-    lesson_date  DATE NOT NULL,
-    time_slot    TEXT NOT NULL,
-    note         TEXT,
-    booking_type TEXT NOT NULL DEFAULT 'regular'
-                 CHECK (booking_type IN ('regular', 'trial')),
-    status       TEXT NOT NULL DEFAULT 'Pending'
-                 CHECK (status IN ('Pending', 'Approved', 'Declined')),
-  created_at   TIMESTAMPTZ DEFAULT NOW(),
-  updated_at   TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_bookings_tutor_id   ON bookings(tutor_id);
-CREATE INDEX IF NOT EXISTS idx_bookings_student_id ON bookings(student_id);
-CREATE INDEX IF NOT EXISTS idx_bookings_lesson_date ON bookings(lesson_date);
-CREATE INDEX IF NOT EXISTS idx_bookings_status     ON bookings(status);
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS booking_type TEXT DEFAULT 'regular';
-UPDATE bookings SET booking_type = 'regular' WHERE booking_type IS NULL OR booking_type NOT IN ('regular', 'trial');
-CREATE UNIQUE INDEX IF NOT EXISTS uq_bookings_active_slot
-  ON bookings(tutor_id, lesson_date, time_slot)
-  WHERE status IN ('Pending', 'Approved');
-
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tutor_name TEXT;
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS student_name TEXT;
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS child_name TEXT;
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS note TEXT;
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
-
-CREATE OR REPLACE TRIGGER set_booking_updated_at
-BEFORE UPDATE ON bookings
-FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
--- ── Bảng attendance (điểm danh từng buổi học) ────────────────────────────────
-CREATE TABLE IF NOT EXISTS attendance (
+-- ── Bảng classes ─────────────────────────────────────────────────────────────
+-- Lớp học do tutor tạo, chứa link Google Meet, ngày bắt đầu/kết thúc
+CREATE TABLE IF NOT EXISTS classes (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  booking_id  UUID NOT NULL UNIQUE REFERENCES bookings(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  description TEXT,
   tutor_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  student_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  status      TEXT NOT NULL CHECK (status IN ('present', 'absent', 'excused')),
-  note        TEXT,
-  marked_at   TIMESTAMPTZ DEFAULT NOW(),
+  meet_link   TEXT,                          -- Google Meet link
+  start_date  DATE,
+  end_date    DATE,
+  status      TEXT NOT NULL DEFAULT 'active'
+              CHECK (status IN ('active', 'archived', 'draft')),
   created_at  TIMESTAMPTZ DEFAULT NOW(),
   updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_attendance_tutor_id   ON attendance(tutor_id);
-CREATE INDEX IF NOT EXISTS idx_attendance_student_id ON attendance(student_id);
-CREATE INDEX IF NOT EXISTS idx_attendance_status     ON attendance(status);
+CREATE INDEX IF NOT EXISTS idx_classes_tutor_id ON classes(tutor_id);
+CREATE INDEX IF NOT EXISTS idx_classes_status   ON classes(status);
 
-CREATE OR REPLACE TRIGGER set_attendance_updated_at
-BEFORE UPDATE ON attendance
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TABLE IF NOT EXISTS tutor_reviews (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tutor_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  student_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  booking_id  UUID NOT NULL UNIQUE REFERENCES bookings(id) ON DELETE CASCADE,
-  rating      INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
-  comment     TEXT NOT NULL,
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_tutor_reviews_tutor_id   ON tutor_reviews(tutor_id);
-CREATE INDEX IF NOT EXISTS idx_tutor_reviews_student_id ON tutor_reviews(student_id);
-
-CREATE OR REPLACE TRIGGER set_tutor_reviews_updated_at
-BEFORE UPDATE ON tutor_reviews
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
--- Course marketplace: tutors can sell self-paced video courses.
-CREATE TABLE IF NOT EXISTS courses (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tutor_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  title         TEXT NOT NULL,
-  description   TEXT,
-  subject       TEXT,
-  level         TEXT,
-  price         INT NOT NULL DEFAULT 0 CHECK (price >= 0),
-  thumbnail_url TEXT,
-  learning_outcomes JSONB NOT NULL DEFAULT '[]'::jsonb,
-  requirements      JSONB NOT NULL DEFAULT '[]'::jsonb,
-  status        TEXT NOT NULL DEFAULT 'draft'
-                CHECK (status IN ('draft', 'pending_review', 'published', 'rejected', 'archived')),
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_courses_tutor_id ON courses(tutor_id);
-CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status);
-
-ALTER TABLE courses ADD COLUMN IF NOT EXISTS learning_outcomes JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE courses ADD COLUMN IF NOT EXISTS requirements JSONB DEFAULT '[]'::jsonb;
-
-CREATE OR REPLACE TRIGGER set_courses_updated_at
-BEFORE UPDATE ON courses
+CREATE OR REPLACE TRIGGER set_classes_updated_at
+BEFORE UPDATE ON classes
 FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE TABLE IF NOT EXISTS course_lessons (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  course_id      UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-  title          TEXT NOT NULL,
-  description    TEXT,
-  video_url      TEXT,
-  material_url   TEXT,
-  duration_label TEXT,
-  is_preview     BOOLEAN NOT NULL DEFAULT false,
-  position       INT NOT NULL DEFAULT 1,
-  created_at     TIMESTAMPTZ DEFAULT NOW(),
-  updated_at     TIMESTAMPTZ DEFAULT NOW()
-);
 
-CREATE INDEX IF NOT EXISTS idx_course_lessons_course_id ON course_lessons(course_id);
-
-CREATE OR REPLACE TRIGGER set_course_lessons_updated_at
-BEFORE UPDATE ON course_lessons
-FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TABLE IF NOT EXISTS course_enrollments (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  course_id    UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-  student_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  student_name TEXT,
-  child_name   TEXT,
-  status       TEXT NOT NULL DEFAULT 'active'
-               CHECK (status IN ('active', 'refunded', 'cancelled')),
-  purchased_at TIMESTAMPTZ DEFAULT NOW(),
-  created_at   TIMESTAMPTZ DEFAULT NOW(),
-  updated_at   TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(course_id, student_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_course_enrollments_student_id ON course_enrollments(student_id);
-
-CREATE OR REPLACE TRIGGER set_course_enrollments_updated_at
-BEFORE UPDATE ON course_enrollments
-FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TABLE IF NOT EXISTS course_progress (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  enrollment_id   UUID NOT NULL REFERENCES course_enrollments(id) ON DELETE CASCADE,
-  lesson_id       UUID NOT NULL REFERENCES course_lessons(id) ON DELETE CASCADE,
-  watched_seconds INT NOT NULL DEFAULT 0,
-  is_completed    BOOLEAN NOT NULL DEFAULT false,
-  completed_at    TIMESTAMPTZ,
-  updated_at      TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(enrollment_id, lesson_id)
-);
-
-
--- ── Bảng tutor_availability (lịch dạy — không cần duyệt) ─────────────────────
--- Mỗi row là 1 khung giờ trong tuần
-CREATE TABLE IF NOT EXISTS tutor_availability (
+-- ── Bảng class_members ──────────────────────────────────────────────────────
+-- Quan hệ N-N giữa classes và students
+-- Mỗi student chỉ join 1 lần vào mỗi class (UNIQUE constraint)
+CREATE TABLE IF NOT EXISTS class_members (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tutor_id   UUID NOT NULL REFERENCES tutor_profiles(id) ON DELETE CASCADE,
-  day_of_week TEXT NOT NULL
-              CHECK (day_of_week IN ('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')),
-  time_slot  TEXT NOT NULL,               -- VD: "09:00 AM", "02:30 PM"
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  class_id   UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  student_id UUID NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+  joined_at  TIMESTAMPTZ DEFAULT NOW(),
+
+  UNIQUE(class_id, student_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_availability_tutor_id ON tutor_availability(tutor_id);
--- Tránh trùng lặp slot
-CREATE UNIQUE INDEX IF NOT EXISTS idx_availability_unique
-  ON tutor_availability(tutor_id, day_of_week, time_slot);
+CREATE INDEX IF NOT EXISTS idx_class_members_class_id   ON class_members(class_id);
+CREATE INDEX IF NOT EXISTS idx_class_members_student_id ON class_members(student_id);
 
 
--- ── Bảng conversations ───────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS conversations (
+-- ── Bảng materials ──────────────────────────────────────────────────────────
+-- Tài liệu học tập: PDF, PPT, DOCX, Video, Links
+-- file_url sẽ trỏ tới Supabase Storage khi tích hợp upload
+CREATE TABLE IF NOT EXISTS materials (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  tutor_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  class_id    UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  description TEXT,
+  file_url    TEXT,                           -- Link file trên Supabase Storage
+  file_type   TEXT,                           -- VD: 'pdf', 'ppt', 'docx', 'video', 'link'
+  file_size   TEXT,                           -- VD: '2.4 MB'
+  uploaded_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW(),
-  CHECK (student_id <> tutor_id),
-  UNIQUE(student_id, tutor_id)
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_conv_student ON conversations(student_id);
-CREATE INDEX IF NOT EXISTS idx_conv_tutor   ON conversations(tutor_id);
+CREATE INDEX IF NOT EXISTS idx_materials_class_id    ON materials(class_id);
+CREATE INDEX IF NOT EXISTS idx_materials_uploaded_by ON materials(uploaded_by);
 
-CREATE OR REPLACE TRIGGER set_conv_updated_at
-BEFORE UPDATE ON conversations
+CREATE OR REPLACE TRIGGER set_materials_updated_at
+BEFORE UPDATE ON materials
 FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- ── Bảng messages ─────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS messages (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  sender_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  receiver_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  content         TEXT NOT NULL CHECK (char_length(trim(content)) > 0),
-  is_read         BOOLEAN NOT NULL DEFAULT false,
-  created_at      TIMESTAMPTZ DEFAULT NOW()
+
+-- ── Bảng assignments ────────────────────────────────────────────────────────
+-- Bài tập do tutor giao cho lớp
+CREATE TABLE IF NOT EXISTS assignments (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  class_id    UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  description TEXT,
+  due_date    DATE,
+  created_by  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_msg_conv    ON messages(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_msg_sender  ON messages(sender_id);
-CREATE INDEX IF NOT EXISTS idx_msg_receiver_unread ON messages(receiver_id, is_read);
-CREATE INDEX IF NOT EXISTS idx_msg_created ON messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_assignments_class_id   ON assignments(class_id);
+CREATE INDEX IF NOT EXISTS idx_assignments_due_date   ON assignments(due_date);
+CREATE INDEX IF NOT EXISTS idx_assignments_created_by ON assignments(created_by);
 
--- Enable Realtime cho messages/conversations. Safe to run multiple times.
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication_tables
-    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'messages'
-  ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE messages;
-  END IF;
+CREATE OR REPLACE TRIGGER set_assignments_updated_at
+BEFORE UPDATE ON assignments
+FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication_tables
-    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'conversations'
-  ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE conversations;
-  END IF;
-END $$;
 
--- Supabase Storage bucket cho avatar, video demo và minh chứng CV.
--- Nếu project đang dùng policy riêng, có thể điều chỉnh lại theo nhu cầu bảo mật.
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('edux-media', 'edux-media', true)
-ON CONFLICT (id) DO NOTHING;
+-- ── Bảng discussions ────────────────────────────────────────────────────────
+-- Bài đăng thảo luận trong lớp: câu hỏi, thông báo, thảo luận chung
+CREATE TABLE IF NOT EXISTS discussions (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  class_id        UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+  title           TEXT NOT NULL,
+  content         TEXT,
+  discussion_type TEXT NOT NULL DEFAULT 'discussion'
+                  CHECK (discussion_type IN ('question', 'announcement', 'discussion')),
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
 
-DO $$
-BEGIN
-  CREATE POLICY "EduX media public read"
-  ON storage.objects FOR SELECT
-  USING (bucket_id = 'edux-media');
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_discussions_class_id ON discussions(class_id);
+CREATE INDEX IF NOT EXISTS idx_discussions_user_id  ON discussions(user_id);
+CREATE INDEX IF NOT EXISTS idx_discussions_type     ON discussions(discussion_type);
 
-DO $$
-BEGIN
-  CREATE POLICY "EduX media anon upload"
-  ON storage.objects FOR INSERT
-  WITH CHECK (bucket_id = 'edux-media');
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+CREATE OR REPLACE TRIGGER set_discussions_updated_at
+BEFORE UPDATE ON discussions
+FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+
+-- ── Bảng discussion_replies ─────────────────────────────────────────────────
+-- Phản hồi cho mỗi bài thảo luận
+CREATE TABLE IF NOT EXISTS discussion_replies (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  discussion_id UUID NOT NULL REFERENCES discussions(id) ON DELETE CASCADE,
+  user_id       UUID NOT NULL REFERENCES users(id)       ON DELETE CASCADE,
+  content       TEXT NOT NULL,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_replies_discussion_id ON discussion_replies(discussion_id);
+CREATE INDEX IF NOT EXISTS idx_replies_user_id       ON discussion_replies(user_id);
+
+CREATE OR REPLACE TRIGGER set_replies_updated_at
+BEFORE UPDATE ON discussion_replies
+FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+
+-- ================================================================
+-- SEED DATA (chỉ dùng để test — xóa trước khi deploy production)
+-- ================================================================
+-- Bước 1: Tạo user test với role 'tutor'
+-- INSERT INTO users (full_name, email, password_hash, role)
+-- VALUES ('Nguyen Van Test', 'testtutor@example.com', 'hashed_pw_placeholder', 'tutor')
+-- RETURNING id;
+--
+-- Bước 2: Chép UUID trả về ở trên vào <user_uuid> bên dưới, rồi chạy:
+-- INSERT INTO tutor_profiles
+--   (user_id, bio, subjects, experience_years, certificate_url, cccd_url, status)
+-- VALUES
+--   (
+--     '<user_uuid>',
+--     'I am a passionate mathematics tutor with 5 years of teaching experience.',
+--     'Mathematics, Physics',
+--     5,
+--     'https://example.com/certificates/cert.pdf',
+--     'https://example.com/cccd/cccd.jpg',
+--     'pending'
+--   );
+--
+-- Hoặc tạo admin để test login:
+-- INSERT INTO users (full_name, email, password_hash, role)
+-- VALUES ('Admin EduX', 'admin@edux.com', '<bcrypt_hash>', 'admin');
+-- ================================================================
+
+-- ── Bảng lessons (NEW) ───────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS lessons (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  class_id          UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  title             TEXT NOT NULL,
+  description       TEXT,
+  lesson_order      INTEGER,
+  duration_minutes  INTEGER,
+  video_url         TEXT,
+  material_id       UUID REFERENCES materials(id) ON DELETE SET NULL,
+  status            TEXT NOT NULL DEFAULT 'published',
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lessons_class_id ON lessons(class_id);
+CREATE INDEX IF NOT EXISTS idx_lessons_lesson_order ON lessons(lesson_order);
+
+CREATE OR REPLACE TRIGGER set_lessons_updated_at
+BEFORE UPDATE ON lessons
+FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ── Bảng learning_paths (NEW) ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS learning_paths (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  class_id        UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  student_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  current_level   TEXT,
+  target_level    TEXT,
+  goal            TEXT,
+  duration_weeks  INTEGER DEFAULT 8,
+  generated_plan  JSONB,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+
+  UNIQUE(class_id, student_id)
+);
+
+-- Bảng learning_path_steps (NEW) ──────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS learning_path_steps (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  learning_path_id  UUID NOT NULL REFERENCES learning_paths(id) ON DELETE CASCADE,
+  lesson_id         UUID REFERENCES lessons(id) ON DELETE SET NULL,
+  step_order        INTEGER,
+  title             TEXT NOT NULL,
+  description       TEXT,
+  estimated_week    INTEGER,
+  status            TEXT NOT NULL DEFAULT 'pending',
+  created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_learning_paths_class_student ON learning_paths(class_id, student_id);
+CREATE INDEX IF NOT EXISTS idx_learning_path_steps_path ON learning_path_steps(learning_path_id);
+
+CREATE OR REPLACE TRIGGER set_learning_paths_updated_at
+BEFORE UPDATE ON learning_paths
+FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+

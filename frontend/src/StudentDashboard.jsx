@@ -6,8 +6,10 @@
  */
 import { useState, useEffect } from 'react'
 import { useAuth } from './AuthContext'
-import { getBookings, getUnreadCount, getOrCreateConversation, getTutors } from './services/api'
-
+import QuizList from './QuizList'
+import PracticeMode from './PracticeMode'
+import ExamPapers from './ExamPapers'
+import MessagesSection from './components/MessagesSection'
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
 const MY_TUTORS = [
   {
@@ -33,188 +35,48 @@ const MY_TUTORS = [
   },
 ]
 
-const NAV_ITEMS = [
-  { icon: 'dashboard', label: 'Dashboard', active: true },
-  { icon: 'school', label: 'My Courses' },
-  { icon: 'calendar_today', label: 'Schedule' },
-  { icon: 'chat', label: 'Messages' },
-]
+import StudentSidebar from './components/StudentSidebar'
 
 export default function StudentDashboard() {
-  const { user, logout } = useAuth()
+  const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState('Dashboard')
-  const [bookings, setBookings] = useState([])
-  const [bookingsLoading, setBookingsLoading] = useState(true)
-  const [unreadCount, setUnreadCount] = useState(0)
-  const [dashboardTutors, setDashboardTutors] = useState(MY_TUTORS)
-
-  const displayName = user?.name || user?.email?.split('@')[0] || 'Student'
-  const initials = displayName.charAt(0).toUpperCase()
-
-  const openTutorChat = async (tutorId) => {
-    try {
-      const conv = await getOrCreateConversation(tutorId)
-      window.location.hash = `/messages/${conv.id}`
-    } catch {
-      alert('Không thể mở chat. Gia sư này cần là tài khoản tutor thật trong Supabase.')
-    }
+  
+  const getSectionFromHash = () => {
+    const parts = window.location.hash.split('/')
+    return parts.length > 2 ? parts[2] : 'dashboard'
   }
+  const [activeSection, setActiveSection] = useState(getSectionFromHash())
 
   useEffect(() => {
-    getUnreadCount().then(setUnreadCount).catch(() => {})
-    const timer = setInterval(() => {
-      getUnreadCount().then(setUnreadCount).catch(() => {})
-    }, 30000)
-    return () => clearInterval(timer)
+    const handleHash = () => setActiveSection(getSectionFromHash())
+    window.addEventListener('hashchange', handleHash)
+    return () => window.removeEventListener('hashchange', handleHash)
   }, [])
 
+  // Listen for cross-component navigation events (e.g. from quota error banner)
   useEffect(() => {
-    let active = true
-    getTutors()
-      .then((data) => {
-        if (active && Array.isArray(data) && data.length > 0) {
-          setDashboardTutors(data.map((tutor) => ({
-            id: tutor.id,
-            userId: tutor.user_id || tutor.userId || tutor.tutor_id || tutor.tutorId || tutor.id,
-            profileId: tutor.profile_id || tutor.profileId || tutor.id,
-            accountId: tutor.account_id || tutor.accountId || tutor.user_id || tutor.userId || tutor.id,
-            tutorId: tutor.tutor_id || tutor.tutorId || tutor.user_id || tutor.userId || tutor.id,
-            name: tutor.name,
-            subject: (tutor.subjects || [])[0] || 'General',
-            subjects: tutor.subjects || [],
-            avatar: tutor.avatar,
-            isNewTutor: tutor.isNewTutor,
-          })))
-        }
-      })
-      .catch(() => {})
-    return () => { active = false }
+    const handler = (e) => {
+      setActiveSection(e.detail)
+      window.location.hash = `/dashboard/${e.detail}`
+    }
+    window.addEventListener('navigate-section', handler)
+    return () => window.removeEventListener('navigate-section', handler)
   }, [])
 
-  // Load bookings
-  useEffect(() => {
-    async function loadBookings() {
-      try {
-        const data = await getBookings()
-        // Filter to only this student's bookings
-        const userBookings = data.filter(b => b.studentId === user?.id || b.studentName === displayName)
-        setBookings(userBookings)
-      } catch (err) {
-        console.error("Error loading student bookings:", err)
-      } finally {
-        setBookingsLoading(false)
-      }
-    }
-    if (user) {
-      loadBookings()
-    }
-  }, [user, displayName])
+  // Lấy tên hiển thị: ưu tiên name, rồi email
+  const displayName = user?.name || user?.email?.split('@')[0] || 'Student'
+  // Lấy chữ cái đầu để làm avatar fallback
+  const initials = displayName.charAt(0).toUpperCase()
 
   return (
     <div className="bg-background text-on-background font-body-md text-body-md antialiased flex h-screen overflow-hidden">
 
-      {/* ── Mobile overlay ── */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      {/* ── Sidebar ── */}
-      <nav
-        className={`
-          fixed left-0 top-0 h-full z-40 flex flex-col py-lg w-64
-          bg-surface-container-low border-r border-outline-variant/20 shadow-sm
-          transition-transform duration-300
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          lg:translate-x-0
-        `}
-      >
-        {/* Logo */}
-        <div className="px-md mb-xl flex items-center gap-sm">
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary">
-            <span className="material-symbols-outlined text-[20px]">school</span>
-          </div>
-          <div>
-            <h1 className="font-headline-md text-headline-md font-black text-primary leading-tight">
-              EduX
-            </h1>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Student Portal</p>
-          </div>
-        </div>
-
-        {/* Nav items */}
-        <ul className="flex-1 flex flex-col gap-xs px-sm">
-          {NAV_ITEMS.map((item) => {
-            const isActive = item.label === activeTab;
-            const isMessages = item.label === 'Messages';
-            return (
-              <li key={item.label}>
-                <a
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    if (isMessages) {
-                      window.location.hash = '/messages'
-                    } else {
-                      setActiveTab(item.label)
-                      setSidebarOpen(false)
-                    }
-                  }}
-                  className={`
-                    flex items-center gap-sm px-md py-sm rounded-lg
-                    transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2
-                    ${isActive
-                      ? 'text-primary font-bold bg-secondary-container'
-                      : 'text-on-surface-variant hover:bg-surface-container-high'
-                    }
-                  `}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={isActive ? { fontVariationSettings: "'FILL' 1" } : {}}
-                  >
-                    {item.icon}
-                  </span>
-                  <span className="font-label-md text-label-md flex-1">{item.label}</span>
-                  {isMessages && unreadCount > 0 && (
-                    <span className="min-w-[18px] h-[18px] rounded-full bg-error text-on-error text-[10px] font-bold flex items-center justify-center px-1">
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </span>
-                  )}
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-
-        {/* Bottom actions */}
-        <div className="px-sm mt-auto flex flex-col gap-xs">
-          <a
-            href="#"
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
-          >
-            <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Settings</span>
-          </a>
-          <a
-            href="#"
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
-            onClick={(e) => { e.preventDefault(); logout() }}
-          >
-            <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Logout</span>
-          </a>
-          <div className="mt-md px-xs">
-            <button className="w-full bg-surface-container border border-outline-variant text-on-surface font-label-md text-label-md h-12 rounded-lg flex items-center justify-center gap-sm hover:bg-surface-container-highest transition-colors duration-200">
-              <span className="material-symbols-outlined text-[18px]">help_center</span>
-              Get Support
-            </button>
-          </div>
-        </div>
-      </nav>
+      <StudentSidebar
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        activeRoute={activeSection}
+        logout={logout}
+      />
 
       {/* ── Main content wrapper ── */}
       <div className="flex-1 flex flex-col lg:ml-64 h-full overflow-hidden">
@@ -227,7 +89,7 @@ export default function StudentDashboard() {
             <button
               className="lg:hidden w-10 h-10 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high rounded-full transition-colors"
               onClick={() => setSidebarOpen(true)}
-              aria-label="Open menu"
+              aria-label="Mở menu"
             >
               <span className="material-symbols-outlined">menu</span>
             </button>
@@ -239,7 +101,7 @@ export default function StudentDashboard() {
               </span>
               <input
                 className="w-full h-10 pl-10 pr-sm bg-surface-container-low border border-outline-variant/50 rounded-lg font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant/70 focus:border-primary focus:ring-2 focus:ring-on-tertiary-container/30 focus:outline-none transition-all duration-200"
-                placeholder="Search courses, resources..."
+                placeholder="Tìm kiếm khóa học, tài nguyên..."
                 type="text"
               />
             </div>
@@ -247,14 +109,14 @@ export default function StudentDashboard() {
             <div className="flex items-center gap-sm lg:gap-md">
               {/* Notification */}
               <button
-                aria-label="Notifications"
+                aria-label="Thông báo"
                 className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
               >
                 <span className="material-symbols-outlined">notifications</span>
               </button>
 
               <button
-                aria-label="Help"
+                aria-label="Trợ giúp"
                 className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
               >
                 <span className="material-symbols-outlined">help</span>
@@ -287,307 +149,140 @@ export default function StudentDashboard() {
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-md lg:p-lg">
           <div className="max-w-container-max mx-auto flex flex-col gap-xl pb-xl">
 
-            {activeTab === 'Dashboard' ? (
+            {/* ── Assessments Section ── */}
+            {activeSection === 'assessments' && (
+              <QuizList token={token} />
+            )}
+
+            {/* ── AI Practice Section ── */}
+            {activeSection === 'practice' && (
+              <PracticeMode token={token} />
+            )}
+
+            {/* ── Đề thi Section ── */}
+            {activeSection === 'exam-papers' && (
+              <ExamPapers token={token} />
+            )}
+
+            {/* ── Parent Link Section ── */}
+            {activeSection === 'parent-link' && (
+              <ParentLinkSection token={token} />
+            )}
+
+            {activeSection === 'messages' && (
+              <MessagesSection token={token} user={user} />
+            )}
+
+            {/* ── Dashboard Home ── */}
+            {(activeSection === 'dashboard' || activeSection === 'courses' || activeSection === 'schedule') && (
               <>
-                {/* ── Welcome Header ── */}
-                <div className="flex justify-between items-end flex-wrap gap-md">
-                  <div>
-                    <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs">
-                      Welcome back, {displayName} 👋
-                    </h2>
-                    <p className="font-body-lg text-body-lg text-on-surface-variant">
-                      Here is your academic overview for today.
+
+            {/* ── Welcome Header ── */}
+            <div className="flex justify-between items-end flex-wrap gap-md">
+              <div>
+                <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs">
+                  Chào mừng trở lại, {displayName} 👋
+                </h2>
+                <p className="font-body-lg text-body-lg text-on-surface-variant">
+                  Đây là tổng quan học tập của bạn hôm nay.
+                </p>
+              </div>
+              <button className="h-12 px-md bg-surface-container border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface flex items-center gap-sm hover:bg-surface-container-highest transition-colors">
+                <span className="material-symbols-outlined">tune</span>
+                Tùy Chỉnh
+              </button>
+            </div>
+
+            {/* ── Hero: Next Class ── */}
+            <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/5 to-tertiary-container/5">
+              {/* Decorative glow */}
+              <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 pointer-events-none" />
+
+              <div className="relative z-10 bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md flex flex-col lg:flex-row justify-between items-start lg:items-center gap-lg border-primary/10">
+                <div className="flex gap-lg items-center w-full">
+                  {/* Icon */}
+                  <div className="w-16 h-16 rounded-xl bg-primary-container flex items-center justify-center text-on-primary-container shrink-0 shadow-sm">
+                    <span className="material-symbols-outlined text-[32px]">functions</span>
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-sm mb-xs flex-wrap">
+                      <span className="inline-flex items-center px-2 py-1 rounded bg-on-tertiary-container/20 text-primary font-label-sm text-label-sm">
+                        Sắp Diễn Ra
+                      </span>
+                      <span className="font-label-sm text-label-sm text-error flex items-center gap-xs">
+                        <span className="material-symbols-outlined text-[14px]">schedule</span>
+                        Bắt đầu sau 15 phút
+                      </span>
+                    </div>
+                    <h3 className="font-headline-md text-headline-md text-on-surface mb-xs">
+                      Toán Học Nâng Cao
+                    </h3>
+                    <p className="font-body-md text-body-md text-on-surface-variant flex items-center gap-xs">
+                      <span className="material-symbols-outlined text-[18px]">person</span>
+                      Dr. Sarah Wilson • Hôm nay, 14:00
                     </p>
                   </div>
-                  <button className="h-12 px-md bg-surface-container border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface flex items-center gap-sm hover:bg-surface-container-highest transition-colors">
-                    <span className="material-symbols-outlined">tune</span>
-                    Customize
-                  </button>
                 </div>
+                <button className="w-full lg:w-auto h-12 px-xl bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-surface-tint hover:shadow-md transition-all duration-200 whitespace-nowrap">
+                  Vào Lớp Học
+                </button>
+              </div>
+            </div>
 
-                {/* ── Hero: Next Class ── */}
-                <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/5 to-tertiary-container/5">
-                  {/* Decorative glow */}
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 pointer-events-none" />
+            {/* ── Stats Grid ── */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-md lg:gap-gutter">
+              <StatCard
+                icon="library_books"
+                label="Khóa Học Đang Học"
+                value="4"
+              />
+              <StatCard
+                icon="assignment_late"
+                label="Bài Tập Sắp Hết Hạn"
+                value="2"
+              />
+              <StatCard
+                icon="timer"
+                label="Số Giờ Đã Học"
+                value={<>28<span className="font-headline-md text-headline-md text-on-surface-variant">giờ</span></>}
+              />
+            </div>
 
-                  <div className="relative z-10 bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md flex flex-col lg:flex-row justify-between items-start lg:items-center gap-lg border-primary/10">
-                    <div className="flex gap-lg items-center w-full">
-                      {/* Icon */}
-                      <div className="w-16 h-16 rounded-xl bg-primary-container flex items-center justify-center text-on-primary-container shrink-0 shadow-sm">
-                        <span className="material-symbols-outlined text-[32px]">functions</span>
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-sm mb-xs flex-wrap">
-                          <span className="inline-flex items-center px-2 py-1 rounded bg-on-tertiary-container/20 text-primary font-label-sm text-label-sm">
-                            Next Upcoming
-                          </span>
-                          <span className="font-label-sm text-label-sm text-error flex items-center gap-xs">
-                            <span className="material-symbols-outlined text-[14px]">schedule</span>
-                            Starts in 15m
-                          </span>
-                        </div>
-                        <h3 className="font-headline-md text-headline-md text-on-surface mb-xs">
-                          Advanced Mathematics
-                        </h3>
-                        <p className="font-body-md text-body-md text-on-surface-variant flex items-center gap-xs">
-                          <span className="material-symbols-outlined text-[18px]">person</span>
-                          Dr. Sarah Wilson • Today, 2:00 PM
-                        </p>
-                      </div>
-                    </div>
-                    <button className="w-full lg:w-auto h-12 px-xl bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-surface-tint hover:shadow-md transition-all duration-200 whitespace-nowrap">
-                      Join Class
-                    </button>
+            {/* ── My Tutors ── */}
+            <div>
+              <div className="flex justify-between items-center mb-md">
+                <h3 className="font-headline-md text-headline-md text-on-surface">Gia Sư Của Tôi</h3>
+                <a
+                  href="#"
+                  className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
+                >
+                  Xem Tất Cả
+                </a>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-md">
+                {/* Tutor cards */}
+                {MY_TUTORS.map((tutor) => (
+                  <TutorCard key={tutor.id} tutor={tutor} />
+                ))}
+
+                {/* Find New Tutor CTA */}
+                <a
+                  href="#/"
+                  className="bg-surface-container-lowest/70 backdrop-blur-md border-2 border-dashed border-outline-variant/50 rounded-xl p-md flex flex-col items-center justify-center text-center bg-transparent hover:bg-surface-container-lowest/50 hover:border-primary/50 transition-all duration-300 cursor-pointer group"
+                >
+                  <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-sm group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors duration-300">
+                    <span className="material-symbols-outlined text-[28px]">person_add</span>
                   </div>
-                </div>
+                  <h4 className="font-label-md text-label-md text-on-surface mb-xs">Tìm Gia Sư</h4>
+                  <p className="font-label-sm text-label-sm text-on-surface-variant">
+                    Khám phá các gia sư hiện có
+                  </p>
+                </a>
+              </div>
+            </div>
 
-                {/* ── Stats Grid ── */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-md lg:gap-gutter">
-                  <StatCard
-                    icon="library_books"
-                    label="Courses in Progress"
-                    value="4"
-                  />
-                  <StatCard
-                    icon="assignment_late"
-                    label="Assignments Due"
-                    value="2"
-                  />
-                  <StatCard
-                    icon="timer"
-                    label="Hours Studied"
-                    value={<>28<span className="font-headline-md text-headline-md text-on-surface-variant">h</span></>}
-                  />
-                </div>
-
-                {/* ── My Upcoming Bookings (Active bookings from Calendar) ── */}
-                {bookings.length > 0 && (
-                  <div className="space-y-md">
-                    <div className="flex justify-between items-center">
-                      <h3 className="font-headline-md text-headline-md text-on-surface">Pending & Approved Bookings</h3>
-                      <button 
-                        onClick={() => setActiveTab('Schedule')}
-                        className="text-primary font-label-sm text-label-sm hover:underline"
-                      >
-                        View All
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
-                      {bookings.slice(0, 2).map((booking) => (
-                        <div key={booking.id} className="bg-white/80 border border-outline-variant/30 rounded-xl p-4 flex gap-sm items-center shadow-sm relative overflow-hidden">
-                          <div className={`absolute top-0 left-0 w-1.5 h-full ${
-                            booking.status === 'Approved' ? 'bg-[#16a34a]' : booking.status === 'Declined' ? 'bg-error' : 'bg-amber-500'
-                          }`} />
-                          
-                          <img src={booking.tutorAvatar} alt={booking.tutorName} className="w-12 h-12 rounded-full object-cover border border-outline-variant/30" />
-                          <div className="flex-grow min-w-0 pl-1">
-                            <h4 className="font-label-md text-label-md text-on-surface truncate">{booking.tutorName}</h4>
-                            <p className="text-[13px] text-on-surface-variant truncate flex items-center gap-1">
-                              {booking.subject}
-                              {booking.bookingType === 'trial' && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">Trial</span>}
-                            </p>
-                            <p className="text-[12px] text-outline mt-0.5 flex items-center gap-1">
-                              <span className="material-symbols-outlined text-[14px]">calendar_today</span>
-                              {booking.date} • {booking.timeSlot}
-                            </p>
-                          </div>
-                          
-                          <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full ${
-                            booking.status === 'Approved' 
-                              ? 'bg-[#dcfce7] text-[#16a34a]' 
-                              : booking.status === 'Declined' 
-                              ? 'bg-error-container text-error' 
-                              : 'bg-amber-50 text-amber-600 border border-amber-100'
-                          }`}>
-                            {booking.status}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* ── My Tutors ── */}
-                <div>
-                  <div className="flex justify-between items-center mb-md">
-                    <h3 className="font-headline-md text-headline-md text-on-surface">My Tutors</h3>
-                    <a
-                      href="#"
-                      className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
-                    >
-                      View All
-                    </a>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-md">
-                    {/* Tutor cards */}
-                    {dashboardTutors.map((tutor) => (
-                      <TutorCard key={tutor.id} tutor={tutor} onMessage={openTutorChat} />
-                    ))}
-
-                    {/* Find New Tutor CTA */}
-                    <a
-                      href="#/"
-                      className="bg-surface-container-lowest/70 backdrop-blur-md border-2 border-dashed border-outline-variant/50 rounded-xl p-md flex flex-col items-center justify-center text-center bg-transparent hover:bg-surface-container-lowest/50 hover:border-primary/50 transition-all duration-300 cursor-pointer group"
-                    >
-                      <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-sm group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors duration-300">
-                        <span className="material-symbols-outlined text-[28px]">person_add</span>
-                      </div>
-                      <h4 className="font-label-md text-label-md text-on-surface mb-xs">Find a Tutor</h4>
-                      <p className="font-label-sm text-label-sm text-on-surface-variant">
-                        Browse available experts
-                      </p>
-                    </a>
-                  </div>
-                </div>
               </>
-            ) : activeTab === 'Schedule' ? (
-              <div className="space-y-6">
-                <div className="flex justify-between items-center flex-wrap gap-2">
-                  <div>
-                    <h2 className="font-headline-lg text-headline-lg text-on-surface">My Schedule</h2>
-                    <p className="font-body-md text-body-md text-on-surface-variant">Review your booked tutoring sessions and approval status.</p>
-                  </div>
-                  
-                  <a 
-                    href="#/"
-                    className="h-11 px-4 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:bg-primary/95 transition-colors flex items-center gap-1.5 shadow-sm"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">add</span>
-                    Book New Session
-                  </a>
-                </div>
-
-                <div className="bg-white/70 backdrop-blur-md border border-outline-variant/20 rounded-2xl p-5 shadow-sm">
-                  <div className="flex items-center justify-between gap-3 mb-4">
-                    <div>
-                      <h3 className="font-headline-md text-headline-md text-on-surface">Book with a Tutor</h3>
-                      <p className="text-[13px] text-on-surface-variant">Choose a tutor and open the calendar to pick an available date and time.</p>
-                    </div>
-                    <span className="material-symbols-outlined text-primary">calendar_month</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {dashboardTutors.slice(0, 6).map((tutor) => (
-                      <BookingTutorCard key={tutor.id} tutor={tutor} />
-                    ))}
-                  </div>
-                </div>
-
-                {!bookingsLoading && bookings.length > 0 && (
-                  <StudentAttendanceSummary bookings={bookings} />
-                )}
-
-                {bookingsLoading ? (
-                  <div className="bg-white/70 backdrop-blur-md border border-outline-variant/20 rounded-2xl p-12 text-center flex flex-col items-center justify-center space-y-3">
-                    <svg className="animate-spin h-8 w-8 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                    </svg>
-                    <p className="font-label-md text-label-md text-on-surface-variant">Loading schedule bookings...</p>
-                  </div>
-                ) : bookings.length === 0 ? (
-                  <div className="bg-white/70 backdrop-blur-md border border-outline-variant/20 rounded-2xl p-12 text-center flex flex-col items-center justify-center space-y-4">
-                    <div className="w-20 h-20 rounded-full bg-primary/5 flex items-center justify-center">
-                      <span className="material-symbols-outlined text-[40px] text-primary/50">calendar_today</span>
-                    </div>
-                    <div className="space-y-1">
-                      <h3 className="font-headline-md text-headline-md text-on-surface">No Sessions Yet</h3>
-                      <p className="font-body-md text-body-md text-on-surface-variant max-w-sm mx-auto">
-                        Browse tutors on the home page, pick a time slot, and your bookings will appear here.
-                      </p>
-                    </div>
-                    <a
-                      href="#/"
-                      className="h-11 px-6 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:bg-primary/95 transition-colors flex items-center gap-2 shadow-sm"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">search</span>
-                      Find a Tutor
-                    </a>
-                  </div>
-                ) : (
-                  <div className="bg-white/70 backdrop-blur-md border border-outline-variant/20 rounded-2xl overflow-hidden shadow-sm divide-y divide-outline-variant/10">
-                    {bookings.map((booking) => (
-                      <div key={booking.id} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-surface-container-lowest/50 transition-colors">
-                        <div className="flex items-center gap-4">
-                          <img src={booking.tutorAvatar} alt={booking.tutorName} className="w-14 h-14 rounded-full object-cover border-2 border-surface bg-surface-container-low shadow-sm" />
-                          <div className="space-y-0.5">
-                            <h4 className="font-label-md text-[17px] text-on-surface font-semibold">{booking.tutorName}</h4>
-                            <p className="font-body-sm text-[14px] text-on-surface-variant flex items-center gap-1.5 flex-wrap">
-                              <span className="px-2 py-0.5 rounded bg-primary/5 text-primary text-[11px] font-bold border border-primary/5">
-                                {booking.subject}
-                              </span>
-                              {booking.bookingType === 'trial' && (
-                                <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 text-[11px] font-bold border border-amber-200">
-                                  Trial
-                                </span>
-                              )}
-                              <span>•</span>
-                              <span className="flex items-center gap-0.5">
-                                <span className="material-symbols-outlined text-[15px]">calendar_today</span>
-                                {booking.date}
-                              </span>
-                              <span>•</span>
-                              <span className="flex items-center gap-0.5">
-                                <span className="material-symbols-outlined text-[15px]">schedule</span>
-                                {booking.timeSlot}
-                              </span>
-                            </p>
-                            {booking.notes && (
-                              <p className="text-[13px] text-outline italic mt-1 truncate max-w-md">Notes: "{booking.notes}"</p>
-                            )}
-                            {booking.attendanceStatus && (
-                              <p className="text-[12px] text-on-surface-variant mt-1 flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[14px]">fact_check</span>
-                                Attendance: <strong>{booking.attendanceStatus}</strong>
-                                {booking.attendanceNote ? ` - ${booking.attendanceNote}` : ''}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-3 self-end sm:self-center">
-                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                            booking.status === 'Approved'
-                              ? 'bg-[#dcfce7] text-[#16a34a] border border-[#bbf7d0]'
-                              : booking.status === 'Declined'
-                              ? 'bg-error-container text-error border border-red-200'
-                              : 'bg-amber-50 text-amber-700 border border-amber-200'
-                          }`}>
-                            {booking.status}
-                          </span>
-                          
-                          {booking.status === 'Approved' ? (
-                            booking.bookingType === 'trial' && booking.attendanceStatus === 'present' ? (
-                              <a href={`#/tutor-profile/${booking.tutorId}`} className="h-10 px-4 bg-amber-500 text-white rounded-lg font-label-sm text-label-sm hover:bg-amber-600 transition-colors shadow-sm flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[16px]">rate_review</span>
-                                Review Trial
-                              </a>
-                            ) : (
-                              <button className="h-10 px-4 bg-primary text-on-primary rounded-lg font-label-sm text-label-sm hover:bg-primary/95 transition-colors shadow-sm flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[16px]">videocam</span>
-                                Join Meeting
-                              </button>
-                            )
-                          ) : (
-                            <button
-                              onClick={() => openTutorChat(booking.tutorId)}
-                              className="h-10 px-4 border border-outline-variant text-on-surface-variant rounded-lg font-label-sm text-label-sm hover:bg-surface-container-high transition-colors"
-                            >
-                              Contact
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="bg-white/70 backdrop-blur-md border border-outline-variant/30 rounded-2xl p-12 text-center py-20">
-                <span className="material-symbols-outlined text-4xl text-outline mb-2">construction</span>
-                <h3 className="font-headline-md text-headline-md text-on-surface">Tab "{activeTab}" Under Construction</h3>
-                <p className="text-on-surface-variant mt-2">This view is currently under development.</p>
-              </div>
             )}
 
           </div>
@@ -615,7 +310,7 @@ function StatCard({ icon, label, value }) {
 }
 
 // ─── Tutor Card component ──────────────────────────────────────────────────────
-function TutorCard({ tutor, onMessage }) {
+function TutorCard({ tutor }) {
   return (
     <div className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md flex flex-col items-center text-center hover:shadow-md transition-shadow duration-300">
       <img
@@ -624,147 +319,118 @@ function TutorCard({ tutor, onMessage }) {
         className="w-20 h-20 rounded-full object-cover mb-sm border-2 border-surface bg-surface-container-lowest shadow-sm"
         loading="lazy"
       />
-      <h4 className="font-label-md text-label-md text-on-surface mb-xs flex items-center justify-center gap-1.5">
-        <span>{tutor.name}</span>
-        {tutor.isNewTutor && <NewTutorBadge />}
-      </h4>
+      <h4 className="font-label-md text-label-md text-on-surface mb-xs">{tutor.name}</h4>
       <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm mb-md">
         {tutor.subject}
       </span>
-      <button
-        onClick={() => onMessage(tutor.id)}
-        className="w-full h-10 border border-outline-variant text-on-surface font-label-sm text-label-sm rounded-lg hover:bg-surface-container hover:text-primary transition-colors"
-      >
-        Message
+      <button className="w-full h-10 border border-outline-variant text-on-surface font-label-sm text-label-sm rounded-lg hover:bg-surface-container hover:text-primary transition-colors">
+        Nhắn Tin
       </button>
     </div>
   )
 }
 
-function BookingTutorCard({ tutor }) {
-  const subject = tutor.subject || (Array.isArray(tutor.subjects) ? tutor.subjects[0] : '') || 'General'
-  console.log('Schedule tutor object:', tutor)
-  const bookingTutorId = tutor.profileId || tutor.profile_id || tutor.id || tutor.userId || tutor.user_id || tutor.tutorId || tutor.tutor_id
-  const handleTrialClick = () => {
-    sessionStorage.setItem('edux_focus_trial_class', String(bookingTutorId))
-  }
-  const handleBookClick = () => {
-    console.log('Clicked tutor:', tutor)
-    sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify({
-      ...tutor,
-      id: bookingTutorId,
-      profile_id: tutor.profileId || tutor.profile_id || bookingTutorId,
-      user_id: tutor.userId || tutor.user_id || tutor.accountId || tutor.account_id || tutor.tutorId || tutor.tutor_id || tutor.id,
-      tutor_id: tutor.tutorId || tutor.tutor_id || tutor.userId || tutor.user_id || tutor.id,
-      subjects: tutor.subjects?.length ? tutor.subjects : [subject],
-    }))
-  }
-  return (
-    <div className={`rounded-xl border bg-white/85 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${tutor.isNewTutor ? 'border-amber-200 ring-1 ring-amber-100' : 'border-outline-variant/20'}`}>
-      <div className="flex items-center gap-3">
-        {tutor.avatar ? (
-          <img src={tutor.avatar} alt={tutor.name} className="w-12 h-12 rounded-full object-cover border border-outline-variant/30" />
-        ) : (
-          <div className="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">
-            {(tutor.name || 'T').charAt(0)}
-          </div>
-        )}
-        <div className="min-w-0 flex-1">
-          <h4 className="font-label-md text-label-md text-on-surface truncate flex items-center gap-1.5">
-            <span className="truncate">{tutor.name}</span>
-            {tutor.isNewTutor && <NewTutorBadge />}
-          </h4>
-          <p className="text-[12px] text-on-surface-variant truncate">{subject}</p>
-          {tutor.isNewTutor && (
-            <p className="mt-1 text-[11px] font-bold text-amber-700">
-              Có lớp học thử miễn phí trước khi đặt lịch chính thức
-            </p>
-          )}
-        </div>
-      </div>
-      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {tutor.isNewTutor && (
-          <a
-            onClick={handleTrialClick}
-            href={`#/tutor-profile/${bookingTutorId}`}
-            className="h-9 px-3 rounded-lg bg-amber-500 text-white font-label-sm text-[12px] flex items-center justify-center gap-1 hover:bg-amber-600 transition-colors"
-          >
-            <span className="material-symbols-outlined text-[15px]">workspace_premium</span>
-            Học thử
-          </a>
-        )}
-        <a onClick={handleBookClick} href={`#/booking-calendar/${bookingTutorId}`} className="h-9 px-3 rounded-lg bg-primary text-on-primary font-label-sm text-[12px] flex items-center justify-center gap-1 hover:bg-primary/90 transition-colors">
-          <span className="material-symbols-outlined text-[15px]">event_available</span>
-          Book
-        </a>
-      </div>
-    </div>
-  )
-}
+// ─── Parent Link Section ──────────────────────────────────────────────────────
+function ParentLinkSection({ token }) {
+  const [code, setCode] = useState(null)
+  const [parents, setParents] = useState([])
+  const [loading, setLoading] = useState(true)
 
-function NewTutorBadge() {
-  return (
-    <span className="inline-flex flex-shrink-0 items-center rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700">
-      New
-    </span>
-  )
-}
+  useEffect(() => {
+    // Lấy mã chia sẻ
+    fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/link-code`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => setCode(d.code))
+      .catch(console.error)
 
-function StudentAttendanceSummary({ bookings }) {
-  const approved = bookings.filter((booking) => booking.status === 'Approved')
-  const marked = approved.filter((booking) => booking.attendanceStatus)
-  const present = marked.filter((booking) => booking.attendanceStatus === 'present')
-  const absent = marked.filter((booking) => booking.attendanceStatus === 'absent')
-  const excused = marked.filter((booking) => booking.attendanceStatus === 'excused')
-  const rate = marked.length ? Math.round((present.length / marked.length) * 100) : null
+    // Lấy danh sách phụ huynh
+    fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/parents`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => { setParents(d.parents || []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <div className="text-center py-xl"><span className="material-symbols-outlined animate-spin text-primary text-[40px]">sync</span></div>
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div className="bg-white/70 backdrop-blur-md border border-outline-variant/20 rounded-2xl p-5 shadow-sm lg:col-span-2">
-        <div className="flex items-center justify-between gap-3 mb-4">
+    <div className="max-w-3xl mx-auto flex flex-col gap-lg animate-in fade-in slide-in-from-bottom-4 duration-500">
+      
+      {/* Code card */}
+      <div className="bg-surface rounded-3xl border border-outline-variant/30 shadow-md p-lg flex flex-col md:flex-row gap-xl items-center relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-2 h-full bg-primary" />
+        
+        <div className="flex-1 space-y-4">
           <div>
-            <h3 className="font-headline-md text-headline-md text-on-surface">Attendance Overview</h3>
-            <p className="text-[13px] text-on-surface-variant">Track attended, absent, and excused lessons after tutor marks attendance.</p>
+            <h2 className="font-headline-md text-headline-md font-bold text-on-surface">Mã chia sẻ phụ huynh</h2>
+            <p className="font-body-md text-body-md text-on-surface-variant mt-1">
+              Đưa mã này cho phụ huynh của bạn. Phụ huynh sẽ dùng mã này trong "EduX Phụ huynh" để theo dõi quá trình học tập, bài tập, đề thi của bạn.
+            </p>
           </div>
-          <span className="material-symbols-outlined text-primary">fact_check</span>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <AttendanceMetric label="Attendance Rate" value={rate == null ? '--' : `${rate}%`} tone="primary" />
-          <AttendanceMetric label="Present" value={present.length} tone="green" />
-          <AttendanceMetric label="Absent" value={absent.length} tone="red" />
-          <AttendanceMetric label="Excused" value={excused.length} tone="amber" />
+
+          <div className="bg-surface-container-low rounded-2xl border border-outline-variant/30 p-md flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-widest text-on-surface-variant mb-1">Mã của bạn</p>
+              <p className="font-mono text-3xl font-black text-primary tracking-[0.2em]">{code || '--------'}</p>
+            </div>
+            <button 
+              onClick={() => {
+                navigator.clipboard.writeText(code)
+                alert('Đã sao chép mã!')
+              }}
+              className="w-12 h-12 flex items-center justify-center bg-primary/10 text-primary hover:bg-primary/20 rounded-xl transition-colors"
+              title="Sao chép"
+            >
+              <span className="material-symbols-outlined text-[24px]">content_copy</span>
+            </button>
+          </div>
+          
+          <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200/50">
+            <span className="material-symbols-outlined text-[20px]">info</span>
+            <p>Mã này là cố định và không thay đổi. Bạn không thể tự hủy liên kết.</p>
+          </div>
         </div>
       </div>
-      <div className="bg-white/70 backdrop-blur-md border border-outline-variant/20 rounded-2xl p-5 shadow-sm">
-        <h3 className="font-headline-sm text-headline-sm text-on-surface mb-3">Absence History</h3>
-        {absent.length === 0 ? (
-          <p className="text-[13px] text-on-surface-variant italic">No absences recorded.</p>
+
+      {/* Connected parents list */}
+      <div>
+        <h3 className="font-headline-sm text-headline-sm font-semibold text-on-surface mb-md">Phụ huynh đang theo dõi ({parents.length})</h3>
+        
+        {parents.length === 0 ? (
+          <div className="bg-surface-container-low border border-outline-variant/30 rounded-3xl p-xl flex flex-col items-center justify-center text-center">
+            <div className="w-16 h-16 bg-surface-container border border-outline-variant/50 rounded-full flex items-center justify-center mb-md">
+              <span className="material-symbols-outlined text-[32px] text-on-surface-variant">family_history</span>
+            </div>
+            <p className="font-label-lg text-on-surface font-medium">Chưa có phụ huynh nào</p>
+            <p className="font-body-sm text-on-surface-variant mt-1 max-w-sm">Chia sẻ mã phía trên cho phụ huynh của bạn để họ có thể theo dõi tiến độ học tập.</p>
+          </div>
         ) : (
-          <div className="space-y-2 max-h-40 overflow-auto">
-            {absent.map((booking) => (
-              <div key={booking.id} className="rounded-xl bg-red-50 border border-red-200 p-3">
-                <p className="text-[12px] font-bold text-red-700">{booking.date} - {booking.timeSlot}</p>
-                <p className="text-[12px] text-red-600">{booking.subject}{booking.attendanceNote ? ` - ${booking.attendanceNote}` : ''}</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+            {parents.map(p => (
+              <div key={p.id} className="bg-surface rounded-2xl border border-outline-variant/30 p-md flex gap-4 items-center hover:shadow-sm transition-shadow">
+                {p.parent_picture ? (
+                  <img src={p.parent_picture} alt={p.parent_name} className="w-14 h-14 rounded-full object-cover border border-outline-variant/30" />
+                ) : (
+                  <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-lg">
+                    {p.parent_name.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex-1">
+                  <p className="font-label-lg text-on-surface font-semibold">{p.nickname ? `${p.nickname} (${p.parent_name})` : p.parent_name}</p>
+                  <p className="font-body-sm text-on-surface-variant">{p.parent_email}</p>
+                  <p className="text-xs text-on-surface-variant mt-1 border-t border-outline-variant/20 pt-1">
+                    Liên kết ngày: {new Date(p.linked_at).toLocaleDateString('vi-VN')}
+                  </p>
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
-    </div>
-  )
-}
 
-function AttendanceMetric({ label, value, tone }) {
-  const styles = {
-    primary: 'bg-primary/5 text-primary border-primary/10',
-    green: 'bg-[#dcfce7] text-[#16a34a] border-[#bbf7d0]',
-    red: 'bg-red-50 text-red-600 border-red-200',
-    amber: 'bg-amber-50 text-amber-700 border-amber-200',
-  }
-  return (
-    <div className={`rounded-xl border p-3 ${styles[tone]}`}>
-      <p className="text-[11px] font-bold uppercase opacity-80">{label}</p>
-      <p className="text-2xl font-black">{value}</p>
     </div>
   )
 }
