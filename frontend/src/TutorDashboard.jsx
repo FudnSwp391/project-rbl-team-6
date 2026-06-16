@@ -1,4 +1,4 @@
-﻿/**
+/**
  * TutorDashboard.jsx
  * Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
  * Dashboard dÄ‚Â nh cho gia sĂ†Â° (role: tutor).
@@ -13,6 +13,7 @@ import { getBookings, updateBookingStatus,
 import ProofUploader from './components/ProofUploader'
 import TutorCoursesTab from './components/TutorCourses'
 import { uploadAvatarFile, uploadDemoVideo } from './services/upload'
+import MessagesSection from './components/MessagesSection'
 
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Overview' },
@@ -25,7 +26,7 @@ const NAV_ITEMS = [
 ]
 
 export default function TutorDashboard() {
-  const { user, logout } = useAuth()
+  const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activeTab, setActiveTab] = useState('Overview')
   const [requests, setRequests] = useState([])
@@ -211,12 +212,8 @@ export default function TutorDashboard() {
                 href="#"
                 onClick={(e) => {
                   e.preventDefault()
-                  if (isMessages) {
-                    window.location.hash = '/messages'
-                  } else {
-                    setActiveTab(item.label)
-                    setSidebarOpen(false)
-                  }
+                  setActiveTab(item.label)
+                  setSidebarOpen(false)
                 }}
                 className={`
                   flex items-center gap-sm px-md py-sm rounded-lg
@@ -482,6 +479,10 @@ export default function TutorDashboard() {
 
           {activeTab === 'Earnings' && (
             <TutorEarningsTab />
+          )}
+
+          {activeTab === 'Messages' && (
+            <MessagesSection token={token} user={user} />
           )}
 
         </main>
