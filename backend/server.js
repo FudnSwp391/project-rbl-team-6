@@ -3220,7 +3220,172 @@ async function startServer() {
     console.error("⚠️  DB migration (reviews) warning:", err.message);
   }
 
-  app.get("/api/tutor/courses", verifyToken, async (req, res) => {
+  async function ensureCourseSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS courses (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT,
+      subject TEXT,
+      level TEXT,
+      price INT NOT NULL DEFAULT 0 CHECK (price >= 0),
+      thumbnail_url TEXT,
+      learning_outcomes JSONB NOT NULL DEFAULT '[]'::jsonb,
+      requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'pending_review', 'published', 'rejected', 'archived')),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS tutor_id UUID REFERENCES users(id) ON DELETE CASCADE");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS title TEXT");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS description TEXT");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS subject TEXT");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS level TEXT");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS price INT DEFAULT 0");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS thumbnail_url TEXT");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS learning_outcomes JSONB DEFAULT '[]'::jsonb");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS requirements JSONB DEFAULT '[]'::jsonb");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft'");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()");
+  await pool.query("ALTER TABLE courses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
+  await pool.query("UPDATE courses SET status = 'draft' WHERE status IS NULL OR status NOT IN ('draft', 'pending_review', 'published', 'rejected', 'archived')");
+  await pool.query("UPDATE courses SET price = 0 WHERE price IS NULL OR price < 0");
+  await pool.query("UPDATE courses SET learning_outcomes = '[]'::jsonb WHERE learning_outcomes IS NULL");
+  await pool.query("UPDATE courses SET requirements = '[]'::jsonb WHERE requirements IS NULL");
+  await pool.query(`
+    DO $$
+    DECLARE constraint_record RECORD;
+    BEGIN
+      FOR constraint_record IN
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
+        WHERE rel.relname = 'courses'
+          AND con.contype = 'c'
+          AND att.attname IN ('status', 'price')
+      LOOP
+        EXECUTE format('ALTER TABLE courses DROP CONSTRAINT IF EXISTS %I', constraint_record.conname);
+      END LOOP;
+    END $$;
+  `);
+  await pool.query("ALTER TABLE courses ALTER COLUMN status SET DEFAULT 'draft'");
+  await pool.query("ALTER TABLE courses ALTER COLUMN price SET DEFAULT 0");
+  await pool.query("ALTER TABLE courses ADD CONSTRAINT courses_status_check CHECK (status IN ('draft', 'pending_review', 'published', 'rejected', 'archived'))");
+  await pool.query("ALTER TABLE courses ADD CONSTRAINT courses_price_check CHECK (price >= 0)");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS course_lessons (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      course_id UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT,
+      video_url TEXT,
+      material_url TEXT,
+      duration_label TEXT,
+      is_preview BOOLEAN NOT NULL DEFAULT false,
+      position INT NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS course_id UUID REFERENCES courses(id) ON DELETE CASCADE");
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS title TEXT");
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS description TEXT");
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS video_url TEXT");
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS material_url TEXT");
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS duration_label TEXT");
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS is_preview BOOLEAN DEFAULT false");
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS position INT DEFAULT 1");
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()");
+  await pool.query("ALTER TABLE course_lessons ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS course_enrollments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      course_id UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      student_name TEXT,
+      child_name TEXT,
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'refunded', 'cancelled')),
+      purchased_at TIMESTAMPTZ DEFAULT NOW(),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(course_id, student_id)
+    );
+  `);
+  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS course_id UUID REFERENCES courses(id) ON DELETE CASCADE");
+  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS student_id UUID REFERENCES users(id) ON DELETE CASCADE");
+  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS student_name TEXT");
+  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS child_name TEXT");
+  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'");
+  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS purchased_at TIMESTAMPTZ DEFAULT NOW()");
+  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()");
+  await pool.query("ALTER TABLE course_enrollments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
+  await pool.query("UPDATE course_enrollments SET status = 'active' WHERE status IS NULL OR status NOT IN ('active', 'refunded', 'cancelled')");
+  await pool.query(`
+    DO $$
+    DECLARE constraint_record RECORD;
+    BEGIN
+      FOR constraint_record IN
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
+        WHERE rel.relname = 'course_enrollments'
+          AND con.contype = 'c'
+          AND att.attname = 'status'
+      LOOP
+        EXECUTE format('ALTER TABLE course_enrollments DROP CONSTRAINT IF EXISTS %I', constraint_record.conname);
+      END LOOP;
+    END $$;
+  `);
+  await pool.query("ALTER TABLE course_enrollments ALTER COLUMN status SET DEFAULT 'active'");
+  await pool.query("ALTER TABLE course_enrollments ADD CONSTRAINT course_enrollments_status_check CHECK (status IN ('active', 'refunded', 'cancelled'))");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS course_progress (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      enrollment_id UUID NOT NULL REFERENCES course_enrollments(id) ON DELETE CASCADE,
+      lesson_id UUID NOT NULL REFERENCES course_lessons(id) ON DELETE CASCADE,
+      watched_seconds INT NOT NULL DEFAULT 0,
+      is_completed BOOLEAN NOT NULL DEFAULT false,
+      completed_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(enrollment_id, lesson_id)
+    );
+  `);
+  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS enrollment_id UUID REFERENCES course_enrollments(id) ON DELETE CASCADE");
+  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS lesson_id UUID REFERENCES course_lessons(id) ON DELETE CASCADE");
+  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS watched_seconds INT DEFAULT 0");
+  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS is_completed BOOLEAN DEFAULT false");
+  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()");
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_courses_tutor_id ON courses(tutor_id)");
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status)");
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_course_lessons_course_id ON course_lessons(course_id)");
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_course_enrollments_student_id ON course_enrollments(student_id)");
+  try {
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_course_enrollments_course_student
+      ON course_enrollments(course_id, student_id)
+    `);
+  } catch (error) {
+    console.warn("[Courses] Could not create unique enrollment index. Existing duplicate enrollments may need cleanup.", error.message);
+  }
+  try {
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_course_progress_enrollment_lesson
+      ON course_progress(enrollment_id, lesson_id)
+    `);
+  } catch (error) {
+    console.warn("[Courses] Could not create unique progress index. Existing duplicate progress rows may need cleanup.", error.message);
+  }
+}
+
+
+app.get("/api/tutor/courses", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
     await ensureCourseSchema();
