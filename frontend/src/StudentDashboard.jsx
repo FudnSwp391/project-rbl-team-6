@@ -10,6 +10,7 @@ import QuizList from './QuizList'
 import PracticeMode from './PracticeMode'
 import ExamPapers from './ExamPapers'
 import MessagesSection from './components/MessagesSection'
+import WalletWidget from './components/WalletWidget'
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
 const MY_TUTORS = [
   {
@@ -123,6 +124,8 @@ export default function StudentDashboard() {
               </button>
 
               <div className="w-px h-8 bg-outline-variant/30 mx-xs" />
+
+              <WalletWidget token={token} />
 
               {/* Avatar */}
               <div className="flex items-center gap-xs rounded-full px-xs py-xs hover:bg-surface-container-high transition-colors cursor-pointer">

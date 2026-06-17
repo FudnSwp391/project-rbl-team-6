@@ -3220,7 +3220,205 @@ async function startServer() {
     console.error("⚠️  DB migration (reviews) warning:", err.message);
   }
 
-  app.listen(port, () => {
+// =========================================================================
+// ==================== PAYMENT & ESCROW ROUTES ============================
+// =========================================================================
+const crypto = require('crypto');
+const moment = require('moment');
+const querystring = require('qs');
+
+// 1. Lấy thông tin Ví
+app.get('/api/payment/wallet', verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM wallets WHERE user_id = $1', [req.user.userId]);
+    if (rows.length === 0) return res.status(404).json({ message: 'Ví không tồn tại' });
+    res.json({ wallet: rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// 2. Tạo URL Nạp Tiền VNPAY
+app.post('/api/payment/create-url', verifyToken, async (req, res) => {
+  try {
+      const { amount, returnUrl } = req.body;
+      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
+      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'Ví không tồn tại' });
+      const wId = walletRes.rows[0].id;
+
+      const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
+      const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
+      let vnpUrl = process.env.VNPAY_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
+      
+      const ipAddr = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.socket.remoteAddress || req.connection.socket.remoteAddress || '127.0.0.1';
+
+      let date = new Date();
+      let createDate = moment(date).format('YYYYMMDDHHmmss');
+      let orderId = moment(date).format('DDHHmmss'); 
+
+      let vnp_Params = {
+          'vnp_Version': '2.1.0',
+          'vnp_Command': 'pay',
+          'vnp_TmnCode': tmnCode,
+          'vnp_Locale': 'vn',
+          'vnp_CurrCode': 'VND',
+          'vnp_TxnRef': orderId,
+          'vnp_OrderInfo': wId, 
+          'vnp_OrderType': 'topup',
+          'vnp_Amount': amount * 100, 
+          'vnp_ReturnUrl': returnUrl,
+          'vnp_IpAddr': ipAddr,
+          'vnp_CreateDate': createDate
+      };
+
+      function sortObject(obj) {
+          let sorted = {};
+          let str = [];
+          let key;
+          for (key in obj){
+              if (obj.hasOwnProperty(key)) { str.push(encodeURIComponent(key)); }
+          }
+          str.sort();
+          for (key = 0; key < str.length; key++) {
+              sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+");
+          }
+          return sorted;
+      }
+
+      vnp_Params = sortObject(vnp_Params);
+      const signData = querystring.stringify(vnp_Params, { encode: false });
+      const hmac = crypto.createHmac("sha512", secretKey);
+      const signed = hmac.update(new Buffer.from(signData, 'utf-8')).digest("hex"); 
+      
+      vnp_Params['vnp_SecureHash'] = signed;
+      vnpUrl += '?' + querystring.stringify(vnp_Params, { encode: false });
+
+      res.json({ success: true, url: vnpUrl });
+  } catch (e) {
+      console.error('Create VNPAY URL Error:', e);
+      res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// 3. VNPAY IPN Webhook
+app.get('/api/payment/vnpay-ipn', async (req, res) => {
+  try {
+      let vnp_Params = req.query;
+      const secureHash = vnp_Params['vnp_SecureHash'];
+      const amount = vnp_Params['vnp_Amount'] / 100;
+      const orderId = vnp_Params['vnp_TxnRef'];
+      const responseCode = vnp_Params['vnp_ResponseCode'];
+      const walletId = vnp_Params['vnp_OrderInfo']; 
+
+      delete vnp_Params['vnp_SecureHash'];
+      delete vnp_Params['vnp_SecureHashType'];
+
+      function sortObject(obj) {
+          let sorted = {};
+          let str = [];
+          let key;
+          for (key in obj){ if (obj.hasOwnProperty(key)) { str.push(encodeURIComponent(key)); } }
+          str.sort();
+          for (key = 0; key < str.length; key++) { sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+"); }
+          return sorted;
+      }
+
+      vnp_Params = sortObject(vnp_Params);
+      const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
+      const signData = querystring.stringify(vnp_Params, { encode: false });
+      const hmac = crypto.createHmac("sha512", secretKey);
+      const signed = hmac.update(new Buffer.from(signData, 'utf-8')).digest("hex");     
+
+      if (secureHash !== signed) {
+          return res.status(200).json({ RspCode: '97', Message: 'Checksum failed' });
+      }
+
+      if (responseCode !== '00') {
+           return res.status(200).json({ RspCode: '00', Message: 'Success processing failed transaction' });
+      }
+
+      // Call RPC process_deposit
+      const dbRes = await pool.query('SELECT process_deposit($1, $2, $3, $4) AS success', [walletId, amount, 'VNPAY', orderId]);
+      const isSuccess = dbRes.rows[0].success;
+
+      if (!isSuccess) {
+           return res.status(200).json({ RspCode: '02', Message: 'Order already confirmed' });
+      }
+
+      res.status(200).json({ RspCode: '00', Message: 'Confirm Success' });
+  } catch (err) {
+      console.error('IPN Error:', err);
+      res.status(200).json({ RspCode: '99', Message: 'Unknown error' });
+  }
+});
+
+// 4. Hold Money (Book Lesson)
+app.post('/api/escrow/hold', verifyToken, async (req, res) => {
+  const { amount, lessonId } = req.body;
+  try {
+      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
+      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'Ví không tồn tại' });
+      const payerWalletId = walletRes.rows[0].id;
+
+      const { rows } = await pool.query('SELECT hold_money_for_lesson($1, $2, $3) AS tx_id', [payerWalletId, amount, lessonId]);
+      
+      res.json({ success: true, transactionId: rows[0].tx_id });
+  } catch (err) {
+      // Trigger error from CHECK (balance >= amount)
+      res.status(400).json({ success: false, message: 'Số dư không đủ để thanh toán hoặc lỗi hệ thống.' });
+  }
+});
+
+// 5. Release Escrow (Giải ngân cho Gia sư)
+app.post('/api/escrow/release', verifyToken, async (req, res) => {
+    const { transactionId, payerWalletId, tutorWalletId, amount } = req.body;
+    // Lấy admin_wallet_id từ môi trường hoặc truy vấn user admin đầu tiên
+    try {
+        let adminWalletId = process.env.ADMIN_WALLET_ID;
+        if (!adminWalletId) {
+            const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
+            if (rows.length > 0) adminWalletId = rows[0].id;
+            else return res.status(500).json({ success: false, message: 'Lỗi hệ thống: Chưa cấu hình ví Admin.' });
+        }
+
+        const commissionRate = 0.1; // 10%
+        const { error } = await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [
+            transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, commissionRate
+        ]);
+        res.json({ success: true, message: 'Đã giải ngân cho Gia sư' });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 6. Resolve Dispute (Xử lý khiếu nại - Admin)
+app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+    
+    const { disputeId, transactionId, payerWalletId, tutorWalletId, amount, decision, adminNote } = req.body;
+    
+    try {
+        if (decision === 'REFUND_TO_STUDENT') {
+            await pool.query('SELECT refund_escrow($1, $2, $3)', [transactionId, payerWalletId, amount]);
+            await pool.query("UPDATE disputes SET status = 'RESOLVED_REFUND', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
+        } 
+        else if (decision === 'RELEASE_TO_TUTOR') {
+            let adminWalletId = process.env.ADMIN_WALLET_ID;
+            if (!adminWalletId) {
+                const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
+                adminWalletId = rows[0].id;
+            }
+            await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
+            await pool.query("UPDATE disputes SET status = 'RESOLVED_RELEASE', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
+        }
+        res.json({ success: true, message: 'Đã xử lý khiếu nại thành công' });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.listen(port, () => {
     console.log(`🚀 Server is running on http://localhost:${port}`);
   });
 }
