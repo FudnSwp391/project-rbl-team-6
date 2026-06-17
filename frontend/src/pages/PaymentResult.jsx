@@ -11,6 +11,12 @@ export default function PaymentResult() {
         if (rspCode === '00') {
             setStatus('success');
             setMessage('Giao dịch nạp tiền thành công! Số dư ví của bạn đã được cập nhật.');
+            
+            // Giả lập VNPAY gọi IPN Webhook (vì localhost VNPAY không tự gọi được)
+            const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+            const ipnUrl = `${API_BASE}/api/payment/vnpay-ipn?${queryParams.toString()}`;
+            fetch(ipnUrl).catch(e => console.error('Lỗi giả lập IPN:', e));
+
         } else if (rspCode) {
             setStatus('error');
             setMessage('Giao dịch thất bại hoặc đã bị huỷ. Mã lỗi: ' + rspCode);
