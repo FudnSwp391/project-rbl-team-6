@@ -38,7 +38,7 @@ export default function WalletWidget({ token }) {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({ amount: Number(amount), returnUrl })
+                body: JSON.stringify({ amount: Number(amount), returnUrl, walletId: wallet.id })
             });
             const data = await res.json();
             if (data.success && data.url) {
