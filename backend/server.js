@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const jwt = require("jsonwebtoken");
@@ -19,11 +19,11 @@ const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
 const jwtSecret = process.env.JWT_SECRET || "dev_jwt_secret_change_me";
 const googleClient = new OAuth2Client(googleClientId);
 
-// ΓöÇΓöÇΓöÇ Middleware ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ Middleware Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 app.use(cors({ origin: frontendOrigin }));
 app.use(express.json());
 
-// ΓöÇΓöÇΓöÇ Helper: tß║ío JWT token ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ Helper: tÃŸâ•‘Ã­o JWT token Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 function createToken(user) {
   return jwt.sign(
     {
@@ -38,7 +38,7 @@ function createToken(user) {
   );
 }
 
-// ΓöÇΓöÇΓöÇ Middleware: verifyToken ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ Middleware: verifyToken Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 // Reads the Authorization header, verifies the JWT, and attaches decoded
 // user info to req.user. Returns 401 if the token is missing or invalid.
 function verifyToken(req, res, next) {
@@ -59,7 +59,7 @@ function verifyToken(req, res, next) {
   }
 }
 
-// ΓöÇΓöÇΓöÇ Middleware: requireAdmin ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ Middleware: requireAdmin Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 // Must be used AFTER verifyToken. Returns 403 if the user is not an admin.
 function requireAdmin(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -75,9 +75,9 @@ function requireTutor(req, res, next) {
   next();
 }
 
-// ΓöÇΓöÇΓöÇ Nodemailer: email helper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-// Gß╗¡i email th├┤ng b├ío kß║┐t quß║ú kiß╗âm duyß╗çt hß╗ô s╞í gia s╞░.
-// Nß║┐u SMTP ch╞░a cß║Ñu h├¼nh ΓåÆ log warning v├á bß╗Å qua (kh├┤ng crash server).
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ Nodemailer: email helper Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+// GÃŸâ•—Â¡i email thâ”œâ”¤ng bâ”œÃ­o kÃŸâ•‘â”t quÃŸâ•‘Ãº kiÃŸâ•—Ã¢m duyÃŸâ•—Ã§t hÃŸâ•—Ã´ sâ•žÃ­ gia sâ•žâ–‘.
+// NÃŸâ•‘â”u SMTP châ•žâ–‘a cÃŸâ•‘Ã‘u hâ”œÂ¼nh Î“Ã¥Ã† log warning vâ”œÃ¡ bÃŸâ•—Ã… qua (khâ”œâ”¤ng crash server).
 
 // Create transporter once (singleton)
 const emailTransporter = (() => {
@@ -93,13 +93,13 @@ const emailTransporter = (() => {
 
 async function sendTutorReviewEmail(to, status, reason, notes) {
   if (!emailTransporter) {
-    console.log(`[Email] SMTP ch╞░a cß║Ñu h├¼nh ΓÇö bß╗Å qua email tß╗¢i ${to}`);
+    console.log(`[Email] SMTP châ•žâ–‘a cÃŸâ•‘Ã‘u hâ”œÂ¼nh Î“Ã‡Ã¶ bÃŸâ•—Ã… qua email tÃŸâ•—Â¢i ${to}`);
     return;
   }
 
   const isApproved = status === "approved";
 
-  // NO emoji in subject ΓÇö major spam trigger when sending GmailΓåÆGmail via SMTP
+  // NO emoji in subject Î“Ã‡Ã¶ major spam trigger when sending GmailÎ“Ã¥Ã†Gmail via SMTP
   const subject = isApproved
     ? "[EduX] Ho so gia su cua ban da duoc chap thuan"
     : "[EduX] Thong bao ket qua xet duyet ho so gia su";
@@ -134,12 +134,12 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
         <tr>
           <td style="padding:40px 40px 0;text-align:center;">
             <div style="width:80px;height:80px;background:#dcfce7;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:24px;">
-              <span style="font-size:40px;">Γ£à</span>
+              <span style="font-size:40px;">Î“Â£Ã </span>
             </div>
-            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Ch├║c mß╗½ng! Hß╗ô s╞í ─æ├ú ─æ╞░ß╗úc duyß╗çt</h2>
+            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Châ”œâ•‘c mÃŸâ•—Â½ng! HÃŸâ•—Ã´ sâ•žÃ­ â”€Ã¦â”œÃº â”€Ã¦â•žâ–‘ÃŸâ•—Ãºc duyÃŸâ•—Ã§t</h2>
             <p style="margin:0;color:#444653;font-size:16px;line-height:1.6;">
-              Hß╗ô s╞í ─æ─âng k├╜ gia s╞░ cß╗ºa bß║ín tr├¬n <strong>EduX</strong> ─æ├ú ─æ╞░ß╗úc <strong style="color:#16a34a;">chß║Ñp thuß║¡n</strong>.
-              T├ái khoß║ún gia s╞░ cß╗ºa bß║ín hiß╗çn ─æ├ú <strong>hoß║ít ─æß╗Öng ─æß║ºy ─æß╗º</strong>.
+              HÃŸâ•—Ã´ sâ•žÃ­ â”€Ã¦â”€Ã¢ng kâ”œâ•œ gia sâ•žâ–‘ cÃŸâ•—Âºa bÃŸâ•‘Ã­n trâ”œÂ¬n <strong>EduX</strong> â”€Ã¦â”œÃº â”€Ã¦â•žâ–‘ÃŸâ•—Ãºc <strong style="color:#16a34a;">chÃŸâ•‘Ã‘p thuÃŸâ•‘Â¡n</strong>.
+              Tâ”œÃ¡i khoÃŸâ•‘Ãºn gia sâ•žâ–‘ cÃŸâ•—Âºa bÃŸâ•‘Ã­n hiÃŸâ•—Ã§n â”€Ã¦â”œÃº <strong>hoÃŸâ•‘Ã­t â”€Ã¦ÃŸâ•—Ã–ng â”€Ã¦ÃŸâ•‘Âºy â”€Ã¦ÃŸâ•—Âº</strong>.
             </p>
           </td>
         </tr>
@@ -147,21 +147,21 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
         <tr>
           <td style="padding:32px 40px;">
             <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:24px;">
-              <h3 style="margin:0 0 16px;color:#15803d;font-size:16px;font-weight:700;">Bß║ín c├│ thß╗â l├ám g├¼ tiß║┐p theo?</h3>
+              <h3 style="margin:0 0 16px;color:#15803d;font-size:16px;font-weight:700;">BÃŸâ•‘Ã­n câ”œâ”‚ thÃŸâ•—Ã¢ lâ”œÃ¡m gâ”œÂ¼ tiÃŸâ•‘â”p theo?</h3>
               <table cellpadding="0" cellspacing="0" width="100%">
                 <tr>
                   <td style="padding:8px 0;color:#444653;font-size:15px;">
-                    <span style="color:#16a34a;font-weight:bold;margin-right:8px;">ΓåÆ</span>─É─âng nhß║¡p v├á ho├án thiß╗çn hß╗ô s╞í gia s╞░
+                    <span style="color:#16a34a;font-weight:bold;margin-right:8px;">Î“Ã¥Ã†</span>â”€Ã‰â”€Ã¢ng nhÃŸâ•‘Â¡p vâ”œÃ¡ hoâ”œÃ¡n thiÃŸâ•—Ã§n hÃŸâ•—Ã´ sâ•žÃ­ gia sâ•žâ–‘
                   </td>
                 </tr>
                 <tr>
                   <td style="padding:8px 0;color:#444653;font-size:15px;">
-                    <span style="color:#16a34a;font-weight:bold;margin-right:8px;">ΓåÆ</span>Bß║»t ─æß║ºu nhß║¡n y├¬u cß║ºu tß╗½ hß╗ìc sinh
+                    <span style="color:#16a34a;font-weight:bold;margin-right:8px;">Î“Ã¥Ã†</span>BÃŸâ•‘Â»t â”€Ã¦ÃŸâ•‘Âºu nhÃŸâ•‘Â¡n yâ”œÂ¬u cÃŸâ•‘Âºu tÃŸâ•—Â½ hÃŸâ•—Ã¬c sinh
                   </td>
                 </tr>
                 <tr>
                   <td style="padding:8px 0;color:#444653;font-size:15px;">
-                    <span style="color:#16a34a;font-weight:bold;margin-right:8px;">ΓåÆ</span>Thiß║┐t lß║¡p lß╗ïch dß║íy v├á mß╗⌐c hß╗ìc ph├¡
+                    <span style="color:#16a34a;font-weight:bold;margin-right:8px;">Î“Ã¥Ã†</span>ThiÃŸâ•‘â”t lÃŸâ•‘Â¡p lÃŸâ•—Ã¯ch dÃŸâ•‘Ã­y vâ”œÃ¡ mÃŸâ•—âŒc hÃŸâ•—Ã¬c phâ”œÂ¡
                   </td>
                 </tr>
               </table>
@@ -173,7 +173,7 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
         <tr>
           <td style="padding:0 40px 24px;">
             <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:20px 24px;">
-              <p style="margin:0 0 8px;color:#1d4ed8;font-size:14px;font-weight:700;">≡ƒô¥ Ghi ch├║ tß╗½ Ban Quß║ún Trß╗ï:</p>
+              <p style="margin:0 0 8px;color:#1d4ed8;font-size:14px;font-weight:700;">â‰¡Æ’Ã´Â¥ Ghi châ”œâ•‘ tÃŸâ•—Â½ Ban QuÃŸâ•‘Ãºn TrÃŸâ•—Ã¯:</p>
               <p style="margin:0;color:#1e3a5f;font-size:15px;line-height:1.6;white-space:pre-line;">${notes}</p>
             </div>
           </td>
@@ -183,14 +183,14 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
           <td style="padding:0 40px 40px;text-align:center;">
             <a href="${frontendUrl}#/tutor"
                style="display:inline-block;background:linear-gradient(135deg,#00288e,#1e40af);color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:16px 40px;border-radius:12px;box-shadow:0 4px 12px rgba(0,40,142,0.3);">
-              V├áo Dashboard Gia S╞░ ΓåÆ
+              Vâ”œÃ¡o Dashboard Gia Sâ•žâ–‘ Î“Ã¥Ã†
             </a>
           </td>
         </tr>
         <!-- Footer -->
         <tr>
           <td style="background:#f8f9fb;padding:24px 40px;text-align:center;border-top:1px solid #e1e2e4;">
-            <p style="margin:0;color:#757684;font-size:13px;">┬⌐ 2024 EduX. Mß╗ìi thß║»c mß║»c xin li├¬n hß╗ç <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
+            <p style="margin:0;color:#757684;font-size:13px;">â”¬âŒ 2024 EduX. MÃŸâ•—Ã¬i thÃŸâ•‘Â»c mÃŸâ•‘Â»c xin liâ”œÂ¬n hÃŸâ•—Ã§ <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
           </td>
         </tr>
       </table>
@@ -226,12 +226,12 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
         <tr>
           <td style="padding:40px 40px 0;text-align:center;">
             <div style="width:80px;height:80px;background:#fef2f2;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:24px;">
-              <span style="font-size:40px;">Γ¥î</span>
+              <span style="font-size:40px;">Î“Â¥Ã®</span>
             </div>
-            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Hß╗ô s╞í ch╞░a ─æ╞░ß╗úc chß║Ñp thuß║¡n</h2>
+            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">HÃŸâ•—Ã´ sâ•žÃ­ châ•žâ–‘a â”€Ã¦â•žâ–‘ÃŸâ•—Ãºc chÃŸâ•‘Ã‘p thuÃŸâ•‘Â¡n</h2>
             <p style="margin:0;color:#444653;font-size:16px;line-height:1.6;">
-              Cß║úm ╞ín bß║ín ─æ├ú ─æ─âng k├╜ l├ám gia s╞░ tr├¬n <strong>EduX</strong>.
-              Sau khi xem x├⌐t, hß╗ô s╞í cß╗ºa bß║ín hiß╗çn ch╞░a ─æ├íp ß╗⌐ng ─æß╗º ─æiß╗üu kiß╗çn.
+              CÃŸâ•‘Ãºm â•žÃ­n bÃŸâ•‘Ã­n â”€Ã¦â”œÃº â”€Ã¦â”€Ã¢ng kâ”œâ•œ lâ”œÃ¡m gia sâ•žâ–‘ trâ”œÂ¬n <strong>EduX</strong>.
+              Sau khi xem xâ”œâŒt, hÃŸâ•—Ã´ sâ•žÃ­ cÃŸâ•—Âºa bÃŸâ•‘Ã­n hiÃŸâ•—Ã§n châ•žâ–‘a â”€Ã¦â”œÃ­p ÃŸâ•—âŒng â”€Ã¦ÃŸâ•—Âº â”€Ã¦iÃŸâ•—Ã¼u kiÃŸâ•—Ã§n.
             </p>
           </td>
         </tr>
@@ -240,7 +240,7 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
         <tr>
           <td style="padding:24px 40px 0;">
             <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:20px 24px;">
-              <p style="margin:0 0 8px;color:#991b1b;font-size:14px;font-weight:700;">≡ƒôï L├╜ do tß╗½ chß╗æi:</p>
+              <p style="margin:0 0 8px;color:#991b1b;font-size:14px;font-weight:700;">â‰¡Æ’Ã´Ã¯ Lâ”œâ•œ do tÃŸâ•—Â½ chÃŸâ•—Ã¦i:</p>
               <p style="margin:0;color:#b91c1c;font-size:15px;line-height:1.6;">${reason}</p>
             </div>
           </td>
@@ -249,9 +249,9 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
         <tr>
           <td style="padding:24px 40px;">
             <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:20px 24px;">
-              <h3 style="margin:0 0 12px;color:#1d4ed8;font-size:15px;font-weight:700;">≡ƒÆí Bß║ín c├│ thß╗â l├ám g├¼?</h3>
+              <h3 style="margin:0 0 12px;color:#1d4ed8;font-size:15px;font-weight:700;">â‰¡Æ’Ã†Ã­ BÃŸâ•‘Ã­n câ”œâ”‚ thÃŸâ•—Ã¢ lâ”œÃ¡m gâ”œÂ¼?</h3>
               <p style="margin:0;color:#444653;font-size:15px;line-height:1.6;">
-                H├úy xem x├⌐t lß║íi c├íc th├┤ng tin v├á t├ái liß╗çu trong hß╗ô s╞í, sau ─æ├│ chß╗ënh sß╗¡a v├á nß╗Öp lß║íi ─æß╗â ─æ╞░ß╗úc xem x├⌐t lß║ºn tiß║┐p theo.
+                Hâ”œÃºy xem xâ”œâŒt lÃŸâ•‘Ã­i câ”œÃ­c thâ”œâ”¤ng tin vâ”œÃ¡ tâ”œÃ¡i liÃŸâ•—Ã§u trong hÃŸâ•—Ã´ sâ•žÃ­, sau â”€Ã¦â”œâ”‚ chÃŸâ•—Ã«nh sÃŸâ•—Â¡a vâ”œÃ¡ nÃŸâ•—Ã–p lÃŸâ•‘Ã­i â”€Ã¦ÃŸâ•—Ã¢ â”€Ã¦â•žâ–‘ÃŸâ•—Ãºc xem xâ”œâŒt lÃŸâ•‘Âºn tiÃŸâ•‘â”p theo.
               </p>
             </div>
           </td>
@@ -261,7 +261,7 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
         <tr>
           <td style="padding:0 40px 24px;">
             <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:20px 24px;">
-              <p style="margin:0 0 8px;color:#9a3412;font-size:14px;font-weight:700;">≡ƒô¥ Ghi ch├║ tß╗½ Ban Quß║ún Trß╗ï:</p>
+              <p style="margin:0 0 8px;color:#9a3412;font-size:14px;font-weight:700;">â‰¡Æ’Ã´Â¥ Ghi châ”œâ•‘ tÃŸâ•—Â½ Ban QuÃŸâ•‘Ãºn TrÃŸâ•—Ã¯:</p>
               <p style="margin:0;color:#7c2d12;font-size:15px;line-height:1.6;white-space:pre-line;">${notes}</p>
             </div>
           </td>
@@ -271,14 +271,14 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
           <td style="padding:0 40px 40px;text-align:center;">
             <a href="${frontendUrl}#/tutor-profile"
                style="display:inline-block;background:linear-gradient(135deg,#00288e,#1e40af);color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:16px 40px;border-radius:12px;box-shadow:0 4px 12px rgba(0,40,142,0.3);">
-              Chß╗ënh sß╗¡a &amp; Nß╗Öp lß║íi hß╗ô s╞í ΓåÆ
+              ChÃŸâ•—Ã«nh sÃŸâ•—Â¡a &amp; NÃŸâ•—Ã–p lÃŸâ•‘Ã­i hÃŸâ•—Ã´ sâ•žÃ­ Î“Ã¥Ã†
             </a>
           </td>
         </tr>
         <!-- Footer -->
         <tr>
           <td style="background:#f8f9fb;padding:24px 40px;text-align:center;border-top:1px solid #e1e2e4;">
-            <p style="margin:0;color:#757684;font-size:13px;">┬⌐ 2024 EduX. Mß╗ìi thß║»c mß║»c xin li├¬n hß╗ç <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
+            <p style="margin:0;color:#757684;font-size:13px;">â”¬âŒ 2024 EduX. MÃŸâ•—Ã¬i thÃŸâ•‘Â»c mÃŸâ•‘Â»c xin liâ”œÂ¬n hÃŸâ•—Ã§ <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
           </td>
         </tr>
       </table>
@@ -289,8 +289,8 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
 
   const isApprovedStatus = status === "approved";
   const plainText = isApprovedStatus
-    ? `Ch├║c mß╗½ng! Hß╗ô s╞í gia s╞░ cß╗ºa bß║ín tr├¬n EduX ─æ├ú ─æ╞░ß╗úc CHß║ñP THUß║¼N.\n\nT├ái khoß║ún gia s╞░ cß╗ºa bß║ín hiß╗çn ─æ├ú hoß║ít ─æß╗Öng ─æß║ºy ─æß╗º.\n${notes ? `\nGhi ch├║ tß╗½ Ban Quß║ún Trß╗ï:\n${notes}\n` : ''}\nTruy cß║¡p: ${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}#/tutor\n\nEduX ΓÇö support@edux.com`
-    : `Hß╗ô s╞í gia s╞░ cß╗ºa bß║ín tr├¬n EduX CH╞»A ─æ╞░ß╗úc chß║Ñp thuß║¡n.\n\nL├╜ do: ${reason || 'Kh├┤ng ─æ├íp ß╗⌐ng ─æß╗º ─æiß╗üu kiß╗çn'}\n${notes ? `\nGhi ch├║ tß╗½ Ban Quß║ún Trß╗ï:\n${notes}\n` : ''}\nBß║ín c├│ thß╗â chß╗ënh sß╗¡a v├á nß╗Öp lß║íi: ${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}#/tutor-profile\n\nEduX ΓÇö support@edux.com`;
+    ? `Châ”œâ•‘c mÃŸâ•—Â½ng! HÃŸâ•—Ã´ sâ•žÃ­ gia sâ•žâ–‘ cÃŸâ•—Âºa bÃŸâ•‘Ã­n trâ”œÂ¬n EduX â”€Ã¦â”œÃº â”€Ã¦â•žâ–‘ÃŸâ•—Ãºc CHÃŸâ•‘Ã±P THUÃŸâ•‘Â¼N.\n\nTâ”œÃ¡i khoÃŸâ•‘Ãºn gia sâ•žâ–‘ cÃŸâ•—Âºa bÃŸâ•‘Ã­n hiÃŸâ•—Ã§n â”€Ã¦â”œÃº hoÃŸâ•‘Ã­t â”€Ã¦ÃŸâ•—Ã–ng â”€Ã¦ÃŸâ•‘Âºy â”€Ã¦ÃŸâ•—Âº.\n${notes ? `\nGhi châ”œâ•‘ tÃŸâ•—Â½ Ban QuÃŸâ•‘Ãºn TrÃŸâ•—Ã¯:\n${notes}\n` : ''}\nTruy cÃŸâ•‘Â¡p: ${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}#/tutor\n\nEduX Î“Ã‡Ã¶ support@edux.com`
+    : `HÃŸâ•—Ã´ sâ•žÃ­ gia sâ•žâ–‘ cÃŸâ•—Âºa bÃŸâ•‘Ã­n trâ”œÂ¬n EduX CHâ•žÂ»A â”€Ã¦â•žâ–‘ÃŸâ•—Ãºc chÃŸâ•‘Ã‘p thuÃŸâ•‘Â¡n.\n\nLâ”œâ•œ do: ${reason || 'Khâ”œâ”¤ng â”€Ã¦â”œÃ­p ÃŸâ•—âŒng â”€Ã¦ÃŸâ•—Âº â”€Ã¦iÃŸâ•—Ã¼u kiÃŸâ•—Ã§n'}\n${notes ? `\nGhi châ”œâ•‘ tÃŸâ•—Â½ Ban QuÃŸâ•‘Ãºn TrÃŸâ•—Ã¯:\n${notes}\n` : ''}\nBÃŸâ•‘Ã­n câ”œâ”‚ thÃŸâ•—Ã¢ chÃŸâ•—Ã«nh sÃŸâ•—Â¡a vâ”œÃ¡ nÃŸâ•—Ã–p lÃŸâ•‘Ã­i: ${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}#/tutor-profile\n\nEduX Î“Ã‡Ã¶ support@edux.com`;
 
   try {
     await emailTransporter.sendMail({
@@ -306,15 +306,15 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
         'Importance': 'high',
       },
     });
-    console.log(`[Email] Γ£à ─É├ú gß╗¡i email ${status} tß╗¢i ${to}`);
+    console.log(`[Email] Î“Â£Ã  â”€Ã‰â”œÃº gÃŸâ•—Â¡i email ${status} tÃŸâ•—Â¢i ${to}`);
   } catch (err) {
-    console.error(`[Email] Γ¥î Gß╗¡i email thß║Ñt bß║íi tß╗¢i ${to}:`, err.message);
+    console.error(`[Email] Î“Â¥Ã® GÃŸâ•—Â¡i email thÃŸâ•‘Ã‘t bÃŸâ•‘Ã­i tÃŸâ•—Â¢i ${to}:`, err.message);
   }
 }
 
 async function sendPasswordResetEmail(to, otp) {
   if (!emailTransporter) {
-    console.log(`[Email] SMTP ch╞░a cß║Ñu h├¼nh ΓÇö bß╗Å qua email tß╗¢i ${to}`);
+    console.log(`[Email] SMTP châ•žâ–‘a cÃŸâ•‘Ã‘u hâ”œÂ¼nh Î“Ã‡Ã¶ bÃŸâ•—Ã… qua email tÃŸâ•—Â¢i ${to}`);
     return;
   }
 
@@ -329,26 +329,26 @@ async function sendPasswordResetEmail(to, otp) {
         <tr>
           <td style="background:linear-gradient(135deg,#00288e 0%,#1e40af 100%);padding:40px 40px 32px;text-align:center;">
             <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-0.5px;">EduX</h1>
-            <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px;">Nß╗ün tß║úng kß║┐t nß╗æi gia s╞░ chuy├¬n nghiß╗çp</p>
+            <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px;">NÃŸâ•—Ã¼n tÃŸâ•‘Ãºng kÃŸâ•‘â”t nÃŸâ•—Ã¦i gia sâ•žâ–‘ chuyâ”œÂ¬n nghiÃŸâ•—Ã§p</p>
           </td>
         </tr>
         <tr>
           <td style="padding:40px;text-align:center;">
-            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Kh├┤i phß╗Ñc mß║¡t khß║⌐u</h2>
+            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Khâ”œâ”¤i phÃŸâ•—Ã‘c mÃŸâ•‘Â¡t khÃŸâ•‘âŒu</h2>
             <p style="margin:0;color:#444653;font-size:16px;line-height:1.6;">
-              M├ú x├íc thß╗▒c OTP (d├╣ng mß╗Öt lß║ºn) cß╗ºa bß║ín l├á:
+              Mâ”œÃº xâ”œÃ­c thÃŸâ•—â–’c OTP (dâ”œâ•£ng mÃŸâ•—Ã–t lÃŸâ•‘Âºn) cÃŸâ•—Âºa bÃŸâ•‘Ã­n lâ”œÃ¡:
             </p>
             <div style="margin:32px 0;background:#f0fdf4;border:2px dashed #bbf7d0;border-radius:12px;padding:24px;display:inline-block;">
               <span style="font-size:36px;font-weight:800;color:#16a34a;letter-spacing:8px;">${otp}</span>
             </div>
             <p style="margin:0;color:#757684;font-size:14px;line-height:1.6;">
-              M├ú n├áy sß║╜ hß║┐t hß║ín sau <strong>10 ph├║t</strong>. Vui l├▓ng kh├┤ng chia sß║╗ m├ú n├áy cho bß║Ñt kß╗│ ai.
+              Mâ”œÃº nâ”œÃ¡y sÃŸâ•‘â•œ hÃŸâ•‘â”t hÃŸâ•‘Ã­n sau <strong>10 phâ”œâ•‘t</strong>. Vui lâ”œâ–“ng khâ”œâ”¤ng chia sÃŸâ•‘â•— mâ”œÃº nâ”œÃ¡y cho bÃŸâ•‘Ã‘t kÃŸâ•—â”‚ ai.
             </p>
           </td>
         </tr>
         <tr>
           <td style="background:#f8f9fb;padding:24px 40px;text-align:center;border-top:1px solid #e1e2e4;">
-            <p style="margin:0;color:#757684;font-size:13px;">┬⌐ 2024 EduX. Mß╗ìi thß║»c mß║»c xin li├¬n hß╗ç <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
+            <p style="margin:0;color:#757684;font-size:13px;">â”¬âŒ 2024 EduX. MÃŸâ•—Ã¬i thÃŸâ•‘Â»c mÃŸâ•‘Â»c xin liâ”œÂ¬n hÃŸâ•—Ã§ <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
           </td>
         </tr>
       </table>
@@ -357,7 +357,7 @@ async function sendPasswordResetEmail(to, otp) {
 </body>
 </html>`;
 
-  const plainText = `M├ú OTP kh├┤i phß╗Ñc mß║¡t khß║⌐u cß╗ºa bß║ín l├á: ${otp}\n\nM├ú n├áy sß║╜ hß║┐t hß║ín sau 10 ph├║t.`;
+  const plainText = `Mâ”œÃº OTP khâ”œâ”¤i phÃŸâ•—Ã‘c mÃŸâ•‘Â¡t khÃŸâ•‘âŒu cÃŸâ•—Âºa bÃŸâ•‘Ã­n lâ”œÃ¡: ${otp}\n\nMâ”œÃº nâ”œÃ¡y sÃŸâ•‘â•œ hÃŸâ•‘â”t hÃŸâ•‘Ã­n sau 10 phâ”œâ•‘t.`;
 
   try {
     await emailTransporter.sendMail({
@@ -373,14 +373,14 @@ async function sendPasswordResetEmail(to, otp) {
         'Importance': 'high',
       },
     });
-    console.log(`[Email] Γ£à ─É├ú gß╗¡i email OTP reset mß║¡t khß║⌐u tß╗¢i ${to}`);
+    console.log(`[Email] Î“Â£Ã  â”€Ã‰â”œÃº gÃŸâ•—Â¡i email OTP reset mÃŸâ•‘Â¡t khÃŸâ•‘âŒu tÃŸâ•—Â¢i ${to}`);
   } catch (err) {
-    console.error(`[Email] Γ¥î Gß╗¡i email OTP thß║Ñt bß║íi tß╗¢i ${to}:`, err.message);
+    console.error(`[Email] Î“Â¥Ã® GÃŸâ•—Â¡i email OTP thÃŸâ•‘Ã‘t bÃŸâ•‘Ã­i tÃŸâ•—Â¢i ${to}:`, err.message);
   }
 }
 
 
-// ΓöÇΓöÇΓöÇ Multer Configuration ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ Multer Configuration Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
@@ -393,7 +393,7 @@ const upload = multer({
   },
 });
 
-// ΓöÇΓöÇΓöÇ Supabase Storage Helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ Supabase Storage Helpers Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 
@@ -437,26 +437,26 @@ async function createSignedUrl(path) {
   // We need a full absolute URL for the frontend.
   const rawSigned = data.signedURL || data.signedUrl || (data.data && data.data.signedUrl) || null;
   if (!rawSigned) return null;
-  // Already a full absolute URL ΓÇö return as-is
+  // Already a full absolute URL Î“Ã‡Ã¶ return as-is
   if (rawSigned.startsWith('http://') || rawSigned.startsWith('https://')) {
     return rawSigned;
   }
-  // Supabase returned "/object/sign/..." ΓÇö prepend base + /storage/v1
+  // Supabase returned "/object/sign/..." Î“Ã‡Ã¶ prepend base + /storage/v1
   if (rawSigned.startsWith('/object/')) {
     return `${SUPABASE_URL}/storage/v1${rawSigned}`;
   }
-  // Already has /storage/v1 prefix or other format ΓÇö just prepend base URL
+  // Already has /storage/v1 prefix or other format Î“Ã‡Ã¶ just prepend base URL
   return `${SUPABASE_URL}${rawSigned}`;
 }
 
 
-// ΓöÇΓöÇΓöÇ GET / ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ GET / Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 app.get("/", (req, res) => {
-  res.send("EduX Backend is running Γ£à");
+  res.send("EduX Backend is running Î“Â£Ã ");
 });
 
-// ─É─ö POST /api/auth/check-email ─É─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö
-// Kiểm tra email đã tồn tại chưa (dùng trước khi đăng ký để báo lỗi sớm)
+// â”€Ã‰â”€Ã¶ POST /api/auth/check-email â”€Ã‰â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶â”€Ã¶
+// Kiá»ƒm tra email Ä‘Ã£ tá»“n táº¡i chÆ°a (dÃ¹ng trÆ°á»›c khi Ä‘Äƒng kÃ½ Ä‘á»ƒ bÃ¡o lá»—i sá»›m)
 app.post("/api/auth/check-email", async (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ message: "Email is required." });
@@ -473,13 +473,13 @@ app.post("/api/auth/check-email", async (req, res) => {
       return res.status(409).json({
         available: false,
         isGoogleAccount: true,
-        message: "Email này đã được đăng ký qua Google. Vui lòng đăng nhập bằng Google.",
+        message: "Email nÃ y Ä‘Ã£ Ä‘Æ°á»£c Ä‘Äƒng kÃ½ qua Google. Vui lÃ²ng Ä‘Äƒng nháº­p báº±ng Google.",
       });
     }
     return res.status(409).json({
       available: false,
       isGoogleAccount: false,
-      message: "Email này đã được đăng ký. Vui lòng đăng nhập.",
+      message: "Email nÃ y Ä‘Ã£ Ä‘Æ°á»£c Ä‘Äƒng kÃ½. Vui lÃ²ng Ä‘Äƒng nháº­p.",
     });
   } catch (err) {
     console.error("check-email error:", err);
@@ -487,8 +487,8 @@ app.post("/api/auth/check-email", async (req, res) => {
   }
 });
 
-// ΓöÇΓöÇΓöÇ POST /api/auth/register ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-// ─É─âng k├╜ bß║▒ng email + password
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ POST /api/auth/register Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+// â”€Ã‰â”€Ã¢ng kâ”œâ•œ bÃŸâ•‘â–’ng email + password
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { fullName, email, password, role } = req.body || {};
@@ -508,7 +508,7 @@ app.post("/api/auth/register", async (req, res) => {
     const allowedRoles = ["student", "parent", "tutor"];
     const userRole = allowedRoles.includes(role) ? role : "student";
 
-    // Kiß╗âm tra email ─æ├ú tß╗ôn tß║íi ch╞░a
+    // KiÃŸâ•—Ã¢m tra email â”€Ã¦â”œÃº tÃŸâ•—Ã´n tÃŸâ•‘Ã­i châ•žâ–‘a
     const existing = await pool.query(
       "SELECT id, google_id FROM users WHERE email = $1",
       [email.toLowerCase().trim()]
@@ -516,7 +516,7 @@ app.post("/api/auth/register", async (req, res) => {
     if (existing.rows.length > 0) {
       if (existing.rows[0].google_id) {
         return res.status(409).json({
-          message: "Email này đã được đăng ký qua Google. Vui lòng đăng nhập bằng Google.",
+          message: "Email nÃ y Ä‘Ã£ Ä‘Æ°á»£c Ä‘Äƒng kÃ½ qua Google. Vui lÃ²ng Ä‘Äƒng nháº­p báº±ng Google.",
           isGoogleAccount: true,
         });
       }
@@ -528,7 +528,7 @@ app.post("/api/auth/register", async (req, res) => {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Tß║ío user mß╗¢i
+    // TÃŸâ•‘Ã­o user mÃŸâ•—Â¢i
     const result = await pool.query(
       `INSERT INTO users (full_name, email, password_hash, role)
        VALUES ($1, $2, $3, $4)
@@ -555,7 +555,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-// ΓöÇΓöÇΓöÇ POST /api/auth/forgot-password/request-otp ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ POST /api/auth/forgot-password/request-otp Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 app.post("/api/auth/forgot-password/request-otp", async (req, res) => {
   try {
     const { email } = req.body || {};
@@ -566,7 +566,7 @@ app.post("/api/auth/forgot-password/request-otp", async (req, res) => {
     const result = await pool.query("SELECT id, email FROM users WHERE email = $1", [email.toLowerCase().trim()]);
     if (result.rows.length === 0) {
       // Don't reveal if email exists or not, just return success
-      return res.json({ message: "Nß║┐u email tß╗ôn tß║íi, OTP ─æ├ú ─æ╞░ß╗úc gß╗¡i." });
+      return res.json({ message: "NÃŸâ•‘â”u email tÃŸâ•—Ã´n tÃŸâ•‘Ã­i, OTP â”€Ã¦â”œÃº â”€Ã¦â•žâ–‘ÃŸâ•—Ãºc gÃŸâ•—Â¡i." });
     }
 
     // Generate 6-digit OTP
@@ -581,23 +581,23 @@ app.post("/api/auth/forgot-password/request-otp", async (req, res) => {
     // Send email without blocking
     sendPasswordResetEmail(result.rows[0].email, otp).catch(console.error);
 
-    return res.json({ message: "OTP ─æ├ú ─æ╞░ß╗úc gß╗¡i ─æß║┐n email cß╗ºa bß║ín." });
+    return res.json({ message: "OTP â”€Ã¦â”œÃº â”€Ã¦â•žâ–‘ÃŸâ•—Ãºc gÃŸâ•—Â¡i â”€Ã¦ÃŸâ•‘â”n email cÃŸâ•—Âºa bÃŸâ•‘Ã­n." });
   } catch (error) {
     console.error("Request OTP error:", error);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-// ΓöÇΓöÇΓöÇ POST /api/auth/forgot-password/reset ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ POST /api/auth/forgot-password/reset Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 app.post("/api/auth/forgot-password/reset", async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body || {};
     if (!email || !otp || !newPassword) {
-      return res.status(400).json({ message: "Thiß║┐u th├┤ng tin y├¬u cß║ºu." });
+      return res.status(400).json({ message: "ThiÃŸâ•‘â”u thâ”œâ”¤ng tin yâ”œÂ¬u cÃŸâ•‘Âºu." });
     }
 
     if (newPassword.length < 8) {
-      return res.status(400).json({ message: "Mß║¡t khß║⌐u phß║úi d├ái ├¡t nhß║Ñt 8 k├╜ tß╗▒." });
+      return res.status(400).json({ message: "MÃŸâ•‘Â¡t khÃŸâ•‘âŒu phÃŸâ•‘Ãºi dâ”œÃ¡i â”œÂ¡t nhÃŸâ•‘Ã‘t 8 kâ”œâ•œ tÃŸâ•—â–’." });
     }
 
     const result = await pool.query(
@@ -606,20 +606,20 @@ app.post("/api/auth/forgot-password/reset", async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).json({ message: "OTP kh├┤ng hß╗úp lß╗ç hoß║╖c ─æ├ú hß║┐t hß║ín." });
+      return res.status(400).json({ message: "OTP khâ”œâ”¤ng hÃŸâ•—Ãºp lÃŸâ•—Ã§ hoÃŸâ•‘â•–c â”€Ã¦â”œÃº hÃŸâ•‘â”t hÃŸâ•‘Ã­n." });
     }
 
     const user = result.rows[0];
 
     if (!user.reset_otp || user.reset_otp !== otp.trim()) {
-      return res.status(400).json({ message: "M├ú OTP kh├┤ng ch├¡nh x├íc." });
+      return res.status(400).json({ message: "Mâ”œÃº OTP khâ”œâ”¤ng châ”œÂ¡nh xâ”œÃ­c." });
     }
 
     if (new Date() > new Date(user.reset_otp_expiry)) {
-      return res.status(400).json({ message: "M├ú OTP ─æ├ú hß║┐t hß║ín. Vui l├▓ng y├¬u cß║ºu lß║íi." });
+      return res.status(400).json({ message: "Mâ”œÃº OTP â”€Ã¦â”œÃº hÃŸâ•‘â”t hÃŸâ•‘Ã­n. Vui lâ”œâ–“ng yâ”œÂ¬u cÃŸâ•‘Âºu lÃŸâ•‘Ã­i." });
     }
 
-    // OTP hß╗úp lß╗ç, tiß║┐n h├ánh ─æß╗òi mß║¡t khß║⌐u
+    // OTP hÃŸâ•—Ãºp lÃŸâ•—Ã§, tiÃŸâ•‘â”n hâ”œÃ¡nh â”€Ã¦ÃŸâ•—Ã²i mÃŸâ•‘Â¡t khÃŸâ•‘âŒu
     const saltRounds = 12;
     const passwordHash = await bcrypt.hash(newPassword, saltRounds);
 
@@ -628,15 +628,15 @@ app.post("/api/auth/forgot-password/reset", async (req, res) => {
       [passwordHash, user.id]
     );
 
-    return res.json({ message: "─Éß║╖t lß║íi mß║¡t khß║⌐u th├ánh c├┤ng!" });
+    return res.json({ message: "â”€Ã‰ÃŸâ•‘â•–t lÃŸâ•‘Ã­i mÃŸâ•‘Â¡t khÃŸâ•‘âŒu thâ”œÃ¡nh câ”œâ”¤ng!" });
   } catch (error) {
     console.error("Reset password error:", error);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-// ΓöÇΓöÇΓöÇ POST /api/auth/login ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-// ─É─âng nhß║¡p bß║▒ng email + password
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ POST /api/auth/login Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+// â”€Ã‰â”€Ã¢ng nhÃŸâ•‘Â¡p bÃŸâ•‘â–’ng email + password
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body || {};
@@ -647,7 +647,7 @@ app.post("/api/auth/login", async (req, res) => {
         .json({ message: "Email and password are required." });
     }
 
-    // T├¼m user theo email
+    // Tâ”œÂ¼m user theo email
     const result = await pool.query(
       "SELECT id, full_name, email, password_hash, role, picture FROM users WHERE email = $1",
       [email.toLowerCase().trim()]
@@ -661,14 +661,14 @@ app.post("/api/auth/login", async (req, res) => {
 
     const user = result.rows[0];
 
-    // User ─æ─âng k├╜ bß║▒ng Google, kh├┤ng c├│ password
+    // User â”€Ã¦â”€Ã¢ng kâ”œâ•œ bÃŸâ•‘â–’ng Google, khâ”œâ”¤ng câ”œâ”‚ password
     if (!user.password_hash) {
       return res.status(401).json({
         message: "This account uses Google sign-in. Please use Google to log in.",
       });
     }
 
-    // Kiß╗âm tra password
+    // KiÃŸâ•—Ã¢m tra password
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid email or password." });
@@ -697,8 +697,8 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// ΓöÇΓöÇΓöÇ POST /api/auth/google ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-// ─É─âng nhß║¡p / ─æ─âng k├╜ bß║▒ng Google OAuth ΓÇö l╞░u v├áo DB
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ POST /api/auth/google Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+// â”€Ã‰â”€Ã¢ng nhÃŸâ•‘Â¡p / â”€Ã¦â”€Ã¢ng kâ”œâ•œ bÃŸâ•‘â–’ng Google OAuth Î“Ã‡Ã¶ lâ•žâ–‘u vâ”œÃ¡o DB
 app.post("/api/auth/google", async (req, res) => {
   try {
     const { credential } = req.body || {};
@@ -728,7 +728,7 @@ app.post("/api/auth/google", async (req, res) => {
     const name = payload.name || "";
     const picture = payload.picture || "";
 
-    // T├¼m user ─æ├ú c├│ ch╞░a (theo google_id hoß║╖c email)
+    // Tâ”œÂ¼m user â”€Ã¦â”œÃº câ”œâ”‚ châ•žâ–‘a (theo google_id hoÃŸâ•‘â•–c email)
     let userResult = await pool.query(
       "SELECT id, full_name, email, role, picture FROM users WHERE google_id = $1 OR email = $2",
       [googleId, email]
@@ -736,7 +736,7 @@ app.post("/api/auth/google", async (req, res) => {
 
     let user;
     if (userResult.rows.length > 0) {
-      // ─É├ú c├│ ΓåÆ cß║¡p nhß║¡t google_id v├á picture nß║┐u cß║ºn
+      // â”€Ã‰â”œÃº câ”œâ”‚ Î“Ã¥Ã† cÃŸâ•‘Â¡p nhÃŸâ•‘Â¡t google_id vâ”œÃ¡ picture nÃŸâ•‘â”u cÃŸâ•‘Âºn
       user = userResult.rows[0];
       await pool.query(
         "UPDATE users SET google_id = $1, picture = $2 WHERE id = $3",
@@ -744,7 +744,7 @@ app.post("/api/auth/google", async (req, res) => {
       );
       user.picture = picture;
     } else {
-      // Ch╞░a c├│ ΓåÆ tß║ío mß╗¢i vß╗¢i role mß║╖c ─æß╗ïnh 'student'
+      // Châ•žâ–‘a câ”œâ”‚ Î“Ã¥Ã† tÃŸâ•‘Ã­o mÃŸâ•—Â¢i vÃŸâ•—Â¢i role mÃŸâ•‘â•–c â”€Ã¦ÃŸâ•—Ã¯nh 'student'
       const insertResult = await pool.query(
         `INSERT INTO users (full_name, email, google_id, picture, role)
          VALUES ($1, $2, $3, $4, 'student')
@@ -777,9 +777,9 @@ app.post("/api/auth/google", async (req, res) => {
   }
 });
 
-// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
-// ΓöÇΓöÇ TUTOR APIs ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+// Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰
+// Î“Ã¶Ã‡Î“Ã¶Ã‡ TUTOR APIs Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+// Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰
 
 app.get("/api/tutor/profile", verifyToken, async (req, res) => {
   try {
@@ -799,13 +799,13 @@ app.get("/api/tutor/profile", verifyToken, async (req, res) => {
 app.post(
   "/api/tutor/profile",
   verifyToken,
-  // Khai b├ío ─æß╗º 3 file fields ─æß╗â multer kh├┤ng n├⌐m LIMIT_UNEXPECTED_FILE
+  // Khai bâ”œÃ­o â”€Ã¦ÃŸâ•—Âº 3 file fields â”€Ã¦ÃŸâ•—Ã¢ multer khâ”œâ”¤ng nâ”œâŒm LIMIT_UNEXPECTED_FILE
   upload.fields([
     { name: "profile_photo",  maxCount: 1  },
     { name: "certificates",   maxCount: 10 },
     { name: "cccd",           maxCount: 1  },
   ]),
-  // ΓöÇΓöÇ Multer error handler: trß║ú JSON thay v├¼ HTML ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  // Î“Ã¶Ã‡Î“Ã¶Ã‡ Multer error handler: trÃŸâ•‘Ãº JSON thay vâ”œÂ¼ HTML Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
   (err, req, res, next) => {
     if (err) {
       return res.status(400).json({ message: err.message || "File upload error." });
@@ -855,7 +855,7 @@ app.post(
 
       let result;
       if (existing.rows.length > 0) {
-        // ΓöÇΓöÇ UPDATE ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+        // Î“Ã¶Ã‡Î“Ã¶Ã‡ UPDATE Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
         let values = [
           bio, subjects, parseInt(experience_years) || 0,
           first_name, last_name, display_name,
@@ -937,7 +937,7 @@ app.post(
           try {
             await pool.query(
               "INSERT INTO tutor_certificates (tutor_profile_id, name, url, cert_type, issuer, issue_year) VALUES ($1, $2, $3, $4, $5, $6)",
-              [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
+              [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chá»©ng chá»‰', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
             );
           } catch (certExtErr) {
             // Fall back to basic insert if extended cert columns don't exist yet
@@ -958,11 +958,11 @@ app.post(
 );
 
 
-// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
-// ΓöÇΓöÇ ADMIN APIs (all protected by verifyToken + requireAdmin) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+// Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰
+// Î“Ã¶Ã‡Î“Ã¶Ã‡ ADMIN APIs (all protected by verifyToken + requireAdmin) Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+// Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰Î“Ã²Ã‰
 
-// ΓöÇΓöÇΓöÇ GET /api/admin/tutors/stats ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ GET /api/admin/tutors/stats Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 // Returns count of pending / approved / rejected tutor profiles
 app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) => {
   try {
@@ -985,7 +985,7 @@ app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) =
   }
 });
 
-// ΓöÇΓöÇΓöÇ GET /api/admin/document-url ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ GET /api/admin/document-url Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 // Generates a signed URL for a given storage path so admins can view documents
 app.get("/api/admin/document-url", verifyToken, requireAdmin, async (req, res) => {
   try {
@@ -1003,7 +1003,7 @@ app.get("/api/admin/document-url", verifyToken, requireAdmin, async (req, res) =
   }
 });
 
-// ΓöÇΓöÇΓöÇ GET /api/admin/tutors/pending ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ GET /api/admin/tutors/pending Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 // Returns all tutor_profiles with status = 'pending', joined with users
 app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res) => {
   try {
@@ -1077,7 +1077,7 @@ app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req
   }
 });
 
-// ΓöÇΓöÇΓöÇ PATCH /api/admin/tutors/:id/reject ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡ PATCH /api/admin/tutors/:id/reject Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
 // Rejects a tutor application with a reason and optionally sends them an email
 app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -1123,11 +1123,11 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
 });
 
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── ADMIN APIs (all protected by verifyToken + requireAdmin) ──────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â”€â”€ ADMIN APIs (all protected by verifyToken + requireAdmin) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-// ─── GET /api/admin/tutors/stats ──────────────────────────────────────────────
+// â”€â”€â”€ GET /api/admin/tutors/stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Returns count of pending / approved / rejected tutor profiles
 app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) => {
   try {
@@ -1150,7 +1150,7 @@ app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) =
   }
 });
 
-// ─── GET /api/admin/tutors/pending (duplicate route kept for compatibility) ───
+// â”€â”€â”€ GET /api/admin/tutors/pending (duplicate route kept for compatibility) â”€â”€â”€
 app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -1177,7 +1177,7 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
   }
 });
 
-// ─── PATCH /api/admin/tutors/:id/approve ─────────────────────────────────────
+// â”€â”€â”€ PATCH /api/admin/tutors/:id/approve â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Approves a tutor application and optionally sends them an email
 app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -1218,7 +1218,7 @@ app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req
   }
 });
 
-// ─── PATCH /api/admin/tutors/:id/reject ──────────────────────────────────────
+// â”€â”€â”€ PATCH /api/admin/tutors/:id/reject â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Rejects a tutor application with a reason and optionally sends them an email
 app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -1259,9 +1259,9 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â”€â”€ PERSON 4: Class Workspace Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 const classRoutes = require("./routes/classRoutes");
 const materialRoutes = require("./routes/materialRoutes");
 const assignmentRoutes = require("./routes/assignmentRoutes");
@@ -1276,7 +1276,7 @@ app.use("/", discussionRoutes);
 app.use("/", lessonRoutes);
 app.use("/", learningPathRoutes);
 
-// ── GET /api/admin/users ──────────────────────────────────────────────────────
+// â”€â”€ GET /api/admin/users â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
   const { search = "", role = "all", page = "1", limit = "20" } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -1322,7 +1322,7 @@ app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
-// ── GET /api/admin/users/:id ─────────────────────────────────────────────────
+// â”€â”€ GET /api/admin/users/:id â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Returns full profile of one user. Includes tutor_profiles data if role = tutor.
 app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -1356,7 +1356,7 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
       user.quiz_attempts = parseInt(attemptsResult.rows[0].count);
     }
 
-    // Lịch sử đăng nhập gần nhất (10 lần)
+    // Lá»‹ch sá»­ Ä‘Äƒng nháº­p gáº§n nháº¥t (10 láº§n)
     const logsResult = await pool.query(
       `SELECT ip_address, user_agent, is_suspicious, created_at
        FROM login_logs WHERE user_id = $1
@@ -1372,7 +1372,7 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
-// ── PATCH /api/admin/users/:id/ban ───────────────────────────────────────────
+// â”€â”€ PATCH /api/admin/users/:id/ban â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Bans or unbans a user. Cannot ban admin accounts.
 // Body: { "banned": true | false }
 app.patch("/api/admin/users/:id/ban", verifyToken, requireAdmin, async (req, res) => {
@@ -1403,7 +1403,7 @@ app.patch("/api/admin/users/:id/ban", verifyToken, requireAdmin, async (req, res
   }
 });
 
-// ── PATCH /api/admin/users/:id/role ──────────────────────────────────────────
+// â”€â”€ PATCH /api/admin/users/:id/role â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Changes a user's role. Cannot change admin accounts.
 // Body: { "role": "student" | "tutor" | "parent" }
 app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, res) => {
@@ -1434,11 +1434,11 @@ app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, re
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  QUIZ APIs
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-// ─── GET /api/quizzes ─────────────────────────────────────────────────────────
+// â”€â”€â”€ GET /api/quizzes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/quizzes', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -1454,7 +1454,7 @@ app.get('/api/quizzes', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── GET /api/subjects ────────────────────────────────────────────────────────
+// â”€â”€â”€ GET /api/subjects â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/subjects', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(`SELECT DISTINCT subject FROM quizzes ORDER BY subject`);
@@ -1462,7 +1462,7 @@ app.get('/api/subjects', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── GET /api/quizzes/attempts/:attemptId ─────────────────────────────────────
+// â”€â”€â”€ GET /api/quizzes/attempts/:attemptId â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/quizzes/attempts/:attemptId', verifyToken, async (req, res) => {
   try {
     const { attemptId } = req.params;
@@ -1475,7 +1475,7 @@ app.get('/api/quizzes/attempts/:attemptId', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── GET /api/quizzes/:id/start ───────────────────────────────────────────────
+// â”€â”€â”€ GET /api/quizzes/:id/start â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/quizzes/:id/start', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1492,7 +1492,7 @@ app.get('/api/quizzes/:id/start', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── POST /api/quizzes/:id/save-draft ─────────────────────────────────────────
+// â”€â”€â”€ POST /api/quizzes/:id/save-draft â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/quizzes/:id/save-draft', verifyToken, async (req, res) => {
   try {
     const { attemptId, answers, timeRemainingSeconds } = req.body;
@@ -1502,7 +1502,7 @@ app.post('/api/quizzes/:id/save-draft', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── POST /api/quizzes/:id/submit ─────────────────────────────────────────────
+// â”€â”€â”€ POST /api/quizzes/:id/submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/quizzes/:id/submit', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1541,11 +1541,11 @@ app.post('/api/quizzes/:id/submit', verifyToken, async (req, res) => {
   } catch (e) { console.error('Quiz submit:', e); res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  PRACTICE / AI APIs
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-// ─── POST /api/practice/generate ──────────────────────────────────────────────
+// â”€â”€â”€ POST /api/practice/generate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/practice/generate', verifyToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -1555,8 +1555,8 @@ app.post('/api/practice/generate', verifyToken, async (req, res) => {
     const questionCount = Math.min(Math.max(Number(count)||10,1),30);
     const questions = await generateQuizQuestions(topic.trim(), questionCount, diff, questionType);
     // Detect quota notice
-    if (questions.length > 0 && questions[0].question?.startsWith('⚠️')) {
-      return res.status(503).json({ message: 'AI_QUOTA_EXCEEDED', detail: 'Gemini và Groq đều đạt giới hạn. Thử lại sau hoặc dùng Đề thi có sẵn.' });
+    if (questions.length > 0 && questions[0].question?.startsWith('âš ï¸')) {
+      return res.status(503).json({ message: 'AI_QUOTA_EXCEEDED', detail: 'Gemini vÃ  Groq Ä‘á»u Ä‘áº¡t giá»›i háº¡n. Thá»­ láº¡i sau hoáº·c dÃ¹ng Äá» thi cÃ³ sáºµn.' });
     }
     const timeRemainingSeconds = timeLimitMins ? timeLimitMins * 60 : null;
     const result = await pool.query(
@@ -1569,7 +1569,7 @@ app.post('/api/practice/generate', verifyToken, async (req, res) => {
   } catch (e) { console.error('Practice generate:', e); res.status(500).json({ message: e.message||'Server error.' }); }
 });
 
-// ─── GET /api/practice/history ────────────────────────────────────────────────
+// â”€â”€â”€ GET /api/practice/history â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/practice/history', verifyToken, async (req, res) => {
   try {
     const r = await pool.query(
@@ -1580,7 +1580,7 @@ app.get('/api/practice/history', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── GET /api/practice/:sessionId/questions ───────────────────────────────────
+// â”€â”€â”€ GET /api/practice/:sessionId/questions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/practice/:sessionId/questions', verifyToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -1592,7 +1592,7 @@ app.get('/api/practice/:sessionId/questions', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── POST /api/practice/chat ──────────────────────────────────────────────────
+// â”€â”€â”€ POST /api/practice/chat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/practice/chat', verifyToken, async (req, res) => {
   try {
     const { messages } = req.body;
@@ -1602,7 +1602,7 @@ app.post('/api/practice/chat', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── POST /api/practice/:sessionId/save-progress ────────────────────────────────
+// â”€â”€â”€ POST /api/practice/:sessionId/save-progress â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/practice/:sessionId/save-progress', verifyToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -1619,7 +1619,7 @@ app.post('/api/practice/:sessionId/save-progress', verifyToken, async (req, res)
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── POST /api/practice/:sessionId/submit ─────────────────────────────────────
+// â”€â”€â”€ POST /api/practice/:sessionId/submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/practice/:sessionId/submit', verifyToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -1658,7 +1658,7 @@ app.post('/api/practice/:sessionId/submit', verifyToken, async (req, res) => {
   } catch (e) { console.error('Practice submit:', e); res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── GET /api/practice/:sessionId/result ──────────────────────────────────────
+// â”€â”€â”€ GET /api/practice/:sessionId/result â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/practice/:sessionId/result', verifyToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -1668,7 +1668,7 @@ app.get('/api/practice/:sessionId/result', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── DELETE /api/practice/:sessionId ──────────────────────────────────────────
+// â”€â”€â”€ DELETE /api/practice/:sessionId â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.delete('/api/practice/:sessionId', verifyToken, async (req, res) => {
   try {
     await pool.query(`DELETE FROM practice_sessions WHERE id=$1 AND student_id=$2`, [req.params.sessionId, req.user.userId]);
@@ -1676,11 +1676,11 @@ app.delete('/api/practice/:sessionId', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  EXAM PAPERS APIs
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-// ─── Shuffle helpers ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Shuffle helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function shuffleArray(arr) { const a=[...arr]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a; }
 function shuffleQuestionOptions(q) {
   const orig={A:q.option_a,B:q.option_b,C:q.option_c,D:q.option_d};
@@ -1735,7 +1735,7 @@ app.get('/api/exam-papers/:paperId/start', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ─── GET /api/exam-papers/attempts/:attemptId ──────────────────────────────────
+// â”€â”€â”€ GET /api/exam-papers/attempts/:attemptId â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/exam-papers/attempts/:attemptId', verifyToken, async (req, res) => {
   try {
     const { attemptId } = req.params;
@@ -1761,7 +1761,7 @@ app.get('/api/exam-papers/attempts/:attemptId', verifyToken, async (req, res) =>
     return res.json({ attempt: a, paper: paper.rows[0], questions });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
-// ─── POST /api/exam-papers/:paperId/save-draft ──────────────────────────────────
+// â”€â”€â”€ POST /api/exam-papers/:paperId/save-draft â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/exam-papers/:paperId/save-draft', verifyToken, async (req, res) => {
   try {
     const { attemptId, answers, timeRemainingSeconds } = req.body;
@@ -1816,9 +1816,9 @@ app.post('/api/exam-papers/:paperId/submit', verifyToken, async (req, res) => {
   } catch (e) { console.error('Exam submit error:', e); res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  PARENT DASHBOARD APIs
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 // GET /api/parent/overview
 // Returns: stats, recent quiz attempts, available tutors, practice sessions
@@ -2073,9 +2073,9 @@ app.get("/api/parent/activity", verifyToken, async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  PARENT-STUDENT LINKING APIs
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function generateLinkCode() {
   const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -2132,16 +2132,16 @@ app.post('/api/parent/link-child', verifyToken, async (req, res) => {
   try {
     const parentId = req.user.userId;
     const { code, nickname } = req.body;
-    if (!code || code.trim().length!==8) return res.status(400).json({ message: 'Mã liên kết phải đúng 8 ký tự.' });
+    if (!code || code.trim().length!==8) return res.status(400).json({ message: 'MÃ£ liÃªn káº¿t pháº£i Ä‘Ãºng 8 kÃ½ tá»±.' });
     const codeRes = await pool.query('SELECT student_id FROM student_link_codes WHERE code=$1', [code.trim().toUpperCase()]);
-    if (!codeRes.rows.length) return res.status(404).json({ message: 'Mã liên kết không hợp lệ.' });
+    if (!codeRes.rows.length) return res.status(404).json({ message: 'MÃ£ liÃªn káº¿t khÃ´ng há»£p lá»‡.' });
     const studentId = codeRes.rows[0].student_id;
-    if (studentId===parentId) return res.status(400).json({ message: 'Bạn không thể liên kết với chính mình.' });
+    if (studentId===parentId) return res.status(400).json({ message: 'Báº¡n khÃ´ng thá»ƒ liÃªn káº¿t vá»›i chÃ­nh mÃ¬nh.' });
     const dup = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [parentId,studentId]);
-    if (dup.rows.length) return res.status(409).json({ message: 'Học sinh này đã được liên kết rồi.' });
+    if (dup.rows.length) return res.status(409).json({ message: 'Há»c sinh nÃ y Ä‘Ã£ Ä‘Æ°á»£c liÃªn káº¿t rá»“i.' });
     await pool.query('INSERT INTO parent_children (parent_id,student_id,nickname) VALUES ($1,$2,$3)', [parentId,studentId,nickname?.trim()||null]);
     const student = await pool.query('SELECT id,full_name,email,picture FROM users WHERE id=$1', [studentId]);
-    return res.status(201).json({ message: 'Liên kết thành công!', student: student.rows[0] });
+    return res.status(201).json({ message: 'LiÃªn káº¿t thÃ nh cÃ´ng!', student: student.rows[0] });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
@@ -2150,10 +2150,10 @@ app.post('/api/parent/create-child', verifyToken, async (req, res) => {
   try {
     const parentId = req.user.userId;
     const { full_name, email, password, nickname } = req.body;
-    if (!full_name?.trim()||!email?.trim()||!password) return res.status(400).json({ message: 'Vui lòng điền đầy đủ thông tin.' });
-    if (password.length<6) return res.status(400).json({ message: 'Mật khẩu phải ít nhất 6 ký tự.' });
+    if (!full_name?.trim()||!email?.trim()||!password) return res.status(400).json({ message: 'Vui lÃ²ng Ä‘iá»n Ä‘áº§y Ä‘á»§ thÃ´ng tin.' });
+    if (password.length<6) return res.status(400).json({ message: 'Máº­t kháº©u pháº£i Ã­t nháº¥t 6 kÃ½ tá»±.' });
     const exists = await pool.query('SELECT id FROM users WHERE email=$1', [email.trim().toLowerCase()]);
-    if (exists.rows.length) return res.status(409).json({ message: 'Email đã tồn tại. Dùng mã liên kết nếu đây là con bạn.' });
+    if (exists.rows.length) return res.status(409).json({ message: 'Email Ä‘Ã£ tá»“n táº¡i. DÃ¹ng mÃ£ liÃªn káº¿t náº¿u Ä‘Ã¢y lÃ  con báº¡n.' });
     const bcrypt = require('bcryptjs');
     const hash = await bcrypt.hash(password, 10);
     const student = await pool.query(`INSERT INTO users (full_name,email,password_hash,role) VALUES ($1,$2,$3,'student') RETURNING id,full_name,email,role`, [full_name.trim(),email.trim().toLowerCase(),hash]);
@@ -2162,7 +2162,7 @@ app.post('/api/parent/create-child', verifyToken, async (req, res) => {
     let code, tries=0;
     do { code=generateLinkCode(); tries++; } while (tries<10 && (await pool.query('SELECT id FROM student_link_codes WHERE code=$1',[code])).rows.length>0);
     await pool.query('INSERT INTO student_link_codes (student_id,code) VALUES ($1,$2)', [s.id,code]);
-    return res.status(201).json({ message: 'Tạo tài khoản thành công!', student: s });
+    return res.status(201).json({ message: 'Táº¡o tÃ i khoáº£n thÃ nh cÃ´ng!', student: s });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
@@ -2170,8 +2170,8 @@ app.post('/api/parent/create-child', verifyToken, async (req, res) => {
 app.delete('/api/parent/children/:studentId', verifyToken, async (req, res) => {
   try {
     const r = await pool.query('DELETE FROM parent_children WHERE parent_id=$1 AND student_id=$2 RETURNING id', [req.user.userId, req.params.studentId]);
-    if (!r.rows.length) return res.status(404).json({ message: 'Không tìm thấy liên kết.' });
-    return res.json({ message: 'Đã hủy liên kết.' });
+    if (!r.rows.length) return res.status(404).json({ message: 'KhÃ´ng tÃ¬m tháº¥y liÃªn káº¿t.' });
+    return res.json({ message: 'ÄÃ£ há»§y liÃªn káº¿t.' });
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
@@ -2181,7 +2181,7 @@ app.get('/api/parent/children/:studentId/progress', verifyToken, async (req, res
     const parentId = req.user.userId;
     const { studentId } = req.params;
     const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [parentId,studentId]);
-    if (!link.rows.length) return res.status(403).json({ message: 'Bạn không có quyền xem học sinh này.' });
+    if (!link.rows.length) return res.status(403).json({ message: 'Báº¡n khÃ´ng cÃ³ quyá»n xem há»c sinh nÃ y.' });
     const [quiz, practice, exam] = await Promise.all([
       pool.query(`SELECT qa.id,qa.score,qa.submitted_at,q.title,q.subject,q.total_questions,qa.total_correct FROM quiz_attempts qa JOIN quizzes q ON qa.quiz_id=q.id WHERE qa.student_id=$1 AND qa.status='submitted' ORDER BY qa.submitted_at DESC LIMIT 20`, [studentId]),
       pool.query(`SELECT id,topic,difficulty,score,total_questions,total_correct,submitted_at FROM practice_sessions WHERE student_id=$1 AND status='submitted' ORDER BY submitted_at DESC LIMIT 20`, [studentId]),
@@ -2191,16 +2191,16 @@ app.get('/api/parent/children/:studentId/progress', verifyToken, async (req, res
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  PARENT EXTENDED APIs — Schedule, Reviews, Invoices, Notifications
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  PARENT EXTENDED APIs â€” Schedule, Reviews, Invoices, Notifications
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 // GET /api/parent/children/:studentId/schedule
 app.get('/api/parent/children/:studentId/schedule', verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
     const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
-    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+    if (!link.rows.length) return res.status(403).json({ message: 'KhÃ´ng cÃ³ quyá»n truy cáº­p.' });
 
     const sessions = await pool.query(`
       SELECT ts.id, ts.subject, ts.scheduled_at, ts.duration_mins, ts.status, ts.leave_reason, ts.notes,
@@ -2226,27 +2226,27 @@ app.post('/api/parent/children/:studentId/schedule/:sessionId/leave', verifyToke
     const { studentId, sessionId } = req.params;
     const { reason } = req.body;
     const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
-    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+    if (!link.rows.length) return res.status(403).json({ message: 'KhÃ´ng cÃ³ quyá»n truy cáº­p.' });
 
     const updated = await pool.query(`
       UPDATE tutor_sessions SET status='cancelled', leave_reason=$1, updated_at=NOW()
       WHERE id=$2 AND student_id=$3 AND status='scheduled' RETURNING *
     `, [reason || null, sessionId, studentId]);
 
-    if (!updated.rows.length) return res.status(404).json({ message: 'Không tìm thấy buổi học hoặc đã không thể hủy.' });
+    if (!updated.rows.length) return res.status(404).json({ message: 'KhÃ´ng tÃ¬m tháº¥y buá»•i há»c hoáº·c Ä‘Ã£ khÃ´ng thá»ƒ há»§y.' });
 
     const session = updated.rows[0];
     const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [studentId]);
     await pool.query(`
       INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-      VALUES ($1, 'student_absent', 'Học sinh xin nghỉ', $2, 'event_busy', $3, 'session')
+      VALUES ($1, 'student_absent', 'Há»c sinh xin nghá»‰', $2, 'event_busy', $3, 'session')
     `, [
       session.tutor_id,
-      `${studentRes.rows[0]?.full_name || 'Học sinh'} xin nghỉ buổi ${session.subject} ngày ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. Lý do: ${reason || 'Không có lý do.'}`,
+      `${studentRes.rows[0]?.full_name || 'Há»c sinh'} xin nghá»‰ buá»•i ${session.subject} ngÃ y ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. LÃ½ do: ${reason || 'KhÃ´ng cÃ³ lÃ½ do.'}`,
       sessionId
     ]);
 
-    return res.json({ message: 'Đã gửi yêu cầu nghỉ phép.' });
+    return res.json({ message: 'ÄÃ£ gá»­i yÃªu cáº§u nghá»‰ phÃ©p.' });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
 });
 
@@ -2255,7 +2255,7 @@ app.get('/api/parent/children/:studentId/reviews', verifyToken, async (req, res)
   try {
     const { studentId } = req.params;
     const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
-    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+    if (!link.rows.length) return res.status(403).json({ message: 'KhÃ´ng cÃ³ quyá»n truy cáº­p.' });
 
     const reviews = await pool.query(`
       SELECT tr.id, tr.subject, tr.period_label, tr.content, tr.rating, tr.created_at,
@@ -2269,12 +2269,12 @@ app.get('/api/parent/children/:studentId/reviews', verifyToken, async (req, res)
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
 });
 
-// POST /api/tutor/reviews — gia sư tạo nhận xét định kỳ
+// POST /api/tutor/reviews â€” gia sÆ° táº¡o nháº­n xÃ©t Ä‘á»‹nh ká»³
 app.post('/api/tutor/reviews', verifyToken, requireTutor, async (req, res) => {
   try {
     const { student_id, subject, period_label, content, rating } = req.body;
     if (!student_id || !subject || !period_label || !content)
-      return res.status(400).json({ message: 'Thiếu thông tin bắt buộc.' });
+      return res.status(400).json({ message: 'Thiáº¿u thÃ´ng tin báº¯t buá»™c.' });
 
     const review = await pool.query(`
       INSERT INTO tutor_reviews (student_id, tutor_id, subject, period_label, content, rating)
@@ -2287,8 +2287,8 @@ app.post('/api/tutor/reviews', verifyToken, requireTutor, async (req, res) => {
       await pool.query(`
         INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
         VALUES ($1,'tutor_review',$2,$3,'rate_review',$4,'review')
-      `, [p.parent_id, `Nhận xét mới từ gia sư — ${subject}`,
-          `Gia sư vừa gửi nhận xét định kỳ cho ${studentRes.rows[0]?.full_name || 'học sinh'} (${period_label}).`,
+      `, [p.parent_id, `Nháº­n xÃ©t má»›i tá»« gia sÆ° â€” ${subject}`,
+          `Gia sÆ° vá»«a gá»­i nháº­n xÃ©t Ä‘á»‹nh ká»³ cho ${studentRes.rows[0]?.full_name || 'há»c sinh'} (${period_label}).`,
           review.rows[0].id]);
     }
     return res.status(201).json({ review: review.rows[0] });
@@ -2362,7 +2362,7 @@ const supabaseAdmin = createClient(
 );
 const BUCKET = 'chat-files';
 
-// Multer: lưu file vào bộ nhớ tạm
+// Multer: lÆ°u file vÃ o bá»™ nhá»› táº¡m
 const chatUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
@@ -2376,12 +2376,12 @@ const chatUpload = multer({
       'text/plain',
     ];
     const ok = allowed.some(t => file.mimetype.startsWith(t));
-    if (!ok) return cb(new Error('Loại file không được hỗ trợ'));
+    if (!ok) return cb(new Error('Loáº¡i file khÃ´ng Ä‘Æ°á»£c há»— trá»£'));
     cb(null, true);
   }
 });
 
-// ── chat_messages table ──
+// â”€â”€ chat_messages table â”€â”€
 (async () => {
   try {
     await pool.query(`
@@ -2399,11 +2399,11 @@ const chatUpload = multer({
         created_at   TIMESTAMPTZ DEFAULT NOW()
       )
     `);
-    console.log('✅ chat_messages table ready');
+    console.log('âœ… chat_messages table ready');
   } catch (e) { console.error('chat_messages table error:', e.message); }
 })();
 
-// GET /api/chat/conversations — danh sách hội thoại
+// GET /api/chat/conversations â€” danh sÃ¡ch há»™i thoáº¡i
 app.get('/api/chat/conversations', verifyToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -2437,8 +2437,8 @@ app.get('/api/chat/conversations', verifyToken, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
 });
 
-// GET /api/chat/contacts — danh sách liên hệ để nhắn tin (dựa theo role)
-// ⚠️ MUST be before /api/chat/:otherId to avoid wildcard match
+// GET /api/chat/contacts â€” danh sÃ¡ch liÃªn há»‡ Ä‘á»ƒ nháº¯n tin (dá»±a theo role)
+// âš ï¸ MUST be before /api/chat/:otherId to avoid wildcard match
 app.get('/api/chat/contacts', verifyToken, async (req, res) => {
   try {
     const role = req.user.role;
@@ -2540,7 +2540,7 @@ async function checkChatPermission(userId, userRole, otherId) {
   return allowed;
 }
 
-// GET /api/chat/:otherId — lịch sử tin nhắn + đánh dấu đã đọc
+// GET /api/chat/:otherId â€” lá»‹ch sá»­ tin nháº¯n + Ä‘Ã¡nh dáº¥u Ä‘Ã£ Ä‘á»c
 app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -2549,7 +2549,7 @@ app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
 
     const allowed = await checkChatPermission(userId, userRole, otherId);
     if (!allowed) {
-      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+      return res.status(403).json({ message: 'Báº¡n khÃ´ng cÃ³ quyá»n nháº¯n tin vá»›i ngÆ°á»i dÃ¹ng nÃ y.' });
     }
 
     await pool.query(
@@ -2572,22 +2572,22 @@ app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
 });
 
-// POST /api/chat — gửi tin nhắn text
+// POST /api/chat â€” gá»­i tin nháº¯n text
 app.post('/api/chat', verifyToken, async (req, res) => {
   try {
     const senderId = req.user.userId;
     const { receiver_id, content } = req.body;
     if (!receiver_id || !content?.trim())
-      return res.status(400).json({ message: 'receiver_id và content là bắt buộc.' });
+      return res.status(400).json({ message: 'receiver_id vÃ  content lÃ  báº¯t buá»™c.' });
     
     const userRole = req.user.role;
     const allowed = await checkChatPermission(senderId, userRole, receiver_id);
     if (!allowed) {
-      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+      return res.status(403).json({ message: 'Báº¡n khÃ´ng cÃ³ quyá»n nháº¯n tin vá»›i ngÆ°á»i dÃ¹ng nÃ y.' });
     }
 
     const receiver = await pool.query(`SELECT id FROM users WHERE id=$1`, [receiver_id]);
-    if (!receiver.rows.length) return res.status(404).json({ message: 'Người nhận không tồn tại.' });
+    if (!receiver.rows.length) return res.status(404).json({ message: 'NgÆ°á»i nháº­n khÃ´ng tá»“n táº¡i.' });
     const msg = await pool.query(
       `INSERT INTO chat_messages (sender_id, receiver_id, content, msg_type)
        VALUES ($1,$2,$3,'text') RETURNING *`,
@@ -2597,7 +2597,7 @@ app.post('/api/chat', verifyToken, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
 });
 
-// POST /api/chat/upload — upload file (ảnh/video/tệp) lên Supabase Storage
+// POST /api/chat/upload â€” upload file (áº£nh/video/tá»‡p) lÃªn Supabase Storage
 app.post('/api/chat/upload', verifyToken, (req, res, next) => {
   chatUpload.single('file')(req, res, function (err) {
     if (err) return res.status(400).json({ message: err.message || 'File upload error.' });
@@ -2607,13 +2607,13 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
   try {
     const senderId = req.user.userId;
     const { receiver_id } = req.body;
-    if (!receiver_id) return res.status(400).json({ message: 'receiver_id là bắt buộc.' });
-    if (!req.file) return res.status(400).json({ message: 'Không có file được gửi lên.' });
+    if (!receiver_id) return res.status(400).json({ message: 'receiver_id lÃ  báº¯t buá»™c.' });
+    if (!req.file) return res.status(400).json({ message: 'KhÃ´ng cÃ³ file Ä‘Æ°á»£c gá»­i lÃªn.' });
 
     const userRole = req.user.role;
     const allowed = await checkChatPermission(senderId, userRole, receiver_id);
     if (!allowed) {
-      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+      return res.status(403).json({ message: 'Báº¡n khÃ´ng cÃ³ quyá»n nháº¯n tin vá»›i ngÆ°á»i dÃ¹ng nÃ y.' });
     }
 
     const { originalname, mimetype, size, buffer } = req.file;
@@ -2621,26 +2621,26 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
     const safeName = `${Date.now()}_${Math.random().toString(36).slice(2,8)}${ext}`;
     const storagePath = `${senderId}/${safeName}`;
 
-    // Xác định msg_type
+    // XÃ¡c Ä‘á»‹nh msg_type
     let msgType = 'file';
     if (mimetype.startsWith('image/')) msgType = 'image';
     else if (mimetype.startsWith('video/')) msgType = 'video';
 
-    // Upload lên Supabase Storage
+    // Upload lÃªn Supabase Storage
     const { data: uploadData, error: uploadError } = await supabaseAdmin
       .storage.from(BUCKET)
       .upload(storagePath, buffer, { contentType: mimetype, upsert: false });
 
     if (uploadError) {
       console.error('Storage upload error:', uploadError);
-      return res.status(500).json({ message: 'Lỗi upload file: ' + uploadError.message });
+      return res.status(500).json({ message: 'Lá»—i upload file: ' + uploadError.message });
     }
 
-    // Lấy public URL
+    // Láº¥y public URL
     const { data: urlData } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(storagePath);
     const fileUrl = urlData?.publicUrl || '';
 
-    // Lưu tin nhắn vào DB
+    // LÆ°u tin nháº¯n vÃ o DB
     const msg = await pool.query(
       `INSERT INTO chat_messages
          (sender_id, receiver_id, msg_type, file_url, file_name, file_size, file_mime, content)
@@ -2651,7 +2651,7 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error: ' + e.message }); }
 });
 
-// ─── Background Job: Cleanup Abandoned Practice Sessions ─────────
+// â”€â”€â”€ Background Job: Cleanup Abandoned Practice Sessions â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const cleanupAbandonedPracticeSessions = async () => {
   try {
     const res = await pool.query(`
@@ -2660,7 +2660,7 @@ const cleanupAbandonedPracticeSessions = async () => {
       WHERE status = 'in_progress' AND created_at < NOW() - INTERVAL '24 hours'
     `);
     if (res.rowCount > 0) {
-      console.log(`🧹 Cleaned up ${res.rowCount} abandoned practice sessions.`);
+      console.log(`ðŸ§¹ Cleaned up ${res.rowCount} abandoned practice sessions.`);
     }
   } catch (err) {
     console.error('Error cleaning up practice sessions:', err);
@@ -2716,9 +2716,9 @@ app.post('/api/tutor/grade-attempt', verifyToken, requireTutor, async (req, res)
 });
 
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  TUTOR ASSESSMENT MANAGEMENT APIs
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 // GET /api/tutor/assessments
 app.get('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) => {
@@ -2796,7 +2796,7 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
 // GET /api/tutor/grading-queue
 app.get('/api/tutor/grading-queue', verifyToken, requireTutor, async (req, res) => {
   try {
-    // Lấy các exam_paper do tutor upload
+    // Láº¥y cÃ¡c exam_paper do tutor upload
     const attempts = await pool.query(`
       SELECT a.id as attempt_id, a.score, a.status, a.submitted_at,
              a.tutor_score,
@@ -2809,7 +2809,7 @@ app.get('/api/tutor/grading-queue', verifyToken, requireTutor, async (req, res) 
       ORDER BY a.submitted_at DESC
     `, [req.user.userId]);
 
-    // Cũng lấy các quiz attempts nếu có
+    // CÅ©ng láº¥y cÃ¡c quiz attempts náº¿u cÃ³
     const quizAttempts = await pool.query(`
       SELECT a.id as attempt_id, a.score, a.status, a.submitted_at,
              a.tutor_score,
@@ -2822,7 +2822,7 @@ app.get('/api/tutor/grading-queue', verifyToken, requireTutor, async (req, res) 
       ORDER BY a.submitted_at DESC
     `, [req.user.userId]);
 
-    // Cũng lấy các practice sessions (AI generated, any tutor can grade)
+    // CÅ©ng láº¥y cÃ¡c practice sessions (AI generated, any tutor can grade)
     const practiceAttempts = await pool.query(`
       SELECT p.id as attempt_id, p.score, p.status, p.submitted_at,
              p.tutor_score,
@@ -2896,8 +2896,8 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 });
 
 
-// ── GET /api/tutors (public) ──────────────────────────────────────────────────
-// Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
+// â”€â”€ GET /api/tutors (public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Táº¥t cáº£ user cÃ³ role='tutor', LEFT JOIN tutor_profiles Ä‘á»ƒ láº¥y thÃªm thÃ´ng tin.
 app.get("/api/tutors", async (req, res) => {
   const { search = "", subjects = "", sort = "rating", page = "1", limit = "12" } = req.query;
   const pageNum = Math.max(1, parseInt(page));
@@ -2969,8 +2969,8 @@ app.get("/api/tutors", async (req, res) => {
   }
 });
 
-// ── GET /api/tutors/:id ───────────────────────────────────────────────────────
-// Trả về hồ sơ chi tiết của một gia sư theo user ID (public, không cần auth)
+// â”€â”€ GET /api/tutors/:id â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Tráº£ vá» há»“ sÆ¡ chi tiáº¿t cá»§a má»™t gia sÆ° theo user ID (public, khÃ´ng cáº§n auth)
 app.get("/api/tutors/:id", async (req, res) => {
   const { id } = req.params;
   try {
@@ -3006,8 +3006,8 @@ app.get("/api/tutors/:id", async (req, res) => {
   }
 });
 
-// ── GET /api/reviews/featured ─────────────────────────────────────────────────
-// Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)
+// â”€â”€ GET /api/reviews/featured â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Tráº£ vá» cÃ¡c Ä‘Ã¡nh giÃ¡ 5 sao má»›i nháº¥t Ä‘á»ƒ hiá»ƒn thá»‹ trÃªn trang chá»§ (khÃ´ng cáº§n auth)
 app.get("/api/reviews/featured", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 30);
   try {
@@ -3029,15 +3029,15 @@ app.get("/api/reviews/featured", async (req, res) => {
   }
 });
 
-// ── POST /api/reviews ──────────────────────────────────────────────────────────
-// Người dùng đã đăng nhập gửi đánh giá mới
+// â”€â”€ POST /api/reviews â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// NgÆ°á»i dÃ¹ng Ä‘Ã£ Ä‘Äƒng nháº­p gá»­i Ä‘Ã¡nh giÃ¡ má»›i
 app.post("/api/reviews", verifyToken, async (req, res) => {
   const { rating, subject, content } = req.body || {};
   if (!rating || !content) {
-    return res.status(400).json({ message: "rating và content là bắt buộc." });
+    return res.status(400).json({ message: "rating vÃ  content lÃ  báº¯t buá»™c." });
   }
   if (rating < 1 || rating > 5) {
-    return res.status(400).json({ message: "rating phải từ 1 đến 5." });
+    return res.status(400).json({ message: "rating pháº£i tá»« 1 Ä‘áº¿n 5." });
   }
   try {
     const userResult = await pool.query(
@@ -3060,17 +3060,17 @@ app.post("/api/reviews", verifyToken, async (req, res) => {
   }
 });
 
-// Helper: lấy IP thực của client (hỗ trợ proxy/Nginx)
+// Helper: láº¥y IP thá»±c cá»§a client (há»— trá»£ proxy/Nginx)
 function getClientIP(req) {
   const forwarded = req.headers['x-forwarded-for'];
   if (forwarded) return forwarded.split(',')[0].trim();
   return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
-// Helper: ghi log đăng nhập + trả về flag suspicious nếu IP lạ
+// Helper: ghi log Ä‘Äƒng nháº­p + tráº£ vá» flag suspicious náº¿u IP láº¡
 async function logLoginAttempt(userId, ip, userAgent) {
   try {
-    // Lấy IP của lần đăng nhập cuối cùng trong 30 ngày
+    // Láº¥y IP cá»§a láº§n Ä‘Äƒng nháº­p cuá»‘i cÃ¹ng trong 30 ngÃ y
     const recent = await pool.query(
       `SELECT ip_address FROM login_logs
        WHERE user_id = $1 AND created_at > NOW() - INTERVAL '30 days'
@@ -3098,9 +3098,9 @@ async function startServer() {
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE
     `);
-    console.log("✅ DB migration: users.is_banned ready");
+    console.log("âœ… DB migration: users.is_banned ready");
   } catch (err) {
-    console.error("⚠️  DB migration warning:", err.message);
+    console.error("âš ï¸  DB migration warning:", err.message);
   }
 
   // Auto-migrate: create login_logs table
@@ -3117,9 +3117,9 @@ async function startServer() {
       CREATE INDEX IF NOT EXISTS idx_login_logs_user_id ON login_logs(user_id);
       CREATE INDEX IF NOT EXISTS idx_login_logs_created_at ON login_logs(created_at);
     `);
-    console.log("✅ DB migration: login_logs table ready");
+    console.log("âœ… DB migration: login_logs table ready");
   } catch (err) {
-    console.error("⚠️  DB migration (login_logs) warning:", err.message);
+    console.error("âš ï¸  DB migration (login_logs) warning:", err.message);
   }
 
   // Auto-migrate: tutor_profiles extra columns
@@ -3134,9 +3134,9 @@ async function startServer() {
         ADD COLUMN IF NOT EXISTS headline          TEXT,
         ADD COLUMN IF NOT EXISTS reject_reason     TEXT
     `);
-    console.log("✅ DB migration: tutor_profiles extra columns ready");
+    console.log("âœ… DB migration: tutor_profiles extra columns ready");
   } catch (err) {
-    console.error("⚠️  DB migration (tutor_profiles cols) warning:", err.message);
+    console.error("âš ï¸  DB migration (tutor_profiles cols) warning:", err.message);
   }
 
   // Auto-migrate: tutor_certificates table (multiple certs per tutor)
@@ -3151,9 +3151,9 @@ async function startServer() {
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_tutor_certs_profile ON tutor_certificates(tutor_profile_id)`);
-    console.log("✅ DB migration: tutor_certificates table ready");
+    console.log("âœ… DB migration: tutor_certificates table ready");
   } catch (err) {
-    console.error("⚠️  DB migration (tutor_certificates) warning:", err.message);
+    console.error("âš ï¸  DB migration (tutor_certificates) warning:", err.message);
   }
 
   // Auto-migrate: teaching_methods & suitable_students columns on tutor_profiles
@@ -3163,22 +3163,22 @@ async function startServer() {
         ADD COLUMN IF NOT EXISTS teaching_methods  JSONB NOT NULL DEFAULT '[]',
         ADD COLUMN IF NOT EXISTS suitable_students JSONB NOT NULL DEFAULT '[]'
     `);
-    console.log("✅ DB migration: teaching_methods & suitable_students columns ready");
+    console.log("âœ… DB migration: teaching_methods & suitable_students columns ready");
   } catch (err) {
-    console.error("⚠️  DB migration (teaching_methods) warning:", err.message);
+    console.error("âš ï¸  DB migration (teaching_methods) warning:", err.message);
   }
 
   // Auto-migrate: cert_type, issuer, issue_year on tutor_certificates
   try {
     await pool.query(`
       ALTER TABLE tutor_certificates
-        ADD COLUMN IF NOT EXISTS cert_type  TEXT DEFAULT 'Chứng chỉ',
+        ADD COLUMN IF NOT EXISTS cert_type  TEXT DEFAULT 'Chá»©ng chá»‰',
         ADD COLUMN IF NOT EXISTS issuer     TEXT,
         ADD COLUMN IF NOT EXISTS issue_year INTEGER
     `);
-    console.log("✅ DB migration: tutor_certificates extended columns ready");
+    console.log("âœ… DB migration: tutor_certificates extended columns ready");
   } catch (err) {
-    console.error("⚠️  DB migration (cert extended cols) warning:", err.message);
+    console.error("âš ï¸  DB migration (cert extended cols) warning:", err.message);
   }
 
   // Auto-migrate: create reviews table
@@ -3196,28 +3196,28 @@ async function startServer() {
         created_at       TIMESTAMPTZ DEFAULT NOW()
       )
     `);
-    console.log("✅ DB migration: reviews table ready");
+    console.log("âœ… DB migration: reviews table ready");
 
-    // Seed 5-star reviews nếu bảng còn trống
+    // Seed 5-star reviews náº¿u báº£ng cÃ²n trá»‘ng
     const { rows } = await pool.query("SELECT COUNT(*) FROM reviews");
     if (parseInt(rows[0].count) === 0) {
       await pool.query(`
         INSERT INTO reviews (reviewer_name, reviewer_role, rating, subject, content, created_at) VALUES
-        ('Nguyễn Văn An',   'student', 5, 'Toán Cao Cấp',       'Gia sư giải thích rất rõ ràng, từng bước một. Tôi đã hiểu được tích phân bội sau 3 buổi học. Cực kỳ khuyến khích!',                                      NOW() - INTERVAL ''2 minutes''),
-        ('Trần Thị Bích',   'parent',  5, 'Tiếng Anh IELTS',    'Con tôi tăng từ 5.5 lên 7.0 chỉ sau 3 tháng. Gia sư rất tận tâm, có phương pháp riêng cho từng học sinh. Cảm ơn EduX rất nhiều!',                         NOW() - INTERVAL ''18 minutes''),
-        ('Lê Minh Châu',    'student', 5, 'Lập Trình Python',   'Từ chỗ không biết gì về code, giờ tôi đã tự viết được ứng dụng Flask đầu tiên. Gia sư hướng dẫn thực chiến, không dạy lý thuyết suông.',                  NOW() - INTERVAL ''1 hour''),
-        ('Phạm Hoàng Duy',  'student', 5, 'Vật Lý Đại Cương',   'Bài giảng sinh động, có nhiều ví dụ thực tế. Điểm thi cuối kỳ của tôi từ 5 lên 9. Thầy rất nhiệt tình và kiên nhẫn.',                                     NOW() - INTERVAL ''3 hours''),
-        ('Nguyễn Thị Hoa',  'parent',  5, 'Toán Tiểu Học',      'Con tôi 9 tuổi rất thích học, không còn sợ môn Toán nữa. Gia sư biết cách tạo hứng thú cho các em nhỏ. Sẽ tiếp tục đăng ký dài hạn.',                    NOW() - INTERVAL ''5 hours''),
-        ('Đỗ Văn Khoa',     'student', 5, 'Hóa Hữu Cơ',         'Môn Hóa luôn là cơn ác mộng nhưng nhờ gia sư tôi đã vượt qua kỳ thi tốt nghiệp với điểm 8.5. Phương pháp ghi nhớ cực hay!',                              NOW() - INTERVAL ''8 hours''),
-        ('Vũ Thị Lan',      'student', 5, 'Tiếng Nhật N3',       'Sau 6 tháng học, tôi thi đậu JLPT N3 lần đầu tiên. Gia sư bản ngữ, phát âm chuẩn, giáo trình được thiết kế rất khoa học.',                               NOW() - INTERVAL ''1 day''),
-        ('Bùi Minh Long',   'parent',  5, 'Toán THPT',           'Điểm thi thử đại học của con tôi tăng vọt từ 6 lên 8.5 điểm. Gia sư không chỉ dạy kiến thức mà còn rèn kỹ năng làm bài thi hiệu quả.',                   NOW() - INTERVAL ''2 days''),
-        ('Hoàng Thị Mai',   'student', 5, 'Luyện Thi THPT QG',  'Thi thử lần đầu được 18/30, sau 2 tháng ôn với gia sư tôi đạt 26/30. Rất biết ơn sự tận tâm và kinh nghiệm của thầy.',                                    NOW() - INTERVAL ''3 days''),
-        ('Đinh Văn Nam',    'student', 5, 'Tin Học Văn Phòng',   'Học Excel và Word từ cơ bản đến nâng cao, giờ làm việc nhanh hơn rất nhiều. Gia sư dạy đúng những gì thực tế cần dùng, không mất thời gian lý thuyết dài.' , NOW() - INTERVAL ''4 days'')
+        ('Nguyá»…n VÄƒn An',   'student', 5, 'ToÃ¡n Cao Cáº¥p',       'Gia sÆ° giáº£i thÃ­ch ráº¥t rÃµ rÃ ng, tá»«ng bÆ°á»›c má»™t. TÃ´i Ä‘Ã£ hiá»ƒu Ä‘Æ°á»£c tÃ­ch phÃ¢n bá»™i sau 3 buá»•i há»c. Cá»±c ká»³ khuyáº¿n khÃ­ch!',                                      NOW() - INTERVAL ''2 minutes''),
+        ('Tráº§n Thá»‹ BÃ­ch',   'parent',  5, 'Tiáº¿ng Anh IELTS',    'Con tÃ´i tÄƒng tá»« 5.5 lÃªn 7.0 chá»‰ sau 3 thÃ¡ng. Gia sÆ° ráº¥t táº­n tÃ¢m, cÃ³ phÆ°Æ¡ng phÃ¡p riÃªng cho tá»«ng há»c sinh. Cáº£m Æ¡n EduX ráº¥t nhiá»u!',                         NOW() - INTERVAL ''18 minutes''),
+        ('LÃª Minh ChÃ¢u',    'student', 5, 'Láº­p TrÃ¬nh Python',   'Tá»« chá»— khÃ´ng biáº¿t gÃ¬ vá» code, giá» tÃ´i Ä‘Ã£ tá»± viáº¿t Ä‘Æ°á»£c á»©ng dá»¥ng Flask Ä‘áº§u tiÃªn. Gia sÆ° hÆ°á»›ng dáº«n thá»±c chiáº¿n, khÃ´ng dáº¡y lÃ½ thuyáº¿t suÃ´ng.',                  NOW() - INTERVAL ''1 hour''),
+        ('Pháº¡m HoÃ ng Duy',  'student', 5, 'Váº­t LÃ½ Äáº¡i CÆ°Æ¡ng',   'BÃ i giáº£ng sinh Ä‘á»™ng, cÃ³ nhiá»u vÃ­ dá»¥ thá»±c táº¿. Äiá»ƒm thi cuá»‘i ká»³ cá»§a tÃ´i tá»« 5 lÃªn 9. Tháº§y ráº¥t nhiá»‡t tÃ¬nh vÃ  kiÃªn nháº«n.',                                     NOW() - INTERVAL ''3 hours''),
+        ('Nguyá»…n Thá»‹ Hoa',  'parent',  5, 'ToÃ¡n Tiá»ƒu Há»c',      'Con tÃ´i 9 tuá»•i ráº¥t thÃ­ch há»c, khÃ´ng cÃ²n sá»£ mÃ´n ToÃ¡n ná»¯a. Gia sÆ° biáº¿t cÃ¡ch táº¡o há»©ng thÃº cho cÃ¡c em nhá». Sáº½ tiáº¿p tá»¥c Ä‘Äƒng kÃ½ dÃ i háº¡n.',                    NOW() - INTERVAL ''5 hours''),
+        ('Äá»— VÄƒn Khoa',     'student', 5, 'HÃ³a Há»¯u CÆ¡',         'MÃ´n HÃ³a luÃ´n lÃ  cÆ¡n Ã¡c má»™ng nhÆ°ng nhá» gia sÆ° tÃ´i Ä‘Ã£ vÆ°á»£t qua ká»³ thi tá»‘t nghiá»‡p vá»›i Ä‘iá»ƒm 8.5. PhÆ°Æ¡ng phÃ¡p ghi nhá»› cá»±c hay!',                              NOW() - INTERVAL ''8 hours''),
+        ('VÅ© Thá»‹ Lan',      'student', 5, 'Tiáº¿ng Nháº­t N3',       'Sau 6 thÃ¡ng há»c, tÃ´i thi Ä‘áº­u JLPT N3 láº§n Ä‘áº§u tiÃªn. Gia sÆ° báº£n ngá»¯, phÃ¡t Ã¢m chuáº©n, giÃ¡o trÃ¬nh Ä‘Æ°á»£c thiáº¿t káº¿ ráº¥t khoa há»c.',                               NOW() - INTERVAL ''1 day''),
+        ('BÃ¹i Minh Long',   'parent',  5, 'ToÃ¡n THPT',           'Äiá»ƒm thi thá»­ Ä‘áº¡i há»c cá»§a con tÃ´i tÄƒng vá»t tá»« 6 lÃªn 8.5 Ä‘iá»ƒm. Gia sÆ° khÃ´ng chá»‰ dáº¡y kiáº¿n thá»©c mÃ  cÃ²n rÃ¨n ká»¹ nÄƒng lÃ m bÃ i thi hiá»‡u quáº£.',                   NOW() - INTERVAL ''2 days''),
+        ('HoÃ ng Thá»‹ Mai',   'student', 5, 'Luyá»‡n Thi THPT QG',  'Thi thá»­ láº§n Ä‘áº§u Ä‘Æ°á»£c 18/30, sau 2 thÃ¡ng Ã´n vá»›i gia sÆ° tÃ´i Ä‘áº¡t 26/30. Ráº¥t biáº¿t Æ¡n sá»± táº­n tÃ¢m vÃ  kinh nghiá»‡m cá»§a tháº§y.',                                    NOW() - INTERVAL ''3 days''),
+        ('Äinh VÄƒn Nam',    'student', 5, 'Tin Há»c VÄƒn PhÃ²ng',   'Há»c Excel vÃ  Word tá»« cÆ¡ báº£n Ä‘áº¿n nÃ¢ng cao, giá» lÃ m viá»‡c nhanh hÆ¡n ráº¥t nhiá»u. Gia sÆ° dáº¡y Ä‘Ãºng nhá»¯ng gÃ¬ thá»±c táº¿ cáº§n dÃ¹ng, khÃ´ng máº¥t thá»i gian lÃ½ thuyáº¿t dÃ i.' , NOW() - INTERVAL ''4 days'')
       `);
-      console.log("✅ DB seed: 10 sample reviews inserted");
+      console.log("âœ… DB seed: 10 sample reviews inserted");
     }
   } catch (err) {
-    console.error("⚠️  DB migration (reviews) warning:", err.message);
+    console.error("âš ï¸  DB migration (reviews) warning:", err.message);
   }
 
 // =========================================================================
@@ -3227,11 +3227,11 @@ const crypto = require('crypto');
 const moment = require('moment');
 const querystring = require('qs');
 
-// 1. Lấy thông tin Ví
+// 1. Láº¥y thÃ´ng tin VÃ­
 app.get('/api/payment/wallet', verifyToken, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM wallets WHERE user_id = $1', [req.user.userId]);
-    if (rows.length === 0) return res.status(404).json({ message: 'Ví không tồn tại' });
+    if (rows.length === 0) return res.status(404).json({ message: 'VÃ­ khÃ´ng tá»“n táº¡i' });
     res.json({ wallet: rows[0] });
   } catch (err) {
     console.error(err);
@@ -3239,12 +3239,12 @@ app.get('/api/payment/wallet', verifyToken, async (req, res) => {
   }
 });
 
-// 2. Tạo URL Nạp Tiền VNPAY
+// 2. Táº¡o URL Náº¡p Tiá»n VNPAY
 app.post('/api/payment/create-url', verifyToken, async (req, res) => {
   try {
       const { amount, returnUrl } = req.body;
       const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'Ví không tồn tại' });
+      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'VÃ­ khÃ´ng tá»“n táº¡i' });
       const wId = walletRes.rows[0].id;
 
       const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
@@ -3277,7 +3277,7 @@ app.post('/api/payment/create-url', verifyToken, async (req, res) => {
           let str = [];
           let key;
           for (key in obj){
-              if (obj.hasOwnProperty(key)) { str.push(encodeURIComponent(key)); }
+              if (Object.prototype.hasOwnProperty.call(obj, key)) { str.push(encodeURIComponent(key)); }
           }
           str.sort();
           for (key = 0; key < str.length; key++) {
@@ -3318,7 +3318,7 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
           let sorted = {};
           let str = [];
           let key;
-          for (key in obj){ if (obj.hasOwnProperty(key)) { str.push(encodeURIComponent(key)); } }
+          for (key in obj){ if (Object.prototype.hasOwnProperty.call(obj, key)) { str.push(encodeURIComponent(key)); } }
           str.sort();
           for (key = 0; key < str.length; key++) { sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+"); }
           return sorted;
@@ -3358,7 +3358,7 @@ app.post('/api/escrow/hold', verifyToken, async (req, res) => {
   const { amount, lessonId } = req.body;
   try {
       const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'Ví không tồn tại' });
+      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'VÃ­ khÃ´ng tá»“n táº¡i' });
       const payerWalletId = walletRes.rows[0].id;
 
       const { rows } = await pool.query('SELECT hold_money_for_lesson($1, $2, $3) AS tx_id', [payerWalletId, amount, lessonId]);
@@ -3366,33 +3366,33 @@ app.post('/api/escrow/hold', verifyToken, async (req, res) => {
       res.json({ success: true, transactionId: rows[0].tx_id });
   } catch (err) {
       // Trigger error from CHECK (balance >= amount)
-      res.status(400).json({ success: false, message: 'Số dư không đủ để thanh toán hoặc lỗi hệ thống.' });
+      res.status(400).json({ success: false, message: 'Sá»‘ dÆ° khÃ´ng Ä‘á»§ Ä‘á»ƒ thanh toÃ¡n hoáº·c lá»—i há»‡ thá»‘ng.' });
   }
 });
 
-// 5. Release Escrow (Giải ngân cho Gia sư)
+// 5. Release Escrow (Giáº£i ngÃ¢n cho Gia sÆ°)
 app.post('/api/escrow/release', verifyToken, async (req, res) => {
     const { transactionId, payerWalletId, tutorWalletId, amount } = req.body;
-    // Lấy admin_wallet_id từ môi trường hoặc truy vấn user admin đầu tiên
+    // Láº¥y admin_wallet_id tá»« mÃ´i trÆ°á»ng hoáº·c truy váº¥n user admin Ä‘áº§u tiÃªn
     try {
         let adminWalletId = process.env.ADMIN_WALLET_ID;
         if (!adminWalletId) {
             const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
             if (rows.length > 0) adminWalletId = rows[0].id;
-            else return res.status(500).json({ success: false, message: 'Lỗi hệ thống: Chưa cấu hình ví Admin.' });
+            else return res.status(500).json({ success: false, message: 'Lá»—i há»‡ thá»‘ng: ChÆ°a cáº¥u hÃ¬nh vÃ­ Admin.' });
         }
 
         const commissionRate = 0.1; // 10%
         const { error } = await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [
             transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, commissionRate
         ]);
-        res.json({ success: true, message: 'Đã giải ngân cho Gia sư' });
+        res.json({ success: true, message: 'ÄÃ£ giáº£i ngÃ¢n cho Gia sÆ°' });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// 6. Resolve Dispute (Xử lý khiếu nại - Admin)
+// 6. Resolve Dispute (Xá»­ lÃ½ khiáº¿u náº¡i - Admin)
 app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
     
@@ -3412,16 +3412,17 @@ app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
             await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
             await pool.query("UPDATE disputes SET status = 'RESOLVED_RELEASE', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
         }
-        res.json({ success: true, message: 'Đã xử lý khiếu nại thành công' });
+        res.json({ success: true, message: 'ÄÃ£ xá»­ lÃ½ khiáº¿u náº¡i thÃ nh cÃ´ng' });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
 app.listen(port, () => {
-    console.log(`🚀 Server is running on http://localhost:${port}`);
+    console.log(`ðŸš€ Server is running on http://localhost:${port}`);
   });
 }
 
 startServer();
+
 

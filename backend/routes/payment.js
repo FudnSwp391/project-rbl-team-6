@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const moment = require('moment');
@@ -10,7 +10,7 @@ function sortObject(obj) {
     let str = [];
     let key;
     for (key in obj){
-        if (obj.hasOwnProperty(key)) { str.push(encodeURIComponent(key)); }
+        if (Object.prototype.hasOwnProperty.call(obj, key)) { str.push(encodeURIComponent(key)); }
     }
     str.sort();
     for (key = 0; key < str.length; key++) {
@@ -28,7 +28,7 @@ router.post('/create-url', async (req, res) => {
         // Find wallet_id for the user
         const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
         if (walletRes.rowCount === 0) {
-            return res.status(404).json({ success: false, message: 'Ví không tồn tại' });
+            return res.status(404).json({ success: false, message: 'VÃ­ khÃ´ng tá»“n táº¡i' });
         }
         const wId = walletRes.rows[0].id;
 
@@ -115,3 +115,4 @@ router.get('/vnpay-ipn', async (req, res) => {
 });
 
 module.exports = router;
+
