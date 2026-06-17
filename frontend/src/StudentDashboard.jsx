@@ -10,6 +10,7 @@ import QuizList from './QuizList'
 import PracticeMode from './PracticeMode'
 import ExamPapers from './ExamPapers'
 import MessagesSection from './components/MessagesSection'
+import SchedulePage from './pages/SchedulePage'
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
 const MY_TUTORS = [
   {
@@ -82,7 +83,7 @@ export default function StudentDashboard() {
   const initials = displayName.charAt(0).toUpperCase()
 
   return (
-    <div className="bg-background text-on-background font-body-md text-body-md antialiased flex h-screen overflow-hidden">
+    <div className={`bg-background text-on-background font-body-md text-body-md antialiased ${activeSection === 'schedule' ? 'block min-h-screen' : 'flex h-screen overflow-hidden'}`}>
 
 <<<<<<< HEAD
       <StudentSidebar 
@@ -182,7 +183,7 @@ export default function StudentDashboard() {
 >>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 
       {/* ── Main content wrapper ── */}
-      <div className="flex-1 flex flex-col lg:ml-64 h-full overflow-hidden">
+      <div className={`lg:ml-64 ${activeSection === 'schedule' ? 'block min-h-screen' : 'flex-1 flex flex-col h-full overflow-hidden'}`}>
 
         {/* ── Top Bar ── */}
         <header className="w-full h-16 bg-surface/90 backdrop-blur-sm shadow-sm flex items-center z-30 shrink-0 sticky top-0 border-b border-surface-dim/30">
@@ -249,8 +250,8 @@ export default function StudentDashboard() {
         </header>
 
         {/* ── Main canvas ── */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-md lg:p-lg">
-          <div className="max-w-container-max mx-auto flex flex-col gap-xl pb-xl">
+        <main className={`overflow-x-hidden p-md lg:p-lg ${activeSection === 'schedule' ? 'block' : 'flex-1 overflow-y-auto'}`}>
+          <div className={`max-w-container-max mx-auto flex flex-col gap-xl ${activeSection === 'schedule' ? 'pb-8' : 'pb-xl'}`}>
 
             {/* ── Assessments Section ── */}
             {activeSection === 'assessments' && (
@@ -276,8 +277,12 @@ export default function StudentDashboard() {
               <MessagesSection token={token} user={user} />
             )}
 
+            {activeSection === 'schedule' && (
+              <SchedulePage />
+            )}
+
             {/* ── Dashboard Home ── */}
-            {(activeSection === 'dashboard' || activeSection === 'courses' || activeSection === 'schedule') && (
+            {(activeSection === 'dashboard' || activeSection === 'courses') && (
               <>
 
             {/* ── Welcome Header ── */}

@@ -1191,6 +1191,7 @@ const assignmentRoutes = require("./routes/assignmentRoutes");
 const discussionRoutes = require("./routes/discussionRoutes");
 const lessonRoutes = require("./routes/lessonRoutes");
 const learningPathRoutes = require("./routes/learningPathRoutes");
+const scheduleRoutes = require("./routes/scheduleRoutes");
 
 app.use("/api/classes/:classId/materials", materialRoutes);
 app.use("/api/classes", classRoutes);
@@ -1198,6 +1199,7 @@ app.use("/", assignmentRoutes);
 app.use("/", discussionRoutes);
 app.use("/", lessonRoutes);
 app.use("/", learningPathRoutes);
+app.use("/api", scheduleRoutes);
 
 // ─── Start server ─────────────────────────────────────────────────────────────
 app.listen(port, () => {
