@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const jwt = require("jsonwebtoken");
@@ -1431,6 +1431,26 @@ app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, re
   } catch (err) {
     console.error("PATCH /api/admin/users/:id/role error:", err);
     return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── GET /api/admin/transactions ───────────────────────────────────────────
+app.get("/api/admin/transactions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const q = `
+      SELECT 
+        t.id, t.amount, t.type, t.status, t.gateway, t.description, t.created_at as date,
+        u.full_name as user_name, u.email
+      FROM transactions t
+      JOIN wallets w ON t.wallet_id = w.id
+      JOIN users u ON w.user_id = u.id
+      ORDER BY t.created_at DESC
+    `;
+    const { rows } = await pool.query(q);
+    res.json(rows);
+  } catch (err) {
+    console.error("GET /api/admin/transactions error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 

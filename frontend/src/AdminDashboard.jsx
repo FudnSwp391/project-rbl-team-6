@@ -266,7 +266,7 @@ export default function AdminDashboard() {
           {activeView === 'user-management' && <UserManagementView />}
           {activeView === 'subjects'         && <SubjectsView />}
           {activeView === 'lessons'          && <LessonsView />}
-          {activeView === 'transactions'     && <TransactionsView />}
+          {activeView === 'transactions'     && <TransactionsView token={token} />}
           {activeView === 'complaints'       && <ComplaintsView />}
           {activeView === 'reviews'          && <ReviewsView />}
           {activeView === 'reports'          && <ReportsView />}
@@ -1706,28 +1706,61 @@ function LessonsView() {
 }
 
 // ─── Transactions View ────────────────────────────────────────────────────────
-const MOCK_TXN = [
-  { id: 'TXN-4821', user: 'Nguyễn Văn An',   tutor: 'Trần Thị Bích',   amount: 250000,  status: 'Hoàn thành',  date: '2024-06-10' },
-  { id: 'TXN-4820', user: 'Hoàng Đức Mạnh',  tutor: 'Phạm Quỳnh Anh',  amount: 180000,  status: 'Hoàn thành',  date: '2024-06-10' },
-  { id: 'TXN-4819', user: 'Đỗ Thanh Long',   tutor: 'Bùi Phương Thảo', amount: 320000,  status: 'Chờ xử lý',   date: '2024-06-09' },
-  { id: 'TXN-4818', user: 'Lê Minh Cường',   tutor: 'Trần Thị Bích',   amount: 200000,  status: 'Đã hoàn tiền', date: '2024-06-08' },
-  { id: 'TXN-4817', user: 'Phạm Quỳnh Anh',  tutor: 'Bùi Phương Thảo', amount: 150000,  status: 'Hoàn thành',  date: '2024-06-07' },
-  { id: 'TXN-4816', user: 'Nguyễn Văn An',   tutor: 'Phạm Quỳnh Anh',  amount: 280000,  status: 'Thất bại',    date: '2024-06-06' },
-  { id: 'TXN-4815', user: 'Đỗ Thanh Long',   tutor: 'Trần Thị Bích',   amount: 200000,  status: 'Hoàn thành',  date: '2024-06-05' },
-]
+function TransactionsView({ token }) {
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('Tất cả');
 
-function TransactionsView() {
-  const [statusFilter, setStatusFilter] = useState('Tất cả')
+  useEffect(() => {
+    fetchTransactions();
+  }, [token]);
+
+  const fetchTransactions = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/admin/transactions`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTransactions(data);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const statusColor = s => ({
-    'Hoàn thành':  'bg-green-100 text-green-700',
-    'Chờ xử lý':   'bg-amber-100 text-amber-700',
-    'Đã hoàn tiền':'bg-blue-100 text-blue-700',
-    'Thất bại':    'bg-red-100 text-red-600',
-  }[s] || 'bg-gray-100 text-gray-600')
-  const fmt = n => 'đ' + n.toLocaleString('vi-VN')
-  const filtered = statusFilter === 'Tất cả' ? MOCK_TXN : MOCK_TXN.filter(t => t.status === statusFilter)
+    'SUCCESS':  'bg-green-100 text-green-700',
+    'PENDING':   'bg-amber-100 text-amber-700',
+    'REFUNDED':'bg-blue-100 text-blue-700',
+    'FAILED':    'bg-red-100 text-red-600',
+  }[s] || 'bg-gray-100 text-gray-600');
+  
+  const statusLabels = {
+    'SUCCESS': 'Hoàn thành',
+    'PENDING': 'Chờ xử lý',
+    'REFUNDED': 'Đã hoàn tiền',
+    'FAILED': 'Thất bại'
+  };
 
-  const totalRev = MOCK_TXN.filter(t => t.status === 'Hoàn thành').reduce((a, t) => a + t.amount, 0)
+  const fmt = n => 'đ' + Number(n).toLocaleString('vi-VN');
+  
+  const getFilterStatus = (filter) => {
+    if (filter === 'Hoàn thành') return 'SUCCESS';
+    if (filter === 'Chờ xử lý') return 'PENDING';
+    if (filter === 'Đã hoàn tiền') return 'REFUNDED';
+    if (filter === 'Thất bại') return 'FAILED';
+    return null;
+  };
+  
+  const dbFilter = getFilterStatus(statusFilter);
+  const filtered = statusFilter === 'Tất cả' ? transactions : transactions.filter(t => t.status === dbFilter);
+
+  const totalRev = transactions.filter(t => t.status === 'SUCCESS').reduce((a, t) => a + Number(t.amount), 0);
+
+  if (loading) return <div className="p-10 flex justify-center"><span className="material-symbols-outlined animate-spin text-4xl text-primary">refresh</span></div>;
 
   return (
     <div className="p-10 max-w-[1280px] mx-auto">
@@ -1744,9 +1777,9 @@ function TransactionsView() {
       <div className="grid grid-cols-4 gap-6 mb-8">
         {[
           { label: 'Tổng doanh thu',     value: fmt(totalRev),    icon: 'payments',       bg: 'bg-emerald-50',  color: 'text-emerald-700' },
-          { label: 'Hoàn thành',         value: MOCK_TXN.filter(t=>t.status==='Hoàn thành').length, icon: 'check_circle', bg: 'bg-green-50', color: 'text-green-700' },
-          { label: 'Chờ xử lý',          value: MOCK_TXN.filter(t=>t.status==='Chờ xử lý').length,  icon: 'schedule',     bg: 'bg-amber-50', color: 'text-amber-700' },
-          { label: 'Thất bại/Hoàn tiền', value: MOCK_TXN.filter(t=>['Thất bại','Đã hoàn tiền'].includes(t.status)).length, icon: 'cancel', bg: 'bg-red-50', color: 'text-red-600' },
+          { label: 'Hoàn thành',         value: transactions.filter(t=>t.status==='SUCCESS').length, icon: 'check_circle', bg: 'bg-green-50', color: 'text-green-700' },
+          { label: 'Chờ xử lý',          value: transactions.filter(t=>t.status==='PENDING').length,  icon: 'schedule',     bg: 'bg-amber-50', color: 'text-amber-700' },
+          { label: 'Thất bại/Hoàn tiền', value: transactions.filter(t=>['FAILED','REFUNDED'].includes(t.status)).length, icon: 'cancel', bg: 'bg-red-50', color: 'text-red-600' },
         ].map(c => (
           <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm">
             <div className={`w-10 h-10 rounded-lg ${c.bg} flex items-center justify-center ${c.color} mb-3`}>
@@ -1771,8 +1804,8 @@ function TransactionsView() {
           <thead className="bg-gray-50 border-b border-outline-variant">
             <tr>
               <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Mã giao dịch</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Học sinh</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Gia sư</th>
+              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Chủ thẻ/Người nhận</th>
+              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Cổng thanh toán</th>
               <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Số tiền</th>
               <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Trạng thái</th>
               <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Ngày</th>
@@ -1781,14 +1814,27 @@ function TransactionsView() {
           <tbody className="divide-y divide-outline-variant">
             {filtered.map(t => (
               <tr key={t.id} className="hover:bg-gray-50 transition-colors">
-                <td className="py-4 px-6 text-sm font-mono text-primary font-semibold">{t.id}</td>
-                <td className="py-4 px-6 text-sm text-on-surface">{t.user}</td>
-                <td className="py-4 px-6 text-sm text-on-surface">{t.tutor}</td>
-                <td className="py-4 px-6 text-sm font-bold text-on-surface">{fmt(t.amount)}</td>
-                <td className="py-4 px-6"><span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${statusColor(t.status)}`}>{t.status}</span></td>
-                <td className="py-4 px-6 text-sm text-on-surface-variant">{fmtDate(t.date)}</td>
+                <td className="py-4 px-6 text-sm font-mono text-primary font-semibold truncate max-w-[150px]" title={t.id}>{t.id.substring(0,8)}...</td>
+                <td className="py-4 px-6 text-sm text-on-surface">
+                   <div className="font-medium">{t.user_name}</div>
+                   <div className="text-xs text-on-surface-variant">{t.email}</div>
+                </td>
+                <td className="py-4 px-6 text-sm text-on-surface">
+                   <span className="font-semibold text-gray-700">{t.gateway}</span>
+                   {t.type && <div className="text-xs text-gray-500 mt-0.5">{t.type}</div>}
+                </td>
+                <td className="py-4 px-6 text-sm font-bold text-on-surface">
+                  {t.type === 'WITHDRAW' ? '-' : '+'}{fmt(t.amount)}
+                </td>
+                <td className="py-4 px-6"><span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${statusColor(t.status)}`}>{statusLabels[t.status] || t.status}</span></td>
+                <td className="py-4 px-6 text-sm text-on-surface-variant">{new Date(t.date).toLocaleDateString('vi-VN')}</td>
               </tr>
             ))}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan="6" className="py-12 text-center text-on-surface-variant">Không có giao dịch nào</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
