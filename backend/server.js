@@ -2461,103 +2461,21 @@ app.get('/api/chat/conversations', verifyToken, async (req, res) => {
 // âš ï¸ MUST be before /api/chat/:otherId to avoid wildcard match
 app.get('/api/chat/contacts', verifyToken, async (req, res) => {
   try {
-    const role = req.user.role;
     const userId = req.user.userId;
-    let result;
-
-    if (role === 'student') {
-      result = await pool.query(`
-        SELECT DISTINCT u.id, u.full_name, u.email, u.picture, u.role,
-               tp.headline, tp.subjects, tp.hourly_rate
-        FROM users u
-        LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
-        WHERE 
-          (u.role = 'tutor' AND tp.status = 'approved' AND u.id IN (
-            SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1
-          ))
-          OR
-          (u.role = 'parent' AND u.id IN (
-            SELECT parent_id FROM parent_children WHERE student_id = $1
-          ))
-        ORDER BY u.full_name
-      `, [userId]);
-    } else if (role === 'parent') {
-      result = await pool.query(`
-        SELECT DISTINCT u.id, u.full_name, u.email, u.picture, u.role,
-               tp.headline, tp.subjects, tp.hourly_rate
-        FROM users u
-        LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
-        WHERE 
-          (u.role = 'student' AND u.id IN (
-            SELECT student_id FROM parent_children WHERE parent_id = $1
-          ))
-          OR
-          (u.role = 'tutor' AND tp.status = 'approved' AND u.id IN (
-            SELECT c.tutor_id FROM classes c 
-            JOIN class_members cm ON c.id = cm.class_id 
-            JOIN parent_children pc ON cm.student_id = pc.student_id 
-            WHERE pc.parent_id = $1
-          ))
-        ORDER BY u.full_name
-      `, [userId]);
-    } else if (role === 'tutor') {
-      result = await pool.query(`
-        SELECT DISTINCT u.id, u.full_name, u.email, u.picture, u.role
-        FROM users u
-        WHERE 
-          (u.role = 'student' AND u.id IN (
-            SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1
-          ))
-          OR
-          (u.role = 'parent' AND u.id IN (
-            SELECT pc.parent_id FROM parent_children pc 
-            JOIN class_members cm ON pc.student_id = cm.student_id
-            JOIN classes c ON c.id = cm.class_id
-            WHERE c.tutor_id = $1
-          ))
-        ORDER BY u.full_name
-      `, [userId]);
-    } else {
-      result = { rows: [] };
-    }
+    const result = await pool.query(`
+      SELECT u.id, u.full_name, u.email, u.picture, u.role,
+             tp.headline, tp.subjects, tp.hourly_rate
+      FROM users u
+      LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+      WHERE u.id != $1
+      ORDER BY u.full_name
+    `, [userId]);
     return res.json({ contacts: result.rows });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
 });
 
 async function checkChatPermission(userId, userRole, otherId) {
-  if (userRole === 'admin') return true; // admin can chat with anyone
-  // For simplicity, we just check if otherId is in the allowed contacts list.
-  // This isn't the most efficient (fetches full list) but it's safe and DRY enough for now.
-  let allowed = false;
-  if (userRole === 'student') {
-    const res = await pool.query(`
-      SELECT 1 FROM users u WHERE u.id = $2 AND (
-        (u.role = 'tutor' AND u.id IN (SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1))
-        OR
-        (u.role = 'parent' AND u.id IN (SELECT parent_id FROM parent_children WHERE student_id = $1))
-      )
-    `, [userId, otherId]);
-    allowed = res.rowCount > 0;
-  } else if (userRole === 'parent') {
-    const res = await pool.query(`
-      SELECT 1 FROM users u WHERE u.id = $2 AND (
-        (u.role = 'student' AND u.id IN (SELECT student_id FROM parent_children WHERE parent_id = $1))
-        OR
-        (u.role = 'tutor' AND u.id IN (SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id JOIN parent_children pc ON cm.student_id = pc.student_id WHERE pc.parent_id = $1))
-      )
-    `, [userId, otherId]);
-    allowed = res.rowCount > 0;
-  } else if (userRole === 'tutor') {
-    const res = await pool.query(`
-      SELECT 1 FROM users u WHERE u.id = $2 AND (
-        (u.role = 'student' AND u.id IN (SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1))
-        OR
-        (u.role = 'parent' AND u.id IN (SELECT pc.parent_id FROM parent_children pc JOIN class_members cm ON pc.student_id = cm.student_id JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1))
-      )
-    `, [userId, otherId]);
-    allowed = res.rowCount > 0;
-  }
-  return allowed;
+  return true;
 }
 
 // GET /api/chat/:otherId â€” lá»‹ch sá»­ tin nháº¯n + Ä‘Ã¡nh dáº¥u Ä‘Ã£ Ä‘á»c
