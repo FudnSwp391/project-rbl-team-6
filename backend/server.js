@@ -784,6 +784,21 @@ app.post("/api/auth/google", async (req, res) => {
 // ΓöÇΓöÇ TUTOR APIs ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 
+// PUT /api/tutor/availability
+app.put("/api/tutor/availability", verifyToken, async (req, res) => {
+  try {
+    const { availability } = req.body;
+    await pool.query(
+      "UPDATE tutor_profiles SET availability = $1 WHERE user_id = $2",
+      [availability, req.user.userId]
+    );
+    return res.json({ message: "Availability updated successfully." });
+  } catch (error) {
+    console.error("PUT /api/tutor/availability error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 app.get("/api/tutor/profile", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -3800,11 +3815,11 @@ app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
 // ==================== PAYMENT & ESCROW ROUTES ============================
 // =========================================================================
 
-// 1. Lấy th?�ng tin V?�
+// 1. Lấy th?�ng tin V?�
 app.get('/api/payment/wallet', verifyToken, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM wallets WHERE user_id = $1', [req.user.userId]);
-    if (rows.length === 0) return res.status(404).json({ message: 'V?� kh?�ng tồn tại' });
+    if (rows.length === 0) return res.status(404).json({ message: 'V?� kh?�ng tồn tại' });
     res.json({ wallet: rows[0] });
   } catch (err) {
     console.error(err);
@@ -3817,7 +3832,7 @@ app.post('/api/payment/create-url', verifyToken, async (req, res) => {
   try {
       const { amount, returnUrl } = req.body;
       const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
+      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
       const wId = walletRes.rows[0].id;
 
       const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
@@ -3931,7 +3946,7 @@ app.post('/api/escrow/hold', verifyToken, async (req, res) => {
   const { amount, lessonId } = req.body;
   try {
       const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
+      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
       const payerWalletId = walletRes.rows[0].id;
 
       const { rows } = await pool.query('SELECT hold_money_for_lesson($1, $2, $3) AS tx_id', [payerWalletId, amount, lessonId]);
@@ -3939,33 +3954,33 @@ app.post('/api/escrow/hold', verifyToken, async (req, res) => {
       res.json({ success: true, transactionId: rows[0].tx_id });
   } catch (err) {
       // Trigger error from CHECK (balance >= amount)
-      res.status(400).json({ success: false, message: 'Số dư kh?�ng đủ để thanh to?�n hoặc lỗi hệ thống.' });
+      res.status(400).json({ success: false, message: 'Số dư kh?�ng đủ để thanh to?�n hoặc lỗi hệ thống.' });
   }
 });
 
-// 5. Release Escrow (Giải ng?�n cho Gia sư)
+// 5. Release Escrow (Giải ng?�n cho Gia sư)
 app.post('/api/escrow/release', verifyToken, async (req, res) => {
     const { transactionId, payerWalletId, tutorWalletId, amount } = req.body;
-    // Lấy admin_wallet_id từ m?�i trường hoặc truy vấn user admin đầu ti?�n
+    // Lấy admin_wallet_id từ m?�i trường hoặc truy vấn user admin đầu ti?�n
     try {
         let adminWalletId = process.env.ADMIN_WALLET_ID;
         if (!adminWalletId) {
             const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
             if (rows.length > 0) adminWalletId = rows[0].id;
-            else return res.status(500).json({ success: false, message: 'Lỗi hệ thống: Chưa cấu h?�nh v?� Admin.' });
+            else return res.status(500).json({ success: false, message: 'Lỗi hệ thống: Chưa cấu h?�nh v?� Admin.' });
         }
 
         const commissionRate = 0.1; // 10%
         const { error } = await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [
             transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, commissionRate
         ]);
-        res.json({ success: true, message: 'Đ?� giải ng?�n cho Gia sư' });
+        res.json({ success: true, message: 'Đ?� giải ng?�n cho Gia sư' });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// 6. Resolve Dispute (Xử l?� khiếu nại - Admin)
+// 6. Resolve Dispute (Xử l?� khiếu nại - Admin)
 app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
     
@@ -3985,7 +4000,7 @@ app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
             await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
             await pool.query("UPDATE disputes SET status = 'RESOLVED_RELEASE', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
         }
-        res.json({ success: true, message: 'Đ?� xử l?� khiếu nại th?�nh c?�ng' });
+        res.json({ success: true, message: 'Đ?� xử l?� khiếu nại th?�nh c?�ng' });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }

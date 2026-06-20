@@ -193,7 +193,7 @@ export default function TutorDashboard() {
       >
         {/* Logo */}
         <div className="px-md mb-lg">
-          <div className="flex items-center gap-sm">
+          <a href="#/" className="flex items-center gap-sm hover:opacity-80 transition-opacity">
             <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary">
               <span className="material-symbols-outlined text-[18px]">school</span>
             </div>
@@ -203,7 +203,7 @@ export default function TutorDashboard() {
               </h1>
               <p className="font-label-sm text-label-sm text-on-surface-variant">Tutor Portal</p>
             </div>
-          </div>
+          </a>
         </div>
 
         {/* Nav items */}

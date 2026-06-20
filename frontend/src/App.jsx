@@ -19,6 +19,7 @@ import FindTutorsPage from './FindTutorsPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
+import CourseMarketplace from './pages/CourseMarketplace'
 import PaymentResult from './pages/PaymentResult'
 import { useAuth } from './AuthContext'
 
@@ -248,6 +249,7 @@ function HomePage({ onGoSignIn }) {
             <a href="#/find-tutors">Tìm Gia Sư</a>
             <a href="#/become-tutor">Trở Thành Gia Sư</a>
             <a href="#/subjects">Môn Học</a>
+            <a href="#/courses">Khóa Học</a>
             {/* Show Admin link if user is admin */}
             {user?.role === 'admin' && (
               <a href="#/admin" style={{ color: 'var(--primary)', fontWeight: 700 }}>
@@ -579,6 +581,11 @@ function App() {
   // ── Route: Student Dashboard ──
   if (routeName === 'dashboard') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    if (user.role === 'admin') return <AdminDashboard />
+    if (user.role === 'tutor') return <TutorDashboard />
+    if (user.role === 'parent') return <ParentDashboard />
+    return <StudentDashboard />
+  } onGoSignIn={() => navigateTo('signin')} />
     return <StudentDashboard />
   }
 
@@ -695,6 +702,32 @@ function App() {
   }
 
   // ── Route: Tutor Detail Page ──
+  
+  // ── Route: Course Marketplace ──
+  if (routeName === 'courses') {
+    return (
+      <div className="min-h-screen bg-[#f8f9fb]">
+        <header className="site-header" style={{ position: 'sticky', top: 0, zIndex: 50, background: 'white', borderBottom: '1px solid #e2e8f0' }}>
+          <div className="container header-inner" style={{ height: '70px' }}>
+            <a href="#/" className="brand">
+              <span className="material-symbols-outlined icon-fill">school</span>
+              <span className="brand-name">EduX</span>
+            </a>
+            <nav className="header-nav">
+              <a href="#/courses" style={{ color: '#0d9488', fontWeight: 600 }}>Khóa Học</a>
+            </nav>
+            <div className="header-actions">
+              <button className="btn btn-outline" onClick={() => window.location.hash = '#/'}>Trang chủ</button>
+            </div>
+          </div>
+        </header>
+        <main className="py-8">
+          <CourseMarketplace />
+        </main>
+      </div>
+    );
+  }
+
   if (routeName === 'tutor-detail') {
     return <TutorProfile tutorId={route.id} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
