@@ -211,15 +211,15 @@ export default function CourseMarketplace() {
         .text-body-md { font-size: 16px; line-height: 24px; font-weight: 400; }
         .text-label-md { font-size: 14px; line-height: 20px; letter-spacing: 0.05em; font-weight: 500; }
 
-        /* Colors from Stitch */
-        .text-primary { color: #00175c; }
-        .bg-primary { background-color: #00175c; }
+        /* Colors aligned with FindTutorsPage */
+        .text-primary { color: #00288e; }
+        .bg-primary { background-color: #00288e; }
         .text-on-primary { color: #ffffff; }
         .bg-secondary-container { background-color: #8455ef; }
         .text-on-secondary-container { color: #fffbff; }
-        .text-on-surface-variant { color: #444652; }
+        .text-on-surface-variant { color: #444653; }
         .text-on-surface { color: #191c1e; }
-        .bg-surface { background-color: #f7f9fb; }
+        .bg-surface { background-color: #f8f9fb; }
         .border-outline-variant { border-color: #c5c5d4; }
         .bg-surface-container-lowest { background-color: #ffffff; }
         .text-outline { color: #757684; }
@@ -228,32 +228,35 @@ export default function CourseMarketplace() {
 
       {/* Navbar (Only rendered if on /courses route directly) */}
       {isStandalone && (
-        <header className="w-full sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-outline-variant/30 shadow-sm">
-          <div className="max-w-7xl mx-auto px-6 md:px-10 flex items-center justify-between h-16 md:h-20">
-            <div className="flex items-center gap-12">
-              <a className="font-bold text-xl md:text-2xl text-primary flex items-center gap-2" href="#/">
-                <span className="material-symbols-outlined text-2xl md:text-3xl" style={{fontVariationSettings: "'FILL' 1"}}>school</span>
-                EduX
-              </a>
-              <nav className="hidden md:flex items-center gap-8">
-                <a className="text-label-md text-on-surface-variant hover:text-primary transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
-                <a className="text-label-md text-on-surface-variant hover:text-primary transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
-                <a className="text-label-md text-on-surface-variant hover:text-primary transition-colors" href="#/subjects">Môn Học</a>
-                <a className="text-label-md text-primary border-b-2 border-primary pb-1" href="#/courses">Khóa Học</a>
-              </nav>
-            </div>
-            <div className="flex items-center gap-4">
+        <header className="w-full fixed top-0 z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
+          <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">
+            <a className="flex items-center gap-2 text-2xl font-bold text-[#00288e] hover:opacity-80 transition-opacity z-10" href="#/">
+              <span className="material-symbols-outlined text-[28px]" style={{fontVariationSettings: "'FILL' 1"}}>school</span>
+              EduX
+            </a>
+            <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
+              <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
+              <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
+              <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
+              <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/courses">Khóa Học</a>
+            </nav>
+            <div className="flex items-center gap-4 z-10">
               {user ? (
-                <button onClick={() => window.location.hash = '/dashboard'} className="px-5 py-2 md:px-6 md:py-2.5 rounded-lg text-label-md bg-primary text-on-primary hover:opacity-90 transition-all shadow-md">
-                  Dashboard
+                <button
+                  onClick={() => {
+                    if (user.role === 'admin') window.location.hash = '/admin';
+                    else if (user.role === 'tutor') window.location.hash = '/tutor';
+                    else window.location.hash = '/dashboard';
+                  }}
+                  className="hidden sm:block text-sm font-semibold text-[#00288e] hover:opacity-80"
+                >
+                  Bảng Điều Khiển
                 </button>
               ) : (
                 <>
-                  <button onClick={() => window.location.hash = '/signin'} className="hidden md:block px-6 py-2.5 rounded-lg text-label-md text-primary hover:bg-gray-100 transition-all">
-                    Đăng Nhập
-                  </button>
-                  <button onClick={() => window.location.hash = '/signup'} className="px-5 py-2 md:px-6 md:py-2.5 rounded-lg text-label-md bg-primary text-on-primary hover:opacity-90 active:scale-95 transition-all shadow-md">
-                    Đăng Ký
+                  <button onClick={() => window.location.hash = '/signin'} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Đăng Nhập</button>
+                  <button onClick={() => window.location.hash = '/signup'} className="bg-[#00288e] text-white px-6 py-2.5 rounded-lg font-semibold text-sm hover:bg-[#1e40af] transition-all active:scale-95 shadow-sm">
+                    Tham Gia Miễn Phí
                   </button>
                 </>
               )}
@@ -314,7 +317,7 @@ export default function CourseMarketplace() {
 
       {/* All Courses */}
       {!loading && (
-        <section ref={courseSectionRef} className={`${isStandalone ? 'pt-8 pb-12' : 'py-12'} bg-surface`}>
+        <section ref={courseSectionRef} className={`${isStandalone ? 'pt-24 pb-12' : 'py-12'} bg-surface`}>
           <div className="max-w-7xl mx-auto px-6 md:px-10">
             <div className={isStandalone ? "grid grid-cols-1 lg:grid-cols-[270px_minmax(0,1fr)] gap-8 items-start" : ""}>
               {isStandalone && (
