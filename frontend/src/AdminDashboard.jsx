@@ -1857,12 +1857,12 @@ function TransactionsView({ token }) {
 
 function ComplaintsView({ token }) {
   const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
-  const [disputes, setDisputes] = React.useState([])
-  const [loading, setLoading] = React.useState(true)
-  const [statusFilter, setStatusFilter] = React.useState('all')
-  const [resolveModal, setResolveModal] = React.useState(null)
-  const [adminNote, setAdminNote] = React.useState('')
-  const [resolving, setResolving] = React.useState(false)
+  const [disputes, setDisputes] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [resolveModal, setResolveModal] = useState(null)
+  const [adminNote, setAdminNote] = useState('')
+  const [resolving, setResolving] = useState(false)
 
   const fetchDisputes = async () => {
     setLoading(true)
@@ -1876,7 +1876,7 @@ function ComplaintsView({ token }) {
     setLoading(false)
   }
 
-  React.useEffect(() => { fetchDisputes() }, [])
+  useEffect(() => { fetchDisputes() }, [])
 
   const handleResolve = async (decision) => {
     if (!resolveModal) return
