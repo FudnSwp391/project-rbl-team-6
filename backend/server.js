@@ -401,6 +401,9 @@ const upload = multer({
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 
+const { createClient } = require('@supabase/supabase-js');
+const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
 async function uploadFileToStorage(file, path) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     throw new Error("Supabase Storage credentials missing in backend.");
@@ -848,6 +851,36 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
   }
 });
 
+// POST /api/tutor/presigned-url
+app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
+  try {
+    const { filename, bucket } = req.body;
+    if (!filename) return res.status(400).json({ message: "filename is required." });
+    
+    const targetBucket = bucket || 'tutor-documents';
+    const ext = filename.split('.').pop();
+    const safePath = `${req.user.userId}_${Date.now()}.${ext}`;
+
+    const { data, error } = await supabaseAdmin.storage
+      .from(targetBucket)
+      .createSignedUploadUrl(safePath);
+
+    if (error) {
+      console.error("Supabase sign error:", error);
+      return res.status(500).json({ message: "Lỗi cấu hình Storage." });
+    }
+    
+    return res.json({ 
+      signedUrl: data.signedUrl, 
+      path: data.path,
+      publicUrl: `${SUPABASE_URL}/storage/v1/object/public/${targetBucket}/${data.path}`
+    });
+  } catch (error) {
+    console.error("Presigned URL error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 app.get("/api/tutor/profile", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -862,23 +895,10 @@ app.get("/api/tutor/profile", verifyToken, async (req, res) => {
   }
 });
 
-// Upload profile data along with images
+// Upload profile data (JSON based)
 app.post(
   "/api/tutor/profile",
   verifyToken,
-  // Khai b├ío ─æß╗º 3 file fields ─æß╗â multer kh├┤ng n├⌐m LIMIT_UNEXPECTED_FILE
-  upload.fields([
-    { name: "profile_photo",  maxCount: 1  },
-    { name: "certificates",   maxCount: 10 },
-    { name: "cccd",           maxCount: 1  },
-  ]),
-  // ΓöÇΓöÇ Multer error handler: trß║ú JSON thay v├¼ HTML ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-  (err, req, res, next) => {
-    if (err) {
-      return res.status(400).json({ message: err.message || "File upload error." });
-    }
-    next();
-  },
   async (req, res) => {
     try {
       const {
@@ -888,6 +908,7 @@ app.post(
         education, language, hourly_rate,
         teaching_style, qualifications,
         teaching_methods, suitable_students, cert_metadata,
+        profile_photo_url, cccd_url
       } = req.body;
       const userId = req.user.userId;
 
@@ -898,22 +919,8 @@ app.post(
       try { parsedSuitableStudents = JSON.parse(suitable_students || '[]'); } catch {}
       try { parsedCertMetadata = JSON.parse(cert_metadata || '[]'); } catch {}
 
-      const files = req.files || {};
-      const photoFile = files["profile_photo"] ? files["profile_photo"][0] : null;
-      const certFiles = files["certificates"]  || [];
-      const cccdFile  = files["cccd"]          ? files["cccd"][0]          : null;
-
-      let photoPath = null;
-      let cccdPath  = null;
-
-      if (photoFile) {
-        const ext = photoFile.originalname.split('.').pop();
-        photoPath = await uploadFileToStorage(photoFile, `profile_photos/${userId}_${Date.now()}.${ext}`);
-      }
-      if (cccdFile) {
-        const ext = cccdFile.originalname.split('.').pop();
-        cccdPath = await uploadFileToStorage(cccdFile, `cccds/${userId}_${Date.now()}.${ext}`);
-      }
+            let photoPath = profile_photo_url || null;
+      let cccdPath  = cccd_url || null;
 
       const existing = await pool.query(
         "SELECT id FROM tutor_profiles WHERE user_id = $1",
@@ -2421,12 +2428,7 @@ app.put('/api/notifications/:id/read', verifyToken, async (req, res) => {
 
 
 
-const { createClient } = require('@supabase/supabase-js');
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_KEY || ''
-);
 const BUCKET = 'chat-files';
 
 // Multer: lưu file vào bộ nhớ tạm
