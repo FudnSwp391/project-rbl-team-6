@@ -19,6 +19,7 @@ import FindTutorsPage from './FindTutorsPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
+import PaymentResult from './pages/PaymentResult'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -112,6 +113,7 @@ const getRouteFromHash = () => {
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
+  if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
 
@@ -679,6 +681,9 @@ function App() {
   }
 
   // ── Route: Public Pages ──
+  if (routeName === 'payment-result') {
+    return <PaymentResult />
+  }
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }

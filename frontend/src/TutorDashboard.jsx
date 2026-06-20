@@ -14,12 +14,17 @@ import ProofUploader from './components/ProofUploader'
 import TutorCoursesTab from './components/TutorCourses'
 import { uploadAvatarFile, uploadDemoVideo } from './services/upload'
 import MessagesSection from './components/MessagesSection'
+import TutorAssessmentManager from './components/TutorAssessmentManager'
+import TutorGradingDashboard from './components/TutorGradingDashboard'
+import WalletWidget from './components/WalletWidget'
 
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Overview' },
   { icon: 'calendar_today', label: 'My Schedule' },
   { icon: 'group', label: 'Students' },
   { icon: 'video_library', label: 'Courses' },
+  { icon: 'description', label: 'Assessments' },
+  { icon: 'fact_check', label: 'Review & Grade' },
   { icon: 'payments', label: 'Earnings' },
   { icon: 'chat', label: 'Messages' },
   { icon: 'account_circle', label: 'My Profile' },
@@ -305,6 +310,8 @@ export default function TutorDashboard() {
                 <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full" />
               </button>
 
+              <WalletWidget token={token} />
+
               {/* Avatar */}
               <div className="w-10 h-10 rounded-full bg-primary overflow-hidden flex items-center justify-center text-on-primary font-label-md font-bold cursor-pointer border-2 border-surface select-none">
                 {user?.picture ? (
@@ -475,6 +482,14 @@ export default function TutorDashboard() {
 
           {activeTab === 'Courses' && (
             <TutorCoursesTab user={user} />
+          )}
+
+          {activeTab === 'Assessments' && (
+            <TutorAssessmentManager token={token} />
+          )}
+
+          {activeTab === 'Review & Grade' && (
+            <TutorGradingDashboard token={token} />
           )}
 
           {activeTab === 'Earnings' && (

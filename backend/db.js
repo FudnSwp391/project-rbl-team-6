@@ -5,9 +5,7 @@ dotenv.config();
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false, // bắt buộc với Supabase
-  },
+  ssl: false
 });
 
 // Test kết nối khi khởi động
