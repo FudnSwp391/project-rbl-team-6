@@ -3764,37 +3764,71 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
 });
 
 // POST /api/bookings — tạo lịch học mới
-// Ưu tiên dùng tutorId (gia sư thật trong DB); tutorName là snapshot tại thời điểm đặt.
+// Hỗ trợ cả định dạng cũ (lessonDate, timeSlot, tutorName) và mới (sessions, notes, childName)
 app.post("/api/bookings", verifyToken, async (req, res) => {
   try {
-    const { tutorId, tutorName, subject, lessonDate, timeSlot, note } = req.body || {};
+    const { tutorId, tutorName, subject, lessonDate, timeSlot, note, sessions, date, notes, childName } = req.body || {};
 
-    if (!tutorName || !lessonDate || !timeSlot) {
-      return res.status(400).json({ message: "Thiếu thông tin: cần tutorName, lessonDate, timeSlot." });
+    const bookingSessions = sessions && sessions.length > 0 
+      ? sessions 
+      : [{ date: lessonDate || date, timeSlot }];
+
+    if (!bookingSessions[0] || !bookingSessions[0].date || !bookingSessions[0].timeSlot) {
+      return res.status(400).json({ message: "Thiếu thông tin: cần lessonDate, timeSlot (hoặc mảng sessions)." });
     }
 
-    // Nếu có tutorId, kiểm tra gia sư đó đã được duyệt
+    let finalTutorName = tutorName;
+
+    // Nếu có tutorId, kiểm tra gia sư đó đã được duyệt và lấy tên nếu chưa truyền
     if (tutorId) {
-      const check = await pool.query(
-        `SELECT 1 FROM tutor_profiles WHERE user_id = $1 AND status = 'approved'`,
+      const tutorCheck = await pool.query(
+        `SELECT u.full_name FROM tutor_profiles tp 
+         JOIN users u ON tp.user_id = u.id 
+         WHERE tp.user_id = $1 AND tp.status = 'approved'`,
         [tutorId]
       );
-      if (check.rowCount === 0) {
+      if (tutorCheck.rowCount === 0) {
         return res.status(400).json({ message: "Gia sư không tồn tại hoặc chưa được duyệt." });
+      }
+      if (!finalTutorName) {
+        finalTutorName = tutorCheck.rows[0].full_name;
       }
     }
 
-    // Có gia sư thật → chờ gia sư duyệt (pending). Không có (mock) → confirmed luôn.
+    if (!finalTutorName) {
+        finalTutorName = "Gia sư"; // Fallback nếu vẫn không có
+    }
+
     const initialStatus = tutorId ? "pending" : "confirmed";
+    const finalNote = notes || note || null;
+    const createdBookings = [];
 
-    const result = await pool.query(
-      `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, created_at`,
-      [req.user.userId, tutorId || null, tutorName, subject || null, lessonDate, timeSlot, note || null, initialStatus]
-    );
+    // Chèn từng session
+    for (const session of bookingSessions) {
+      const sessionDate = session.date || session.lessonDate;
+      const sessionTimeSlot = session.timeSlot;
 
-    return res.status(201).json(result.rows[0]);
+      if (!sessionDate || !sessionTimeSlot) continue;
+
+      const result = await pool.query(
+        `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, created_at`,
+        [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus]
+      );
+      createdBookings.push(result.rows[0]);
+    }
+
+    if (createdBookings.length === 0) {
+      return res.status(400).json({ message: "Không thể tạo lịch hẹn." });
+    }
+
+    return res.status(201).json({ 
+      message: "Đặt lịch thành công.", 
+      bookings: createdBookings,
+      // Trả về bản ghi đầu tiên để tương thích ngược với API cũ
+      ...createdBookings[0] 
+    });
   } catch (error) {
     console.error("[bookings] POST error:", error.code, error.message, error.detail || "");
     // Trả lỗi cụ thể cho client để dev dễ debug
