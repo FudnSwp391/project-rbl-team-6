@@ -3747,12 +3747,15 @@ app.get("/api/tutor/students", verifyToken, async (req, res) => {
 app.get("/api/bookings", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, b.lesson_date,
-              b.time_slot, b.note, b.status, b.created_at,
-              u.picture AS tutor_picture
+      `SELECT b.id, b.tutor_id, b.tutor_name, b.student_id, b.subject, b.lesson_date,
+              b.time_slot, b.note, b.child_name, b.status, b.created_at,
+              u_tutor.picture AS tutor_picture,
+              u_student.picture AS student_picture, u_student.full_name AS "studentName"
        FROM bookings b
-       LEFT JOIN users u ON u.id = b.tutor_id
-       WHERE b.student_id = $1 AND b.status IN ('pending', 'confirmed', 'declined')
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       LEFT JOIN users u_student ON u_student.id = b.student_id
+       WHERE (b.student_id = $1 OR b.tutor_id = $1)
+         AND b.status IN ('Pending', 'Approved', 'Declined', 'Rejected', 'Cancelled', 'pending', 'confirmed', 'declined')
        ORDER BY b.lesson_date ASC, b.time_slot ASC`,
       [req.user.userId]
     );
