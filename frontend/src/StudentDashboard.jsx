@@ -11,6 +11,7 @@ import PracticeMode from './PracticeMode'
 import ExamPapers from './ExamPapers'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
+import NotificationDropdown from './components/NotificationDropdown'
 import { getStudentBookings, confirmLessonComplete, reportTutor } from './services/api'
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
 const MY_TUTORS = [
@@ -110,12 +111,7 @@ export default function StudentDashboard() {
 
             <div className="flex items-center gap-sm lg:gap-md">
               {/* Notification */}
-              <button
-                aria-label="Thông báo"
-                className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
-              >
-                <span className="material-symbols-outlined">notifications</span>
-              </button>
+              <NotificationDropdown token={token} />
 
               <button
                 aria-label="Trợ giúp"

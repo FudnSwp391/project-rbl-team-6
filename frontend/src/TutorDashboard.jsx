@@ -17,6 +17,7 @@ import MessagesSection from './components/MessagesSection'
 import TutorAssessmentManager from './components/TutorAssessmentManager'
 import TutorGradingDashboard from './components/TutorGradingDashboard'
 import WalletWidget from './components/WalletWidget'
+import NotificationDropdown from './components/NotificationDropdown'
 
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Overview' },
@@ -310,10 +311,7 @@ export default function TutorDashboard() {
             {/* Right actions */}
             <div className="flex items-center gap-md">
               {/* Notification bell */}
-              <button className="relative p-2 text-on-surface-variant hover:text-primary transition-colors duration-200">
-                <span className="material-symbols-outlined">notifications</span>
-                <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full" />
-              </button>
+              <NotificationDropdown token={token} />
 
               <WalletWidget token={token} />
 
