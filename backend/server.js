@@ -3883,25 +3883,28 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
   }
 });
 
-// PATCH /api/tutor/bookings/:id/status — gia sư duyệt / từ chối lịch (chỉ lịch của mình)
-app.patch("/api/tutor/bookings/:id/status", verifyToken, async (req, res) => {
+// PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
+app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
   try {
     const { status } = req.body || {};
-    if (!["confirmed", "declined"].includes(status)) {
-      return res.status(400).json({ message: "status phải là 'confirmed' hoặc 'declined'." });
+    if (!["Approved", "Declined", "Cancelled", "Rejected"].includes(status)) {
+      return res.status(400).json({ message: "status phải là 'Approved', 'Declined', 'Cancelled', hoặc 'Rejected'." });
     }
+    
+    // Tạm thời cho phép cả tutor và student update trạng thái để linh hoạt.
+    // Nếu muốn strict: kiểm tra quyền.
     const r = await pool.query(
       `UPDATE bookings SET status = $1
-       WHERE id = $2 AND tutor_id = $3 AND status = 'pending'
+       WHERE id = $2 AND (tutor_id = $3 OR student_id = $3)
        RETURNING id, status`,
       [status, req.params.id, req.user.userId]
     );
     if (r.rowCount === 0) {
-      return res.status(404).json({ message: "Không tìm thấy lịch chờ duyệt của bạn." });
+      return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
     }
     return res.json(r.rows[0]);
   } catch (e) {
-    console.error("[tutor/bookings PATCH] error:", e);
+    console.error("[bookings PATCH] error:", e);
     return res.status(500).json({ message: "Server error." });
   }
 });
