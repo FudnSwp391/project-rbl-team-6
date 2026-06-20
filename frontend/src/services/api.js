@@ -1,4 +1,4 @@
-﻿/**
+/**
  * api.js
  * API client for EduX.
  * Uses native fetch to connect to the backend, with a complete Mock + LocalStorage fallback
@@ -483,4 +483,4 @@ export async function updateCourseProgress(courseId, lessonId, payload = {}) {
     body: JSON.stringify(payload),
   })
 }
-
+export const apiRequest = request;

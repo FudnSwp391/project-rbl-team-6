@@ -578,14 +578,12 @@ function App() {
     return <AdminDashboard />
   }
 
-  // ── Route: Student Dashboard ──
+  // ── Route: Dashboard ──
   if (routeName === 'dashboard') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     if (user.role === 'admin') return <AdminDashboard />
     if (user.role === 'tutor') return <TutorDashboard />
     if (user.role === 'parent') return <ParentDashboard />
-    return <StudentDashboard />
-  } onGoSignIn={() => navigateTo('signin')} />
     return <StudentDashboard />
   }
 
