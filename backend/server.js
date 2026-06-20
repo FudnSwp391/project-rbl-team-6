@@ -3680,6 +3680,343 @@ app.get("/api/tutor/students", verifyToken, async (req, res) => {
   }
 });
 
+// GET /api/bookings — danh sách lịch học của user hiện tại
+app.get("/api/bookings", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, b.lesson_date,
+              b.time_slot, b.note, b.status, b.created_at,
+              u.picture AS tutor_picture
+       FROM bookings b
+       LEFT JOIN users u ON u.id = b.tutor_id
+       WHERE b.student_id = $1 AND b.status IN ('pending', 'confirmed', 'declined')
+       ORDER BY b.lesson_date ASC, b.time_slot ASC`,
+      [req.user.userId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error("[bookings] GET error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// POST /api/bookings — tạo lịch học mới
+// Ưu tiên dùng tutorId (gia sư thật trong DB); tutorName là snapshot tại thời điểm đặt.
+app.post("/api/bookings", verifyToken, async (req, res) => {
+  try {
+    const { tutorId, tutorName, subject, lessonDate, timeSlot, note } = req.body || {};
+
+    if (!tutorName || !lessonDate || !timeSlot) {
+      return res.status(400).json({ message: "Thiếu thông tin: cần tutorName, lessonDate, timeSlot." });
+    }
+
+    // Nếu có tutorId, kiểm tra gia sư đó đã được duyệt
+    if (tutorId) {
+      const check = await pool.query(
+        `SELECT 1 FROM tutor_profiles WHERE user_id = $1 AND status = 'approved'`,
+        [tutorId]
+      );
+      if (check.rowCount === 0) {
+        return res.status(400).json({ message: "Gia sư không tồn tại hoặc chưa được duyệt." });
+      }
+    }
+
+    // Có gia sư thật → chờ gia sư duyệt (pending). Không có (mock) → confirmed luôn.
+    const initialStatus = tutorId ? "pending" : "confirmed";
+
+    const result = await pool.query(
+      `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, created_at`,
+      [req.user.userId, tutorId || null, tutorName, subject || null, lessonDate, timeSlot, note || null, initialStatus]
+    );
+
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error("[bookings] POST error:", error.code, error.message, error.detail || "");
+    // Trả lỗi cụ thể cho client để dev dễ debug
+    if (error.code === "42P01") {
+      return res.status(500).json({ message: "Bảng 'bookings' chưa tồn tại trong database. Hãy chạy SQL migration trong Supabase." });
+    }
+    if (error.code === "42703") {
+      return res.status(500).json({ message: `Cột bị thiếu trong bảng bookings: ${error.message}. Hãy chạy ALTER TABLE migration.` });
+    }
+    if (error.code === "23503") {
+      return res.status(400).json({ message: "Foreign key không hợp lệ (gia sư hoặc học sinh không tồn tại)." });
+    }
+    return res.status(500).json({ message: `DB error [${error.code || "?"}]: ${error.message}` });
+  }
+});
+
+// GET /api/tutor/bookings — lịch học sinh đặt với gia sư đang đăng nhập.
+// Khớp CHÍNH XÁC theo tutor_id (= user.id của gia sư trong JWT).
+app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.id, b.subject, b.lesson_date, b.time_slot, b.note, b.status, b.created_at,
+              u.full_name AS student_name, u.email AS student_email, u.picture AS student_picture
+       FROM bookings b
+       JOIN users u ON u.id = b.student_id
+       WHERE b.tutor_id = $1 AND b.status IN ('pending', 'confirmed')
+       ORDER BY (b.status = 'pending') DESC, b.lesson_date ASC, b.time_slot ASC`,
+      [req.user.userId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error("[tutor/bookings] GET error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// PATCH /api/tutor/bookings/:id/status — gia sư duyệt / từ chối lịch (chỉ lịch của mình)
+app.patch("/api/tutor/bookings/:id/status", verifyToken, async (req, res) => {
+  try {
+    const { status } = req.body || {};
+    if (!["confirmed", "declined"].includes(status)) {
+      return res.status(400).json({ message: "status phải là 'confirmed' hoặc 'declined'." });
+    }
+    const r = await pool.query(
+      `UPDATE bookings SET status = $1
+       WHERE id = $2 AND tutor_id = $3 AND status = 'pending'
+       RETURNING id, status`,
+      [status, req.params.id, req.user.userId]
+    );
+    if (r.rowCount === 0) {
+      return res.status(404).json({ message: "Không tìm thấy lịch chờ duyệt của bạn." });
+    }
+    return res.json(r.rows[0]);
+  } catch (e) {
+    console.error("[tutor/bookings PATCH] error:", e);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// DELETE /api/bookings/:id — hủy lịch (chỉ chủ sở hữu mới hủy được)
+app.delete("/api/bookings/:id", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM bookings WHERE id = $1 AND student_id = $2 RETURNING id`,
+      [req.params.id, req.user.userId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Không tìm thấy lịch học hoặc bạn không có quyền hủy." });
+    }
+
+    return res.json({ message: "Đã hủy lịch học.", id: result.rows[0].id });
+  } catch (error) {
+    console.error("[bookings] DELETE error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── Google Gemini AI: gợi ý gia sư ──────────────────────────────────────────
+// Frontend POST { userMessage } → backend TỰ query DB (chỉ gia sư status='approved')
+// → gọi Gemini → trả { reply, tutorIds }. API key giữ kín ở backend.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+
+// Danh sách model thử lần lượt: nếu model đầu hết quota (429) hoặc quá tải (503),
+// tự động fallback sang model tiếp theo. Mỗi model free tier có quota riêng,
+// nên thử nhiều model giúp tăng tổng số request dùng được mỗi ngày.
+const GEMINI_MODELS = [
+  process.env.GEMINI_MODEL || "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-flash-latest",
+].filter((m, i, arr) => arr.indexOf(m) === i); // loại trùng
+
+// Gọi 1 model Gemini. Trả { ok, data?, status?, errText? }
+async function callGeminiModel(model, prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.7,
+          topP: 0.9,
+          // Để budget rộng: model 2.5 có "thinking" ngốn token, cần dư chỗ cho JSON output
+          maxOutputTokens: 2048,
+          responseMimeType: "application/json",
+        },
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false, status: res.status, errText: await res.text() };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (err) {
+    return { ok: false, status: 0, errText: err.message };
+  }
+}
+
+const askAiHandler = async (req, res) => {
+  try {
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ error: "GEMINI_API_KEY chưa được cấu hình trong .env" });
+    }
+
+    const { userMessage } = req.body || {};
+    if (!userMessage || typeof userMessage !== "string") {
+      return res.status(400).json({ error: "Thiếu trường userMessage" });
+    }
+
+    // ⚠️ QUAN TRỌNG (theo spec TV3): chỉ lấy gia sư status='approved' từ DB
+    const tutorsFromDB = await pool.query(`
+      SELECT tp.id, u.full_name AS name,
+             tp.bio, tp.experience_years AS experience,
+             tp.hourly_rate AS price_per_hour,
+             tp.location, tp.teaching_methods AS methods,
+             tp.avg_rating AS rating, tp.review_count AS reviews,
+             ARRAY_AGG(DISTINCT s.name) FILTER (WHERE s.name IS NOT NULL) AS subjects,
+             ARRAY_AGG(DISTINCT ts.level) FILTER (WHERE ts.level IS NOT NULL) AS levels
+      FROM tutor_profiles tp
+      JOIN users u ON u.id = tp.user_id
+      LEFT JOIN tutor_subjects ts ON ts.tutor_id = tp.id
+      LEFT JOIN subjects s ON s.id = ts.subject_id
+      WHERE tp.status = 'approved'
+      GROUP BY tp.id, u.full_name, tp.bio, tp.experience_years, tp.hourly_rate,
+               tp.location, tp.teaching_methods, tp.avg_rating, tp.review_count
+      ORDER BY tp.avg_rating DESC NULLS LAST, tp.review_count DESC
+    `);
+
+    // Rút gọn tutors để tiết kiệm token gửi Gemini
+    const tutorSummary = tutorsFromDB.rows.map((t) => ({
+      id: t.id,
+      name: t.name,
+      subjects: t.subjects || [],
+      levels: t.levels || [],
+      rating: t.rating,
+      pricePerHour: t.price_per_hour,
+      methods: t.methods || [],
+      location: t.location,
+      experience: t.experience,
+      bio: t.bio,
+    }));
+
+    if (tutorSummary.length === 0) {
+      return res.json({
+        reply: "Hiện tại chưa có gia sư nào được duyệt trong hệ thống. Vui lòng quay lại sau.",
+        tutorIds: [],
+      });
+    }
+
+    const systemPrompt = `Bạn là trợ lý AI thân thiện của EduX — nền tảng kết nối gia sư tại Việt Nam.
+
+Cách phản hồi tuỳ theo loại tin nhắn:
+
+A) NẾU người dùng CHÀO HỎI hoặc TRÒ CHUYỆN PHIẾM (vd: "hello", "xin chào", "hi", "chào bạn", "bạn khoẻ không", "bạn là ai", "cảm ơn", "EduX là gì"):
+   → Trả lời tự nhiên, ấm áp như một người bạn (2-3 câu).
+   → Tự giới thiệu nếu user chào lần đầu, gợi ý họ mô tả nhu cầu học.
+   → tutorIds = [] (mảng rỗng, KHÔNG đề xuất gia sư).
+
+B) NẾU người dùng MÔ TẢ NHU CẦU TÌM GIA SƯ (vd: "Tìm gia sư Toán lớp 10", "Em cần học Tiếng Anh IELTS"):
+   → Trả lời ngắn gọn xác nhận đã hiểu (1-2 câu).
+   → Chọn TỐI ĐA 3 gia sư phù hợp nhất từ danh sách (dựa môn học, cấp lớp, giá, hình thức, địa điểm).
+   → tutorIds là mảng id các gia sư đã chọn.
+
+C) NẾU không có gia sư phù hợp với yêu cầu cụ thể:
+   → tutorIds = [], giải thích nhẹ nhàng và gợi ý nới rộng tiêu chí.
+
+D) NẾU câu hỏi KHÔNG liên quan đến học tập / gia sư (vd: "thời tiết hôm nay", "kể chuyện cười"):
+   → Lịch sự từ chối, hướng người dùng quay về chủ đề tìm gia sư.
+   → tutorIds = [].
+
+LUÔN trả lời bằng tiếng Việt, ấm áp, ngắn gọn, KHÔNG dùng markdown.
+
+QUAN TRỌNG: Chỉ trả về JSON thuần tuý theo format:
+{"reply": "câu trả lời tự nhiên", "tutorIds": [1, 2, 3]}
+
+DANH SÁCH GIA SƯ HIỆN CÓ:
+${JSON.stringify(tutorSummary, null, 2)}
+
+TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
+
+    // Thử lần lượt các model — fallback khi gặp 429 (hết quota) hoặc 503 (quá tải)
+    let data = null;
+    let lastErr = { status: 0, errText: "Không có model khả dụng" };
+    let usedModel = null;
+
+    for (const model of GEMINI_MODELS) {
+      const result = await callGeminiModel(model, systemPrompt);
+      if (result.ok) {
+        data = result.data;
+        usedModel = model;
+        break;
+      }
+      lastErr = result;
+      console.warn(`[Gemini] Model ${model} lỗi ${result.status} — thử model tiếp theo`);
+      // Chỉ fallback khi lỗi tạm thời (quota/quá tải). Lỗi khác (400, 401) thì dừng luôn.
+      if (result.status !== 429 && result.status !== 503 && result.status !== 0) break;
+    }
+
+    if (!data) {
+      console.error("[Gemini] Tất cả model đều lỗi:", lastErr.status, lastErr.errText);
+      return res.status(502).json({ error: "Lỗi từ Gemini API", detail: lastErr.errText });
+    }
+
+    console.log(`[Gemini] ✓ Trả lời bằng model: ${usedModel}`);
+
+    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText) {
+      console.error("[Gemini] Empty response", data);
+      return res.status(502).json({ error: "Gemini trả phản hồi rỗng" });
+    }
+
+    // Bóc markdown nếu Gemini lỡ trả ```json ... ```
+    let cleaned = rawText
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (e) {
+      // Thử trích xuất object JSON đầu tiên { ... } trong chuỗi (phòng khi có text thừa)
+      const firstBrace = cleaned.indexOf("{");
+      const lastBrace = cleaned.lastIndexOf("}");
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        try {
+          parsed = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+        } catch (e2) {
+          console.error("[Gemini] JSON parse error:", e2.message, "raw:", rawText);
+          return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+        }
+      } else {
+        console.error("[Gemini] JSON parse error:", e.message, "raw:", rawText);
+        return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+      }
+    }
+
+    if (typeof parsed.reply !== "string" || !Array.isArray(parsed.tutorIds)) {
+      console.error("[Gemini] Invalid schema", parsed);
+      return res.status(502).json({ error: "Gemini trả format không hợp lệ" });
+    }
+
+    return res.json(parsed);
+  } catch (error) {
+    console.error("[ask-ai] Server error:", error);
+    return res.status(500).json({ error: "Server error", detail: error.message });
+  }
+};
+
+// Đăng ký cả 2 đường dẫn cho cùng 1 handler:
+//   /api/ai-suggest — tên theo spec Thành viên 3
+//   /api/ask-ai     — tên cũ, giữ để không vỡ frontend hiện tại
+app.post("/api/ai-suggest", askAiHandler);
+app.post("/api/ask-ai", askAiHandler);
+
+// ─── Start server ─────────────────────────────────────────────────────────────
+app.listen(port, () => {
+  console.log(`🚀 Server is running on http://localhost:${port}`);
+});
+
+
 app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "tutor") {
