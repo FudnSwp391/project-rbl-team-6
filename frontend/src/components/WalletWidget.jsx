@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -106,9 +107,9 @@ export default function WalletWidget({ token }) {
                 </button>
             </div>
 
-            {/* Top-up Modal */}
-            {showTopUp && (
-                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4">
+            {/* Top-up Modal via Portal */}
+            {showTopUp && createPortal(
+                <div className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center backdrop-blur-sm px-4">
                     <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl relative">
                         <button onClick={() => setShowTopUp(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
                             <span className="material-symbols-outlined">close</span>
@@ -154,25 +155,26 @@ export default function WalletWidget({ token }) {
                             }
                         </button>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
-            {/* Transaction History Modal */}
-            {showHistory && (
-                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4">
+            {/* Transaction History Modal via Portal */}
+            {showHistory && createPortal(
+                <div className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center backdrop-blur-sm px-4">
                     <div className="bg-white rounded-2xl w-full max-w-md shadow-xl relative flex flex-col max-h-[80vh]">
-                        <div className="flex items-center justify-between p-5 border-b">
+                        <div className="flex items-center justify-between p-5 border-b shrink-0">
                             <h2 className="text-lg font-bold flex items-center gap-2">
                                 <span className="material-symbols-outlined text-[#10B981]">history</span>
                                 Lịch sử giao dịch
                             </h2>
-                            <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-gray-600">
+                            <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-gray-600 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors">
                                 <span className="material-symbols-outlined">close</span>
                             </button>
                         </div>
 
                         {/* Balance summary */}
-                        <div className="grid grid-cols-2 gap-3 p-4 bg-gray-50 border-b">
+                        <div className="grid grid-cols-2 gap-3 p-4 bg-gray-50 border-b shrink-0">
                             <div className="text-center">
                                 <p className="text-xs text-gray-500">Số dư khả dụng</p>
                                 <p className="font-bold text-green-600">{fmtMoney(wallet?.balance)}</p>
@@ -212,7 +214,8 @@ export default function WalletWidget({ token }) {
                             )}
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );
