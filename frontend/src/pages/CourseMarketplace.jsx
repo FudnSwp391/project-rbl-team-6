@@ -130,7 +130,7 @@ export default function CourseMarketplace() {
     return (
       <div 
         className="group bg-surface-container-lowest rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all border border-outline-variant/20 flex flex-col cursor-pointer"
-        onClick={() => { window.location.hash = `/courses/${course.id}`; }}
+        onClick={() => { window.location.hash = `/course/${course.id}`; }}
       >
         <div className="relative aspect-[16/9]">
           {imageUrl ? (

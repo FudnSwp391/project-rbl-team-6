@@ -12,6 +12,7 @@ import TutorDashboard from './TutorDashboard'
 import ParentDashboard from './ParentDashboard'
 import MyCourses from './pages/MyCourses'
 import CourseDetail from './pages/CourseDetail'
+import CoursePlayer from './pages/CoursePlayer'
 import QuizTaking from './QuizTaking'
 import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
@@ -20,6 +21,7 @@ import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
 import CourseMarketplace from './pages/CourseMarketplace'
+import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
 import { useAuth } from './AuthContext'
 
@@ -109,6 +111,10 @@ const getRouteFromHash = () => {
   if (normalized === '/tutor-profile') return { name: 'tutor-profile' }
 
   const tutorDetailMatch = normalized.match(/^\/tutor-detail\/([^/]+)$/)
+  const bookingMatch = normalized.match(/^\/booking\/([^/]+)$/)
+  const coursePlayerMatch = normalized.match(/^\/course-player\/([^/]+)$/)
+  if (coursePlayerMatch) return { name: 'courseplayer', id: coursePlayerMatch[1] }
+  if (bookingMatch) return { name: 'booking', id: bookingMatch[1] }
   if (tutorDetailMatch) return { name: 'tutor-detail', id: tutorDetailMatch[1] }
   if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
@@ -726,6 +732,10 @@ function App() {
     );
   }
 
+  if (routeName === 'booking') {
+    return <BookingCalendar tutorId={route.id} onGoHome={() => navigateTo('home')} />
+  }
+
   if (routeName === 'tutor-detail') {
     return <TutorProfile tutorId={route.id} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
@@ -744,6 +754,11 @@ function App() {
   }
 
   // ── Route: Course Detail (protected) ──
+  if (routeName === 'courseplayer') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <CoursePlayer courseId={route.id} onGoHome={() => navigateTo('home')} />
+  }
+
   if (routeName === 'coursedetail') {
     if (!user) {
       return (
@@ -753,7 +768,7 @@ function App() {
         />
       )
     }
-    return <CourseDetail />
+    return <CourseDetail courseId={route.id} />
   }
 
   // ── Route: Home ──
