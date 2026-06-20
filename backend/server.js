@@ -1106,6 +1106,47 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
 });
 
 // Approves a tutor application and optionally sends them an email
+
+// POST /api/admin/tutors/:id/release-hold — Admin thủ công nhả cọc cho gia sư
+app.post("/api/admin/tutors/:id/release-hold", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // id này có thể là profile id hoặc user_id, ta check cả hai
+    const profileRes = await client.query('SELECT user_id FROM tutor_profiles WHERE id=$1 OR user_id=$1 LIMIT 1', [id]);
+    if (!profileRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: "Không tìm thấy gia sư." });
+    }
+    const userId = profileRes.rows[0].user_id;
+
+    const walletRes = await client.query('SELECT id, held_balance FROM wallets WHERE user_id=$1', [userId]);
+    if (!walletRes.rows.length || Number(walletRes.rows[0].held_balance) === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: "Gia sư không có tiền trong ví cọc ảo." });
+    }
+
+    const heldAmount = Number(walletRes.rows[0].held_balance);
+    await client.query('UPDATE wallets SET balance = balance + held_balance, held_balance = 0 WHERE id=$1', [walletRes.rows[0].id]);
+    
+    await client.query(`
+      INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+      VALUES ($1,'hold_released','Admin đã nhả cọc',$2,'verified_user',$1,'system')
+    `, [userId, `Admin đã thủ công nhả ${heldAmount.toLocaleString('vi-VN')}đ tiền cọc vào số dư khả dụng của bạn.`]);
+
+    await client.query('COMMIT');
+    return res.json({ success: true, message: "Đã nhả cọc thành công." });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error("Release hold error:", err);
+    return res.status(500).json({ message: "Server error." });
+  } finally {
+    client.release();
+  }
+});
+
 app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { notes } = req.body || {};   // optional admin notes included in email
@@ -1438,6 +1479,12 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
       [id]
     );
     user.login_logs = logsResult.rows;
+
+    const walletRes = await pool.query(
+      `SELECT balance, held_balance FROM wallets WHERE user_id = $1 LIMIT 1`,
+      [id]
+    );
+    user.wallet = walletRes.rows[0] || { balance: 0, held_balance: 0 };
 
     return res.json(user);
   } catch (err) {
@@ -3752,11 +3799,15 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
     const result = await pool.query(
       `SELECT b.id, b.tutor_id, b.tutor_name, b.student_id, b.subject, b.lesson_date,
               b.time_slot, b.note, b.child_name, b.status, b.created_at,
+              b.lesson_fee, b.escrow_tx_id, b.escrow_released_at, b.auto_release_at,
               u_tutor.picture AS tutor_picture,
-              u_student.picture AS student_picture, u_student.full_name AS "studentName"
+              u_student.picture AS student_picture, u_student.full_name AS "studentName",
+              a.status AS attendance_status,
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS has_open_dispute
        FROM bookings b
        LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
        LEFT JOIN users u_student ON u_student.id = b.student_id
+       LEFT JOIN attendance a ON a.booking_id = b.id
        WHERE (b.student_id = $1 OR b.tutor_id = $1)
          AND b.status IN ('Pending', 'Approved', 'Declined', 'Rejected', 'Cancelled', 'pending', 'confirmed', 'declined')
        ORDER BY b.lesson_date ASC, b.time_slot ASC`,
@@ -3765,6 +3816,64 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
     return res.json(result.rows);
   } catch (error) {
     console.error("[bookings] GET error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// GET /api/student/bookings — bookings đầy đủ cho học sinh (bao gồm escrow status)
+app.get("/api/student/bookings", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject,
+              to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date,
+              b.time_slot, b.note, b.child_name, b.status, b.created_at,
+              b.lesson_fee, b.escrow_tx_id, b.escrow_released_at, b.auto_release_at,
+              u_tutor.full_name AS tutor_full_name,
+              u_tutor.picture AS tutor_picture,
+              tp.reputation_score, tp.subjects AS tutor_subjects,
+              a.status AS attendance_status,
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS has_open_dispute
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
+       LEFT JOIN attendance a ON a.booking_id = b.id
+       WHERE b.student_id = $1
+       ORDER BY b.lesson_date DESC, b.time_slot DESC
+       LIMIT 50`,
+      [req.user.userId]
+    );
+    return res.json({ bookings: result.rows });
+  } catch (error) {
+    console.error("[student/bookings] GET error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// GET /api/admin/disputes — Lấy tất cả disputes cho admin
+app.get("/api/admin/disputes", verifyToken, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+  try {
+    const result = await pool.query(`
+      SELECT d.id, d.reason, d.status, d.admin_note, d.created_at, d.resolved_at,
+             d.booking_id,
+             b.subject, to_char(b.lesson_date,'YYYY-MM-DD') AS lesson_date,
+             b.lesson_fee, b.tutor_name,
+             u_reporter.full_name AS reporter_name, u_reporter.email AS reporter_email,
+             u_tutor.full_name AS tutor_full_name, u_tutor.email AS tutor_email,
+             u_student.full_name AS student_name
+      FROM disputes d
+      JOIN bookings b ON b.id = d.booking_id
+      JOIN users u_reporter ON u_reporter.id = d.raised_by
+      LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+      LEFT JOIN users u_student ON u_student.id = b.student_id
+      ORDER BY
+        CASE d.status WHEN 'OPEN' THEN 0 ELSE 1 END,
+        d.created_at DESC
+      LIMIT 100
+    `);
+    return res.json({ disputes: result.rows });
+  } catch (e) {
+    console.error("Admin disputes error:", e);
     return res.status(500).json({ message: "Server error." });
   }
 });
@@ -3809,6 +3918,13 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     const finalNote = notes || note || null;
     const createdBookings = [];
 
+    // Lấy hourly_rate của gia sư để set lesson_fee ngay từ đầu
+    let lessonFeeForBooking = 0;
+    if (tutorId) {
+      const rateRes = await pool.query('SELECT hourly_rate FROM tutor_profiles WHERE user_id=$1 LIMIT 1', [tutorId]);
+      lessonFeeForBooking = Number(rateRes.rows[0]?.hourly_rate || 0);
+    }
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -3821,10 +3937,10 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         if (!sessionDate || !sessionTimeSlot) continue;
 
         const result = await client.query(
-          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, created_at`,
-          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus]
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, created_at`,
+          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking]
         );
         createdBookings.push(result.rows[0]);
       }
@@ -4447,91 +4563,113 @@ app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
     }
 
     const tutorId = req.user.userId;
-    const profileResult = await pool.query(
-      `SELECT hourly_rate
-       FROM tutor_profiles
-       WHERE user_id = $1
-       LIMIT 1`,
-      [tutorId]
-    );
+    const [profileResult, walletResult] = await Promise.all([
+      pool.query(`SELECT hourly_rate, reputation_score, completed_lessons_count FROM tutor_profiles WHERE user_id=$1 LIMIT 1`, [tutorId]),
+      pool.query(`SELECT w.id, w.balance, w.held_balance FROM wallets w WHERE w.user_id=$1`, [tutorId])
+    ]);
 
     const hourlyRate = Number(profileResult.rows[0]?.hourly_rate || 0);
+    const wallet = walletResult.rows[0] || { balance: 0, held_balance: 0 };
+
+    // Lấy lessons với lesson_fee thực tế từ booking
     const lessonResult = await pool.query(
       `SELECT
-         b.id,
-         b.student_id AS "studentId",
+         b.id, b.student_id AS "studentId",
          COALESCE(b.child_name, b.student_name, s.full_name, 'Student') AS "studentName",
-         b.child_name AS "childName",
-         b.subject,
+         b.child_name AS "childName", b.subject,
          to_char(b.lesson_date, 'YYYY-MM-DD') AS date,
          b.time_slot AS "timeSlot",
          b.status AS "bookingStatus",
+         COALESCE(b.lesson_fee, $2) AS "lessonFee",
+         b.escrow_released_at AS "escrowReleasedAt",
+         b.auto_release_at AS "autoReleaseAt",
          a.status AS "attendanceStatus",
          a.note AS "attendanceNote",
-         a.marked_at AS "markedAt"
+         a.marked_at AS "markedAt",
+         EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS "hasOpenDispute"
        FROM bookings b
        LEFT JOIN users s ON s.id = b.student_id
        LEFT JOIN attendance a ON a.booking_id = b.id
-       WHERE b.tutor_id = $1
-         AND b.status = 'Approved'
+       WHERE b.tutor_id = $1 AND b.status = 'Approved'
        ORDER BY b.lesson_date DESC, b.time_slot DESC`,
-      [tutorId]
+      [tutorId, hourlyRate]
     );
 
     const lessons = lessonResult.rows.map((lesson) => {
       const attendance = lesson.attendanceStatus || "awaiting_attendance";
-      const isPayable = attendance === "present";
-      const isPending = attendance === "awaiting_attendance";
-      const amount = isPayable ? hourlyRate : 0;
+      const fee = Number(lesson.lessonFee || 0);
+      const tutorShare = Math.floor(fee * 0.9); // 90% sau khi trừ 10% hoa hồng
+
+      let paymentStatus;
+      if (lesson.escrowReleasedAt) {
+        paymentStatus = "released";
+      } else if (attendance === "present" && lesson.autoReleaseAt) {
+        paymentStatus = lesson.hasOpenDispute ? "disputed" : "pending_release";
+      } else if (attendance === "present") {
+        paymentStatus = "pending_release";
+      } else if (attendance === "awaiting_attendance") {
+        paymentStatus = "pending_attendance";
+      } else {
+        paymentStatus = "no_charge"; // absent/excused
+      }
 
       return {
         ...lesson,
         attendanceStatus: attendance,
-        paymentStatus: isPayable ? "earned" : isPending ? "pending_attendance" : "no_charge",
-        amount,
+        paymentStatus,
+        amount: paymentStatus === "released" ? tutorShare : paymentStatus === "pending_release" ? tutorShare : 0,
+        rawFee: fee,
+        tutorShare,
       };
     });
 
     const now = new Date();
     const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     const monthOf = (value) => {
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return "";
-      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const d = new Date(value);
+      if (isNaN(d.getTime())) return "";
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     };
 
-    const earnedLessons = lessons.filter((lesson) => lesson.paymentStatus === "earned");
-    const pendingLessons = lessons.filter((lesson) => lesson.paymentStatus === "pending_attendance");
-    const noChargeLessons = lessons.filter((lesson) => lesson.paymentStatus === "no_charge");
-    const monthLessons = earnedLessons.filter((lesson) => monthOf(lesson.date) === monthKey);
+    const releasedLessons = lessons.filter(l => l.paymentStatus === "released");
+    const pendingReleaseLessons = lessons.filter(l => l.paymentStatus === "pending_release");
+    const pendingAttendanceLessons = lessons.filter(l => l.paymentStatus === "pending_attendance");
+    const disputedLessons = lessons.filter(l => l.paymentStatus === "disputed");
+    const monthLessons = releasedLessons.filter(l => monthOf(l.date) === monthKey);
 
     const monthlyBreakdown = [];
-    for (let i = 5; i >= 0; i -= 1) {
+    for (let i = 5; i >= 0; i--) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      const items = earnedLessons.filter((lesson) => monthOf(lesson.date) === key);
+      const items = releasedLessons.filter(l => monthOf(l.date) === key);
       monthlyBreakdown.push({
         month: key,
         label: date.toLocaleString("en-US", { month: "short" }),
-        amount: items.reduce((sum, lesson) => sum + lesson.amount, 0),
+        amount: items.reduce((s, l) => s + l.tutorShare, 0),
         lessons: items.length,
       });
     }
 
-    const totalEarned = earnedLessons.reduce((sum, lesson) => sum + lesson.amount, 0);
-    const thisMonthEarned = monthLessons.reduce((sum, lesson) => sum + lesson.amount, 0);
-    const pendingAmount = pendingLessons.length * hourlyRate;
-
     return res.json({
       hourlyRate,
+      reputationScore: profileResult.rows[0]?.reputation_score ?? 100,
+      completedLessonsCount: profileResult.rows[0]?.completed_lessons_count ?? 0,
       currency: "VND",
+      wallet: {
+        balance: Number(wallet.balance),
+        heldBalance: Number(wallet.held_balance),
+      },
       summary: {
-        thisMonthEarned,
-        totalEarned,
-        pendingAmount,
-        completedLessons: earnedLessons.length,
-        pendingLessons: pendingLessons.length,
-        noChargeLessons: noChargeLessons.length,
+        thisMonthEarned: monthLessons.reduce((s, l) => s + l.tutorShare, 0),
+        totalEarned: releasedLessons.reduce((s, l) => s + l.tutorShare, 0),
+        pendingReleaseAmount: pendingReleaseLessons.reduce((s, l) => s + l.tutorShare, 0),
+        pendingAttendanceAmount: pendingAttendanceLessons.length * Math.floor(hourlyRate * 0.9),
+        disputedAmount: disputedLessons.reduce((s, l) => s + l.tutorShare, 0),
+        completedLessons: releasedLessons.length,
+        pendingReleaseLessons: pendingReleaseLessons.length,
+        pendingAttendanceLessons: pendingAttendanceLessons.length,
+        noChargeLessons: lessons.filter(l => l.paymentStatus === "no_charge").length,
+        disputedLessons: disputedLessons.length,
       },
       monthlyBreakdown,
       transactions: lessons,
@@ -5113,6 +5251,53 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
       console.error('❌ Cron auto-release error:', err.message);
     }
   }, 5 * 60 * 1000); // chạy mỗi 5 phút
+
+
+  // ── Cron: Tự động hủy lịch nếu Gia sư không duyệt sau 24h ───────────────
+  setInterval(async () => {
+    try {
+      // Tìm bookings Pending > 24h
+      const dueBookings = await pool.query(`
+        SELECT b.id, b.student_id, b.tutor_id, b.escrow_tx_id, b.payer_wallet_id, b.lesson_fee
+        FROM bookings b
+        WHERE b.status = 'Pending'
+          AND b.created_at <= NOW() - INTERVAL '24 hours'
+      `);
+
+      for (const row of dueBookings.rows) {
+        try {
+          if (row.escrow_tx_id && Number(row.lesson_fee) > 0) {
+            // Hoàn tiền cho học sinh
+            await pool.query('SELECT refund_escrow($1,$2,$3)', [
+              row.escrow_tx_id, row.payer_wallet_id, row.lesson_fee
+            ]);
+            await pool.query(`UPDATE bookings SET status='Cancelled', escrow_released_at=NOW() WHERE id=$1`, [row.id]);
+          } else {
+            // Hủy không hoàn tiền
+            await pool.query(`UPDATE bookings SET status='Cancelled' WHERE id=$1`, [row.id]);
+          }
+
+          // Thông báo cho Học sinh
+          await pool.query(`
+            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+            VALUES ($1,'refund','Lịch học đã bị hủy do gia sư không phản hồi',$2,'undo',$3,'booking')
+          `, [row.student_id, `Hệ thống đã hủy lịch học và hoàn lại ${Number(row.lesson_fee||0).toLocaleString('vi-VN')}đ vì gia sư không duyệt trong 24h.`, row.id]);
+
+          // Thông báo cho Gia sư
+          await pool.query(`
+            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+            VALUES ($1,'cancellation','Lịch học bị hủy tự động',$2,'event_busy',$3,'booking')
+          `, [row.tutor_id, `Một lịch học đã bị hủy vì bạn không phản hồi trong 24h.`, row.id]);
+
+          console.log(`✅ Auto-cancelled unapproved booking ${row.id}`);
+        } catch (innerErr) {
+          console.error(`❌ Auto-cancel failed for booking ${row.id}:`, innerErr.message);
+        }
+      }
+    } catch (err) {
+      console.error('❌ Cron auto-cancel error:', err.message);
+    }
+  }, 10 * 60 * 1000); // chạy mỗi 10 phút
 
   app.listen(port, () => {
     console.log(`🚀 Server is running on http://localhost:${port}`);
