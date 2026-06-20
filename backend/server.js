@@ -3799,7 +3799,7 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         finalTutorName = "Gia sư"; // Fallback nếu vẫn không có
     }
 
-    const initialStatus = tutorId ? "pending" : "confirmed";
+    const initialStatus = tutorId ? "Pending" : "Approved";
     const finalNote = notes || note || null;
     const createdBookings = [];
 
