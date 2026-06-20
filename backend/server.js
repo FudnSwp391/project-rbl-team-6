@@ -3803,20 +3803,32 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     const finalNote = notes || note || null;
     const createdBookings = [];
 
-    // Chèn từng session
-    for (const session of bookingSessions) {
-      const sessionDate = session.date || session.lessonDate;
-      const sessionTimeSlot = session.timeSlot;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      
+      // Chèn từng session
+      for (const session of bookingSessions) {
+        const sessionDate = session.date || session.lessonDate;
+        const sessionTimeSlot = session.timeSlot;
 
-      if (!sessionDate || !sessionTimeSlot) continue;
+        if (!sessionDate || !sessionTimeSlot) continue;
 
-      const result = await pool.query(
-        `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, created_at`,
-        [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus]
-      );
-      createdBookings.push(result.rows[0]);
+        const result = await client.query(
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, created_at`,
+          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus]
+        );
+        createdBookings.push(result.rows[0]);
+      }
+      
+      await client.query("COMMIT");
+    } catch (dbErr) {
+      await client.query("ROLLBACK");
+      throw dbErr;
+    } finally {
+      client.release();
     }
 
     if (createdBookings.length === 0) {
@@ -3832,6 +3844,9 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
   } catch (error) {
     console.error("[bookings] POST error:", error.code, error.message, error.detail || "");
     // Trả lỗi cụ thể cho client để dev dễ debug
+    if (error.code === "23505" && error.constraint === "uq_bookings_active_slot") {
+      return res.status(400).json({ message: "Một hoặc nhiều buổi học bạn chọn đã có người đặt trước. Vui lòng tải lại trang và chọn lịch khác." });
+    }
     if (error.code === "42P01") {
       return res.status(500).json({ message: "Bảng 'bookings' chưa tồn tại trong database. Hãy chạy SQL migration trong Supabase." });
     }
