@@ -3088,7 +3088,7 @@ app.get("/api/tutors/:id", async (req, res) => {
          tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
          tp.education, tp.language, tp.teaching_style, tp.qualifications,
          tp.first_name, tp.last_name, tp.display_name, tp.phone,
-         tp.headline, tp.teaching_methods, tp.suitable_students,
+         tp.headline, tp.teaching_methods, tp.suitable_students, tp.availability,
          COALESCE(
            (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = u.id),
            0
