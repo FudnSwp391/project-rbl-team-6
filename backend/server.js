@@ -2950,12 +2950,18 @@ app.get("/api/reviews/featured", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 30);
   try {
     const result = await pool.query(
-      `SELECT r.id, r.reviewer_name, r.reviewer_role, r.reviewer_picture,
-              r.rating, r.subject, r.content, r.created_at,
-              u.picture AS user_picture, u.full_name AS user_full_name
+      `SELECT r.id, 
+              u.full_name AS reviewer_name, 
+              u.role AS reviewer_role, 
+              u.picture AS user_picture,
+              r.rating, 
+              COALESCE(c.title, 'Gia sư') AS subject, 
+              r.comment AS content, 
+              r.created_at
        FROM reviews r
-       LEFT JOIN users u ON u.id = r.reviewer_id
-       WHERE r.rating = 5
+       LEFT JOIN users u ON u.id = r.user_id
+       LEFT JOIN courses c ON c.id = r.course_id
+       WHERE r.rating = 5 AND r.is_visible = true
        ORDER BY r.created_at DESC
        LIMIT $1`,
       [limit]
