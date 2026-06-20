@@ -2763,6 +2763,28 @@ app.get('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =>
   }
 });
 
+// GET /api/reviews/featured
+app.get("/api/reviews/featured", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 12, 30);
+  try {
+    const result = await pool.query(
+      `SELECT r.id, r.rating, r.comment AS content, r.review_type, r.created_at,
+              u.full_name AS reviewer_name, u.role AS reviewer_role, u.picture AS reviewer_picture,
+              u.picture AS user_picture
+       FROM reviews r
+       LEFT JOIN users u ON u.id = r.user_id
+       WHERE r.rating = 5 AND r.is_visible = true
+       ORDER BY r.created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/reviews/featured error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 // POST /api/tutor/assessments
 app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) => {
   const client = await pool.connect();
@@ -3049,12 +3071,12 @@ app.get("/api/reviews/featured", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 30);
   try {
     const result = await pool.query(
-      `SELECT r.id, r.reviewer_name, r.reviewer_role, r.reviewer_picture,
-              r.rating, r.subject, r.content, r.created_at,
-              u.picture AS user_picture, u.full_name AS user_full_name
+      `SELECT r.id, r.rating, r.comment AS content, r.review_type, r.created_at,
+              u.full_name AS reviewer_name, u.role AS reviewer_role, u.picture AS reviewer_picture,
+              u.picture AS user_picture
        FROM reviews r
-       LEFT JOIN users u ON u.id = r.reviewer_id
-       WHERE r.rating = 5
+       LEFT JOIN users u ON u.id = r.user_id
+       WHERE r.rating = 5 AND r.is_visible = true
        ORDER BY r.created_at DESC
        LIMIT $1`,
       [limit]
@@ -3069,7 +3091,7 @@ app.get("/api/reviews/featured", async (req, res) => {
 // ── POST /api/reviews ──────────────────────────────────────────────────────────
 // Người dùng đã đăng nhập gửi đánh giá mới
 app.post("/api/reviews", verifyToken, async (req, res) => {
-  const { rating, subject, content } = req.body || {};
+  const { rating, content, tutor_id, course_id } = req.body || {};
   if (!rating || !content) {
     return res.status(400).json({ message: "rating và content là bắt buộc." });
   }
@@ -3077,18 +3099,11 @@ app.post("/api/reviews", verifyToken, async (req, res) => {
     return res.status(400).json({ message: "rating phải từ 1 đến 5." });
   }
   try {
-    const userResult = await pool.query(
-      "SELECT full_name, role, picture FROM users WHERE id = $1",
-      [req.user.userId]
-    );
-    if (!userResult.rows.length) return res.status(404).json({ message: "User not found." });
-    const u = userResult.rows[0];
-
     const result = await pool.query(
-      `INSERT INTO reviews (reviewer_id, reviewer_name, reviewer_role, reviewer_picture, rating, subject, content)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO reviews (user_id, tutor_id, course_id, rating, comment, review_type, is_visible)
+       VALUES ($1, $2, $3, $4, $5, $6, true)
        RETURNING *`,
-      [req.user.userId, rating, content]
+      [req.user.userId, tutor_id || null, course_id || null, rating, content, tutor_id ? 'tutor' : 'course']
     );
     return res.status(201).json(result.rows[0]);
   } catch (err) {
