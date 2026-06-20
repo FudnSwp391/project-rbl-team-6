@@ -2914,6 +2914,25 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 });
 
 
+
+// ── GET /api/courses ──────────────────────────────────────────────────────────
+// Lấy danh sách khóa học cho marketplace
+app.get("/api/courses", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture 
+       FROM courses c
+       JOIN users u ON c.tutor_id = u.id
+       WHERE c.status = 'approved' OR c.status = 'published' OR c.status = 'active'
+       ORDER BY c.created_at DESC`
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/courses error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 // ── GET /api/tutors (public) ──────────────────────────────────────────────────
 // Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
 app.get("/api/tutors", async (req, res) => {
