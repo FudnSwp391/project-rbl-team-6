@@ -167,6 +167,18 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
       const suitableForFromDB = Array.isArray(data.suitable_students) && data.suitable_students.length > 0
         ? data.suitable_students
         : null
+      const dbAvailability = data.availability || base.availability
+      let parsedSchedule = null
+      if (dbAvailability && typeof dbAvailability === 'object' && Object.keys(dbAvailability).length > 0) {
+        const dayMap = { Monday: 'T2', Tuesday: 'T3', Wednesday: 'T4', Thursday: 'T5', Friday: 'T6', Saturday: 'T7', Sunday: 'CN' }
+        parsedSchedule = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+          .filter(day => dbAvailability[day] && dbAvailability[day].length > 0)
+          .map(day => ({
+            day: dayMap[day] || day,
+            slots: dbAvailability[day]
+          }))
+      }
+
       return {
         ...BASE_PROFILE,              // extended mock fields (schedule, reviews, etc.)
         ...base,                      // real basic fields from FindTutors listing
@@ -181,6 +193,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
         // Use structured DB data if available, otherwise fall back to mock
         teachingMethods: teachingMethodsFromDB || BASE_PROFILE.teachingMethods,
         suitableFor: suitableForFromDB || BASE_PROFILE.suitableFor,
+        availableSchedule: parsedSchedule && parsedSchedule.length > 0 ? parsedSchedule : BASE_PROFILE.availableSchedule,
       }
     }
 
