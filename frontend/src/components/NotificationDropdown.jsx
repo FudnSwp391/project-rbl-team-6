@@ -115,10 +115,10 @@ export default function NotificationDropdown({ token }) {
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative inline-flex items-center" ref={dropdownRef}>
       <button
         onClick={() => setOpen(v => !v)}
-        className="relative p-2 text-on-surface-variant hover:text-primary rounded-full hover:bg-surface-container transition-colors"
+        className="relative w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
         aria-label="Thông báo"
       >
         <span className="material-symbols-outlined" style={unreadCount > 0 ? { fontVariationSettings: "'FILL' 1" } : {}}>
