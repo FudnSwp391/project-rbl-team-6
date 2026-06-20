@@ -3001,11 +3001,11 @@ app.get("/api/tutors/:id", async (req, res) => {
          tp.first_name, tp.last_name, tp.display_name, tp.phone,
          tp.headline, tp.teaching_methods, tp.suitable_students,
          COALESCE(
-           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.reviewer_id = u.id),
+           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = u.id),
            0
          ) AS avg_r,
          COALESCE(
-           (SELECT COUNT(*) FROM reviews r WHERE r.reviewer_id = u.id),
+           (SELECT COUNT(*) FROM reviews r WHERE r.tutor_id = u.id),
            0
          ) AS review_count
        FROM tutor_profiles tp
