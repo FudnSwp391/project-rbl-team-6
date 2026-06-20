@@ -799,6 +799,54 @@ app.put("/api/tutor/availability", verifyToken, async (req, res) => {
   }
 });
 
+
+// GET /api/tutors/:id/availability — public endpoint for BookingCalendar
+app.get("/api/tutors/:id/availability", async (req, res) => {
+  try {
+    const tutorId = req.params.id;
+    const { from, to } = req.query; // date range: YYYY-MM-DD
+
+    // Get availability from tutor_profiles (try both user_id and profile id)
+    let result = await pool.query(
+      "SELECT availability FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
+      [tutorId]
+    );
+    if (!result.rows.length) {
+      result = await pool.query(
+        "SELECT availability FROM tutor_profiles WHERE id::text = $1 LIMIT 1",
+        [tutorId]
+      );
+    }
+
+    const availability = result.rows.length ? (result.rows[0].availability || {}) : {};
+
+    // Get booked slots for the date range
+    let bookedSlots = {};
+    if (from && to) {
+      const bookingsResult = await pool.query(
+        `SELECT lesson_date, time_slot, status
+         FROM bookings
+         WHERE tutor_id = $1
+           AND lesson_date >= $2::date
+           AND lesson_date <= $3::date
+           AND status != 'cancelled'
+         ORDER BY lesson_date, time_slot`,
+        [tutorId, from, to]
+      );
+      for (const row of bookingsResult.rows) {
+        const dateKey = String(row.lesson_date).slice(0, 10);
+        if (!bookedSlots[dateKey]) bookedSlots[dateKey] = [];
+        bookedSlots[dateKey].push({ timeSlot: row.time_slot, status: row.status });
+      }
+    }
+
+    return res.json({ availability, bookedSlots });
+  } catch (error) {
+    console.error("GET /api/tutors/:id/availability error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 app.get("/api/tutor/profile", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(

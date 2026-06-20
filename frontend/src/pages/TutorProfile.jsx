@@ -535,7 +535,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 {/* Action buttons */}
                 <div className="space-y-3">
                   <button
-                    onClick={() => window.location.hash = '/booking/' + id}
+                    onClick={() => window.location.hash = '/booking/' + tutorId}
                     className="w-full bg-[#00288e] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#1e40af] transition-colors shadow-md flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-[18px]">calendar_month</span>
