@@ -2733,6 +2733,14 @@ app.post('/api/chat', verifyToken, async (req, res) => {
        VALUES ($1,$2,$3,'text') RETURNING *`,
       [senderId, receiver_id, content.trim()]
     );
+
+    // Thêm thông báo cho người nhận
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1, 'new_message', $2, $3, 'chat', $4, 'chat')`,
+      [receiver_id, `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`, content.trim(), senderId]
+    );
+
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
 });
@@ -2787,6 +2795,18 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [senderId, receiver_id, msgType, fileUrl, originalname, size, mimetype, null]
     );
+
+    // Thêm thông báo cho người nhận
+    let bodyText = 'Đã gửi một tệp đính kèm';
+    if (msgType === 'image') bodyText = 'Đã gửi một hình ảnh';
+    if (msgType === 'video') bodyText = 'Đã gửi một video';
+
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1, 'new_message', $2, $3, 'chat', $4, 'chat')`,
+      [receiver_id, `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`, bodyText, senderId]
+    );
+
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error: ' + e.message }); }
 });

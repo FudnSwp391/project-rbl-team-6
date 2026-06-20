@@ -1,7 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { supabase } from '../services/supabase';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+const parseJwt = (token) => {
+  try {
+    return JSON.parse(atob(token.split('.')[1]));
+  } catch (e) {
+    return null;
+  }
+};
 
 function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -80,9 +89,27 @@ export default function NotificationDropdown({ token }) {
   useEffect(() => {
     if (token) {
       fetchNotifs(false); // Initial fetch without toast
-      // Poll every 15s for new notifications
-      const interval = setInterval(() => fetchNotifs(true), 15000);
-      return () => clearInterval(interval);
+      
+      const payload = parseJwt(token);
+      const userId = payload?.userId;
+      
+      if (userId) {
+        const channel = supabase
+          .channel(`notifications:${userId}`)
+          .on('postgres_changes', {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter: `user_id=eq.${userId}`
+          }, (payload) => {
+            fetchNotifs(true);
+          })
+          .subscribe();
+
+        return () => {
+          supabase.removeChannel(channel);
+        };
+      }
     }
   }, [token]);
 
