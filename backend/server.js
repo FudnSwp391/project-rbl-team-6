@@ -2570,6 +2570,8 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
         WHERE 
           (u.role = 'tutor' AND tp.status = 'approved' AND u.id IN (
             SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1
+            UNION
+            SELECT crs.tutor_id FROM courses crs JOIN course_enrollments ce ON crs.id = ce.course_id WHERE ce.student_id = $1
           ))
           OR
           (u.role = 'parent' AND u.id IN (
@@ -2593,6 +2595,8 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
             JOIN class_members cm ON c.id = cm.class_id 
             JOIN parent_children pc ON cm.student_id = pc.student_id 
             WHERE pc.parent_id = $1
+            UNION
+            SELECT crs.tutor_id FROM courses crs JOIN course_enrollments ce ON crs.id = ce.course_id JOIN parent_children pc ON ce.student_id = pc.student_id WHERE pc.parent_id = $1
           ))
         ORDER BY u.full_name
       `, [userId]);
@@ -2603,6 +2607,8 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
         WHERE 
           (u.role = 'student' AND u.id IN (
             SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1
+            UNION
+            SELECT ce.student_id FROM course_enrollments ce JOIN courses crs ON ce.course_id = crs.id WHERE crs.tutor_id = $1
           ))
           OR
           (u.role = 'parent' AND u.id IN (
@@ -2610,6 +2616,8 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
             JOIN class_members cm ON pc.student_id = cm.student_id
             JOIN classes c ON c.id = cm.class_id
             WHERE c.tutor_id = $1
+            UNION
+            SELECT pc.parent_id FROM parent_children pc JOIN course_enrollments ce ON pc.student_id = ce.student_id JOIN courses crs ON ce.course_id = crs.id WHERE crs.tutor_id = $1
           ))
         ORDER BY u.full_name
       `, [userId]);
@@ -2628,7 +2636,11 @@ async function checkChatPermission(userId, userRole, otherId) {
   if (userRole === 'student') {
     const res = await pool.query(`
       SELECT 1 FROM users u WHERE u.id = $2 AND (
-        (u.role = 'tutor' AND u.id IN (SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1))
+        (u.role = 'tutor' AND u.id IN (
+           SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1
+           UNION
+           SELECT crs.tutor_id FROM courses crs JOIN course_enrollments ce ON crs.id = ce.course_id WHERE ce.student_id = $1
+        ))
         OR
         (u.role = 'parent' AND u.id IN (SELECT parent_id FROM parent_children WHERE student_id = $1))
       )
@@ -2639,16 +2651,28 @@ async function checkChatPermission(userId, userRole, otherId) {
       SELECT 1 FROM users u WHERE u.id = $2 AND (
         (u.role = 'student' AND u.id IN (SELECT student_id FROM parent_children WHERE parent_id = $1))
         OR
-        (u.role = 'tutor' AND u.id IN (SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id JOIN parent_children pc ON cm.student_id = pc.student_id WHERE pc.parent_id = $1))
+        (u.role = 'tutor' AND u.id IN (
+           SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id JOIN parent_children pc ON cm.student_id = pc.student_id WHERE pc.parent_id = $1
+           UNION
+           SELECT crs.tutor_id FROM courses crs JOIN course_enrollments ce ON crs.id = ce.course_id JOIN parent_children pc ON ce.student_id = pc.student_id WHERE pc.parent_id = $1
+        ))
       )
     `, [userId, otherId]);
     allowed = res.rowCount > 0;
   } else if (userRole === 'tutor') {
     const res = await pool.query(`
       SELECT 1 FROM users u WHERE u.id = $2 AND (
-        (u.role = 'student' AND u.id IN (SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1))
+        (u.role = 'student' AND u.id IN (
+           SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1
+           UNION
+           SELECT ce.student_id FROM course_enrollments ce JOIN courses crs ON ce.course_id = crs.id WHERE crs.tutor_id = $1
+        ))
         OR
-        (u.role = 'parent' AND u.id IN (SELECT pc.parent_id FROM parent_children pc JOIN class_members cm ON pc.student_id = cm.student_id JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1))
+        (u.role = 'parent' AND u.id IN (
+           SELECT pc.parent_id FROM parent_children pc JOIN class_members cm ON pc.student_id = cm.student_id JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1
+           UNION
+           SELECT pc.parent_id FROM parent_children pc JOIN course_enrollments ce ON pc.student_id = ce.student_id JOIN courses crs ON ce.course_id = crs.id WHERE crs.tutor_id = $1
+        ))
       )
     `, [userId, otherId]);
     allowed = res.rowCount > 0;
