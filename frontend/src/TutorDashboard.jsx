@@ -80,8 +80,13 @@ export default function TutorDashboard() {
         const toStudentName = (booking) =>
           booking.childName || booking.studentName || 'Student'
 
-        const toScheduleDate = (booking) =>
-          `${booking.date || booking.lessonDate || 'No date'} - ${booking.timeSlot || 'No time'}`
+        const toScheduleDate = (booking) => {
+          const d = booking.lesson_date || booking.lessonDate || booking.date;
+          const t = booking.time_slot || booking.timeSlot || booking.time;
+          const dateStr = d ? String(d).slice(0, 10) : 'No date';
+          const timeStr = t || 'No time';
+          return `${dateStr} - ${timeStr}`;
+        }
 
         const pendingBookings = bookingsList
           .filter(b => b.status === 'Pending')
@@ -1061,11 +1066,11 @@ function MyScheduleTab() {
       meta: dayName,
     }))
     const bookedSlots = approvedBookings
-      .filter((booking) => normalizeBookingDate(booking.date) === dateKey)
+      .filter((booking) => normalizeBookingDate(booking.lesson_date || booking.date) === dateKey)
       .map((booking) => ({
         id: `booking-${booking.id}`,
         type: 'booking',
-        time: booking.timeSlot || booking.time || 'Scheduled',
+        time: booking.time_slot || booking.timeSlot || booking.time || 'Scheduled',
         title: booking.subject || 'Class',
         meta: booking.childName || booking.studentName || 'Student',
       }))
