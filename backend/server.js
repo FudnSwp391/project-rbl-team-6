@@ -3069,7 +3069,7 @@ app.post("/api/reviews", verifyToken, async (req, res) => {
       `INSERT INTO reviews (reviewer_id, reviewer_name, reviewer_role, reviewer_picture, rating, subject, content)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [req.user.userId, u.full_name, u.role, u.picture || null, rating, subject || null, content]
+      [req.user.userId, rating, content]
     );
     return res.status(201).json(result.rows[0]);
   } catch (err) {
