@@ -833,7 +833,7 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
          WHERE tutor_id = $1
            AND lesson_date >= $2::date
            AND lesson_date <= $3::date
-           AND status != 'cancelled'
+           AND LOWER(status) NOT IN ('cancelled', 'declined')
          ORDER BY lesson_date, time_slot`,
         [tutorId, from, to]
       );
@@ -4122,6 +4122,22 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         const sessionTimeSlot = session.timeSlot;
 
         if (!sessionDate || !sessionTimeSlot) continue;
+
+        // Check for double booking
+        if (tutorId) {
+          const overlapCheck = await client.query(
+            `SELECT id FROM bookings
+             WHERE tutor_id = $1
+               AND lesson_date = $2::date
+               AND time_slot = $3
+               AND LOWER(status) NOT IN ('cancelled', 'declined')`,
+            [tutorId, sessionDate, sessionTimeSlot]
+          );
+          if (overlapCheck.rowCount > 0) {
+            await client.query("ROLLBACK");
+            return res.status(409).json({ message: `Lịch học ${sessionTimeSlot} ngày ${sessionDate} đã có người đặt. Vui lòng chọn lịch khác.` });
+          }
+        }
 
         const result = await client.query(
           `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee)
