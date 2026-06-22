@@ -225,16 +225,22 @@ export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
                 Tìm Gia Sư
               </a>
               <a
+                href="#/become-tutor"
+                className="text-on-surface-variant font-label-md text-label-md hover:text-primary transition-colors duration-200"
+              >
+                Trở Thành Gia Sư
+              </a>
+              <a
                 href="#/subjects"
                 className="text-primary font-label-md text-label-md font-bold border-b-2 border-primary pb-px"
               >
                 Môn Học
               </a>
               <a
-                href="#/become-tutor"
+                href="#/courses"
                 className="text-on-surface-variant font-label-md text-label-md hover:text-primary transition-colors duration-200"
               >
-                Về Chúng Tôi
+                Khóa Học
               </a>
             </nav>
           </div>

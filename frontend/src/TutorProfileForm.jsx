@@ -17,6 +17,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { useAuth } from './AuthContext'
+import { uploadAvatarFile, uploadProofFile } from './services/upload'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -438,33 +439,6 @@ export default function TutorProfileForm() {
     setSubmitting(true)
     setSubmitMessage({ text: '', type: '' })
 
-    const formData = new FormData()
-    // Step 1
-    formData.append('first_name', firstName.trim())
-    formData.append('last_name', lastName.trim())
-    formData.append('display_name', displayName.trim())
-    formData.append('birthday', `${birthYear}-${String(MONTHS.indexOf(birthMonth) + 1).padStart(2, '0')}-${birthDay}`)
-    formData.append('gender', gender)
-    formData.append('country', country)
-    formData.append('city', city.trim())
-    formData.append('phone', phone.trim())
-    formData.append('bio', bio.trim())
-    // Step 2
-    formData.append('subjects', subjects.join(', '))
-    formData.append('education', education)
-    formData.append('experience_years', experienceYears)
-    formData.append('language', language)
-    if (hourlyRate !== '') formData.append('hourly_rate', hourlyRate)
-    formData.append('teaching_style', teachingStyle.trim())
-    formData.append('qualifications', qualifications.trim())
-    formData.append('teaching_methods', JSON.stringify(teachingMethods.filter(m => m.trim())))
-    formData.append('suitable_students', JSON.stringify(suitableStudents))
-    formData.append('cert_metadata', JSON.stringify(certMetadata))
-    // Step 3 images
-    if (profilePhotoFile) formData.append('profile_photo', profilePhotoFile)
-    certificateFiles.forEach(f => formData.append('certificates', f))
-    if (cccdFile) formData.append('cccd', cccdFile)
-
     try {
       let activeToken = token
 
@@ -489,11 +463,54 @@ export default function TutorProfileForm() {
         sessionStorage.removeItem('pendingTutorReg')
       }
 
+      // ── Upload file lên Supabase trước khi gọi lưu profile ────────────────
+      let profile_photo_url = null
+      let cccd_url = null
+
+      if (profilePhotoFile) {
+        profile_photo_url = await uploadAvatarFile(profilePhotoFile)
+      }
+      if (cccdFile) {
+        cccd_url = await uploadProofFile(cccdFile)
+      }
+
+      // ── Chuẩn bị JSON Payload ──────────────────────────────────────────────
+      const payload = {
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        display_name: displayName.trim(),
+        gender,
+        country,
+        city: city.trim(),
+        phone: phone.trim(),
+        bio: bio.trim(),
+        subjects: subjects.join(', '),
+        education,
+        experience_years: experienceYears,
+        language,
+        hourly_rate: hourlyRate !== '' ? hourlyRate : null,
+        teaching_style: teachingStyle.trim(),
+        qualifications: qualifications.trim(),
+        teaching_methods: JSON.stringify(teachingMethods.filter(m => m.trim())),
+        suitable_students: JSON.stringify(suitableStudents),
+        cert_metadata: JSON.stringify(certMetadata),
+        profile_photo_url,
+        cccd_url
+      }
+
+      if (birthDay && birthMonth && birthYear) {
+        const padM = String(MONTHS.indexOf(birthMonth) + 1).padStart(2, '0')
+        payload.birthday = `${birthYear}-${padM}-${birthDay}`
+      }
+
       // ── Gọi API tạo/cập nhật tutor profile ──────────────────────────────────
       const res = await fetch(`${API}/api/tutor/profile`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${activeToken}` },
-        body: formData,
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${activeToken}` 
+        },
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.message || 'Submission failed.')

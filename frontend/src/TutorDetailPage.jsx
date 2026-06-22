@@ -29,6 +29,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
             <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
           </nav>
 
           {/* Auth Buttons */}
@@ -84,7 +85,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
                 </div>
               </div>
               <div className="space-y-3 mb-10">
-                <button className="w-full h-[48px] bg-[#00288e] text-white text-sm font-semibold rounded-lg hover:bg-[#1e40af] transition-all flex items-center justify-center gap-2 active-interaction shadow-sm">
+                <button onClick={() => window.location.hash = '/booking/' + tutor.id} className="w-full h-[48px] bg-[#00288e] text-white text-sm font-semibold rounded-lg hover:bg-[#1e40af] transition-all flex items-center justify-center gap-2 active-interaction shadow-sm">
                   <span className="material-symbols-outlined">event_available</span> Đặt Lịch Học
                 </button>
                 <button className="w-full h-[48px] border border-[#c4c5d5] text-[#00288e] text-sm font-semibold rounded-lg hover:border-[#00288e] transition-all flex items-center justify-center gap-2 active-interaction bg-white">

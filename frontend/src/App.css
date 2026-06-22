@@ -506,12 +506,42 @@
   gap: 10px;
 }
 
+.header-profile-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 4px 8px 4px 4px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.header-profile-link:hover {
+  background: rgba(0, 40, 142, 0.08);
+}
+
+.header-profile-link:active {
+  transform: scale(0.98);
+}
+
+.header-profile-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 .header-avatar {
   width: 36px;
   height: 36px;
   border-radius: 50%;
   object-fit: cover;
   border: 2px solid var(--primary);
+}
+
+.header-avatar-icon {
+  color: var(--primary);
+  font-size: 36px;
 }
 
 .header-username {
