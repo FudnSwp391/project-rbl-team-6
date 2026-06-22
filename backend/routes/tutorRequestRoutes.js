@@ -645,4 +645,50 @@ router.post("/api/tutor-requests/:requestId/cancel", requireAuth, async (req, re
   }
 });
 
+// ─── HẠNG MỤC 6: GIA SƯ CỦA TÔI (MY TUTORS) ─────────────────────────────────
+
+// GET /api/student/my-tutors
+// Lấy danh sách gia sư đã kết nối thành công của học sinh
+router.get("/api/student/my-tutors", requireAuth, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    
+    const result = await pool.query(`
+      SELECT 
+        trm.id AS match_id,
+        trm.tutor_id,
+        trm.responded_at AS connected_at,
+        tr.subject AS connected_subject,
+        tr.grade_level,
+        COALESCE(
+          NULLIF(TRIM(COALESCE(tp.display_name, '')), ''),
+          NULLIF(TRIM(COALESCE(tp.first_name,'') || ' ' || COALESCE(tp.last_name,'')), ''),
+          u.full_name
+        ) AS tutor_name,
+        COALESCE(tp.profile_photo_url, u.picture) AS tutor_avatar,
+        tp.experience_years,
+        COALESCE(
+          (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = tp.id),
+          0
+        ) AS tutor_rating,
+        COALESCE(
+          (SELECT COUNT(*) FROM reviews r WHERE r.tutor_id = tp.id),
+          0
+        ) AS tutor_review_count
+      FROM tutor_request_matches trm
+      JOIN tutor_requests tr ON trm.request_id = tr.id
+      JOIN users u ON trm.tutor_id = u.id
+      LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+      WHERE tr.student_id = $1 
+        AND trm.status = 'tutor_accepted'
+      ORDER BY trm.responded_at DESC
+    `, [studentId]);
+
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error("[MyTutors] GET error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
 module.exports = router;
