@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from './AuthContext'
+import NotificationDropdown from './components/NotificationDropdown'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -224,10 +225,7 @@ export default function AdminDashboard() {
             <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" onClick={fetchData} title="Làm mới">
               <span className="material-symbols-outlined">refresh</span>
             </button>
-            <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors relative">
-              <span className="material-symbols-outlined">notifications</span>
-              <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full" />
-            </button>
+            <NotificationDropdown token={token} />
             <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors">
               <span className="material-symbols-outlined">help</span>
             </button>
@@ -266,8 +264,8 @@ export default function AdminDashboard() {
           {activeView === 'user-management' && <UserManagementView />}
           {activeView === 'subjects'         && <SubjectsView />}
           {activeView === 'lessons'          && <LessonsView />}
-          {activeView === 'transactions'     && <TransactionsView />}
-          {activeView === 'complaints'       && <ComplaintsView />}
+          {activeView === 'transactions'     && <TransactionsView token={token} />}
+          {activeView === 'complaints'       && <ComplaintsView token={token} />}
           {activeView === 'reviews'          && <ReviewsView />}
           {activeView === 'reports'          && <ReportsView />}
           {activeView === 'ai-insights'      && <AIInsightsView />}
@@ -1034,7 +1032,7 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
 }
 
 // ─── User Detail Panel ────────────────────────────────────────────────────────
-function UserDetailPanel({ user, detail, loading, onBan, actionId }) {
+function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold }) {
   const roleColor  = r => ({ admin:'bg-purple-100 text-purple-700', tutor:'bg-indigo-100 text-indigo-700', student:'bg-blue-100 text-blue-700', parent:'bg-green-100 text-green-700' }[r] ?? 'bg-gray-100 text-gray-600')
   const statusColor = b => b ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'
   const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—'
@@ -1238,6 +1236,19 @@ function UserManagementView() {
       setPage(p)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
+  }
+
+  
+  async function handleReleaseHold(userId) {
+    if (!confirm('Bạn có chắc chắn muốn nhả toàn bộ tiền cọc của gia sư này không?')) return;
+    try {
+      const res = await authFetch(`${API}/api/admin/tutors/${userId}/release-hold`, token, { method: 'POST' });
+      setUMToast({ msg: res.message || 'Đã nhả cọc thành công.', type: 'success' });
+      // reload detail
+      fetchDetail(userId);
+    } catch (err) {
+      setUMToast({ msg: `Lỗi nhả cọc: ${err.message}`, type: 'error' });
+    }
   }
 
   async function fetchDetail(userId) {
@@ -1706,28 +1717,61 @@ function LessonsView() {
 }
 
 // ─── Transactions View ────────────────────────────────────────────────────────
-const MOCK_TXN = [
-  { id: 'TXN-4821', user: 'Nguyễn Văn An',   tutor: 'Trần Thị Bích',   amount: 250000,  status: 'Hoàn thành',  date: '2024-06-10' },
-  { id: 'TXN-4820', user: 'Hoàng Đức Mạnh',  tutor: 'Phạm Quỳnh Anh',  amount: 180000,  status: 'Hoàn thành',  date: '2024-06-10' },
-  { id: 'TXN-4819', user: 'Đỗ Thanh Long',   tutor: 'Bùi Phương Thảo', amount: 320000,  status: 'Chờ xử lý',   date: '2024-06-09' },
-  { id: 'TXN-4818', user: 'Lê Minh Cường',   tutor: 'Trần Thị Bích',   amount: 200000,  status: 'Đã hoàn tiền', date: '2024-06-08' },
-  { id: 'TXN-4817', user: 'Phạm Quỳnh Anh',  tutor: 'Bùi Phương Thảo', amount: 150000,  status: 'Hoàn thành',  date: '2024-06-07' },
-  { id: 'TXN-4816', user: 'Nguyễn Văn An',   tutor: 'Phạm Quỳnh Anh',  amount: 280000,  status: 'Thất bại',    date: '2024-06-06' },
-  { id: 'TXN-4815', user: 'Đỗ Thanh Long',   tutor: 'Trần Thị Bích',   amount: 200000,  status: 'Hoàn thành',  date: '2024-06-05' },
-]
+function TransactionsView({ token }) {
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('Tất cả');
 
-function TransactionsView() {
-  const [statusFilter, setStatusFilter] = useState('Tất cả')
+  useEffect(() => {
+    fetchTransactions();
+  }, [token]);
+
+  const fetchTransactions = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/admin/transactions`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTransactions(data);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const statusColor = s => ({
-    'Hoàn thành':  'bg-green-100 text-green-700',
-    'Chờ xử lý':   'bg-amber-100 text-amber-700',
-    'Đã hoàn tiền':'bg-blue-100 text-blue-700',
-    'Thất bại':    'bg-red-100 text-red-600',
-  }[s] || 'bg-gray-100 text-gray-600')
-  const fmt = n => 'đ' + n.toLocaleString('vi-VN')
-  const filtered = statusFilter === 'Tất cả' ? MOCK_TXN : MOCK_TXN.filter(t => t.status === statusFilter)
+    'SUCCESS':  'bg-green-100 text-green-700',
+    'PENDING':   'bg-amber-100 text-amber-700',
+    'REFUNDED':'bg-blue-100 text-blue-700',
+    'FAILED':    'bg-red-100 text-red-600',
+  }[s] || 'bg-gray-100 text-gray-600');
+  
+  const statusLabels = {
+    'SUCCESS': 'Hoàn thành',
+    'PENDING': 'Chờ xử lý',
+    'REFUNDED': 'Đã hoàn tiền',
+    'FAILED': 'Thất bại'
+  };
 
-  const totalRev = MOCK_TXN.filter(t => t.status === 'Hoàn thành').reduce((a, t) => a + t.amount, 0)
+  const fmt = n => 'đ' + Number(n).toLocaleString('vi-VN');
+  
+  const getFilterStatus = (filter) => {
+    if (filter === 'Hoàn thành') return 'SUCCESS';
+    if (filter === 'Chờ xử lý') return 'PENDING';
+    if (filter === 'Đã hoàn tiền') return 'REFUNDED';
+    if (filter === 'Thất bại') return 'FAILED';
+    return null;
+  };
+  
+  const dbFilter = getFilterStatus(statusFilter);
+  const filtered = statusFilter === 'Tất cả' ? transactions : transactions.filter(t => t.status === dbFilter);
+
+  const totalRev = transactions.filter(t => t.status === 'SUCCESS').reduce((a, t) => a + Number(t.amount), 0);
+
+  if (loading) return <div className="p-10 flex justify-center"><span className="material-symbols-outlined animate-spin text-4xl text-primary">refresh</span></div>;
 
   return (
     <div className="p-10 max-w-[1280px] mx-auto">
@@ -1744,9 +1788,9 @@ function TransactionsView() {
       <div className="grid grid-cols-4 gap-6 mb-8">
         {[
           { label: 'Tổng doanh thu',     value: fmt(totalRev),    icon: 'payments',       bg: 'bg-emerald-50',  color: 'text-emerald-700' },
-          { label: 'Hoàn thành',         value: MOCK_TXN.filter(t=>t.status==='Hoàn thành').length, icon: 'check_circle', bg: 'bg-green-50', color: 'text-green-700' },
-          { label: 'Chờ xử lý',          value: MOCK_TXN.filter(t=>t.status==='Chờ xử lý').length,  icon: 'schedule',     bg: 'bg-amber-50', color: 'text-amber-700' },
-          { label: 'Thất bại/Hoàn tiền', value: MOCK_TXN.filter(t=>['Thất bại','Đã hoàn tiền'].includes(t.status)).length, icon: 'cancel', bg: 'bg-red-50', color: 'text-red-600' },
+          { label: 'Hoàn thành',         value: transactions.filter(t=>t.status==='SUCCESS').length, icon: 'check_circle', bg: 'bg-green-50', color: 'text-green-700' },
+          { label: 'Chờ xử lý',          value: transactions.filter(t=>t.status==='PENDING').length,  icon: 'schedule',     bg: 'bg-amber-50', color: 'text-amber-700' },
+          { label: 'Thất bại/Hoàn tiền', value: transactions.filter(t=>['FAILED','REFUNDED'].includes(t.status)).length, icon: 'cancel', bg: 'bg-red-50', color: 'text-red-600' },
         ].map(c => (
           <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm">
             <div className={`w-10 h-10 rounded-lg ${c.bg} flex items-center justify-center ${c.color} mb-3`}>
@@ -1771,8 +1815,8 @@ function TransactionsView() {
           <thead className="bg-gray-50 border-b border-outline-variant">
             <tr>
               <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Mã giao dịch</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Học sinh</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Gia sư</th>
+              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Chủ thẻ/Người nhận</th>
+              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Cổng thanh toán</th>
               <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Số tiền</th>
               <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Trạng thái</th>
               <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Ngày</th>
@@ -1781,14 +1825,27 @@ function TransactionsView() {
           <tbody className="divide-y divide-outline-variant">
             {filtered.map(t => (
               <tr key={t.id} className="hover:bg-gray-50 transition-colors">
-                <td className="py-4 px-6 text-sm font-mono text-primary font-semibold">{t.id}</td>
-                <td className="py-4 px-6 text-sm text-on-surface">{t.user}</td>
-                <td className="py-4 px-6 text-sm text-on-surface">{t.tutor}</td>
-                <td className="py-4 px-6 text-sm font-bold text-on-surface">{fmt(t.amount)}</td>
-                <td className="py-4 px-6"><span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${statusColor(t.status)}`}>{t.status}</span></td>
-                <td className="py-4 px-6 text-sm text-on-surface-variant">{fmtDate(t.date)}</td>
+                <td className="py-4 px-6 text-sm font-mono text-primary font-semibold truncate max-w-[150px]" title={t.id}>{t.id.substring(0,8)}...</td>
+                <td className="py-4 px-6 text-sm text-on-surface">
+                   <div className="font-medium">{t.user_name}</div>
+                   <div className="text-xs text-on-surface-variant">{t.email}</div>
+                </td>
+                <td className="py-4 px-6 text-sm text-on-surface">
+                   <span className="font-semibold text-gray-700">{t.gateway}</span>
+                   {t.type && <div className="text-xs text-gray-500 mt-0.5">{t.type}</div>}
+                </td>
+                <td className="py-4 px-6 text-sm font-bold text-on-surface">
+                  {t.type === 'WITHDRAW' ? '-' : '+'}{fmt(t.amount)}
+                </td>
+                <td className="py-4 px-6"><span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${statusColor(t.status)}`}>{statusLabels[t.status] || t.status}</span></td>
+                <td className="py-4 px-6 text-sm text-on-surface-variant">{new Date(t.date).toLocaleDateString('vi-VN')}</td>
               </tr>
             ))}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan="6" className="py-12 text-center text-on-surface-variant">Không có giao dịch nào</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -1796,36 +1853,77 @@ function TransactionsView() {
   )
 }
 
-// ─── Complaints View ──────────────────────────────────────────────────────────
-const MOCK_COMPLAINTS = [
-  { id: 'C-101', reporter: 'Nguyễn Văn An',  against: 'Trần Thị Bích',   issue: 'Gia sư không đến buổi học đã lên lịch',         priority: 'Cao',    status: 'Mở',          date: '2024-06-10' },
-  { id: 'C-100', reporter: 'Đỗ Thanh Long',  against: 'Phạm Quỳnh Anh',  issue: 'Nội dung bài học sai lệch và không chính xác', priority: 'Trung bình', status: 'Đang xem xét', date: '2024-06-08' },
-  { id: 'C-099', reporter: 'Hoàng Đức Mạnh', against: 'Bùi Phương Thảo', issue: 'Chưa hoàn tiền sau khi hủy',                   priority: 'Cao',    status: 'Mở',          date: '2024-06-07' },
-  { id: 'C-098', reporter: 'Lê Minh Cường',  against: 'Trần Thị Bích',   issue: 'Ngôn ngữ không phù hợp trong buổi học',        priority: 'Cao',    status: 'Đã giải quyết', date: '2024-06-01' },
-  { id: 'C-097', reporter: 'Bùi Phương Thảo',against: 'Nguyễn Văn An',   issue: 'Học sinh gây mất trật tự trong buổi học nhóm', priority: 'Thấp',   status: 'Đã giải quyết', date: '2024-05-28' },
-]
+function ComplaintsView({ token }) {
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+  const [disputes, setDisputes] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [resolveModal, setResolveModal] = useState(null)
+  const [adminNote, setAdminNote] = useState('')
+  const [resolving, setResolving] = useState(false)
 
-function ComplaintsView() {
-  const [statusFilter, setStatusFilter] = useState('Tất cả')
-  const priorityColor = p => p === 'Cao' ? 'bg-red-100 text-red-700' : p === 'Trung bình' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
-  const statusColor   = s => s === 'Mở' ? 'bg-red-50 text-red-700 border border-red-200' : s === 'Đang xem xét' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-green-50 text-green-700 border border-green-200'
-  const filtered = statusFilter === 'Tất cả' ? MOCK_COMPLAINTS : MOCK_COMPLAINTS.filter(c => c.status === statusFilter)
+  const fetchDisputes = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(API_BASE + '/api/admin/disputes', {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
+      })
+      const data = await res.json()
+      setDisputes(data.disputes || [])
+    } catch (e) { console.error(e) }
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchDisputes() }, [])
+
+  const handleResolve = async (decision) => {
+    if (!resolveModal) return
+    setResolving(true)
+    try {
+      const res = await fetch(API_BASE + '/api/escrow/resolve-dispute-v2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('token') },
+        body: JSON.stringify({ disputeId: resolveModal.id, decision, adminNote })
+      })
+      const data = await res.json()
+      if (data.success) {
+        alert('Đã xử lý: ' + (decision === 'REFUND_TO_STUDENT' ? 'Hoàn tiền cho học sinh' : 'Giải ngân cho gia sư'))
+        setResolveModal(null); setAdminNote(''); fetchDisputes()
+      } else { alert(data.message || 'Có lỗi xảy ra.') }
+    } catch { alert('Lỗi kết nối.') }
+    setResolving(false)
+  }
+
+  const fmtMoney = (n) => Number(n || 0).toLocaleString('vi-VN') + 'đ'
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('vi-VN') : '—'
+  const statusLabel = { 'OPEN': 'Đang mở', 'RESOLVED_REFUND': 'Hoàn tiền', 'RESOLVED_RELEASE': 'Giải ngân' }
+  const statusColor = {
+    'OPEN': 'bg-red-50 text-red-700 border border-red-200',
+    'RESOLVED_REFUND': 'bg-green-50 text-green-700 border border-green-200',
+    'RESOLVED_RELEASE': 'bg-blue-50 text-blue-700 border border-blue-200'
+  }
+  const filtered = statusFilter === 'all' ? disputes
+    : statusFilter === 'open' ? disputes.filter(d => d.status === 'OPEN')
+    : disputes.filter(d => d.status !== 'OPEN')
+  const openCount = disputes.filter(d => d.status === 'OPEN').length
+  const resolvedCount = disputes.filter(d => d.status !== 'OPEN').length
 
   return (
     <div className="p-10 max-w-[1280px] mx-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
-          <h2 className="text-3xl font-bold text-on-background">Khiếu nại</h2>
-          <p className="text-sm text-on-surface-variant mt-1">Xem xét và giải quyết các vấn đề do người dùng báo cáo.</p>
+          <h2 className="text-3xl font-bold text-on-background">Khiếu nại & Tranh chấp</h2>
+          <p className="text-sm text-on-surface-variant mt-1">Xem xét và phán quyết các khiếu nại liên quan đến học phí.</p>
         </div>
+        <button onClick={fetchDisputes} className="flex items-center gap-2 px-4 py-2 rounded-xl border border-outline-variant text-sm hover:bg-gray-50 transition-colors">
+          <span className="material-symbols-outlined text-[18px]">refresh</span>Làm mới
+        </button>
       </div>
-
-      {/* Summary cards */}
       <div className="grid grid-cols-3 gap-6 mb-8">
         {[
-          { label: 'Đang mở',       count: MOCK_COMPLAINTS.filter(c=>c.status==='Mở').length,             color: 'border-red-400',   icon: 'report_problem', iconColor: 'text-red-600',   bg: 'bg-red-50' },
-          { label: 'Đang xem xét', count: MOCK_COMPLAINTS.filter(c=>c.status==='Đang xem xét').length, color: 'border-amber-400', icon: 'rate_review',    iconColor: 'text-amber-600', bg: 'bg-amber-50' },
-          { label: 'Đã giải quyết',count: MOCK_COMPLAINTS.filter(c=>c.status==='Đã giải quyết').length,color: 'border-green-400', icon: 'check_circle',   iconColor: 'text-green-600', bg: 'bg-green-50' },
+          { label: 'Đang mở', count: openCount, color: 'border-red-400', icon: 'gavel', iconColor: 'text-red-600', bg: 'bg-red-50' },
+          { label: 'Đã xử lý', count: resolvedCount, color: 'border-green-400', icon: 'check_circle', iconColor: 'text-green-600', bg: 'bg-green-50' },
+          { label: 'Tổng cộng', count: disputes.length, color: 'border-blue-400', icon: 'report', iconColor: 'text-blue-600', bg: 'bg-blue-50' },
         ].map(c => (
           <div key={c.label} className={`bg-white rounded-xl p-5 shadow-sm border-l-4 ${c.color}`}>
             <div className="flex items-center gap-3">
@@ -1840,50 +1938,111 @@ function ComplaintsView() {
           </div>
         ))}
       </div>
-
       <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
         <div className="flex gap-3 px-6 py-4 border-b border-outline-variant">
-          {['Tất cả','Mở','Đang xem xét','Đã giải quyết'].map(s => (
-            <button key={s} onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${statusFilter === s ? 'bg-primary text-white' : 'bg-gray-100 text-on-surface-variant hover:bg-gray-200'}`}>
-              {s}
+          {[{key:'all',label:'Tất cả'},{key:'open',label:`Đang mở (${openCount})`},{key:'closed',label:'Đã xử lý'}].map(f => (
+            <button key={f.key} onClick={() => setStatusFilter(f.key)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${statusFilter===f.key?'bg-primary text-white':'bg-gray-100 text-on-surface-variant hover:bg-gray-200'}`}>
+              {f.label}
             </button>
           ))}
         </div>
-        <table className="w-full text-left">
-          <thead className="bg-gray-50 border-b border-outline-variant">
-            <tr>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Mã</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Người báo cáo</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Bị báo cáo</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Vấn đề</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Mức độ</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Trạng thái</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase text-right">Thao tác</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-outline-variant">
-            {filtered.map(c => (
-              <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                <td className="py-4 px-6 text-sm font-mono text-primary font-semibold">{c.id}</td>
-                <td className="py-4 px-6 text-sm text-on-surface">{c.reporter}</td>
-                <td className="py-4 px-6 text-sm text-on-surface">{c.against}</td>
-                <td className="py-4 px-6 text-sm text-on-surface-variant max-w-xs truncate">{c.issue}</td>
-                <td className="py-4 px-6"><span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${priorityColor(c.priority)}`}>{c.priority}</span></td>
-                <td className="py-4 px-6"><span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${statusColor(c.status)}`}>{c.status}</span></td>
-                <td className="py-4 px-6 text-right">
-                  <button className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity">
-                    Xem xét
-                  </button>
-                </td>
+        {loading ? (
+          <div className="p-12 text-center"><div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin mx-auto" /></div>
+        ) : filtered.length === 0 ? (
+          <div className="p-12 text-center text-on-surface-variant">
+            <span className="material-symbols-outlined text-[48px] block mb-2">check_circle</span>
+            Không có khiếu nại nào
+          </div>
+        ) : (
+          <table className="w-full text-left">
+            <thead className="bg-gray-50 border-b border-outline-variant">
+              <tr>
+                {['Người báo cáo','Gia sư','Môn / Ngày','Học phí','Lý do','Ngày gửi','Trạng thái','Thao tác'].map(h => (
+                  <th key={h} className="py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase">{h}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-outline-variant">
+              {filtered.map(d => (
+                <tr key={d.id} className={`hover:bg-gray-50 transition-colors ${d.status==='OPEN'?'bg-red-50/30':''}`}>
+                  <td className="py-3 px-4 text-sm font-medium text-on-surface">{d.reporter_name}</td>
+                  <td className="py-3 px-4 text-sm text-on-surface">{d.tutor_full_name || d.tutor_name}</td>
+                  <td className="py-3 px-4 text-sm"><p>{d.subject}</p><p className="text-xs text-on-surface-variant">{fmtDate(d.lesson_date)}</p></td>
+                  <td className="py-3 px-4 text-sm font-semibold text-primary">{fmtMoney(d.lesson_fee)}</td>
+                  <td className="py-3 px-4 text-sm text-on-surface-variant max-w-[180px]"><p className="truncate" title={d.reason}>{d.reason}</p></td>
+                  <td className="py-3 px-4 text-sm text-on-surface-variant">{fmtDate(d.created_at)}</td>
+                  <td className="py-3 px-4">
+                    <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${statusColor[d.status]||'bg-gray-100 text-gray-600'}`}>{statusLabel[d.status]||d.status}</span>
+                  </td>
+                  <td className="py-3 px-4 text-right">
+                    {d.status === 'OPEN' ? (
+                      <button onClick={() => { setResolveModal(d); setAdminNote('') }}
+                        className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 flex items-center gap-1 ml-auto">
+                        <span className="material-symbols-outlined text-[14px]">gavel</span>Phán quyết
+                      </button>
+                    ) : <span className="text-xs text-on-surface-variant italic">Đã xử lý</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
+
+      {resolveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">gavel</span>Phán quyết khiếu nại
+              </h3>
+              <button onClick={() => setResolveModal(null)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="bg-gray-50 rounded-xl p-4 text-sm space-y-2">
+                <div className="flex justify-between"><span className="text-on-surface-variant">Người báo cáo:</span><span className="font-medium">{resolveModal.reporter_name}</span></div>
+                <div className="flex justify-between"><span className="text-on-surface-variant">Gia sư:</span><span className="font-medium">{resolveModal.tutor_full_name}</span></div>
+                <div className="flex justify-between"><span className="text-on-surface-variant">Môn học:</span><span className="font-medium">{resolveModal.subject} — {fmtDate(resolveModal.lesson_date)}</span></div>
+                <div className="flex justify-between"><span className="text-on-surface-variant">Số tiền:</span><span className="font-bold text-primary text-base">{fmtMoney(resolveModal.lesson_fee)}</span></div>
+                <div className="pt-2 border-t border-gray-200">
+                  <span className="text-on-surface-variant">Lý do:</span>
+                  <p className="text-on-surface mt-1 italic">"{resolveModal.reason}"</p>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-on-surface-variant mb-1">Ghi chú phán quyết</label>
+                <textarea value={adminNote} onChange={e => setAdminNote(e.target.value)} rows={3}
+                  placeholder="Lý do phán quyết..."
+                  className="w-full p-3 rounded-xl border border-gray-300 focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button onClick={() => handleResolve('REFUND_TO_STUDENT')} disabled={resolving}
+                  className="p-4 rounded-xl bg-red-50 border-2 border-red-300 hover:border-red-500 hover:bg-red-100 transition-all disabled:opacity-50 text-left">
+                  <span className="material-symbols-outlined text-red-600 text-[22px] block mb-2">undo</span>
+                  <p className="font-bold text-red-800 text-sm">Hoàn tiền → Học sinh</p>
+                  <p className="text-xs text-red-600 mt-1">Gia sư vi phạm. Trừ -10đ uy tín.</p>
+                  <p className="text-xs font-bold text-red-700 mt-2">→ {fmtMoney(resolveModal.lesson_fee)}</p>
+                </button>
+                <button onClick={() => handleResolve('RELEASE_TO_TUTOR')} disabled={resolving}
+                  className="p-4 rounded-xl bg-blue-50 border-2 border-blue-300 hover:border-blue-500 hover:bg-blue-100 transition-all disabled:opacity-50 text-left">
+                  <span className="material-symbols-outlined text-blue-600 text-[22px] block mb-2">payments</span>
+                  <p className="font-bold text-blue-800 text-sm">Giải ngân → Gia sư</p>
+                  <p className="text-xs text-blue-600 mt-1">Khiếu nại không có cơ sở.</p>
+                  <p className="text-xs font-bold text-blue-700 mt-2">→ {fmtMoney(Math.floor(Number(resolveModal.lesson_fee||0)*0.9))}</p>
+                </button>
+              </div>
+              {resolving && <div className="text-center text-sm text-on-surface-variant flex items-center justify-center gap-2"><div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"/>Đang xử lý...</div>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
 
 // ─── Reviews View ─────────────────────────────────────────────────────────────
 const MOCK_REVIEWS = [

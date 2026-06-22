@@ -170,6 +170,18 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
       const suitableForFromDB = Array.isArray(data.suitable_students) && data.suitable_students.length > 0
         ? data.suitable_students
         : null
+      const dbAvailability = data.availability || base.availability
+      let parsedSchedule = null
+      if (dbAvailability && typeof dbAvailability === 'object' && Object.keys(dbAvailability).length > 0) {
+        const dayMap = { Monday: 'T2', Tuesday: 'T3', Wednesday: 'T4', Thursday: 'T5', Friday: 'T6', Saturday: 'T7', Sunday: 'CN' }
+        parsedSchedule = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+          .filter(day => dbAvailability[day] && dbAvailability[day].length > 0)
+          .map(day => ({
+            day: dayMap[day] || day,
+            slots: dbAvailability[day]
+          }))
+      }
+
       return {
         ...BASE_PROFILE,              // extended mock fields (schedule, reviews, etc.)
         ...base,                      // real basic fields from FindTutors listing
@@ -184,6 +196,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
         // Use structured DB data if available, otherwise fall back to mock
         teachingMethods: teachingMethodsFromDB || BASE_PROFILE.teachingMethods,
         suitableFor: suitableForFromDB || BASE_PROFILE.suitableFor,
+        availableSchedule: parsedSchedule && parsedSchedule.length > 0 ? parsedSchedule : BASE_PROFILE.availableSchedule,
       }
     }
 
@@ -248,6 +261,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/ai-suggest">AI Gợi Ý</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
           </nav>
           <div className="flex items-center gap-4 z-10">
             {user ? (
@@ -511,14 +525,17 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 {/* Action buttons */}
                 <div className="space-y-3">
                   <button
-                    onClick={() => setShowBooking(true)}
+                    onClick={() => window.location.hash = '/booking/' + tutorId}
                     className="w-full bg-[#00288e] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#1e40af] transition-colors shadow-md flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-[18px]">calendar_month</span>
                     Đặt Lịch Học
                   </button>
                   <button
-                    onClick={() => alert('Tính năng nhắn tin sẽ được phát triển sau.')}
+                    onClick={() => {
+                      if (!user) return onGoSignIn();
+                      alert('Để nhắn tin, bạn cần tham gia khóa học của gia sư này. Nếu đã đăng ký, vui lòng vào Bảng điều khiển -> Tin nhắn để trao đổi.');
+                    }}
                     className="w-full bg-white border border-[#c4c5d5] text-[#00288e] py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#f8f9fb] transition-colors flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-[18px]">chat</span>
@@ -543,13 +560,16 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             <span className="text-xs text-[#444653]">/giờ</span>
           </div>
           <button
-            onClick={() => alert('Tính năng nhắn tin sẽ được phát triển sau.')}
+            onClick={() => {
+              if (!user) return onGoSignIn();
+              alert('Để nhắn tin, bạn cần tham gia khóa học của gia sư này. Nếu đã đăng ký, vui lòng vào Bảng điều khiển -> Tin nhắn để trao đổi.');
+            }}
             className="px-4 py-2.5 border border-[#00288e] text-[#00288e] rounded-xl text-sm font-semibold"
           >
             Nhắn Tin
           </button>
           <button
-            onClick={() => setShowBooking(true)}
+            onClick={() => window.location.hash = '/booking/' + tutorId}
             className="px-5 py-2.5 bg-[#00288e] text-white rounded-xl text-sm font-semibold hover:bg-[#1e40af] transition-colors"
           >
             Đặt Lịch

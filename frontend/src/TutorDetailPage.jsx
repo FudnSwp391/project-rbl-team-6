@@ -35,6 +35,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/ai-suggest">AI Gợi Ý</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
           </nav>
 
           {/* Auth Buttons */}
@@ -90,7 +91,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
                 </div>
               </div>
               <div className="space-y-3 mb-10">
-                <button className="btn-shine w-full h-[48px] bg-gradient-to-r from-[#00288e] via-[#2747c4] to-[#3a6fe0] text-white text-sm font-semibold rounded-lg hover:-translate-y-0.5 hover:shadow-[0_14px_30px_-8px_rgba(55,85,195,0.55)] transition-all flex items-center justify-center gap-2 active-interaction shadow-sm">
+                <button onClick={() => window.location.hash = '/booking/' + (viewingTutor?.id || '')} className="w-full h-[48px] bg-[#00288e] text-white text-sm font-semibold rounded-lg hover:bg-[#1e40af] transition-all flex items-center justify-center gap-2 active-interaction shadow-sm">
                   <span className="material-symbols-outlined">event_available</span> Đặt Lịch Học
                 </button>
                 <button className="btn-shine w-full h-[48px] border border-[#c4c5d5] text-[#00288e] text-sm font-semibold rounded-lg hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2 active-interaction bg-white">

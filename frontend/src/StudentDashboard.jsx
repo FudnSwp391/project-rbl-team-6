@@ -4,12 +4,16 @@
  * Dashboard dành cho học sinh (role: student / parent / tutor).
  * Hiện thị: khóa học đang học, bài tập, giờ học, gia sư hiện tại.
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
 import QuizList from './QuizList'
 import PracticeMode from './PracticeMode'
 import ExamPapers from './ExamPapers'
 import MessagesSection from './components/MessagesSection'
+import WalletWidget from './components/WalletWidget'
+import NotificationDropdown from './components/NotificationDropdown'
+import SchedulePage from './components/SchedulePage'
+import { getStudentBookings, confirmLessonComplete, reportTutor } from './services/api'
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
 const MY_TUTORS = [
   {
@@ -108,12 +112,7 @@ export default function StudentDashboard() {
 
             <div className="flex items-center gap-sm lg:gap-md">
               {/* Notification */}
-              <button
-                aria-label="Thông báo"
-                className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
-              >
-                <span className="material-symbols-outlined">notifications</span>
-              </button>
+              <NotificationDropdown token={token} />
 
               <button
                 aria-label="Trợ giúp"
@@ -123,6 +122,8 @@ export default function StudentDashboard() {
               </button>
 
               <div className="w-px h-8 bg-outline-variant/30 mx-xs" />
+
+              <WalletWidget token={token} />
 
               {/* Avatar */}
               <div className="flex items-center gap-xs rounded-full px-xs py-xs hover:bg-surface-container-high transition-colors cursor-pointer">
@@ -173,8 +174,13 @@ export default function StudentDashboard() {
               <MessagesSection token={token} user={user} />
             )}
 
+            {/* ── Lịch học Section ── */}
+            {activeSection === 'schedule' && (
+              <SchedulePage />
+            )}
+
             {/* ── Dashboard Home ── */}
-            {(activeSection === 'dashboard' || activeSection === 'courses' || activeSection === 'schedule') && (
+            {(activeSection === 'dashboard' || activeSection === 'courses') && (
               <>
 
             {/* ── Welcome Header ── */}
@@ -431,6 +437,314 @@ function ParentLinkSection({ token }) {
         )}
       </div>
 
+    </div>
+  )
+}
+
+// ─── Student Bookings Section ─────────────────────────────────────────────────
+function StudentBookingsSection({ token }) {
+  const [bookings, setBookings] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('all')
+  const [actionLoading, setActionLoading] = useState(null)
+  const [reportModal, setReportModal] = useState(null) // booking object
+  const [reportReason, setReportReason] = useState('')
+
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+
+  const fetchBookings = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/student/bookings`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      setBookings(data.bookings || [])
+    } catch (e) {
+      console.error('Failed to load bookings', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { fetchBookings() }, [token])
+
+  const handleConfirmComplete = async (booking) => {
+    if (!window.confirm(`Xác nhận buổi học "${booking.subject}" đã hoàn thành? Tiền sẽ được giải ngân cho gia sư ngay lập tức.`)) return
+    setActionLoading(booking.id + '_confirm')
+    try {
+      const res = await fetch(`${API_BASE}/api/escrow/manual-release/${booking.id}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (data.success) {
+        alert('✅ Xác nhận thành công! Tiền đã được giải ngân cho gia sư.')
+        fetchBookings()
+      } else {
+        alert(data.message || 'Có lỗi xảy ra.')
+      }
+    } catch { alert('Lỗi kết nối.') }
+    setActionLoading(null)
+  }
+
+  const handleReport = async () => {
+    if (!reportReason.trim()) return alert('Vui lòng nhập lý do báo cáo.')
+    setActionLoading(reportModal.id + '_report')
+    try {
+      const res = await fetch(`${API_BASE}/api/bookings/${reportModal.id}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason: reportReason })
+      })
+      const data = await res.json()
+      if (res.ok) {
+        alert('✅ Đã gửi báo cáo. Admin sẽ xem xét trong 24-48h. Tiền tạm thời bị giữ lại.')
+        setReportModal(null)
+        setReportReason('')
+        fetchBookings()
+      } else {
+        alert(data.message || 'Có lỗi xảy ra.')
+      }
+    } catch { alert('Lỗi kết nối.') }
+    setActionLoading(null)
+  }
+
+  const fmtMoney = (n) => Number(n || 0).toLocaleString('vi-VN') + 'đ'
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'
+
+  const statusConfig = {
+    'Pending':   { label: 'Chờ duyệt',    cls: 'bg-amber-100 text-amber-700',  icon: 'pending' },
+    'Approved':  { label: 'Đã duyệt',     cls: 'bg-blue-100 text-blue-700',    icon: 'check_circle' },
+    'Cancelled': { label: 'Đã hủy',       cls: 'bg-red-100 text-red-700',      icon: 'cancel' },
+    'Declined':  { label: 'Bị từ chối',   cls: 'bg-red-100 text-red-700',      icon: 'block' },
+    'Rejected':  { label: 'Bị từ chối',   cls: 'bg-red-100 text-red-700',      icon: 'block' },
+  }
+
+  const escrowConfig = (b) => {
+    if (b.has_open_dispute) return { label: 'Đang khiếu nại', cls: 'bg-orange-100 text-orange-700', icon: 'gavel' }
+    if (b.escrow_released_at) return { label: 'Đã giải ngân', cls: 'bg-green-100 text-green-700', icon: 'payments' }
+    if (b.attendance_status === 'present' && b.auto_release_at) {
+      const releaseAt = new Date(b.auto_release_at)
+      const hoursLeft = Math.max(0, Math.round((releaseAt - Date.now()) / 3600000))
+      return { label: `Giải ngân sau ${hoursLeft}h`, cls: 'bg-blue-100 text-blue-700', icon: 'hourglass_top' }
+    }
+    if (b.escrow_tx_id && !b.escrow_released_at) return { label: 'Tiền tạm giữ', cls: 'bg-amber-100 text-amber-700', icon: 'lock' }
+    return null
+  }
+
+  const filtered = bookings.filter(b => {
+    if (filter === 'active') return ['Pending', 'Approved'].includes(b.status)
+    if (filter === 'completed') return b.escrow_released_at != null
+    if (filter === 'cancelled') return ['Cancelled', 'Declined', 'Rejected'].includes(b.status)
+    return true
+  })
+
+  const upcoming = bookings.filter(b => b.status === 'Approved' && !b.escrow_released_at)
+  const pendingRelease = bookings.filter(b => b.attendance_status === 'present' && !b.escrow_released_at && !b.has_open_dispute)
+
+  return (
+    <div className="flex flex-col gap-lg max-w-5xl mx-auto">
+      <div className="flex items-center justify-between flex-wrap gap-md">
+        <div>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>calendar_month</span>
+            Lịch học của tôi
+          </h2>
+          <p className="font-body-sm text-on-surface-variant">{bookings.length} buổi học tổng cộng</p>
+        </div>
+        <a href="#/tutor" className="h-10 px-4 bg-primary text-on-primary rounded-xl font-label-md flex items-center gap-1 hover:bg-primary/90 transition-colors">
+          <span className="material-symbols-outlined text-[18px]">add</span>
+          Đặt lịch mới
+        </a>
+      </div>
+
+      {/* Pending release banner */}
+      {pendingRelease.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-start gap-3">
+          <span className="material-symbols-outlined text-blue-600 text-[24px] shrink-0 mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
+          <div className="flex-1">
+            <p className="font-label-md text-blue-800 font-semibold">
+              {pendingRelease.length} buổi học đang chờ xác nhận
+            </p>
+            <p className="font-body-sm text-blue-600 mt-0.5">
+              Tiền sẽ tự động giải ngân sau 24h. Nếu hài lòng, bấm "Xác nhận hoàn thành" để giải ngân ngay và không cần đợi.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Filter tabs */}
+      <div className="flex bg-surface-container-high/60 rounded-xl p-1 gap-1">
+        {[
+          { key: 'all', label: 'Tất cả' },
+          { key: 'active', label: 'Đang học' },
+          { key: 'completed', label: 'Đã hoàn thành' },
+          { key: 'cancelled', label: 'Đã hủy' },
+        ].map(f => (
+          <button key={f.key} onClick={() => setFilter(f.key)}
+            className={`flex-1 h-9 rounded-lg font-label-sm transition-all ${filter === f.key ? 'bg-surface shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-xl">
+          <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-xl gap-md text-center bg-surface rounded-2xl border border-outline-variant/20">
+          <span className="material-symbols-outlined text-[48px] text-on-surface-variant">event_available</span>
+          <p className="font-body-md text-on-surface-variant">Chưa có buổi học nào</p>
+          <a href="#/tutor" className="h-10 px-6 bg-primary text-on-primary rounded-xl font-label-md hover:bg-primary/90 transition-colors">
+            Tìm gia sư ngay
+          </a>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-md">
+          {filtered.map(b => {
+            const sc = statusConfig[b.status] || statusConfig['Pending']
+            const ec = escrowConfig(b)
+            const canConfirm = b.attendance_status === 'present' && !b.escrow_released_at && !b.has_open_dispute && b.escrow_tx_id
+            const canReport = b.status === 'Approved' && !b.has_open_dispute && !b.escrow_released_at
+            const canCancel = b.status === 'Pending' || (b.status === 'Approved' && !b.escrow_released_at)
+
+            return (
+              <div key={b.id} className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-md">
+                <div className="flex items-start justify-between gap-md flex-wrap">
+                  {/* Tutor info */}
+                  <div className="flex items-center gap-3">
+                    {b.tutor_picture
+                      ? <img src={b.tutor_picture} alt={b.tutor_name} className="w-11 h-11 rounded-full object-cover border border-outline-variant/20" />
+                      : <div className="w-11 h-11 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center">{(b.tutor_full_name || b.tutor_name || 'T')[0].toUpperCase()}</div>
+                    }
+                    <div>
+                      <p className="font-label-md text-on-surface font-semibold">{b.tutor_full_name || b.tutor_name || 'Gia sư'}</p>
+                      <p className="font-label-sm text-on-surface-variant">{b.subject}</p>
+                      {b.child_name && <p className="text-xs text-on-surface-variant">Học sinh: {b.child_name}</p>}
+                    </div>
+                  </div>
+
+                  {/* Date & time */}
+                  <div className="text-right">
+                    <p className="font-label-md text-on-surface">{fmtDate(b.lesson_date)}</p>
+                    <p className="font-label-sm text-on-surface-variant">{b.time_slot}</p>
+                    {b.lesson_fee > 0 && (
+                      <p className="text-xs text-primary font-semibold mt-0.5">{fmtMoney(b.lesson_fee)}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Status badges */}
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${sc.cls}`}>
+                    <span className="material-symbols-outlined text-[13px]">{sc.icon}</span>
+                    {sc.label}
+                  </span>
+                  {ec && (
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${ec.cls}`}>
+                      <span className="material-symbols-outlined text-[13px]">{ec.icon}</span>
+                      {ec.label}
+                    </span>
+                  )}
+                  {b.attendance_status && (
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                      b.attendance_status === 'present' ? 'bg-green-100 text-green-700' :
+                      b.attendance_status === 'absent' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
+                    }`}>
+                      {b.attendance_status === 'present' ? '✓ Có mặt' : b.attendance_status === 'absent' ? '✗ Vắng' : '~ Có phép'}
+                    </span>
+                  )}
+                </div>
+
+                {/* Actions */}
+                {(canConfirm || canReport || canCancel) && (
+                  <div className="flex gap-2 mt-3 flex-wrap">
+                    {canConfirm && (
+                      <button
+                        onClick={() => handleConfirmComplete(b)}
+                        disabled={actionLoading === b.id + '_confirm'}
+                        className="h-8 px-3 bg-green-600 text-white rounded-lg text-xs font-semibold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">done_all</span>
+                        {actionLoading === b.id + '_confirm' ? 'Đang xử lý...' : 'Xác nhận hoàn thành'}
+                      </button>
+                    )}
+                    {canReport && (
+                      <button
+                        onClick={() => { setReportModal(b); setReportReason('') }}
+                        className="h-8 px-3 bg-red-50 border border-red-300 text-red-700 rounded-lg text-xs font-semibold hover:bg-red-100 transition-colors flex items-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">report</span>
+                        Báo cáo vi phạm
+                      </button>
+                    )}
+                    {canCancel && (
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm('Bạn có chắc muốn hủy buổi học này?')) return
+                          setActionLoading(b.id + '_cancel')
+                          try {
+                            const res = await fetch(`${API_BASE}/api/bookings/${b.id}`, {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                              body: JSON.stringify({ status: 'Cancelled' })
+                            })
+                            const data = await res.json()
+                            if (res.ok) { fetchBookings() } else { alert(data.message) }
+                          } catch { alert('Lỗi kết nối.') }
+                          setActionLoading(null)
+                        }}
+                        disabled={actionLoading === b.id + '_cancel'}
+                        className="h-8 px-3 bg-surface-container border border-outline-variant text-on-surface-variant rounded-lg text-xs font-semibold hover:bg-surface-container-high transition-colors disabled:opacity-50 flex items-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">cancel</span>
+                        Hủy lịch
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Report Modal */}
+      {reportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
+              <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-red-500">report</span>
+                Báo cáo vi phạm
+              </h3>
+              <button onClick={() => setReportModal(null)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container">
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+            <div className="p-4 flex flex-col gap-4">
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm">
+                <p className="font-medium text-red-800">{reportModal.subject} — {reportModal.tutor_full_name || reportModal.tutor_name}</p>
+                <p className="text-red-600 text-xs mt-1">Tiền sẽ bị tạm giữ cho đến khi Admin giải quyết (24–48h).</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Lý do báo cáo <span className="text-error">*</span></label>
+                <textarea value={reportReason} onChange={e => setReportReason(e.target.value)} rows={4}
+                  placeholder="Mô tả vấn đề bạn gặp phải (gia sư không đến, dạy sai nội dung, hành vi không phù hợp...)"
+                  className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
+                />
+              </div>
+              <button onClick={handleReport} disabled={!reportReason.trim() || actionLoading === reportModal.id + '_report'}
+                className="h-11 w-full rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                {actionLoading === reportModal.id + '_report' && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                Gửi báo cáo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

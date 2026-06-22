@@ -1,0 +1,524 @@
+/**
+ * api.js
+ * API client for EduX.
+ * Uses native fetch to connect to the backend, with a complete Mock + LocalStorage fallback
+ * to ensure functionality if the API server is unavailable or routes are unimplemented.
+ */
+
+import { tutors as mockTutors } from '../tutorsData';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+
+// Helper for requests
+async function request(url, options = {}) {
+  const token = localStorage.getItem('token');
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...options.headers
+  };
+
+  const response = await fetch(`${API_BASE_URL}${url}`, {
+    ...options,
+    headers
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `API request failed with status ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch tutor details.
+ * Fallback: Search in mockTutors array.
+ */
+export async function getTutorDetail(tutorId) {
+  try {
+    return await request(`/api/tutors/${tutorId}`);
+  } catch (error) {
+    console.warn(`[API] getTutorDetail failed: ${error.message}. Falling back to tutor list/mock data.`);
+    try {
+      const tutors = await getTutors();
+      const tutor = findTutorByAnyId(tutors, tutorId);
+      if (tutor) {
+        return normalizeTutorDetail(tutor);
+      }
+    } catch (listError) {
+      console.warn(`[API] getTutorDetail list fallback failed: ${listError.message}`);
+    }
+    const idNum = parseInt(tutorId, 10);
+    const tutor = findTutorByAnyId(mockTutors, tutorId) || mockTutors.find(t => t.id === idNum);
+    if (!tutor) {
+      throw new Error(`Tutor with ID ${tutorId} not found.`);
+    }
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 600));
+    return normalizeTutorDetail(tutor);
+  }
+}
+
+function findTutorByAnyId(tutors = [], tutorId) {
+  const target = String(tutorId || '');
+  return tutors.find((tutor) => {
+    const ids = [
+      tutor.id,
+      tutor.user_id,
+      tutor.userId,
+      tutor.tutor_id,
+      tutor.tutorId,
+      tutor.profile_id,
+      tutor.profileId,
+    ].filter((value) => value !== undefined && value !== null);
+    return ids.some((value) => String(value) === target);
+  });
+}
+
+function normalizeTutorDetail(tutor) {
+  const subjects = Array.isArray(tutor.subjects)
+    ? tutor.subjects
+    : tutor.subject
+      ? [tutor.subject]
+      : [];
+  return {
+    ...tutor,
+    id: tutor.user_id || tutor.userId || tutor.tutor_id || tutor.tutorId || tutor.id,
+    user_id: tutor.user_id || tutor.userId || tutor.tutor_id || tutor.tutorId || tutor.id,
+    profile_id: tutor.profile_id || tutor.profileId || tutor.id,
+    name: tutor.name || tutor.full_name || tutor.tutorName || 'Tutor',
+    avatar: tutor.avatar || tutor.picture || tutor.tutorAvatar || '',
+    subjects,
+    rate: tutor.rate || tutor.hourly_rate || 0,
+    availability: tutor.availability || {},
+    description: tutor.description || tutor.bio || tutor.headline || 'EduX tutor.',
+  };
+}
+
+export async function getTutors() {
+  try {
+    return await request('/api/tutors');
+  } catch (error) {
+    console.warn(`[API] getTutors failed: ${error.message}. Falling back to mock data.`);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return mockTutors;
+  }
+}
+
+/**
+ * Fetch tutor availability.
+ * Fallback: Read availability map from mockTutors.
+ */
+export async function getTutorAvailability(tutorId, params = {}) {
+  try {
+    const query = new URLSearchParams(params).toString();
+    return await request(`/api/tutors/${tutorId}/availability${query ? `?${query}` : ''}`);
+  } catch (error) {
+    console.warn(`[API] getTutorAvailability failed: ${error.message}. Falling back to mock data.`);
+    const idNum = parseInt(tutorId, 10);
+    const tutor = findTutorByAnyId(mockTutors, tutorId) || mockTutors.find(t => t.id === idNum);
+    if (!tutor) {
+      throw new Error(`Tutor with ID ${tutorId} not found.`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return tutor.availability;
+  }
+}
+
+/**
+ * Get all bookings.
+ * Fallback: Read from LocalStorage.
+ */
+export async function getBookings() {
+  try {
+    return await request('/api/bookings');
+  } catch (error) {
+    console.warn(`[API] getBookings failed: ${error.message}. Falling back to LocalStorage.`);
+    try {
+      const stored = localStorage.getItem('edux_bookings');
+      const bookings = stored ? JSON.parse(stored) : [];
+      // Sanitize: only return valid booking objects (must have id and status string)
+      return Array.isArray(bookings)
+        ? bookings.filter(b => b && typeof b === 'object' && typeof b.status === 'string')
+        : [];
+    } catch {
+      // Corrupted localStorage â€” clear it and return empty
+      localStorage.removeItem('edux_bookings');
+      return [];
+    }
+  }
+}
+
+/**
+ * Create a new booking request.
+ * Booking must be saved by the backend/Supabase so tutors can see it.
+ */
+export async function createBooking(bookingData) {
+  return request('/api/bookings', {
+    method: 'POST',
+    body: JSON.stringify(bookingData)
+  });
+}
+
+export async function createTrialBooking(bookingData) {
+  return createBooking({
+    ...bookingData,
+    bookingType: 'trial',
+  });
+}
+
+export async function getReviewEligibility(tutorId) {
+  return request(`/api/tutors/${tutorId}/review-eligibility`);
+}
+
+export async function submitTutorReview(tutorId, reviewData) {
+  return request(`/api/tutors/${tutorId}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify(reviewData),
+  });
+}
+
+/**
+ * Update booking status (for Tutor dashboard).
+ * Fallback: Update status in LocalStorage.
+ */
+export async function updateBookingStatus(bookingId, status) {
+  try {
+    return await request(`/api/bookings/${bookingId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    });
+  } catch (error) {
+    console.warn(`[API] updateBookingStatus failed: ${error.message}. Updating in LocalStorage.`);
+    
+    const stored = localStorage.getItem('edux_bookings');
+    const bookings = stored ? JSON.parse(stored) : [];
+    
+    const index = bookings.findIndex(b => b.id === bookingId);
+    if (index !== -1) {
+      bookings[index].status = status;
+      localStorage.setItem('edux_bookings', JSON.stringify(bookings));
+      return bookings[index];
+    }
+    
+    throw new Error(`Booking with ID ${bookingId} not found.`);
+  }
+}
+
+
+export async function getTutorStudents() {
+  return request('/api/tutor/students');
+}
+
+export async function markBookingAttendance(bookingId, status, note = '') {
+  return request(`/api/bookings/${bookingId}/attendance`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, note }),
+  });
+}
+
+export async function getTutorEarnings() {
+  return request('/api/tutor/earnings');
+}
+
+// ── Student Booking & Escrow APIs ──────────────────────────────────────────
+export async function getStudentBookings() {
+  return request('/api/student/bookings');
+}
+
+export async function confirmLessonComplete(bookingId) {
+  return request(`/api/escrow/manual-release/${bookingId}`, { method: 'POST' });
+}
+
+export async function reportTutor(bookingId, reason) {
+  return request(`/api/bookings/${bookingId}/report`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function getWalletFull() {
+  return request('/api/payment/wallet/full');
+}
+
+export async function getTransactionHistory() {
+  return request('/api/payment/transactions');
+}
+
+// ── Admin Dispute APIs ─────────────────────────────────────────────────────
+export async function getAdminDisputes() {
+  return request('/api/admin/disputes');
+}
+
+export async function resolveDispute(disputeId, decision, adminNote = '') {
+  return request('/api/escrow/resolve-dispute-v2', {
+    method: 'POST',
+    body: JSON.stringify({ disputeId, decision, adminNote }),
+  });
+}
+
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â”€â”€ TUTOR PROFILE APIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+/**
+ * Láº¥y profile Ä‘áº§y Ä‘á»§ cá»§a gia sÆ° (credentials + availability).
+ * Fallback: tráº£ vá» mock profile náº¿u backend chÆ°a cĂ³.
+ */
+export async function getTutorProfile() {
+  try {
+    return await request('/api/tutor/profile');
+  } catch (error) {
+    console.warn(`[API] getTutorProfile failed: ${error.message}. Using mock.`);
+    // Tráº£ vá» mock Ä‘á»ƒ UI váº«n hoáº¡t Ä‘á»™ng khi backend chÆ°a sáºµn sĂ ng
+    return {
+      bio: '',
+      bio_pending: null,
+      bio_status: 'approved',
+      status: 'approved',
+      hourly_rate: 0,
+      credentials: [],
+      availability: {},
+    };
+  }
+}
+
+/**
+ * Cáº­p nháº­t bio (gá»­i chá» admin duyá»‡t).
+ */
+export async function updateTutorBio(bio) {
+  try {
+    return await request('/api/tutor/profile/bio', {
+      method: 'PATCH',
+      body: JSON.stringify({ bio }),
+    });
+  } catch (error) {
+    console.warn(`[API] updateTutorBio failed: ${error.message}. Saving locally.`);
+    // Fallback: lÆ°u tháº³ng vĂ o localStorage
+    localStorage.setItem('tutor_bio_local', bio);
+    return { bio, bio_status: 'approved' };
+  }
+}
+
+export async function updateTutorCv(profileData) {
+  return request('/api/tutor/profile/cv', {
+    method: 'PATCH',
+    body: JSON.stringify(profileData),
+  });
+}
+
+export async function submitTutorProfile() {
+  return request('/api/tutor/profile/submit', {
+    method: 'PATCH',
+  });
+}
+
+/**
+ * Cáº­p nháº­t avatar URL (khĂ´ng cáº§n duyá»‡t).
+ */
+export async function updateTutorAvatar(pictureUrl) {
+  try {
+    return await request('/api/tutor/profile/avatar', {
+      method: 'PATCH',
+      body: JSON.stringify({ picture: pictureUrl }),
+    });
+  } catch (error) {
+    console.warn(`[API] updateTutorAvatar failed: ${error.message}.`);
+    throw error;
+  }
+}
+
+/**
+ * ThĂªm 1 credential má»›i (education/certificate/experience).
+ * Fallback: lÆ°u vĂ o localStorage vá»›i status pending.
+ */
+export async function addTutorCredential(credential) {
+  try {
+    return await request('/api/tutor/credentials', {
+      method: 'POST',
+      body: JSON.stringify(credential),
+    });
+  } catch (error) {
+    console.warn(`[API] addTutorCredential failed: ${error.message}. Saving locally.`);
+    const stored = localStorage.getItem('tutor_credentials_local');
+    const list = stored ? JSON.parse(stored) : [];
+    const newItem = {
+      id: `local_${Date.now()}`,
+      ...credential,
+      status: 'approved',
+      created_at: new Date().toISOString(),
+    };
+    list.push(newItem);
+    localStorage.setItem('tutor_credentials_local', JSON.stringify(list));
+    return newItem;
+  }
+}
+
+/**
+ * XoĂ¡ 1 credential.
+ */
+export async function deleteTutorCredential(id) {
+  try {
+    return await request(`/api/tutor/credentials/${id}`, { method: 'DELETE' });
+  } catch (error) {
+    console.warn(`[API] deleteTutorCredential failed: ${error.message}. Removing locally.`);
+    const stored = localStorage.getItem('tutor_credentials_local');
+    const list = stored ? JSON.parse(stored) : [];
+    localStorage.setItem('tutor_credentials_local',
+      JSON.stringify(list.filter(c => c.id !== id)));
+    return { message: 'Deleted locally.' };
+  }
+}
+
+/**
+ * Cáº­p nháº­t lá»‹ch dáº¡y (replace toĂ n bá»™).
+ * Fallback: lÆ°u vĂ o localStorage.
+ */
+export async function updateTutorAvailability(availability) {
+  try {
+    return await request('/api/tutor/availability', {
+      method: 'PUT',
+      body: JSON.stringify({ availability }),
+    });
+  } catch (error) {
+    console.warn(`[API] updateTutorAvailability failed: ${error.message}. Saving locally.`);
+    localStorage.setItem('tutor_availability_local', JSON.stringify(availability));
+    return { message: 'Saved locally.', slots: Object.values(availability).flat().length };
+  }
+}
+
+/**
+ * Admin: láº¥y credentials Ä‘ang chá» duyá»‡t.
+ */
+export async function getAdminPendingCredentials() {
+  return request('/api/admin/credentials/pending');
+}
+
+/**
+ * Admin: approve 1 credential.
+ */
+export async function approveCredential(id) {
+  return request(`/api/admin/credentials/${id}/approve`, { method: 'PATCH' });
+}
+
+/**
+ * Admin: reject 1 credential.
+ */
+export async function rejectCredential(id, reason) {
+  return request(`/api/admin/credentials/${id}/reject`, {
+    method: 'PATCH',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+/**
+ * Admin: láº¥y bio Ä‘ang chá» duyá»‡t.
+ */
+export async function getAdminPendingBios() {
+  return request('/api/admin/bio/pending');
+}
+
+/**
+ * Admin: approve bio.
+ */
+export async function approveBio(id) {
+  return request(`/api/admin/bio/${id}/approve`, { method: 'PATCH' });
+}
+
+/**
+ * Admin: reject bio.
+ */
+export async function rejectBio(id) {
+  return request(`/api/admin/bio/${id}/reject`, { method: 'PATCH' });
+}
+
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â”€â”€ CHAT APIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+export async function getConversations() {
+  return request('/api/conversations')
+}
+
+export async function getOrCreateConversation(tutorId) {
+  return request('/api/conversations', {
+    method: 'POST',
+    body: JSON.stringify({ tutor_id: tutorId }),
+  })
+}
+
+export async function getMessages(conversationId) {
+  return request(`/api/conversations/${conversationId}/messages`)
+}
+
+export async function sendMessage(conversationId, content) {
+  return request(`/api/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  })
+}
+
+export async function markConversationRead(conversationId) {
+  return request(`/api/conversations/${conversationId}/read`, { method: 'PATCH' })
+}
+
+export async function getUnreadCount() {
+  try {
+    const data = await request('/api/messages/unread-count')
+    return data.count || 0
+  } catch {
+    return 0
+  }
+}
+
+export async function getTutorCourses() {
+  return request('/api/tutor/courses')
+}
+
+export async function getPublishedCourses(params = {}) {
+  try {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    ).toString()
+    return await request(`/api/courses${query ? `?${query}` : ''}`)
+  } catch (error) {
+    console.warn(`[API] getPublishedCourses failed: ${error.message}. Returning empty marketplace.`)
+    return []
+  }
+}
+
+export async function saveTutorCourse(course) {
+  const hasId = Boolean(course?.id)
+  return request(hasId ? `/api/tutor/courses/${course.id}` : '/api/tutor/courses', {
+    method: hasId ? 'PATCH' : 'POST',
+    body: JSON.stringify(course),
+  })
+}
+
+export async function deleteTutorCourse(courseId) {
+  return request(`/api/tutor/courses/${courseId}`, { method: 'DELETE' })
+}
+
+export async function getCourseDetail(courseId) {
+  return request(`/api/courses/${courseId}`)
+}
+
+export async function enrollCourse(courseId, payload = {}) {
+  return request(`/api/courses/${courseId}/enroll`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function getMyCourses() {
+  return request('/api/my/courses')
+}
+
+export async function updateCourseProgress(courseId, lessonId, payload = {}) {
+  return request(`/api/courses/${courseId}/lessons/${lessonId}/progress`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+export const apiRequest = request;

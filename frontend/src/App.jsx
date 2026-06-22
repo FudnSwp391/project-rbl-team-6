@@ -12,6 +12,7 @@ import TutorDashboard from './TutorDashboard'
 import ParentDashboard from './ParentDashboard'
 import MyCourses from './pages/MyCourses'
 import CourseDetail from './pages/CourseDetail'
+import CoursePlayer from './pages/CoursePlayer'
 import QuizTaking from './QuizTaking'
 import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
@@ -21,6 +22,9 @@ import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
+import CourseMarketplace from './pages/CourseMarketplace'
+import BookingCalendar from './pages/BookingCalendar'
+import PaymentResult from './pages/PaymentResult'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -109,6 +113,10 @@ const getRouteFromHash = () => {
   if (normalized === '/tutor-profile') return { name: 'tutor-profile' }
 
   const tutorDetailMatch = normalized.match(/^\/tutor-detail\/([^/]+)$/)
+  const bookingMatch = normalized.match(/^\/booking\/([^/]+)$/)
+  const coursePlayerMatch = normalized.match(/^\/course-player\/([^/]+)$/)
+  if (coursePlayerMatch) return { name: 'courseplayer', id: coursePlayerMatch[1] }
+  if (bookingMatch) return { name: 'booking', id: bookingMatch[1] }
   if (tutorDetailMatch) return { name: 'tutor-detail', id: tutorDetailMatch[1] }
   if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
@@ -116,6 +124,7 @@ const getRouteFromHash = () => {
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/ai-suggest') return { name: 'ai-suggest' }
   if (normalized === '/courses') return { name: 'courses' }
+  if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
 
@@ -280,6 +289,7 @@ function HomePage({ onGoSignIn }) {
             <a href="#/courses">Khóa Học</a>
             <a href="#/become-tutor">Trở Thành Gia Sư</a>
             <a href="#/subjects">Môn Học</a>
+            <a href="#/courses">Khóa Học</a>
             {/* Show Admin link if user is admin */}
             {user?.role === 'admin' && (
               <a href="#/admin" style={{ color: 'var(--primary)', fontWeight: 700 }}>
@@ -648,9 +658,12 @@ function App() {
     return <AdminDashboard />
   }
 
-  // ── Route: Student Dashboard ──
+  // ── Route: Dashboard ──
   if (routeName === 'dashboard') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    if (user.role === 'admin') return <AdminDashboard />
+    if (user.role === 'tutor') return <TutorDashboard />
+    if (user.role === 'parent') return <ParentDashboard />
     return <StudentDashboard />
   }
 
@@ -753,6 +766,9 @@ function App() {
   }
 
   // ── Route: Public Pages ──
+  if (routeName === 'payment-result') {
+    return <PaymentResult />
+  }
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
@@ -769,7 +785,15 @@ function App() {
     return <BecomeTutorPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
 
-  // ── Route: Tutor Detail Page ──
+  // ── Route: Course Marketplace ──
+  if (routeName === 'courses') {
+    return <CourseMarketplace />;
+  }
+
+  if (routeName === 'booking') {
+    return <BookingCalendar tutorId={route.id} onGoHome={() => navigateTo('home')} />
+  }
+
   if (routeName === 'tutor-detail') {
     return <TutorProfile tutorId={route.id} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
@@ -788,6 +812,11 @@ function App() {
   }
 
   // ── Route: Course Detail (protected) ──
+  if (routeName === 'courseplayer') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <CoursePlayer courseId={route.id} onGoHome={() => navigateTo('home')} />
+  }
+
   if (routeName === 'coursedetail') {
     if (!user) {
       return (
@@ -797,7 +826,7 @@ function App() {
         />
       )
     }
-    return <CourseDetail />
+    return <CourseDetail courseId={route.id} />
   }
 
   // ── Route: Home ──
@@ -805,4 +834,3 @@ function App() {
 }
 
 export default App
-
