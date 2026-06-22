@@ -98,14 +98,15 @@ export default function CoursesPage({ user }) {
     fetch(`${API_BASE}/api/courses`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        const rows = (d && Array.isArray(d.courses) ? d.courses : [])
-          .map(c => ({
+        // API có thể trả về mảng trực tiếp hoặc { courses: [...] }
+        const raw = Array.isArray(d) ? d : (d && Array.isArray(d.courses) ? d.courses : []);
+        const rows = raw.map(c => ({
             id: c.id, title: c.title, description: c.description || '',
-            category: c.subject, level: c.level || 'Khóa đại học',
+            category: c.subject, level: c.level || '',
             price: c.price || 0, original_price: c.original_price || 0,
             rating: Number(c.avg_rating) || 0, reviews: c.review_count || 0, lessons: c.total_lessons || 0,
           }));
-        if (rows.length) setApiCourses(rows);
+        setApiCourses(rows);
       })
       .catch(() => {});
   }, []);
