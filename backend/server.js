@@ -3878,7 +3878,7 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
     const result = await pool.query(
       `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date_str, b.time_slot, b.status
        FROM bookings b
-       WHERE b.student_id = // GET /api/student/bookings — bookings đầy đủ cho học sinh (bao gồm escrow status)`,
+       WHERE b.student_id = $1`,
        [studentId]
     );
 
@@ -3903,13 +3903,28 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
 
     result.rows.forEach(row => {
       const timeParts = (row.time_slot || '').split('-').map(t => t.trim());
-      let startTimeStr = timeParts[0] || '00:00';
-      let endTimeStr = timeParts[1] || '01:00';
       
-      let [sh, sm] = startTimeStr.split(':');
-      let [eh, em] = endTimeStr.split(':');
-      sh = (sh || '00').padStart(2, '0'); sm = (sm || '00').padStart(2, '0');
-      eh = (eh || '01').padStart(2, '0'); em = (em || '00').padStart(2, '0');
+      let startMatch = timeParts[0] ? timeParts[0].match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/) : null;
+      let endMatch = timeParts[1] ? timeParts[1].match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/) : null;
+
+      let sh = 0, sm = 0, eh = 1, em = 0;
+      if (startMatch) {
+         sh = parseInt(startMatch[1], 10);
+         sm = parseInt(startMatch[2], 10);
+         if (startMatch[3] && startMatch[3].toUpperCase() === 'PM' && sh !== 12) sh += 12;
+         if (startMatch[3] && startMatch[3].toUpperCase() === 'AM' && sh === 12) sh = 0;
+      }
+      if (endMatch) {
+         eh = parseInt(endMatch[1], 10);
+         em = parseInt(endMatch[2], 10);
+         if (endMatch[3] && endMatch[3].toUpperCase() === 'PM' && eh !== 12) eh += 12;
+         if (endMatch[3] && endMatch[3].toUpperCase() === 'AM' && eh === 12) eh = 0;
+      }
+
+      sh = sh.toString().padStart(2, '0');
+      sm = sm.toString().padStart(2, '0');
+      eh = eh.toString().padStart(2, '0');
+      em = em.toString().padStart(2, '0');
       
       const startDate = new Date(`${row.lesson_date_str}T${sh}:${sm}:00+07:00`);
       const endDate = new Date(`${row.lesson_date_str}T${eh}:${em}:00+07:00`);
