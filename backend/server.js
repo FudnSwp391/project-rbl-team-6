@@ -3247,7 +3247,84 @@ app.get("/api/courses", async (req, res) => {
   }
 });
 
+// ── POST /api/ai-suggest (TV3) ────────────────────────────────────────────────
+// Body { prompt } → query gia sư approved → AI chọn gia sư phù hợp.
+// Trả { success, aiUsed, reply, tutors:[...] }. AI lỗi → fallback lọc thủ công.
+app.post("/api/ai-suggest", async (req, res) => {
+  const prompt = (req.body?.prompt ?? req.body?.userMessage ?? "").toString().trim();
+  if (!prompt) return res.status(400).json({ success: false, message: "Thiếu prompt." });
+  try {
+    const tutorsRes = await pool.query(
+      `SELECT u.id, u.full_name, u.picture,
+              tp.bio, tp.subjects, tp.experience_years, tp.hourly_rate,
+              tp.profile_photo_url, tp.city, tp.country, tp.teaching_methods,
+              COALESCE(tp.avg_rating, 0)  AS avg_r,
+              COALESCE(tp.review_count, 0) AS review_count
+       FROM tutor_profiles tp
+       JOIN users u ON u.id = tp.user_id
+       WHERE tp.status = 'approved'
+       ORDER BY tp.avg_rating DESC NULLS LAST, tp.experience_years DESC NULLS LAST`
+    );
+    const all = tutorsRes.rows;
+    if (all.length === 0) {
+      return res.json({ success: true, aiUsed: false, reply: "Hiện chưa có gia sư nào được duyệt. Vui lòng quay lại sau.", tutors: [] });
+    }
 
+    const byId = new Map(all.map(t => [String(t.id), t]));
+    const ai = await suggestTutors(prompt, all);
+    if (ai) {
+      const chosen = ai.tutorIds.map(id => byId.get(String(id))).filter(Boolean).slice(0, 3);
+      return res.json({ success: true, aiUsed: true, reply: ai.reply, tutors: chosen });
+    }
+
+    // Fallback (khi chưa cấu hình AI key): xử lý theo từ khóa NHƯNG tự nhiên như chatbot
+    const t = prompt.toLowerCase().trim();
+    const greetRe  = /^(hi|hello|hey+|chào|xin chào|alo+|hế ?lô|helo|yo)\b|bạn là ai|bạn tên|khoẻ không|khỏe không|cảm ơn|cám ơn|thanks|thank you/i;
+    const searchRe = /(gia sư|giáo viên|tìm|dạy|học|môn|lớp|cấp|toán|lý|vật lý|hoá|hóa|văn|ngữ văn|anh|tiếng|ielts|toeic|sinh|sử|địa|tin|lập trình|python|java|online|offline|ôn thi|luyện thi|gia sư)/i;
+
+    // 1) Chào hỏi / trò chuyện → trả lời thân thiện, KHÔNG đổ danh sách gia sư
+    if (greetRe.test(t) && !searchRe.test(t)) {
+      return res.json({
+        success: true, aiUsed: false,
+        reply: "Xin chào! 👋 Mình là trợ lý EduX. Bạn cần tìm gia sư môn gì, cấp lớp nào, học online hay offline? Mô tả giúp mình nhé!",
+        tutors: [],
+      });
+    }
+    // 2) Không rõ nhu cầu tìm gia sư → hỏi lại, KHÔNG đổ danh sách
+    if (!searchRe.test(t)) {
+      return res.json({
+        success: true, aiUsed: false,
+        reply: 'Bạn mô tả nhu cầu học giúp mình nhé — ví dụ: "Gia sư Toán lớp 10 dạy online" — mình sẽ gợi ý gia sư phù hợp.',
+        tutors: [],
+      });
+    }
+
+    // 3) Có nhu cầu tìm gia sư → lọc theo từ khóa
+    const method = t.includes("online") ? "online" : t.includes("offline") ? "offline" : null;
+    const matchSubject = (x) => (x.subjects || "").toLowerCase().split(/[,;]/)
+      .some(s => s.trim() && t.includes(s.trim().toLowerCase()));
+    const okMethod = (x) => !method || (Array.isArray(x.teaching_methods) && x.teaching_methods.includes(method));
+    const pool2 = all.filter(okMethod);
+    const subjHits = pool2.filter(matchSubject);
+    const result = (subjHits.length ? subjHits : pool2).slice(0, 3);
+
+    if (result.length === 0) {
+      return res.json({
+        success: true, aiUsed: false,
+        reply: "Mình chưa tìm thấy gia sư khớp tiêu chí. Bạn thử nới điều kiện (giá, hình thức, môn học) xem nhé.",
+        tutors: [],
+      });
+    }
+    return res.json({
+      success: true, aiUsed: false,
+      reply: "Dưới đây là một số gia sư phù hợp với nhu cầu của bạn:",
+      tutors: result,
+    });
+  } catch (e) {
+    console.error("POST /api/ai-suggest error:", e.message);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 // ── Reviews theo gia sư / khóa học (TV3) — dùng bảng `reviews` (review_type) ──
@@ -4857,7 +4934,9 @@ TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
 };
 
 // Đăng ký cả 2 đường dẫn cho cùng 1 handler:
+//   /api/ai-suggest — tên theo spec Thành viên 3
 //   /api/ask-ai     — tên cũ, giữ để không vỡ frontend hiện tại
+app.post("/api/ai-suggest", askAiHandler);
 app.post("/api/ask-ai", askAiHandler);
 
 // ─── Start server ─────────────────────────────────────────────────────────────
