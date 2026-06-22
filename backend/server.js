@@ -3929,8 +3929,8 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
       const startDate = new Date(`${row.lesson_date_str}T${sh}:${sm}:00+07:00`);
       const endDate = new Date(`${row.lesson_date_str}T${eh}:${em}:00+07:00`);
 
-      let status = row.status;
-      if (status === 'accepted') {
+      let status = row.status ? row.status.toLowerCase() : 'pending';
+      if (status === 'accepted' || status === 'approved') {
          if (now > endDate) status = 'completed';
          else if (now >= startDate && now <= endDate) status = 'ongoing';
          else status = 'upcoming';
@@ -3979,7 +3979,7 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
     sessions.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
     const today = sessions.filter(s => new Date(s.start_time).toDateString() === todayStr);
-    const up_next = sessions.filter(s => s.status === 'upcoming' || s.status === 'ongoing').slice(0, 3);
+    const up_next = sessions.filter(s => s.status === 'upcoming' || s.status === 'ongoing' || s.status === 'pending').slice(0, 3);
 
     return res.json({
       success: true,
