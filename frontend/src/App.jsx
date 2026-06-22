@@ -812,14 +812,6 @@ function App() {
   }
 
   if (routeName === 'coursedetail') {
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
     return <CourseDetail courseId={route.id} />
   }
 

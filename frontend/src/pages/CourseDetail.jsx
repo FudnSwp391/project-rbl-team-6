@@ -1,357 +1,280 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../AuthContext';
-import StudentSidebar from '../components/StudentSidebar';
-import LessonsTab from '../components/course/LessonsTab';
-import OverviewTab from '../components/course/OverviewTab';
-import AssignmentsTab from '../components/course/AssignmentsTab';
-import MaterialsTab from '../components/course/MaterialsTab';
-import LearningPathTab from '../components/course/LearningPathTab';
-import DiscussionsTab from '../components/course/DiscussionsTab';
 
-const COURSE_DATA = {
-  id: 1,
-  title: 'UI/UX Advanced Mobile App Design',
-  badge: 'Design Excellence',
-  instructor: 'Jane Doe',
-  dateRange: 'Jan 15 - May 20',
-  progress: 45,
-  lessonsCompleted: 12,
-  totalLessons: 24,
-  xpPoints: 850,
-  bannerImage:
-    'https://lh3.googleusercontent.com/aida-public/AB6AXuD_KcMsAP377EF8EhDYTzr9aMGjZgUW8nCwtack2L40Hz5elV_HtLynBqX4pHE3CiLo3wWJF4rW2fiO6XsOpY8Ez3OYmQMNWuMI-Tlny058n1-Begw-zE2pUTHb93o3kJFIIsxiPHDMlRfJowhb1PP1zRF6TKs2N5mqs7qpaC8mMhx13GAK-rz77NleW-hIM3EQMFMu_gW3UfksgkVQhBG_6UMw7BvWwKIrTX2RDJwSaCMlb9MJAeK1osk_XL2Tf763botyHD1A9fQI',
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
-  badges: [
-    { icon: 'rocket_launch', title: 'Early Bird', bgClass: 'bg-primary-fixed', iconClass: 'text-primary' },
-    { icon: 'bolt', title: 'Quick Learner', bgClass: 'bg-tertiary-fixed', iconClass: 'text-on-tertiary-fixed-variant' },
-    { icon: 'emoji_events', title: 'Champion', bgClass: 'bg-surface-container-highest', iconClass: 'text-outline', locked: true },
-  ],
-  nextClass: {
-    label: 'Live Session',
-    title: 'Next Class: Today',
-    time: '05:00 PM - 06:30 PM',
-  },
-  deadline: {
-    title: 'Low-Fi Wireframing',
-    daysLeft: 2,
-    description: "Submit the hi-fi iteration for the 'Eco-Tracker' app design challenge.",
-  },
-  materials: [
-    {
-      icon: 'picture_as_pdf',
-      bgColor: 'bg-red-100',
-      textColor: 'text-red-600',
-      name: 'Course Syllabus.pdf',
-      meta: '2.4 MB • Updated yesterday',
-      action: 'download',
-    },
-    {
-      icon: 'description',
-      bgColor: 'bg-blue-100',
-      textColor: 'text-blue-600',
-      name: 'Mobile UI Kit v2.sketch',
-      meta: '45.8 MB • Library',
-      action: 'link',
-    },
-  ],
+const CAT_STYLE = {
+  'Kỹ Thuật Phần Mềm': { gradient: 'linear-gradient(135deg,#0ea5e9,#1e3a8a)', icon: 'code' },
+  'Toán Học':          { gradient: 'linear-gradient(135deg,#6366f1,#312e81)', icon: 'calculate' },
+  'Ngoại Ngữ':         { gradient: 'linear-gradient(135deg,#f59e0b,#b45309)', icon: 'translate' },
+  'Vi Mạch':           { gradient: 'linear-gradient(135deg,#10b981,#065f46)', icon: 'memory' },
+  _default:            { gradient: 'linear-gradient(135deg,#3b82f6,#1e3a8a)', icon: 'school' },
 };
 
-const TABS = ['Overview', 'Lessons', 'Assignments', 'Materials', 'Discussions', 'Learning Path'];
+function fmtVnd(v) {
+  if (!v || Number(v) === 0) return 'Miễn phí';
+  return new Intl.NumberFormat('vi-VN').format(Number(v)) + ' đ';
+}
 
-export default function CourseDetail() {
-  const { user, logout } = useAuth();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('Overview');
-  const [animateIn, setAnimateIn] = useState(false);
+function Stars({ value, size = 18 }) {
+  const r = Math.round(value);
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map(i => (
+        <span key={i} className="material-symbols-outlined" style={{ fontSize: size, color: i <= r ? '#f5a623' : '#d1d5db', fontVariationSettings: i <= r ? "'FILL' 1" : "'FILL' 0" }}>star</span>
+      ))}
+    </span>
+  );
+}
+
+export default function CourseDetail({ courseId }) {
+  const [course, setCourse] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
-    // Trigger entrance animation after mount
-    const timer = setTimeout(() => setAnimateIn(true), 50);
-    return () => clearTimeout(timer);
-  }, []);
+    const id = courseId || window.location.hash.match(/#\/course\/([^/]+)/)?.[1];
+    if (!id) { setError('Không tìm thấy ID khóa học.'); setLoading(false); return; }
 
-  const getCourseIdFromHash = () => {
-    const match = window.location.hash.match(/#\/course\/([^/]+)/);
-    return match ? match[1] : null;
-  };
+    fetch(`${API_BASE}/api/courses/${id}`)
+      .then(r => { if (!r.ok) throw new Error('Không tìm thấy khóa học.'); return r.json(); })
+      .then(d => { setCourse(d); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  }, [courseId]);
 
-  const classIdFromHash = getCourseIdFromHash();
-  const classId = classIdFromHash && classIdFromHash !== '1' ? classIdFromHash : 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-[#f8f9fb]">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-12 h-12 border-4 border-[#00288e] border-t-transparent rounded-full animate-spin"></div>
+        <p className="text-[#5d5f5f] font-medium">Đang tải khóa học...</p>
+      </div>
+    </div>
+  );
 
-  const renderTabContent = () => {
-    switch (activeTab) {
-      case 'Lessons':
-        return <LessonsTab classId={classId} />;
-      case 'Overview':
-        return <OverviewTab course={course} />;
-      case 'Assignments':
-        return <AssignmentsTab classId={classId} />;
-      case 'Materials':
-        return <MaterialsTab classId={classId} />;
-      case 'Learning Path':
-        return <LearningPathTab classId={classId} />;
-      case 'Discussions':
-        return <DiscussionsTab classId={classId} />;
-      default:
-        return <OverviewTab course={course} />;
-    }
-  };
+  if (error) return (
+    <div className="min-h-screen flex items-center justify-center bg-[#f8f9fb]">
+      <div className="text-center space-y-4">
+        <span className="material-symbols-outlined text-[64px] text-[#9aa3b8]">error_outline</span>
+        <p className="text-[#5d5f5f] text-lg">{error}</p>
+        <button onClick={() => window.location.hash = '#/courses'} className="px-6 py-3 bg-[#00288e] text-white rounded-xl font-semibold hover:bg-[#001d6e] transition-colors">
+          ← Quay lại danh sách
+        </button>
+      </div>
+    </div>
+  );
 
-  const course = COURSE_DATA;
+  const c = course;
+  const catStyle = CAT_STYLE[c.subject] || CAT_STYLE._default;
+  const discount = c.original_price && c.original_price > c.price
+    ? Math.round((1 - c.price / c.original_price) * 100) : 0;
+  const lessons = c.lessons || [];
+  const outcomes = Array.isArray(c.learning_outcomes) ? c.learning_outcomes : [];
+  const requirements = Array.isArray(c.requirements) ? c.requirements : [];
 
   return (
-    <div className="bg-surface text-on-surface min-h-screen font-body-md">
-      {/* TopNavBar */}
-      <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-lg h-16 bg-surface border-b border-outline-variant shadow-sm">
-        <div className="flex items-center gap-md">
-          <a href="#/" className="text-headline-md font-bold text-primary no-underline">
-            EduX
+    <div className="min-h-screen bg-[#f8f9fb] text-[#191c1e] font-sans">
+      {/* Header */}
+      <header className="sticky top-0 z-50 bg-[#f8f9fb]/90 backdrop-blur-md border-b border-[#e5e7eb] shadow-sm">
+        <div className="max-w-[1280px] mx-auto px-6 h-[72px] flex items-center gap-6">
+          <a href="#/" className="flex items-center gap-2 text-2xl font-extrabold text-[#00288e] shrink-0">
+            <span className="material-symbols-outlined text-[#00288e]" style={{ fontVariationSettings: "'FILL' 1" }}>school</span>EduX
           </a>
-          <nav className="hidden md:flex gap-md ml-lg">
+          <nav className="hidden md:flex items-center gap-7 ml-auto text-sm font-semibold">
+            <a href="#/" className="text-[#5d5f5f] hover:text-[#00288e] transition-colors">Trang chủ</a>
+            <a href="#/courses" className="text-[#00288e]">Khóa học</a>
+            <a href="#/find-tutors" className="text-[#5d5f5f] hover:text-[#00288e] transition-colors">Tìm gia sư</a>
           </nav>
-        </div>
-        <div className="flex items-center gap-md">
-          <button className="relative p-xs hover:bg-surface-container rounded-full transition-colors">
-            <span className="material-symbols-outlined text-on-surface-variant">notifications</span>
-            <span className="absolute top-1 right-1 w-2 h-2 bg-error rounded-full"></span>
-          </button>
-          <div className="flex items-center gap-xs">
-            {user?.picture ? (
-              <img
-                alt="Ảnh đại diện người dùng"
-                className="w-8 h-8 rounded-full border border-outline-variant"
-                src={user.picture}
-              />
-            ) : (
-              <span className="material-symbols-outlined text-on-surface-variant text-[32px]">
-                account_circle
-              </span>
-            )}
-            <span className="hidden md:block text-label-md font-semibold">
-              {user?.name || user?.email || 'Văn kiên Nguyễn'}
-            </span>
-          </div>
         </div>
       </header>
 
-      <StudentSidebar
-        sidebarOpen={sidebarOpen}
-        setSidebarOpen={setSidebarOpen}
-        activeRoute="my-courses"
-        logout={logout}
-      />
+      <main className="max-w-[1280px] mx-auto px-6 py-8">
+        {/* Breadcrumb */}
+        <nav className="flex items-center gap-2 text-sm text-[#757684] mb-6">
+          <a href="#/courses" className="hover:text-[#00288e] transition-colors">Khóa học</a>
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_right</span>
+          <span className="text-[#191c1e] font-semibold">{c.title}</span>
+        </nav>
 
-      {/* Main Content */}
-      <main className="ml-[240px] mt-16 p-lg bg-surface min-h-screen">
-        <div className="max-w-container-max mx-auto grid grid-cols-12 gap-lg items-start">
-          {/* Left & Center: Course Details (col-span-8) */}
-          <div className="col-span-8 space-y-8">
-            {/* Breadcrumbs */}
-            <nav
-              className={`flex items-center gap-2 text-label-sm font-label-sm text-on-surface-variant mb-2 transition-all duration-500 ${
-                animateIn ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
-              }`}
-            >
-              <a href="#/my-courses" className="hover:text-primary transition-colors">
-                Khóa học của tôi
-              </a>
-              <span className="material-symbols-outlined text-[16px]">chevron_right</span>
-              {activeTab !== 'Overview' ? (
-                <>
-                  <a
-                    href="#"
-                    className="hover:text-primary transition-colors"
-                    onClick={(e) => { e.preventDefault(); setActiveTab('Overview'); }}
-                  >
-                    {course.title}
-                  </a>
-                  <span className="material-symbols-outlined text-[16px]">chevron_right</span>
-                  <span className="text-primary font-semibold">{activeTab}</span>
-                </>
+        <div className="flex flex-col lg:flex-row gap-8">
+          {/* Left: Main content */}
+          <div className="flex-grow min-w-0 space-y-6">
+            {/* Hero Banner */}
+            <div className="relative rounded-2xl overflow-hidden shadow-lg" style={{ background: catStyle.gradient }}>
+              <span className="material-symbols-outlined absolute select-none" style={{ right: -20, bottom: -30, fontSize: 200, color: 'rgba(255,255,255,0.08)' }}>{catStyle.icon}</span>
+              {c.thumbnail_url ? (
+                <img src={c.thumbnail_url} alt={c.title} className="w-full h-[280px] object-cover" />
               ) : (
-                <span className="text-primary font-semibold">{course.title}</span>
+                <div className="w-full h-[280px] flex items-center justify-center">
+                  <div className="relative z-10 text-center px-8">
+                    <span className="material-symbols-outlined text-white/30" style={{ fontSize: 80 }}>{catStyle.icon}</span>
+                  </div>
+                </div>
               )}
-            </nav>
+              <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/60 to-transparent">
+                <span className="inline-block text-[10px] font-bold tracking-wider uppercase bg-white/20 text-white px-3 py-1 rounded-full mb-3">{c.subject || 'Khóa học'}</span>
+                <h1 className="text-white font-extrabold text-2xl md:text-3xl leading-tight" style={{ textShadow: '0 2px 8px rgba(0,0,0,.4)' }}>{c.title}</h1>
+              </div>
+            </div>
 
-            {/* Hero Section */}
-            <section
-              className={`bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden border border-outline-variant transition-all duration-700 ${
-                animateIn ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
-              }`}
-              style={{ transitionDelay: '0.05s' }}
-            >
-              <div className="relative h-64 w-full">
-                <img className="w-full h-full object-cover" src={course.bannerImage} alt="Course banner" />
-                <div className="absolute top-4 left-4">
-                  <span className="bg-primary text-white px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest shadow-lg">
-                    {course.badge}
-                  </span>
+            {/* Tutor info bar */}
+            <div className="flex items-center gap-4 bg-white border border-[#e5e7eb] rounded-xl p-4 shadow-sm">
+              {c.tutor_picture ? (
+                <img src={c.tutor_picture} alt={c.tutor_name} className="w-12 h-12 rounded-full object-cover border-2 border-[#00288e]/20" />
+              ) : (
+                <div className="w-12 h-12 rounded-full bg-[#00288e]/10 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 28 }}>person</span>
+                </div>
+              )}
+              <div>
+                <p className="text-sm text-[#757684]">Giảng viên</p>
+                <p className="font-bold text-[#191c1e]">{c.tutor_name || 'Chưa cập nhật'}</p>
+              </div>
+              <div className="ml-auto flex items-center gap-3">
+                <div className="flex items-center gap-1.5">
+                  <Stars value={Number(c.avg_rating) || 0} />
+                  <span className="font-bold text-sm text-[#191c1e]">{Number(c.avg_rating || 0).toFixed(1)}</span>
+                  {c.review_count > 0 && <span className="text-[#757684] text-xs">({c.review_count} đánh giá)</span>}
                 </div>
               </div>
-              <div className="p-md space-y-md">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h2 className="text-headline-lg font-bold text-on-surface mb-xs">{course.title}</h2>
-                    <div className="flex items-center gap-4 text-on-surface-variant font-label-md text-label-md">
-                      <div className="flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-primary text-[18px]">person</span>
-                        <span>Instructor: {course.instructor}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-primary text-[18px]">
-                          calendar_month
-                        </span>
-                        <span>{course.dateRange}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-headline-md font-bold text-primary">{course.progress}%</span>
-                    <p className="text-label-sm text-on-surface-variant">Course Progress</p>
-                  </div>
-                </div>
+            </div>
 
-                {/* Progress Bar */}
-                <div className="w-full bg-surface-container-highest rounded-full h-3">
-                  <div
-                    className="bg-primary h-full rounded-full transition-all duration-700"
-                    style={{ width: `${course.progress}%` }}
-                  ></div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-4 pt-2">
-                  <button className="bg-primary text-on-primary font-label-md text-label-md px-8 py-3 rounded-xl flex items-center gap-2 hover:bg-primary-container hover:text-on-primary-container transition-all active:scale-95">
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontVariationSettings: "'FILL' 1" }}
-                    >
-                      play_circle
-                    </span>
-                    Continue Learning
-                  </button>
-                  <button className="border-2 border-primary text-primary font-label-md text-label-md px-8 py-3 rounded-xl flex items-center gap-2 hover:bg-primary/5 transition-all active:scale-95">
-                    <span className="material-symbols-outlined">groups</span>
-                    Join Live Class
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            {/* Tabs & Content */}
-            <section
-              className={`space-y-md transition-all duration-700 ${
-                animateIn ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
-              }`}
-              style={{ transitionDelay: '0.1s' }}
-            >
-              {/* Tab Navigation */}
-              <div className="border-b border-surface-container flex gap-10">
-                {TABS.map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`pb-4 font-label-md text-label-md whitespace-nowrap transition-colors duration-200 ${
-                      activeTab === tab
-                        ? 'text-primary border-b-2 border-primary'
-                        : 'text-on-surface-variant hover:text-primary'
-                    }`}
-                  >
-                    {tab}
+            {/* Tabs */}
+            <div className="bg-white border border-[#e5e7eb] rounded-2xl shadow-sm overflow-hidden">
+              <div className="border-b border-[#e5e7eb] flex">
+                {[['overview', 'Tổng quan'], ['lessons', `Bài học (${lessons.length})`], ['info', 'Thông tin thêm']].map(([key, label]) => (
+                  <button key={key} onClick={() => setActiveTab(key)}
+                    className={`px-6 py-4 text-sm font-semibold transition-colors ${activeTab === key ? 'text-[#00288e] border-b-2 border-[#00288e]' : 'text-[#757684] hover:text-[#00288e]'}`}>
+                    {label}
                   </button>
                 ))}
               </div>
 
-              {/* Tab Content */}
-              {renderTabContent()}
-            </section>
+              <div className="p-6">
+                {activeTab === 'overview' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h2 className="text-lg font-bold text-[#191c1e] mb-3">Mô tả khóa học</h2>
+                      <p className="text-[#444653] leading-relaxed whitespace-pre-line">{c.description || 'Chưa có mô tả cho khóa học này.'}</p>
+                    </div>
+                    {outcomes.length > 0 && (
+                      <div>
+                        <h2 className="text-lg font-bold text-[#191c1e] mb-3">Bạn sẽ học được gì?</h2>
+                        <div className="grid md:grid-cols-2 gap-3">
+                          {outcomes.map((o, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <span className="material-symbols-outlined text-[#16a34a] mt-0.5" style={{ fontSize: 20, fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                              <span className="text-[#444653] text-sm">{o}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {requirements.length > 0 && (
+                      <div>
+                        <h2 className="text-lg font-bold text-[#191c1e] mb-3">Yêu cầu</h2>
+                        <ul className="space-y-2">
+                          {requirements.map((r, i) => (
+                            <li key={i} className="flex items-start gap-2">
+                              <span className="material-symbols-outlined text-[#f59e0b] mt-0.5" style={{ fontSize: 20 }}>arrow_right</span>
+                              <span className="text-[#444653] text-sm">{r}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'lessons' && (
+                  <div className="space-y-3">
+                    {lessons.length === 0 ? (
+                      <div className="text-center py-12 text-[#757684]">
+                        <span className="material-symbols-outlined text-[48px] text-[#d1d5db] block mb-3">library_books</span>
+                        <p>Chưa có bài học nào được thêm vào khóa học này.</p>
+                      </div>
+                    ) : lessons.map((lesson, idx) => (
+                      <div key={lesson.id} className="flex items-center gap-4 p-4 bg-[#f8f9fb] rounded-xl border border-[#e5e7eb] hover:border-[#00288e]/30 transition-colors">
+                        <div className="w-10 h-10 rounded-lg bg-[#00288e]/10 flex items-center justify-center shrink-0">
+                          <span className="text-[#00288e] font-bold text-sm">{idx + 1}</span>
+                        </div>
+                        <div className="flex-grow min-w-0">
+                          <p className="font-semibold text-[#191c1e] text-sm">{lesson.title}</p>
+                          {lesson.description && <p className="text-[#757684] text-xs mt-0.5 line-clamp-1">{lesson.description}</p>}
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          {lesson.duration_label && <span className="text-xs text-[#757684]">{lesson.duration_label}</span>}
+                          {lesson.is_preview ? (
+                            <span className="text-[10px] font-bold text-[#16a34a] bg-[#16a34a]/10 px-2 py-1 rounded-full">Xem trước</span>
+                          ) : (
+                            <span className="material-symbols-outlined text-[#9aa3b8]" style={{ fontSize: 18 }}>lock</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {activeTab === 'info' && (
+                  <div className="space-y-4">
+                    {[
+                      ['Cấp độ', c.level],
+                      ['Đối tượng', c.target_students],
+                      ['Ngôn ngữ', c.language],
+                      ['Hình thức', c.learning_mode],
+                      ['Nền tảng', c.platform],
+                      ['Phương pháp giảng dạy', c.teaching_method],
+                      ['Mục tiêu học tập', c.learning_goal],
+                      ['Kết quả mong đợi', c.expected_outcome],
+                      ['Khu vực', [c.city, c.district].filter(Boolean).join(', ')],
+                    ].filter(([, v]) => v && v.toString().trim()).map(([label, value]) => (
+                      <div key={label} className="flex items-start border-b border-[#f0f1f3] pb-3 last:border-0">
+                        <span className="w-48 text-sm text-[#757684] shrink-0">{label}</span>
+                        <span className="text-sm text-[#191c1e] font-medium">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-          {/* Right Column: Sidebar Stats & Info (col-span-4) */}
-          <div className="col-span-4 space-y-md">
-            {/* Course Statistics Card */}
-            <div
-              className={`bg-surface-container-lowest p-6 rounded-xl border border-surface-container space-y-4 transition-all duration-700 ${
-                animateIn ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
-              }`}
-              style={{ transitionDelay: '0.15s', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05)' }}
-            >
-              <h3 className="font-label-md text-label-md text-on-surface mb-4">Course Statistics</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-surface p-4 rounded-lg border border-surface-container">
-                  <p className="text-xs text-on-surface-variant mb-1">Completed</p>
-                  <p className="text-headline-md font-bold text-primary">{course.lessonsCompleted}/{course.totalLessons}</p>
-                  <p className="text-[10px] text-on-surface-variant">Lessons</p>
-                </div>
-                <div className="bg-surface p-4 rounded-lg border border-surface-container">
-                  <p className="text-xs text-on-surface-variant mb-1">XP Earned</p>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="material-symbols-outlined text-amber-500 text-[20px]"
-                      style={{ fontVariationSettings: "'FILL' 1" }}
-                    >
-                      stars
-                    </span>
-                    <p className="text-headline-md font-bold text-on-surface">{course.xpPoints}</p>
+          {/* Right sidebar: Price & actions */}
+          <div className="w-full lg:w-[340px] shrink-0 space-y-5">
+            <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6 shadow-sm sticky top-[88px]">
+              {/* Price */}
+              <div className="mb-5">
+                {c.original_price > c.price && (
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[#9aa3b8] text-base line-through">{fmtVnd(c.original_price)}</span>
+                    {discount > 0 && <span className="text-[#16a34a] text-sm font-bold bg-[#16a34a]/10 px-2 py-0.5 rounded-full">-{discount}%</span>}
                   </div>
-                  <p className="text-[10px] text-on-surface-variant">Knowledge Points</p>
-                </div>
+                )}
+                <div className="text-[#00288e] font-extrabold text-3xl">{fmtVnd(c.price)}</div>
               </div>
-            </div>
 
-            {/* Upcoming Class Card */}
-            <div
-              className={`bg-primary-container text-white p-6 rounded-xl relative overflow-hidden group transition-all duration-700 ${
-                animateIn ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
-              }`}
-              style={{ transitionDelay: '0.2s', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05)' }}
-            >
-              <div className="relative z-10">
-                <span className="inline-block px-2 py-1 bg-white/20 rounded text-[10px] uppercase font-bold tracking-wider mb-4">
-                  {course.nextClass.label}
-                </span>
-                <h3 className="font-headline-md text-headline-md leading-tight mb-2">Interactive Motion Design</h3>
-                <p className="font-body-md text-body-md opacity-90 mb-6">Today, 5:00 PM • With Prof. Sterling</p>
-                <button className="w-full py-3 bg-white text-primary font-bold rounded-lg hover:bg-opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[20px]">video_call</span>
-                  Join Session
-                </button>
-              </div>
-              {/* Decorative background icon */}
-              <span className="material-symbols-outlined absolute -bottom-4 -right-4 text-[120px] opacity-10 rotate-12 group-hover:scale-110 transition-transform">podcasts</span>
-            </div>
-
-
-
-            {/* Quick Materials */}
-            <div
-              className={`bg-surface-container-lowest p-6 rounded-xl border border-surface-container transition-all duration-700 ${
-                animateIn ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
-              }`}
-              style={{ transitionDelay: '0.25s', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05)' }}
-            >
-              <h3 className="font-label-md text-label-md text-on-surface mb-4">Quick Materials</h3>
-              <div className="space-y-3">
-                {course.materials.map((mat, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-3 bg-surface rounded-lg border border-surface-container hover:border-primary/30 transition-colors group cursor-pointer"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded ${mat.bgColor} ${mat.textColor} flex items-center justify-center`}>
-                        <span className="material-symbols-outlined text-[20px]">{mat.icon}</span>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-on-surface">{mat.name}</p>
-                        <p className="text-[10px] text-on-surface-variant">{mat.meta}</p>
-                      </div>
-                    </div>
-                    <span className="material-symbols-outlined text-outline group-hover:text-primary">download</span>
+              {/* Stats */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                {[
+                  ['play_lesson', `${c.total_lessons || lessons.length || 0} bài học`],
+                  ['schedule', c.session_duration ? `${c.session_duration} phút/buổi` : (c.duration || 'Linh hoạt')],
+                  ['group', c.class_type || '1-on-1'],
+                  ['bar_chart', c.level || 'Tất cả'],
+                ].map(([icon, text], i) => (
+                  <div key={i} className="flex items-center gap-2 p-3 bg-[#f8f9fb] rounded-xl">
+                    <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 20 }}>{icon}</span>
+                    <span className="text-xs text-[#444653] font-medium">{text}</span>
                   </div>
                 ))}
               </div>
-              <button className="w-full mt-6 py-2 text-primary font-label-md text-label-md hover:underline">
-                View All Materials
+
+              {/* Action buttons */}
+              <button className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white font-bold text-base flex items-center justify-center gap-2 hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)] transition-all mb-3">
+                <span className="material-symbols-outlined" style={{ fontSize: 20 }}>shopping_cart</span>
+                Đăng ký khóa học
+              </button>
+              <button onClick={() => window.location.hash = '#/courses'} className="w-full py-3 rounded-xl border-2 border-[#00288e] text-[#00288e] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#00288e]/5 transition-colors">
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
+                Quay lại danh sách
               </button>
             </div>
           </div>

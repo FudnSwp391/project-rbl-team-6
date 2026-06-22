@@ -3099,7 +3099,37 @@ app.get("/api/courses", async (req, res) => {
   }
 });
 
-// ── GET /api/tutors (public) ──────────────────────────────────────────────────
+// ── GET /api/courses/:id ── Chi tiết 1 khóa học (public) ─────────────────────
+app.get("/api/courses/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const courseRes = await pool.query(
+      `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture, u.email AS tutor_email
+       FROM courses c
+       JOIN users u ON c.tutor_id = u.id
+       WHERE c.id = $1`, [id]
+    );
+    if (courseRes.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const course = courseRes.rows[0];
+
+    // Lấy danh sách bài học
+    let lessons = [];
+    try {
+      const lessonsRes = await pool.query(
+        `SELECT id, title, description, duration_label, is_preview, position
+         FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`, [id]
+      );
+      lessons = lessonsRes.rows;
+    } catch (_) { /* bảng chưa tồn tại thì bỏ qua */ }
+
+    return res.json({ ...course, lessons });
+  } catch (err) {
+    console.error("GET /api/courses/:id error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+
 // Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
 app.get("/api/tutors", async (req, res) => {
   const { search = "", subjects = "", sort = "rating", page = "1", limit = "12" } = req.query;

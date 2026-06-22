@@ -56,7 +56,8 @@ function CourseCard({ course, onAdd }) {
   const discount = course.original_price && course.original_price > course.price
     ? Math.round((1 - course.price / course.original_price) * 100) : 0;
   return (
-    <div className="group flex gap-4 bg-white border border-[#e5e7eb] rounded-2xl overflow-hidden shadow-sm hover:border-[#00288e]/40 hover:shadow-[0_12px_40px_-12px_rgba(0,40,142,0.25)] transition-all">
+    <div onClick={() => window.location.hash = `#/course/${course.id}`} style={{ cursor: 'pointer' }}
+      className="group flex gap-4 bg-white border border-[#e5e7eb] rounded-2xl overflow-hidden shadow-sm hover:border-[#00288e]/40 hover:shadow-[0_12px_40px_-12px_rgba(0,40,142,0.25)] transition-all">
       <div className="w-[200px] min-w-[200px] h-[150px] shrink-0"><CourseCover course={course} /></div>
       <div className="flex-grow py-4 pr-2 min-w-0">
         <h3 className="text-[#191c1e] font-bold text-lg leading-snug">{course.title}</h3>
