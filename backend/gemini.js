@@ -673,13 +673,15 @@ YÊU CẦU CỦA NGƯỜI DÙNG: "${userPrompt}"`;
     return normalizeSuggest(await viaGemini());
   } catch (e) {
     if (isQuotaError(e)) console.warn("⚠️  suggestTutors: Gemini hết quota — thử Groq");
+    else if (e.message && e.message.includes("401")) console.error("❌ suggestTutors Gemini: API key không hợp lệ (401 Unauthorized).");
     else console.error("❌ suggestTutors Gemini:", e.message);
   }
   if (hasGroq) {
     try {
       return normalizeSuggest(await viaGroq());
     } catch (e) {
-      console.error("❌ suggestTutors Groq:", e.message);
+      if (e.message && e.message.includes("401")) console.error("❌ suggestTutors Groq: API key không hợp lệ (401 Unauthorized).");
+      else console.error("❌ suggestTutors Groq:", e.message);
     }
   }
   return null;

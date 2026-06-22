@@ -289,7 +289,6 @@ function HomePage({ onGoSignIn }) {
             <a href="#/courses">Khóa Học</a>
             <a href="#/become-tutor">Trở Thành Gia Sư</a>
             <a href="#/subjects">Môn Học</a>
-            <a href="#/courses">Khóa Học</a>
             {/* Show Admin link if user is admin */}
             {user?.role === 'admin' && (
               <a href="#/admin" style={{ color: 'var(--primary)', fontWeight: 700 }}>
