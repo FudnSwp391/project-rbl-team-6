@@ -17,6 +17,9 @@ import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
 import SubjectsPage from './SubjectsPage'
+import THPTSubjectsPage from './THPTSubjectsPage'
+import TieuHocSubjectsPage from './TieuHocSubjectsPage'
+import THCSSubjectsPage from './THCSSubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
 import { useAuth } from './AuthContext'
@@ -111,6 +114,9 @@ const getRouteFromHash = () => {
   if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
   if (normalized === '/subjects')  return { name: 'subjects' }
+  if (normalized === '/subjects/thpt') return { name: 'thpt-subjects' }
+  if (normalized === '/subjects/tieu-hoc') return { name: 'tieu-hoc-subjects' }
+  if (normalized === '/subjects/thcs') return { name: 'thcs-subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
@@ -684,6 +690,15 @@ function App() {
   }
   if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'thpt-subjects') {
+    return <THPTSubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'tieu-hoc-subjects') {
+    return <TieuHocSubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'thcs-subjects') {
+    return <THCSSubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
   if (routeName === 'become-tutor') {
     return <BecomeTutorPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
