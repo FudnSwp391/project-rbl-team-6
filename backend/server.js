@@ -455,11 +455,43 @@ app.get("/", (req, res) => {
   res.send("EduX Backend is running Γ£à");
 });
 
+// ─É─ö POST /api/auth/check-email ─É─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö─ö
+// Kiểm tra email đã tồn tại chưa (dùng trước khi đăng ký để báo lỗi sớm)
+app.post("/api/auth/check-email", async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ message: "Email is required." });
+
+  try {
+    const result = await pool.query(
+      "SELECT id, google_id FROM users WHERE email = $1",
+      [email.toLowerCase().trim()]
+    );
+    if (result.rows.length === 0) {
+      return res.json({ available: true });
+    }
+    if (result.rows[0].google_id) {
+      return res.status(409).json({
+        available: false,
+        isGoogleAccount: true,
+        message: "Email này đã được đăng ký qua Google. Vui lòng đăng nhập bằng Google.",
+      });
+    }
+    return res.status(409).json({
+      available: false,
+      isGoogleAccount: false,
+      message: "Email này đã được đăng ký. Vui lòng đăng nhập.",
+    });
+  } catch (err) {
+    console.error("check-email error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 // ΓöÇΓöÇΓöÇ POST /api/auth/register ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // ─É─âng k├╜ bß║▒ng email + password
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { fullName, email, password, role } = req.body || {};
+    const { fullName, email, password, role, phone, city, avatarUrl } = req.body || {};
 
     // Validate
     if (!fullName || !email || !password) {
@@ -498,10 +530,10 @@ app.post("/api/auth/register", async (req, res) => {
 
     // Tß║ío user mß╗¢i
     const result = await pool.query(
-      `INSERT INTO users (full_name, email, password_hash, role)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (full_name, email, password_hash, role, phone, city, picture)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, full_name, email, role, picture, created_at`,
-      [fullName.trim(), email.toLowerCase().trim(), passwordHash, userRole]
+      [fullName.trim(), email.toLowerCase().trim(), passwordHash, userRole, phone || null, city || null, avatarUrl || null]
     );
 
     const newUser = result.rows[0];
@@ -644,6 +676,9 @@ app.post("/api/auth/login", async (req, res) => {
 
     const token = createToken(user);
 
+    const ip = getClientIP(req);
+    const suspicious = await logLoginAttempt(user.id, ip, req.headers['user-agent']);
+
     return res.json({
       token,
       user: {
@@ -653,6 +688,8 @@ app.post("/api/auth/login", async (req, res) => {
         role: user.role,
         picture: user.picture,
       },
+      suspiciousLogin: suspicious,
+      loginIP: ip,
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -719,6 +756,9 @@ app.post("/api/auth/google", async (req, res) => {
 
     const token = createToken(user);
 
+    const ip = getClientIP(req);
+    const suspicious = await logLoginAttempt(user.id, ip, req.headers['user-agent']);
+
     return res.json({
       token,
       user: {
@@ -728,6 +768,8 @@ app.post("/api/auth/google", async (req, res) => {
         role: user.role,
         picture: user.picture,
       },
+      suspiciousLogin: suspicious,
+      loginIP: ip,
     });
   } catch (error) {
     console.error("Google auth error:", error);
@@ -759,9 +801,9 @@ app.post(
   verifyToken,
   // Khai b├ío ─æß╗º 3 file fields ─æß╗â multer kh├┤ng n├⌐m LIMIT_UNEXPECTED_FILE
   upload.fields([
-    { name: "profile_photo", maxCount: 1 },
-    { name: "certificate",   maxCount: 1 },
-    { name: "cccd",          maxCount: 1 },
+    { name: "profile_photo",  maxCount: 1  },
+    { name: "certificates",   maxCount: 10 },
+    { name: "cccd",           maxCount: 1  },
   ]),
   // ΓöÇΓöÇ Multer error handler: trß║ú JSON thay v├¼ HTML ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   (err, req, res, next) => {
@@ -778,25 +820,28 @@ app.post(
         birthday, gender, country, city, phone,
         education, language, hourly_rate,
         teaching_style, qualifications,
+        teaching_methods, suitable_students, cert_metadata,
       } = req.body;
       const userId = req.user.userId;
 
+      let parsedTeachingMethods = [];
+      let parsedSuitableStudents = [];
+      let parsedCertMetadata = [];
+      try { parsedTeachingMethods = JSON.parse(teaching_methods || '[]'); } catch {}
+      try { parsedSuitableStudents = JSON.parse(suitable_students || '[]'); } catch {}
+      try { parsedCertMetadata = JSON.parse(cert_metadata || '[]'); } catch {}
+
       const files = req.files || {};
       const photoFile = files["profile_photo"] ? files["profile_photo"][0] : null;
-      const certFile  = files["certificate"]   ? files["certificate"][0]   : null;
+      const certFiles = files["certificates"]  || [];
       const cccdFile  = files["cccd"]          ? files["cccd"][0]          : null;
 
       let photoPath = null;
-      let certPath  = null;
       let cccdPath  = null;
 
       if (photoFile) {
         const ext = photoFile.originalname.split('.').pop();
         photoPath = await uploadFileToStorage(photoFile, `profile_photos/${userId}_${Date.now()}.${ext}`);
-      }
-      if (certFile) {
-        const ext = certFile.originalname.split('.').pop();
-        certPath = await uploadFileToStorage(certFile, `certificates/${userId}_${Date.now()}.${ext}`);
       }
       if (cccdFile) {
         const ext = cccdFile.originalname.split('.').pop();
@@ -829,13 +874,11 @@ app.post(
 
         let idx = 19; // $18 = userId
         if (photoPath) { query += `, profile_photo_url = $${idx}`; values.push(photoPath); idx++; }
-        if (certPath)  { query += `, certificate_url = $${idx}`;   values.push(certPath);  idx++; }
         if (cccdPath)  { query += `, cccd_url = $${idx}`;          values.push(cccdPath);  idx++; }
 
         query += ` WHERE user_id = $18 RETURNING *`;
         result = await pool.query(query, values);
       } else {
-        // ΓöÇΓöÇ INSERT ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
         result = await pool.query(
           `INSERT INTO tutor_profiles (
             user_id, bio, subjects, experience_years,
@@ -843,7 +886,7 @@ app.post(
             birthday, gender, country, city, phone,
             education, language, hourly_rate,
             teaching_style, qualifications,
-            profile_photo_url, certificate_url, cccd_url,
+            profile_photo_url, cccd_url,
             status
           ) VALUES (
             $1, $2, $3, $4,
@@ -851,7 +894,7 @@ app.post(
             $8, $9, $10, $11, $12,
             $13, $14, $15,
             $16, $17,
-            $18, $19, $20,
+            $18, $19,
             'pending'
           ) RETURNING *`,
           [
@@ -860,9 +903,50 @@ app.post(
             birthday || null, gender, country, city, phone,
             education, language, parseFloat(hourly_rate) || null,
             teaching_style, qualifications,
-            photoPath, certPath, cccdPath,
+            photoPath, cccdPath,
           ]
         );
+      }
+
+      // Optional: save structured fields (separate query, non-fatal if columns not ready)
+      try {
+        await pool.query(
+          `UPDATE tutor_profiles SET
+            teaching_methods  = $1::jsonb,
+            suitable_students = $2::jsonb
+           WHERE id = $3`,
+          [
+            JSON.stringify(parsedTeachingMethods),
+            JSON.stringify(parsedSuitableStudents),
+            result.rows[0].id,
+          ]
+        );
+      } catch (structErr) {
+        console.warn("[Profile] structured fields save skipped:", structErr.message);
+      }
+
+      // Insert new certificates into tutor_certificates table (with metadata)
+      if (certFiles.length > 0) {
+        const profileId = result.rows[0].id;
+        await pool.query("DELETE FROM tutor_certificates WHERE tutor_profile_id = $1", [profileId]);
+        for (let i = 0; i < certFiles.length; i++) {
+          const f = certFiles[i];
+          const meta = parsedCertMetadata[i] || {};
+          const ext = f.originalname.split('.').pop();
+          const certPath = await uploadFileToStorage(f, `certificates/${userId}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
+          try {
+            await pool.query(
+              "INSERT INTO tutor_certificates (tutor_profile_id, name, url, cert_type, issuer, issue_year) VALUES ($1, $2, $3, $4, $5, $6)",
+              [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
+            );
+          } catch (certExtErr) {
+            // Fall back to basic insert if extended cert columns don't exist yet
+            await pool.query(
+              "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
+              [profileId, meta.name || f.originalname, certPath]
+            );
+          }
+        }
       }
 
       return res.status(200).json(result.rows[0]);
@@ -925,18 +1009,16 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
   try {
     const result = await pool.query(`
       SELECT
-        tp.id,
-        tp.user_id,
-        u.full_name,
-        u.email,
-        tp.bio,
-        tp.subjects,
-        tp.experience_years,
-        tp.certificate_url,
-        tp.cccd_url,
-        tp.status,
-        tp.reject_reason,
-        tp.created_at
+        tp.id, tp.user_id, u.full_name, u.email,
+        tp.bio, tp.subjects, tp.experience_years,
+        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
+        tp.created_at, tp.profile_photo_url, tp.hourly_rate,
+        tp.teaching_methods, tp.suitable_students,
+        COALESCE(
+          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
+           FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
+          '[]'::json
+        ) AS certificates
       FROM tutor_profiles tp
       JOIN users u ON u.id = tp.user_id
       WHERE tp.status = 'pending'
@@ -949,7 +1031,6 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
   }
 });
 
-// ΓöÇΓöÇΓöÇ PATCH /api/admin/tutors/:id/approve ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Approves a tutor application and optionally sends them an email
 app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -1069,24 +1150,21 @@ app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) =
   }
 });
 
-// ─── GET /api/admin/tutors/pending ────────────────────────────────────────────
-// Returns all tutor_profiles with status = 'pending', joined with users
+// ─── GET /api/admin/tutors/pending (duplicate route kept for compatibility) ───
 app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        tp.id,
-        tp.user_id,
-        u.full_name,
-        u.email,
-        tp.bio,
-        tp.subjects,
-        tp.experience_years,
-        tp.certificate_url,
-        tp.cccd_url,
-        tp.status,
-        tp.reject_reason,
-        tp.created_at
+        tp.id, tp.user_id, u.full_name, u.email,
+        tp.bio, tp.subjects, tp.experience_years,
+        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
+        tp.created_at, tp.profile_photo_url, tp.hourly_rate,
+        tp.teaching_methods, tp.suitable_students,
+        COALESCE(
+          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
+           FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
+          '[]'::json
+        ) AS certificates
       FROM tutor_profiles tp
       JOIN users u ON u.id = tp.user_id
       WHERE tp.status = 'pending'
@@ -1181,7 +1259,6 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
   }
 });
 
-<<<<<<< HEAD
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1192,6 +1269,7 @@ const discussionRoutes = require("./routes/discussionRoutes");
 const lessonRoutes = require("./routes/lessonRoutes");
 const learningPathRoutes = require("./routes/learningPathRoutes");
 const scheduleRoutes = require("./routes/scheduleRoutes");
+const tutorRequestRoutes = require("./routes/tutorRequestRoutes");
 
 app.use("/api/classes/:classId/materials", materialRoutes);
 app.use("/api/classes", classRoutes);
@@ -1200,14 +1278,9 @@ app.use("/", discussionRoutes);
 app.use("/", lessonRoutes);
 app.use("/", learningPathRoutes);
 app.use("/api", scheduleRoutes);
+app.use("/", tutorRequestRoutes);
 
-// ─── Start server ─────────────────────────────────────────────────────────────
-app.listen(port, () => {
-  console.log(`🚀 Server is running on http://localhost:${port}`);
-=======
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
-// Returns all users with optional search and role filter. Supports pagination.
-// Query params: search, role, page (default 1), limit (default 20)
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
   const { search = "", role = "all", page = "1", limit = "20" } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -1251,7 +1324,6 @@ app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
     console.error("GET /api/admin/users error:", err);
     return res.status(500).json({ message: "Server error." });
   }
->>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 });
 
 // ── GET /api/admin/users/:id ─────────────────────────────────────────────────
@@ -1287,6 +1359,15 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
       );
       user.quiz_attempts = parseInt(attemptsResult.rows[0].count);
     }
+
+    // Lịch sử đăng nhập gần nhất (10 lần)
+    const logsResult = await pool.query(
+      `SELECT ip_address, user_agent, is_suspicious, created_at
+       FROM login_logs WHERE user_id = $1
+       ORDER BY created_at DESC LIMIT 10`,
+      [id]
+    );
+    user.login_logs = logsResult.rows;
 
     return res.json(user);
   } catch (err) {
@@ -2114,6 +2195,166 @@ app.get('/api/parent/children/:studentId/progress', verifyToken, async (req, res
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  PARENT EXTENDED APIs — Schedule, Reviews, Invoices, Notifications
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/parent/children/:studentId/schedule
+app.get('/api/parent/children/:studentId/schedule', verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+
+    const sessions = await pool.query(`
+      SELECT ts.id, ts.subject, ts.scheduled_at, ts.duration_mins, ts.status, ts.leave_reason, ts.notes,
+             u.id AS tutor_id, u.full_name AS tutor_name, u.picture AS tutor_picture
+      FROM tutor_sessions ts
+      JOIN users u ON ts.tutor_id = u.id
+      WHERE ts.student_id = $1 AND ts.scheduled_at >= NOW() - INTERVAL '7 days'
+      ORDER BY ts.scheduled_at ASC LIMIT 20
+    `, [studentId]);
+
+    const absences = await pool.query(`
+      SELECT COUNT(*) AS count FROM tutor_sessions
+      WHERE student_id=$1 AND status IN ('absent','late') AND scheduled_at >= date_trunc('month', NOW())
+    `, [studentId]);
+
+    return res.json({ sessions: sessions.rows, absences_this_month: parseInt(absences.rows[0].count) });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// POST /api/parent/children/:studentId/schedule/:sessionId/leave
+app.post('/api/parent/children/:studentId/schedule/:sessionId/leave', verifyToken, async (req, res) => {
+  try {
+    const { studentId, sessionId } = req.params;
+    const { reason } = req.body;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+
+    const updated = await pool.query(`
+      UPDATE tutor_sessions SET status='cancelled', leave_reason=$1, updated_at=NOW()
+      WHERE id=$2 AND student_id=$3 AND status='scheduled' RETURNING *
+    `, [reason || null, sessionId, studentId]);
+
+    if (!updated.rows.length) return res.status(404).json({ message: 'Không tìm thấy buổi học hoặc đã không thể hủy.' });
+
+    const session = updated.rows[0];
+    const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [studentId]);
+    await pool.query(`
+      INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+      VALUES ($1, 'student_absent', 'Học sinh xin nghỉ', $2, 'event_busy', $3, 'session')
+    `, [
+      session.tutor_id,
+      `${studentRes.rows[0]?.full_name || 'Học sinh'} xin nghỉ buổi ${session.subject} ngày ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. Lý do: ${reason || 'Không có lý do.'}`,
+      sessionId
+    ]);
+
+    return res.json({ message: 'Đã gửi yêu cầu nghỉ phép.' });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/parent/children/:studentId/reviews
+app.get('/api/parent/children/:studentId/reviews', verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
+    if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
+
+    const reviews = await pool.query(`
+      SELECT tr.id, tr.subject, tr.period_label, tr.content, tr.rating, tr.created_at,
+             u.full_name AS tutor_name, u.picture AS tutor_picture
+      FROM tutor_reviews tr
+      JOIN users u ON tr.tutor_id = u.id
+      WHERE tr.student_id=$1 ORDER BY tr.created_at DESC LIMIT 20
+    `, [studentId]);
+
+    return res.json({ reviews: reviews.rows });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// POST /api/tutor/reviews — gia sư tạo nhận xét định kỳ
+app.post('/api/tutor/reviews', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { student_id, subject, period_label, content, rating } = req.body;
+    if (!student_id || !subject || !period_label || !content)
+      return res.status(400).json({ message: 'Thiếu thông tin bắt buộc.' });
+
+    const review = await pool.query(`
+      INSERT INTO tutor_reviews (student_id, tutor_id, subject, period_label, content, rating)
+      VALUES ($1,$2,$3,$4,$5,$6) RETURNING *
+    `, [student_id, req.user.userId, subject, period_label, content, rating || 3]);
+
+    const parents = await pool.query('SELECT parent_id FROM parent_children WHERE student_id=$1', [student_id]);
+    const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [student_id]);
+    for (const p of parents.rows) {
+      await pool.query(`
+        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+        VALUES ($1,'tutor_review',$2,$3,'rate_review',$4,'review')
+      `, [p.parent_id, `Nhận xét mới từ gia sư — ${subject}`,
+          `Gia sư vừa gửi nhận xét định kỳ cho ${studentRes.rows[0]?.full_name || 'học sinh'} (${period_label}).`,
+          review.rows[0].id]);
+    }
+    return res.status(201).json({ review: review.rows[0] });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/parent/invoices
+app.get('/api/parent/invoices', verifyToken, async (req, res) => {
+  try {
+    const parentId = req.user.userId;
+    await pool.query(`UPDATE invoices SET status='overdue' WHERE parent_id=$1 AND status='pending' AND due_date < CURRENT_DATE`, [parentId]);
+
+    const [pending, paid] = await Promise.all([
+      pool.query(`
+        SELECT i.*, u.full_name AS student_name, t.full_name AS tutor_name
+        FROM invoices i JOIN users u ON i.student_id=u.id LEFT JOIN users t ON i.tutor_id=t.id
+        WHERE i.parent_id=$1 AND i.status IN ('pending','overdue') ORDER BY i.due_date ASC NULLS LAST
+      `, [parentId]),
+      pool.query(`
+        SELECT i.*, u.full_name AS student_name, t.full_name AS tutor_name
+        FROM invoices i JOIN users u ON i.student_id=u.id LEFT JOIN users t ON i.tutor_id=t.id
+        WHERE i.parent_id=$1 AND i.status='paid' ORDER BY i.paid_at DESC LIMIT 50
+      `, [parentId])
+    ]);
+
+    const totalDebt = pending.rows.reduce((s, i) => s + parseInt(i.amount), 0);
+    const totalPaid = paid.rows.reduce((s, i) => s + parseInt(i.amount), 0);
+    const overdueCount = pending.rows.filter(i => i.status === 'overdue').length;
+
+    return res.json({ pending: pending.rows, paid: paid.rows,
+      summary: { total_debt: totalDebt, total_paid: totalPaid, overdue_count: overdueCount } });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// GET /api/notifications
+app.get('/api/notifications', verifyToken, async (req, res) => {
+  try {
+    const notifs = await pool.query(
+      `SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
+      [req.user.userId]
+    );
+    const unreadCount = notifs.rows.filter(n => !n.is_read).length;
+    return res.json({ notifications: notifs.rows, unread_count: unreadCount });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// PUT /api/notifications/read-all
+app.put('/api/notifications/read-all', verifyToken, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=TRUE WHERE user_id=$1', [req.user.userId]);
+    return res.json({ message: 'OK' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
+// PUT /api/notifications/:id/read
+app.put('/api/notifications/:id/read', verifyToken, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=TRUE WHERE id=$1 AND user_id=$2', [req.params.id, req.user.userId]);
+    return res.json({ message: 'OK' });
+  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+});
+
 
 
 
@@ -2205,23 +2446,61 @@ app.get('/api/chat/conversations', verifyToken, async (req, res) => {
 app.get('/api/chat/contacts', verifyToken, async (req, res) => {
   try {
     const role = req.user.role;
+    const userId = req.user.userId;
     let result;
-    if (role === 'parent' || role === 'student') {
+
+    if (role === 'student') {
       result = await pool.query(`
-        SELECT u.id, u.full_name, u.email, u.picture, u.role,
+        SELECT DISTINCT u.id, u.full_name, u.email, u.picture, u.role,
                tp.headline, tp.subjects, tp.hourly_rate
         FROM users u
-        JOIN tutor_profiles tp ON tp.user_id=u.id
-        WHERE u.role='tutor' AND tp.status='approved'
+        LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+        WHERE 
+          (u.role = 'tutor' AND tp.status = 'approved' AND u.id IN (
+            SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1
+          ))
+          OR
+          (u.role = 'parent' AND u.id IN (
+            SELECT parent_id FROM parent_children WHERE student_id = $1
+          ))
         ORDER BY u.full_name
-      `);
+      `, [userId]);
+    } else if (role === 'parent') {
+      result = await pool.query(`
+        SELECT DISTINCT u.id, u.full_name, u.email, u.picture, u.role,
+               tp.headline, tp.subjects, tp.hourly_rate
+        FROM users u
+        LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+        WHERE 
+          (u.role = 'student' AND u.id IN (
+            SELECT student_id FROM parent_children WHERE parent_id = $1
+          ))
+          OR
+          (u.role = 'tutor' AND tp.status = 'approved' AND u.id IN (
+            SELECT c.tutor_id FROM classes c 
+            JOIN class_members cm ON c.id = cm.class_id 
+            JOIN parent_children pc ON cm.student_id = pc.student_id 
+            WHERE pc.parent_id = $1
+          ))
+        ORDER BY u.full_name
+      `, [userId]);
     } else if (role === 'tutor') {
       result = await pool.query(`
-        SELECT id, full_name, email, picture, role
-        FROM users
-        WHERE role IN ('parent', 'student')
-        ORDER BY full_name
-      `);
+        SELECT DISTINCT u.id, u.full_name, u.email, u.picture, u.role
+        FROM users u
+        WHERE 
+          (u.role = 'student' AND u.id IN (
+            SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1
+          ))
+          OR
+          (u.role = 'parent' AND u.id IN (
+            SELECT pc.parent_id FROM parent_children pc 
+            JOIN class_members cm ON pc.student_id = cm.student_id
+            JOIN classes c ON c.id = cm.class_id
+            WHERE c.tutor_id = $1
+          ))
+        ORDER BY u.full_name
+      `, [userId]);
     } else {
       result = { rows: [] };
     }
@@ -2229,11 +2508,54 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
 });
 
+async function checkChatPermission(userId, userRole, otherId) {
+  if (userRole === 'admin') return true; // admin can chat with anyone
+  // For simplicity, we just check if otherId is in the allowed contacts list.
+  // This isn't the most efficient (fetches full list) but it's safe and DRY enough for now.
+  let allowed = false;
+  if (userRole === 'student') {
+    const res = await pool.query(`
+      SELECT 1 FROM users u WHERE u.id = $2 AND (
+        (u.role = 'tutor' AND u.id IN (SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1))
+        OR
+        (u.role = 'parent' AND u.id IN (SELECT parent_id FROM parent_children WHERE student_id = $1))
+      )
+    `, [userId, otherId]);
+    allowed = res.rowCount > 0;
+  } else if (userRole === 'parent') {
+    const res = await pool.query(`
+      SELECT 1 FROM users u WHERE u.id = $2 AND (
+        (u.role = 'student' AND u.id IN (SELECT student_id FROM parent_children WHERE parent_id = $1))
+        OR
+        (u.role = 'tutor' AND u.id IN (SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id JOIN parent_children pc ON cm.student_id = pc.student_id WHERE pc.parent_id = $1))
+      )
+    `, [userId, otherId]);
+    allowed = res.rowCount > 0;
+  } else if (userRole === 'tutor') {
+    const res = await pool.query(`
+      SELECT 1 FROM users u WHERE u.id = $2 AND (
+        (u.role = 'student' AND u.id IN (SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1))
+        OR
+        (u.role = 'parent' AND u.id IN (SELECT pc.parent_id FROM parent_children pc JOIN class_members cm ON pc.student_id = cm.student_id JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1))
+      )
+    `, [userId, otherId]);
+    allowed = res.rowCount > 0;
+  }
+  return allowed;
+}
+
 // GET /api/chat/:otherId — lịch sử tin nhắn + đánh dấu đã đọc
 app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
   try {
     const userId = req.user.userId;
+    const userRole = req.user.role;
     const { otherId } = req.params;
+
+    const allowed = await checkChatPermission(userId, userRole, otherId);
+    if (!allowed) {
+      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+    }
+
     await pool.query(
       `UPDATE chat_messages SET is_read=true WHERE sender_id=$1 AND receiver_id=$2 AND is_read=false`,
       [otherId, userId]
@@ -2261,6 +2583,13 @@ app.post('/api/chat', verifyToken, async (req, res) => {
     const { receiver_id, content } = req.body;
     if (!receiver_id || !content?.trim())
       return res.status(400).json({ message: 'receiver_id và content là bắt buộc.' });
+    
+    const userRole = req.user.role;
+    const allowed = await checkChatPermission(senderId, userRole, receiver_id);
+    if (!allowed) {
+      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+    }
+
     const receiver = await pool.query(`SELECT id FROM users WHERE id=$1`, [receiver_id]);
     if (!receiver.rows.length) return res.status(404).json({ message: 'Người nhận không tồn tại.' });
     const msg = await pool.query(
@@ -2284,6 +2613,12 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
     const { receiver_id } = req.body;
     if (!receiver_id) return res.status(400).json({ message: 'receiver_id là bắt buộc.' });
     if (!req.file) return res.status(400).json({ message: 'Không có file được gửi lên.' });
+
+    const userRole = req.user.role;
+    const allowed = await checkChatPermission(senderId, userRole, receiver_id);
+    if (!allowed) {
+      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+    }
 
     const { originalname, mimetype, size, buffer } = req.file;
     const ext = originalname.includes('.') ? '.' + originalname.split('.').pop() : '';
@@ -2565,6 +2900,364 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 });
 
 
+// ── GET /api/tutors (public) ──────────────────────────────────────────────────
+// Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
+app.get("/api/tutors", async (req, res) => {
+  const { search = "", subjects = "", sort = "rating", page = "1", limit = "12" } = req.query;
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+  const offset = (pageNum - 1) * limitNum;
+
+  const conditions = ["tp.status = 'approved'"];
+  const values = [];
+  let idx = 1;
+
+  if (search.trim()) {
+    conditions.push(`(u.full_name ILIKE $${idx} OR tp.subjects ILIKE $${idx} OR tp.bio ILIKE $${idx})`);
+    values.push(`%${search.trim()}%`);
+    idx++;
+  }
+
+  if (subjects.trim()) {
+    const subjectList = subjects.split(",").map(s => s.trim()).filter(Boolean);
+    if (subjectList.length > 0) {
+      const subConds = subjectList.map(() => `tp.subjects ILIKE $${idx++}`);
+      conditions.push(`(${subConds.join(" OR ")})`);
+      subjectList.forEach(s => values.push(`%${s}%`));
+    }
+  }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+
+  const orderMap = {
+    rating:     "tp.experience_years DESC NULLS LAST",
+    price_asc:  "tp.hourly_rate ASC NULLS LAST",
+    price_desc: "tp.hourly_rate DESC NULLS LAST",
+    experience: "tp.experience_years DESC NULLS LAST",
+    newest:     "tp.created_at DESC",
+  };
+  const orderBy = orderMap[sort] || orderMap.newest;
+
+  try {
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM tutor_profiles tp JOIN users u ON tp.user_id = u.id ${where}`,
+      values
+    );
+    const total = parseInt(countRes.rows[0].count);
+
+    const tutorsRes = await pool.query(
+      `SELECT
+         u.id, u.full_name, u.picture,
+         tp.bio, tp.subjects, tp.experience_years,
+         tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
+         0 AS avg_r,
+         0 AS review_count
+       FROM tutor_profiles tp
+       JOIN users u ON tp.user_id = u.id
+       ${where}
+       ORDER BY ${orderBy}
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, limitNum, offset]
+    );
+
+    return res.json({
+      tutors: tutorsRes.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    });
+  } catch (err) {
+    console.error("GET /api/tutors error:", err.message);
+    return res.status(500).json({ message: "Server error.", detail: err.message });
+  }
+});
+
+// ── POST /api/tutors/matches ──────────────────────────────────────────────────
+// Trả danh sách gia sư được tính matchScore theo nhu cầu học tập từ flow
+// #/tutor-request. Không cần auth.
+app.post("/api/tutors/matches", async (req, res) => {
+  const {
+    subject        = "",
+    educationLevel = "",
+    grade          = "",
+    learningFormat = "",
+    city           = "",
+    budgetMin,
+    budgetMax,
+  } = req.body || {};
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         u.id,
+         COALESCE(
+           NULLIF(TRIM(COALESCE(tp.display_name, '')), ''),
+           NULLIF(TRIM(COALESCE(tp.first_name,'') || ' ' || COALESCE(tp.last_name,'')), ''),
+           u.full_name
+         ) AS name,
+         COALESCE(tp.profile_photo_url, u.picture) AS avatar_url,
+         0   AS rating,
+         0   AS review_count,
+         tp.bio,
+         tp.subjects,
+         tp.experience_years,
+         tp.hourly_rate,
+         tp.city,
+         tp.teaching_methods
+       FROM tutor_profiles tp
+       JOIN users u ON tp.user_id = u.id
+       WHERE tp.status = 'approved'
+       ORDER BY tp.created_at DESC
+       LIMIT 50`
+    );
+
+    const minBudget = budgetMin !== undefined && budgetMin !== null && budgetMin !== "" ? parseInt(budgetMin) : null;
+    const maxBudget = budgetMax !== undefined && budgetMax !== null && budgetMax !== "" ? parseInt(budgetMax) : null;
+
+    const tutors = result.rows.map(t => {
+      let score = 0;
+
+      // Đúng môn học (+35)
+      if (subject && t.subjects) {
+        if (t.subjects.toLowerCase().includes(subject.toLowerCase())) score += 35;
+      }
+
+      // Hình thức học phù hợp (+15)
+      if (learningFormat && t.teaching_methods) {
+        const methods = (Array.isArray(t.teaching_methods) ? t.teaching_methods : [])
+          .join(" ").toLowerCase();
+        const onlineKw  = ["online", "tuyến"];
+        const offlineKw = ["offline", "tiếp"];
+        if (learningFormat === "online"  && onlineKw.some(k => methods.includes(k)))  score += 15;
+        if (learningFormat === "offline" && offlineKw.some(k => methods.includes(k))) score += 15;
+        if (learningFormat === "both")                                                 score += 15;
+      }
+
+      // Học phí trong ngân sách (+15)
+      if (t.hourly_rate !== null && t.hourly_rate !== undefined) {
+        const rate = parseFloat(t.hourly_rate);
+        const okMin = minBudget === null || rate >= minBudget;
+        const okMax = maxBudget === null || rate <= maxBudget;
+        if (okMin && okMax) score += 15;
+      }
+
+      // Cùng khu vực (+10)
+      if (city && t.city) {
+        const tc = t.city.toLowerCase();
+        const rc = city.toLowerCase();
+        if (tc.includes(rc) || rc.includes(tc)) score += 10;
+      }
+
+      // Kinh nghiệm bonus (max +15, 3 điểm/năm)
+      const exp = parseInt(t.experience_years) || 0;
+      score += Math.min(exp * 3, 15);
+
+      // Có đánh giá bonus (+5)
+      if (parseFloat(t.rating) > 0) score += 5;
+
+      score = Math.min(score, 100);
+
+      return {
+        id:             t.id,
+        name:           t.name || "Gia sư EduX",
+        avatarUrl:      t.avatar_url || null,
+        rating:         parseFloat(t.rating) || 0,
+        reviewCount:    t.review_count || 0,
+        bio:            t.bio || null,
+        subjects:       t.subjects || null,
+        experienceYears: t.experience_years || null,
+        pricePerSession: t.hourly_rate ? Math.round(parseFloat(t.hourly_rate)) : null,
+        location:       t.city || null,
+        teachingFormats: Array.isArray(t.teaching_methods) ? t.teaching_methods : [],
+        matchScore:     score,
+      };
+    });
+
+    // Sắp xếp theo matchScore giảm dần
+    tutors.sort((a, b) => b.matchScore - a.matchScore);
+
+    // Fallback khi DB chưa có tutor được duyệt
+    if (tutors.length === 0) {
+      const fallback = [
+        { id: "fallback-1", name: "Lê Minh Anh",       avatarUrl: null, rating: 4.8, reviewCount: 12, bio: "Gia sư Toán – Lý 7 năm kinh nghiệm, phương pháp trực quan.", subjects: "Toán, Vật Lý", experienceYears: 7,  pricePerSession: 250000, location: "Hà Nội",    teachingFormats: ["Trực tuyến", "Trực tiếp"], matchScore: 90, _isFallback: true },
+        { id: "fallback-2", name: "Nguyễn Trần Hưng",  avatarUrl: null, rating: 4.6, reviewCount: 8,  bio: "Chuyên luyện thi THPT Quốc Gia môn Toán và Hóa học.", subjects: "Toán, Hóa", experienceYears: 5,  pricePerSession: 200000, location: "TP. HCM",   teachingFormats: ["Trực tuyến"],               matchScore: 82, _isFallback: true },
+        { id: "fallback-3", name: "Trần Thùy Dương",   avatarUrl: null, rating: 4.9, reviewCount: 20, bio: "Gia sư Tiếng Anh IELTS, cựu sinh viên ĐH Ngoại Thương.", subjects: "Tiếng Anh", experienceYears: 6,  pricePerSession: 300000, location: "Hà Nội",    teachingFormats: ["Trực tuyến", "Trực tiếp"], matchScore: 78, _isFallback: true },
+        { id: "fallback-4", name: "Phạm Văn Phúc",     avatarUrl: null, rating: 4.5, reviewCount: 6,  bio: "Gia sư Toán Tiểu học và THCS, kiên nhẫn với học sinh.",  subjects: "Toán",       experienceYears: 3,  pricePerSession: 150000, location: "Đà Nẵng",   teachingFormats: ["Trực tiếp"],                matchScore: 70, _isFallback: true },
+      ];
+      console.log("[fallback] Không có tutor đã duyệt trong DB – trả về dữ liệu mẫu.");
+      return res.json({ tutors: fallback, total: fallback.length, _isFallback: true });
+    }
+
+    return res.json({ tutors, total: tutors.length });
+  } catch (err) {
+    console.error("POST /api/tutors/matches error:", err.message);
+    return res.status(500).json({ message: "Server error.", detail: err.message });
+  }
+});
+
+// ── GET /api/tutors/:id ───────────────────────────────────────────────────────
+// Trả về hồ sơ chi tiết của một gia sư theo user ID (public, không cần auth)
+app.get("/api/tutors/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT
+         u.id, u.full_name, u.picture, u.email,
+         tp.bio, tp.subjects, tp.experience_years,
+         tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
+         tp.education, tp.language, tp.teaching_style, tp.qualifications,
+         tp.first_name, tp.last_name, tp.display_name, tp.phone,
+         tp.headline, tp.teaching_methods, tp.suitable_students,
+         tp.availability, tp.total_students, tp.completed_lessons_count,
+         COALESCE(
+           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = tp.id),
+           0
+         ) AS avg_r,
+         COALESCE(
+           (SELECT COUNT(*) FROM reviews r WHERE r.tutor_id = tp.id),
+           0
+         ) AS review_count
+       FROM tutor_profiles tp
+       JOIN users u ON tp.user_id = u.id
+       WHERE u.id = $1 AND tp.status = 'approved'
+       LIMIT 1`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Tutor not found." });
+    }
+
+    const tutorInfo = result.rows[0];
+
+    // Fetch reviews for this tutor
+    const reviewsRes = await pool.query(
+      `SELECT r.id, r.rating, r.comment, r.created_at, u.full_name as reviewer_name, u.picture as reviewer_avatar
+       FROM reviews r
+       JOIN users u ON r.user_id = u.id
+       WHERE r.tutor_id = (SELECT id FROM tutor_profiles WHERE user_id = $1)
+       ORDER BY r.created_at DESC`,
+      [id]
+    );
+
+    // Map to required JSON structure
+    const responseData = {
+      id: tutorInfo.id,
+      full_name: tutorInfo.display_name || tutorInfo.first_name || tutorInfo.full_name || "Gia sư EduX",
+      avatar: tutorInfo.profile_photo_url || tutorInfo.picture || null,
+      subjects: tutorInfo.subjects ? tutorInfo.subjects.split(',').map(s => s.trim()) : [],
+      bio: tutorInfo.bio || "",
+      experience_years: tutorInfo.experience_years || 0,
+      hourly_rate: tutorInfo.hourly_rate || null,
+      teaching_methods: Array.isArray(tutorInfo.teaching_methods) ? tutorInfo.teaching_methods : [],
+      availability: tutorInfo.availability && Object.keys(tutorInfo.availability).length > 0 ? tutorInfo.availability : [],
+      rating: parseFloat(tutorInfo.avg_r) || 0,
+      review_count: parseInt(tutorInfo.review_count) || 0,
+      reviews: reviewsRes.rows.map(r => ({
+        id: r.id,
+        reviewer_name: r.reviewer_name || "Học viên ẩn danh",
+        reviewer_avatar: r.reviewer_avatar || null,
+        rating: r.rating,
+        comment: r.comment || "",
+        created_at: r.created_at
+      })),
+      total_students: parseInt(tutorInfo.total_students) || 0,
+      completed_lessons_count: parseInt(tutorInfo.completed_lessons_count) || 0
+    };
+
+    return res.json(responseData);
+  } catch (err) {
+    console.error("GET /api/tutors/:id error:", err.message);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── GET /api/reviews/featured ─────────────────────────────────────────────────
+// Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)
+app.get("/api/reviews/featured", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 12, 30);
+  try {
+    const result = await pool.query(
+      `SELECT r.id, r.reviewer_name, r.reviewer_role, r.reviewer_picture,
+              r.rating, r.subject, r.content, r.created_at,
+              u.picture AS user_picture, u.full_name AS user_full_name
+       FROM reviews r
+       LEFT JOIN users u ON u.id = r.reviewer_id
+       WHERE r.rating = 5
+       ORDER BY r.created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/reviews/featured error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── POST /api/reviews ──────────────────────────────────────────────────────────
+// Người dùng đã đăng nhập gửi đánh giá mới
+app.post("/api/reviews", verifyToken, async (req, res) => {
+  const { rating, subject, content } = req.body || {};
+  if (!rating || !content) {
+    return res.status(400).json({ message: "rating và content là bắt buộc." });
+  }
+  if (rating < 1 || rating > 5) {
+    return res.status(400).json({ message: "rating phải từ 1 đến 5." });
+  }
+  try {
+    const userResult = await pool.query(
+      "SELECT full_name, role, picture FROM users WHERE id = $1",
+      [req.user.userId]
+    );
+    if (!userResult.rows.length) return res.status(404).json({ message: "User not found." });
+    const u = userResult.rows[0];
+
+    const result = await pool.query(
+      `INSERT INTO reviews (reviewer_id, reviewer_name, reviewer_role, reviewer_picture, rating, subject, content)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [req.user.userId, u.full_name, u.role, u.picture || null, rating, subject || null, content]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("POST /api/reviews error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// Helper: lấy IP thực của client (hỗ trợ proxy/Nginx)
+function getClientIP(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+// Helper: ghi log đăng nhập + trả về flag suspicious nếu IP lạ
+async function logLoginAttempt(userId, ip, userAgent) {
+  try {
+    // Lấy IP của lần đăng nhập cuối cùng trong 30 ngày
+    const recent = await pool.query(
+      `SELECT ip_address FROM login_logs
+       WHERE user_id = $1 AND created_at > NOW() - INTERVAL '30 days'
+       ORDER BY created_at DESC LIMIT 5`,
+      [userId]
+    );
+    const recentIPs = recent.rows.map(r => r.ip_address);
+    const suspicious = recentIPs.length > 0 && !recentIPs.includes(ip);
+
+    await pool.query(
+      `INSERT INTO login_logs (user_id, ip_address, user_agent, is_suspicious)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, ip, userAgent || null, suspicious]
+    );
+    return suspicious;
+  } catch (err) {
+    console.error("logLoginAttempt error:", err.message);
+    return false;
+  }
+}
+
 async function startServer() {
   // Auto-migrate: add is_banned column if it doesn't exist yet
   try {
@@ -2573,7 +3266,136 @@ async function startServer() {
     `);
     console.log("✅ DB migration: users.is_banned ready");
   } catch (err) {
-    console.error("⚠️  DB migration warning:", err.message);
+    console.error("❌  DB migration warning:", err.message);
+  }
+
+  // Auto-migrate: add phone and city columns to users
+  try {
+    await pool.query(`
+      ALTER TABLE users 
+        ADD COLUMN IF NOT EXISTS phone TEXT,
+        ADD COLUMN IF NOT EXISTS city TEXT
+    `);
+    console.log("✔️ DB migration: users.phone and users.city ready");
+  } catch (err) {
+    console.error("❌  DB migration warning:", err.message);
+  }
+
+  // Auto-migrate: create login_logs table
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS login_logs (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        ip_address    TEXT NOT NULL,
+        user_agent    TEXT,
+        is_suspicious BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_login_logs_user_id ON login_logs(user_id);
+      CREATE INDEX IF NOT EXISTS idx_login_logs_created_at ON login_logs(created_at);
+    `);
+    console.log("✅ DB migration: login_logs table ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (login_logs) warning:", err.message);
+  }
+
+  // Auto-migrate: tutor_profiles extra columns
+  try {
+    await pool.query(`
+      ALTER TABLE tutor_profiles
+        ADD COLUMN IF NOT EXISTS hourly_rate       NUMERIC(10,2),
+        ADD COLUMN IF NOT EXISTS profile_photo_url TEXT,
+        ADD COLUMN IF NOT EXISTS city              TEXT,
+        ADD COLUMN IF NOT EXISTS country           TEXT,
+        ADD COLUMN IF NOT EXISTS phone             TEXT,
+        ADD COLUMN IF NOT EXISTS headline          TEXT,
+        ADD COLUMN IF NOT EXISTS reject_reason     TEXT
+    `);
+    console.log("✅ DB migration: tutor_profiles extra columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (tutor_profiles cols) warning:", err.message);
+  }
+
+  // Auto-migrate: tutor_certificates table (multiple certs per tutor)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_certificates (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tutor_profile_id UUID NOT NULL REFERENCES tutor_profiles(id) ON DELETE CASCADE,
+        name             TEXT,
+        url              TEXT NOT NULL,
+        created_at       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_tutor_certs_profile ON tutor_certificates(tutor_profile_id)`);
+    console.log("✅ DB migration: tutor_certificates table ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (tutor_certificates) warning:", err.message);
+  }
+
+  // Auto-migrate: teaching_methods & suitable_students columns on tutor_profiles
+  try {
+    await pool.query(`
+      ALTER TABLE tutor_profiles
+        ADD COLUMN IF NOT EXISTS teaching_methods  JSONB NOT NULL DEFAULT '[]',
+        ADD COLUMN IF NOT EXISTS suitable_students JSONB NOT NULL DEFAULT '[]'
+    `);
+    console.log("✅ DB migration: teaching_methods & suitable_students columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (teaching_methods) warning:", err.message);
+  }
+
+  // Auto-migrate: cert_type, issuer, issue_year on tutor_certificates
+  try {
+    await pool.query(`
+      ALTER TABLE tutor_certificates
+        ADD COLUMN IF NOT EXISTS cert_type  TEXT DEFAULT 'Chứng chỉ',
+        ADD COLUMN IF NOT EXISTS issuer     TEXT,
+        ADD COLUMN IF NOT EXISTS issue_year INTEGER
+    `);
+    console.log("✅ DB migration: tutor_certificates extended columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (cert extended cols) warning:", err.message);
+  }
+
+  // Auto-migrate: create reviews table
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reviews (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reviewer_id      UUID REFERENCES users(id) ON DELETE SET NULL,
+        reviewer_name    TEXT NOT NULL,
+        reviewer_role    TEXT NOT NULL DEFAULT 'student',
+        reviewer_picture TEXT,
+        rating           INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        subject          TEXT,
+        content          TEXT NOT NULL,
+        created_at       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log("✅ DB migration: reviews table ready");
+
+    // Seed 5-star reviews nếu bảng còn trống
+    const { rows } = await pool.query("SELECT COUNT(*) FROM reviews");
+    if (parseInt(rows[0].count) === 0) {
+      await pool.query(`
+        INSERT INTO reviews (reviewer_name, reviewer_role, rating, subject, content, created_at) VALUES
+        ('Nguyễn Văn An',   'student', 5, 'Toán Cao Cấp',       'Gia sư giải thích rất rõ ràng, từng bước một. Tôi đã hiểu được tích phân bội sau 3 buổi học. Cực kỳ khuyến khích!',                                      NOW() - INTERVAL ''2 minutes''),
+        ('Trần Thị Bích',   'parent',  5, 'Tiếng Anh IELTS',    'Con tôi tăng từ 5.5 lên 7.0 chỉ sau 3 tháng. Gia sư rất tận tâm, có phương pháp riêng cho từng học sinh. Cảm ơn EduX rất nhiều!',                         NOW() - INTERVAL ''18 minutes''),
+        ('Lê Minh Châu',    'student', 5, 'Lập Trình Python',   'Từ chỗ không biết gì về code, giờ tôi đã tự viết được ứng dụng Flask đầu tiên. Gia sư hướng dẫn thực chiến, không dạy lý thuyết suông.',                  NOW() - INTERVAL ''1 hour''),
+        ('Phạm Hoàng Duy',  'student', 5, 'Vật Lý Đại Cương',   'Bài giảng sinh động, có nhiều ví dụ thực tế. Điểm thi cuối kỳ của tôi từ 5 lên 9. Thầy rất nhiệt tình và kiên nhẫn.',                                     NOW() - INTERVAL ''3 hours''),
+        ('Nguyễn Thị Hoa',  'parent',  5, 'Toán Tiểu Học',      'Con tôi 9 tuổi rất thích học, không còn sợ môn Toán nữa. Gia sư biết cách tạo hứng thú cho các em nhỏ. Sẽ tiếp tục đăng ký dài hạn.',                    NOW() - INTERVAL ''5 hours''),
+        ('Đỗ Văn Khoa',     'student', 5, 'Hóa Hữu Cơ',         'Môn Hóa luôn là cơn ác mộng nhưng nhờ gia sư tôi đã vượt qua kỳ thi tốt nghiệp với điểm 8.5. Phương pháp ghi nhớ cực hay!',                              NOW() - INTERVAL ''8 hours''),
+        ('Vũ Thị Lan',      'student', 5, 'Tiếng Nhật N3',       'Sau 6 tháng học, tôi thi đậu JLPT N3 lần đầu tiên. Gia sư bản ngữ, phát âm chuẩn, giáo trình được thiết kế rất khoa học.',                               NOW() - INTERVAL ''1 day''),
+        ('Bùi Minh Long',   'parent',  5, 'Toán THPT',           'Điểm thi thử đại học của con tôi tăng vọt từ 6 lên 8.5 điểm. Gia sư không chỉ dạy kiến thức mà còn rèn kỹ năng làm bài thi hiệu quả.',                   NOW() - INTERVAL ''2 days''),
+        ('Hoàng Thị Mai',   'student', 5, 'Luyện Thi THPT QG',  'Thi thử lần đầu được 18/30, sau 2 tháng ôn với gia sư tôi đạt 26/30. Rất biết ơn sự tận tâm và kinh nghiệm của thầy.',                                    NOW() - INTERVAL ''3 days''),
+        ('Đinh Văn Nam',    'student', 5, 'Tin Học Văn Phòng',   'Học Excel và Word từ cơ bản đến nâng cao, giờ làm việc nhanh hơn rất nhiều. Gia sư dạy đúng những gì thực tế cần dùng, không mất thời gian lý thuyết dài.' , NOW() - INTERVAL ''4 days'')
+      `);
+      console.log("✅ DB seed: 10 sample reviews inserted");
+    }
+  } catch (err) {
+    console.error("⚠️  DB migration (reviews) warning:", err.message);
   }
 
   app.listen(port, () => {

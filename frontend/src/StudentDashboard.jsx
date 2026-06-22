@@ -36,20 +36,7 @@ const MY_TUTORS = [
   },
 ]
 
-<<<<<<< HEAD
 import StudentSidebar from './components/StudentSidebar'
-=======
-const NAV_ITEMS = [
-  { id: 'dashboard', icon: 'dashboard', label: 'Bảng Điều Khiển' },
-  { id: 'courses', icon: 'school', label: 'Khóa Học Của Tôi' },
-  { id: 'schedule', icon: 'calendar_today', label: 'Lịch Học' },
-  { id: 'messages', icon: 'chat', label: 'Tin Nhắn' },
-  { id: 'assessments', icon: 'quiz', label: 'Bài Kiểm Tra' },
-  { id: 'practice', icon: 'psychology', label: 'Luyện Tập AI' },
-  { id: 'exam-papers', icon: 'description', label: 'Đề thi' },
-  { id: 'parent-link', icon: 'family_restroom', label: 'Mã chia sẻ' },
-]
->>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 
 export default function StudentDashboard() {
   const { user, token, logout } = useAuth()
@@ -85,102 +72,12 @@ export default function StudentDashboard() {
   return (
     <div className={`bg-background text-on-background font-body-md text-body-md antialiased ${activeSection === 'schedule' ? 'block min-h-screen' : 'flex h-screen overflow-hidden'}`}>
 
-<<<<<<< HEAD
-      <StudentSidebar 
+      <StudentSidebar
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
-        activeRoute="dashboard"
+        activeRoute={activeSection}
         logout={logout}
       />
-=======
-      {/* ── Mobile overlay ── */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      {/* ── Sidebar ── */}
-      <nav
-        className={`
-          fixed left-0 top-0 h-full z-40 flex flex-col py-lg w-64
-          bg-surface-container-low border-r border-outline-variant/20 shadow-sm
-          transition-transform duration-300
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          lg:translate-x-0
-        `}
-      >
-        {/* Logo */}
-        <div className="px-md mb-xl flex items-center gap-sm">
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary">
-            <span className="material-symbols-outlined text-[20px]">school</span>
-          </div>
-          <div>
-            <h1 className="font-headline-md text-headline-md font-black text-primary leading-tight">
-              EduX
-            </h1>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Cổng Học Sinh</p>
-          </div>
-        </div>
-
-        {/* Nav items */}
-        <ul className="flex-1 flex flex-col gap-xs px-sm">
-          {NAV_ITEMS.map((item) => {
-            const isActive = activeSection === item.id
-            return (
-              <li key={item.id}>
-                <button
-                  onClick={() => { window.location.hash = `/dashboard/${item.id}`; setSidebarOpen(false) }}
-                  className={`
-                    w-full flex items-center gap-sm px-md py-sm rounded-lg
-                    transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2
-                    ${
-                      isActive
-                        ? 'text-primary font-bold bg-secondary-container'
-                        : 'text-on-surface-variant hover:bg-surface-container-high'
-                    }
-                  `}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={isActive ? { fontVariationSettings: "'FILL' 1" } : {}}
-                  >
-                    {item.icon}
-                  </span>
-                  <span className="font-label-md text-label-md">{item.label}</span>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-
-        {/* Bottom actions */}
-        <div className="px-sm mt-auto flex flex-col gap-xs">
-          <a
-            href="#"
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
-          >
-            <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Cài Đặt</span>
-          </a>
-          <a
-            href="#"
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
-            onClick={(e) => { e.preventDefault(); logout() }}
-          >
-            <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Đăng Xuất</span>
-          </a>
-          <div className="mt-md px-xs">
-            <button className="w-full bg-surface-container border border-outline-variant text-on-surface font-label-md text-label-md h-12 rounded-lg flex items-center justify-center gap-sm hover:bg-surface-container-highest transition-colors duration-200">
-              <span className="material-symbols-outlined text-[18px]">help_center</span>
-              Hỗ Trợ
-            </button>
-          </div>
-        </div>
-      </nav>
->>>>>>> cac19781017142fbca126d01db84b6453311ac7d
 
       {/* ── Main content wrapper ── */}
       <div className={`lg:ml-64 ${activeSection === 'schedule' ? 'block min-h-screen' : 'flex-1 flex flex-col h-full overflow-hidden'}`}>
@@ -361,7 +258,7 @@ export default function StudentDashboard() {
               <div className="flex justify-between items-center mb-md">
                 <h3 className="font-headline-md text-headline-md text-on-surface">Gia Sư Của Tôi</h3>
                 <a
-                  href="#"
+                  href="#/find-tutors"
                   className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
                 >
                   Xem Tất Cả
@@ -376,16 +273,19 @@ export default function StudentDashboard() {
 
                 {/* Find New Tutor CTA */}
                 <a
-                  href="#/"
-                  className="bg-surface-container-lowest/70 backdrop-blur-md border-2 border-dashed border-outline-variant/50 rounded-xl p-md flex flex-col items-center justify-center text-center bg-transparent hover:bg-surface-container-lowest/50 hover:border-primary/50 transition-all duration-300 cursor-pointer group"
+                  href="#/tutor-request"
+                  className="bg-white border-2 border-dashed border-[#c4c5d5] rounded-xl p-6 flex flex-col items-center justify-center text-center hover:border-primary hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer group min-h-[250px]"
                 >
-                  <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-sm group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors duration-300">
-                    <span className="material-symbols-outlined text-[28px]">person_add</span>
+                  <div className="w-16 h-16 rounded-full bg-[#f3f4f6] flex items-center justify-center text-primary mb-4 group-hover:bg-primary group-hover:text-white transition-colors duration-300">
+                    <span className="material-symbols-outlined text-[28px]">person_search</span>
                   </div>
-                  <h4 className="font-label-md text-label-md text-on-surface mb-xs">Tìm Gia Sư</h4>
-                  <p className="font-label-sm text-label-sm text-on-surface-variant">
-                    Khám phá các gia sư hiện có
+                  <h4 className="text-[16px] font-bold text-[#191c1e] mb-2">Tạo yêu cầu tìm gia sư</h4>
+                  <p className="text-[14px] text-[#5d5f5f] mb-6 leading-relaxed px-2">
+                    EduX sẽ gợi ý gia sư phù hợp với nhu cầu học tập của bạn.
                   </p>
+                  <button className="bg-primary/10 text-primary font-semibold text-[14px] px-6 py-2.5 rounded-full group-hover:bg-primary group-hover:text-white transition-all shadow-sm">
+                    Bắt đầu
+                  </button>
                 </a>
               </div>
             </div>

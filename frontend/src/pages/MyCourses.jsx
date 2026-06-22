@@ -19,9 +19,6 @@ export default function MyCourses() {
         <div className="flex items-center gap-md">
           <a href="#/" className="text-headline-md font-bold text-primary no-underline">EduX</a>
           <nav className="hidden md:flex gap-md ml-lg">
-            <a className="text-label-md font-label-md text-on-surface-variant hover:text-primary transition-colors" href="#">Lớp học trực tuyến</a>
-            <a className="text-label-md font-label-md text-on-surface-variant hover:text-primary transition-colors" href="#">Tài liệu</a>
-            <a className="text-label-md font-label-md text-on-surface-variant hover:text-primary transition-colors" href="#">Cộng đồng</a>
           </nav>
         </div>
         <div className="flex items-center gap-md">

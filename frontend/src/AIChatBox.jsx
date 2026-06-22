@@ -30,6 +30,10 @@ export default function AIChatBox({ token, onQuizReady }) {
   function parseLocalIntent(text) {
     const t = text.toLowerCase()
 
+    // Must contain explicit keywords to be considered a quiz request
+    const intentKeywords = /\b(câu|câu hỏi|kiểm tra|ôn tập|luyện tập|quiz|test|bài tập|đề thi|về chủ đề|cho tôi)\b/i
+    if (!intentKeywords.test(t)) return null
+
     // Extract number of questions
     const countMatch = t.match(/\b(\d+)\s*(câu|questions?|qs?|cau)\b/i)
     const count = countMatch ? Math.min(Math.max(parseInt(countMatch[1]), 1), 30) : 10
@@ -42,11 +46,11 @@ export default function AIChatBox({ token, onQuizReady }) {
     // Extract topic — remove numbers, difficulty words, filler words
     let topic = text
       .replace(/\b\d+\s*(câu|questions?|qs?|cau)\b/gi, '')
-      .replace(/\b(give me|i want|help me|practice|review|questions? about|about|on|for|me|please|quiz|ôn tập|on tap|muốn|muon|về|ve|cho tôi|cho toi|tôi muốn|toi muon)\b/gi, '')
+      .replace(/\b(give me|i want|help me|practice|review|questions? about|about|on|for|me|please|quiz|ôn tập|on tap|muốn|muon|về|ve|cho tôi|cho toi|tôi muốn|toi muon|luyện tập|luyen tap|kiểm tra|kiem tra|bài tập|bai tap)\b/gi, '')
       .replace(/\b(easy|dễ|de|medium|trung bình|hard|khó|kho|advanced|beginner)\b/gi, '')
       .replace(/\s+/g, ' ').trim()
       // Remove leading punctuation
-      .replace(/^[,.\-:;]+/, '').trim()
+      .replace(/^[,.\-:;?!]+/, '').trim()
 
     if (!topic || topic.length < 2) return null
     return { topic, count, difficulty }

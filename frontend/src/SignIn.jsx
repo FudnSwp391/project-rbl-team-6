@@ -10,8 +10,10 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   // 'login' | 'forgot_email' | 'forgot_otp' | 'forgot_new_pwd'
   const [viewMode, setViewMode] = useState('login')
 
+  const savedEmail = localStorage.getItem('rememberedEmail') || ''
+  const [rememberMe, setRememberMe] = useState(!!savedEmail)
   const [formData, setFormData] = useState({
-    email: '',
+    email: savedEmail,
     password: '',
   })
   
@@ -26,6 +28,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [googleError, setGoogleError] = useState('')
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false)
+  const [suspiciousAlert, setSuspiciousAlert] = useState(null)
   
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
@@ -73,7 +76,17 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data?.message || 'Đăng nhập thất bại.')
-      login(data.token, data.user)
+      if (rememberMe) {
+        localStorage.setItem('rememberedEmail', formData.email)
+      } else {
+        localStorage.removeItem('rememberedEmail')
+      }
+      if (data.suspiciousLogin) {
+        setSuspiciousAlert(data.loginIP)
+        setTimeout(() => { login(data.token, data.user) }, 3500)
+      } else {
+        login(data.token, data.user)
+      }
     } catch (error) {
       setErrors({ submit: error.message || 'Đăng nhập thất bại. Vui lòng thử lại.' })
     } finally {
@@ -97,7 +110,12 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data?.message || 'Đăng nhập bằng Google thất bại.')
-      login(data.token, data.user)
+      if (data.suspiciousLogin) {
+        setSuspiciousAlert(data.loginIP)
+        setTimeout(() => { login(data.token, data.user) }, 3500)
+      } else {
+        login(data.token, data.user)
+      }
     } catch (error) {
       setGoogleError(error.message || 'Đăng nhập bằng Google thất bại.')
     } finally {
@@ -177,6 +195,20 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
 
   // ─── RENDERS ─────────────────────────────────────────────────────────────────
   const renderLoginForm = () => (
+    <div>
+      {suspiciousAlert && (
+        <div className="mb-4 rounded-xl bg-orange-50 border border-orange-300 p-4 flex gap-3 items-start animate-in fade-in slide-in-from-top-2">
+          <span className="material-symbols-outlined text-orange-500 text-[22px] mt-0.5 shrink-0">gpp_maybe</span>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-orange-800">Đăng nhập từ địa chỉ IP mới</p>
+            <p className="text-xs text-orange-700 mt-1">
+              Chúng tôi phát hiện đăng nhập từ IP <strong>{suspiciousAlert}</strong> — khác với các lần trước.
+              Nếu không phải bạn, hãy đổi mật khẩu ngay.
+            </p>
+          </div>
+          <button type="button" onClick={() => setSuspiciousAlert(null)} className="text-orange-400 hover:text-orange-600 text-lg leading-none">✕</button>
+        </div>
+      )}
     <form className="space-y-md transition-opacity duration-300 animate-in fade-in" onSubmit={handleLoginSubmit} noValidate>
       <div className="space-y-4">
         <div className="relative group">
@@ -205,9 +237,28 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
       </div>
 
       <div className="flex justify-between items-center">
+        <label className="flex items-center gap-2 cursor-pointer select-none group">
+          <div className="relative">
+            <input
+              type="checkbox"
+              className="sr-only"
+              checked={rememberMe}
+              onChange={e => setRememberMe(e.target.checked)}
+            />
+            <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-150 ${rememberMe ? 'bg-[#00288e] border-[#00288e]' : 'bg-white border-outline-variant group-hover:border-primary'}`}>
+              {rememberMe && (
+                <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                  <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
+            </div>
+          </div>
+          <span className="font-label-sm text-label-sm text-on-surface-variant">Nhớ mật khẩu</span>
+        </label>
+
         {errors.success ? (
           <p className="text-sm text-green-600 font-medium">{errors.success}</p>
-        ) : <div/>}
+        ) : null}
         <button
           type="button"
           onClick={() => { setViewMode('forgot_email'); setErrors({}); }}
@@ -246,6 +297,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
       {isGoogleSubmitting && <p className="text-sm text-on-surface-variant">Đang xác minh tài khoản Google...</p>}
       {googleError && <p className="text-sm text-red-600">{googleError}</p>}
     </form>
+    </div>
   )
 
   const renderForgotEmail = () => (

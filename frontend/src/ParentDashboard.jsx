@@ -2,7 +2,7 @@
  * ParentDashboard.jsx
  * ─────────────────────────────────────────────────────────────────────────────
  * Dashboard phụ huynh — dữ liệu thật từ API.
- * Sections: Tổng quan | Học sinh | Gia sư | Lịch sử hoạt động | Cài đặt
+ * Sections: Tổng quan | Học sinh | Gia sư | Lịch sử hoạt động | Tài chính | Cài đặt
  */
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
@@ -16,6 +16,7 @@ const NAV = [
   { key: 'tutors',    icon: 'school',           label: 'Gia sư' },
   { key: 'messages',  icon: 'chat',             label: 'Tin nhắn' },
   { key: 'activity',  icon: 'analytics',        label: 'Hoạt động' },
+  { key: 'finance',   icon: 'account_balance_wallet', label: 'Tài chính' },
   { key: 'settings',  icon: 'settings',         label: 'Cài đặt' },
 ]
 
@@ -64,6 +65,143 @@ function TypeBadge({ type }) {
   )
 }
 
+// ─── Notification Dropdown ─────────────────────────────────────────────────────
+const NOTIF_ICON_MAP = {
+  payment:        { icon: 'payments',     color: 'text-red-500',    bg: 'bg-red-50' },
+  tutor_review:   { icon: 'rate_review',  color: 'text-purple-600', bg: 'bg-purple-50' },
+  student_absent: { icon: 'event_busy',   color: 'text-amber-600',  bg: 'bg-amber-50' },
+  quiz_result:    { icon: 'grading',      color: 'text-blue-600',   bg: 'bg-blue-50' },
+  practice_report:{ icon: 'psychology',   color: 'text-purple-600', bg: 'bg-purple-50' },
+  system:         { icon: 'info',         color: 'text-on-surface-variant', bg: 'bg-surface-container' },
+}
+function notifStyle(type) { return NOTIF_ICON_MAP[type] || NOTIF_ICON_MAP.system }
+
+function timeAgo(dateStr) {
+  if (!dateStr) return ''
+  const diff = (Date.now() - new Date(dateStr)) / 1000
+  if (diff < 3600)  return `${Math.floor(diff / 60)} phút trước`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`
+  if (diff < 604800) return `${Math.floor(diff / 86400)} ngày trước`
+  return new Date(dateStr).toLocaleDateString('vi-VN')
+}
+
+function NotificationDropdown({ token }) {
+  const [open, setOpen] = useState(false)
+  const [notifications, setNotifications] = useState([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const dropdownRef = useRef(null)
+
+  const fetchNotifs = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setNotifications(data.notifications || [])
+      setUnreadCount(data.unread_count || 0)
+    } catch { /* silent */ }
+  }
+
+  useEffect(() => {
+    if (token) fetchNotifs()
+    // Poll every 30s for new notifications
+    const interval = setInterval(() => { if (token) fetchNotifs() }, 30000)
+    return () => clearInterval(interval)
+  }, [token])
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const markAllRead = async () => {
+    await fetch(`${API_BASE}/api/notifications/read-all`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}` }
+    })
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
+    setUnreadCount(0)
+  }
+
+  const markRead = async (id) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n))
+    setUnreadCount(prev => Math.max(0, prev - 1))
+    await fetch(`${API_BASE}/api/notifications/${id}/read`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}` }
+    })
+  }
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => { setOpen(v => !v) }}
+        className="relative p-2 text-on-surface-variant hover:text-primary rounded-full hover:bg-surface-container transition-colors"
+        aria-label="Thông báo"
+      >
+        <span className="material-symbols-outlined" style={unreadCount > 0 ? { fontVariationSettings: "'FILL' 1" } : {}}>
+          notifications
+        </span>
+        {unreadCount > 0 && (
+          <span className="absolute top-1 right-1 min-w-[18px] h-[18px] rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1 border-2 border-surface">
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-80 bg-surface rounded-2xl shadow-xl border border-outline-variant/20 overflow-hidden z-50 animate-[fadeIn_0.15s_ease-out]">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/20">
+            <h4 className="font-headline-sm text-on-surface">Thông báo</h4>
+            {unreadCount > 0 && (
+              <button onClick={markAllRead} className="text-xs text-primary hover:underline font-medium">
+                Đánh dấu tất cả đã đọc
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-96 overflow-y-auto divide-y divide-outline-variant/10">
+            {notifications.length === 0 ? (
+              <div className="p-6 text-center text-on-surface-variant text-sm">Không có thông báo nào</div>
+            ) : (
+              notifications.map(n => {
+                const style = notifStyle(n.type)
+                return (
+                  <button
+                    key={n.id}
+                    onClick={() => markRead(n.id)}
+                    className={`w-full text-left flex items-start gap-3 p-3 hover:bg-surface-container-low transition-colors ${!n.is_read ? 'bg-primary/5' : ''}`}
+                  >
+                    <div className={`w-9 h-9 rounded-full ${style.bg} flex items-center justify-center shrink-0 mt-0.5`}>
+                      <span className={`material-symbols-outlined text-[18px] ${style.color}`} style={{ fontVariationSettings: "'FILL' 1" }}>
+                        {n.icon || style.icon}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1">
+                        <p className={`font-label-md text-on-surface truncate ${!n.is_read ? 'font-semibold' : ''}`}>{n.title}</p>
+                        {!n.is_read && <span className="w-2 h-2 rounded-full bg-primary shrink-0" />}
+                      </div>
+                      <p className="font-body-sm text-on-surface-variant text-xs leading-snug mt-0.5 line-clamp-2">{n.body}</p>
+                      <p className="text-[11px] text-on-surface-variant/70 mt-1">{timeAgo(n.created_at)}</p>
+                    </div>
+                  </button>
+                )
+              })
+            )}
+          </div>
+
+          <div className="px-4 py-2 border-t border-outline-variant/20 text-center">
+            <button className="text-xs text-primary hover:underline font-medium">Xem tất cả thông báo</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -91,13 +229,15 @@ export default function ParentDashboard() {
       `}>
         {/* Brand */}
         <div className="mb-lg px-sm flex items-center gap-sm">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-tertiary flex items-center justify-center">
-            <span className="material-symbols-outlined text-white text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>family_restroom</span>
-          </div>
-          <div>
-            <h1 className="font-headline-md text-headline-md font-bold text-primary leading-tight">EduX</h1>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Phụ huynh</p>
-          </div>
+          <a href="#/" className="flex items-center gap-sm hover:opacity-80 transition-opacity no-underline">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-tertiary flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-white text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>family_restroom</span>
+            </div>
+            <div>
+              <h1 className="font-headline-md text-headline-md font-bold text-primary leading-tight m-0">EduX</h1>
+              <p className="font-label-sm text-label-sm text-on-surface-variant m-0">Phụ huynh</p>
+            </div>
+          </a>
         </div>
 
         {/* Nav */}
@@ -168,9 +308,7 @@ export default function ParentDashboard() {
             </p>
           </div>
 
-          <button className="relative p-2 text-on-surface-variant hover:text-primary rounded-full hover:bg-surface-container transition-colors">
-            <span className="material-symbols-outlined">notifications</span>
-          </button>
+          <NotificationDropdown token={token} />
         </header>
 
         {/* Content */}
@@ -180,6 +318,7 @@ export default function ParentDashboard() {
           {section === 'tutors'    && <TutorsSection    token={token} />}
           {section === 'messages'  && <MessagesSection  token={token} user={user} />}
           {section === 'activity'  && <ActivitySection  token={token} />}
+          {section === 'finance'   && <FinanceSection   token={token} />}
           {section === 'settings'  && <SettingsSection  user={user} displayName={displayName} />}
         </main>
       </div>
@@ -323,7 +462,8 @@ function StudentsSection({ token }) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
-  
+  const [selectedStudent, setSelectedStudent] = useState(null)
+
   const fetchChildren = () => {
     setLoading(true)
     fetch(`${API_BASE}/api/parent/children`, {
@@ -334,9 +474,7 @@ function StudentsSection({ token }) {
       .catch(() => setLoading(false))
   }
 
-  useEffect(() => {
-    fetchChildren()
-  }, [token])
+  useEffect(() => { fetchChildren() }, [token])
 
   const handleUnlink = async (studentId, studentName) => {
     if (!window.confirm(`Bạn có chắc muốn hủy liên kết với học sinh ${studentName}?`)) return
@@ -347,12 +485,21 @@ function StudentsSection({ token }) {
       })
       if (res.ok) fetchChildren()
       else alert('Lỗi khi hủy liên kết')
-    } catch (e) {
-      alert('Lỗi kết nối')
-    }
+    } catch { alert('Lỗi kết nối') }
   }
 
   if (loading) return <LoadingSkeleton />
+
+  // ── Detail view ──
+  if (selectedStudent) {
+    return (
+      <StudentDetailView
+        token={token}
+        student={selectedStudent}
+        onBack={() => setSelectedStudent(null)}
+      />
+    )
+  }
 
   const filtered = children.filter(s =>
     s.student_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -378,7 +525,7 @@ function StudentsSection({ token }) {
               className="pl-9 pr-4 h-10 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-body-sm"
             />
           </div>
-          <button 
+          <button
             onClick={() => setShowAddModal(true)}
             className="h-10 px-4 rounded-xl bg-primary text-on-primary font-label-md flex items-center gap-1 hover:bg-primary/90 transition-colors shadow-sm"
           >
@@ -393,7 +540,11 @@ function StudentsSection({ token }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
           {filtered.map(s => (
-            <div key={s.link_id} className="bg-surface rounded-2xl border border-outline-variant/30 shadow-sm p-md flex flex-col gap-md relative overflow-hidden group hover:border-primary/30 transition-colors">
+            <div
+              key={s.link_id}
+              className="bg-surface rounded-2xl border border-outline-variant/30 shadow-sm p-md flex flex-col gap-md relative overflow-hidden group hover:border-primary/30 hover:shadow-md transition-all cursor-pointer"
+              onClick={() => setSelectedStudent(s)}
+            >
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-sm">
                   <Avatar src={s.student_picture} name={s.student_name} size={12} />
@@ -403,8 +554,8 @@ function StudentsSection({ token }) {
                     {!s.nickname && <p className="font-label-sm text-label-sm text-on-surface-variant">{s.student_email}</p>}
                   </div>
                 </div>
-                <button 
-                  onClick={() => handleUnlink(s.student_id, s.student_name)}
+                <button
+                  onClick={e => { e.stopPropagation(); handleUnlink(s.student_id, s.student_name) }}
                   className="w-8 h-8 flex items-center justify-center rounded-full text-error opacity-0 group-hover:opacity-100 hover:bg-error/10 transition-all"
                   title="Hủy liên kết"
                 >
@@ -429,10 +580,13 @@ function StudentsSection({ token }) {
                   <p className="text-xs mt-1 font-medium text-on-surface-variant">—</p>
                 </div>
               </div>
-              
+
               <div className="flex justify-between items-center text-xs text-on-surface-variant border-t border-outline-variant/20 pt-sm mt-auto">
                 <span>Liên kết ngày: {fmtDate(s.linked_at)}</span>
-                <span>Hoạt động cuối: {fmtDate(s.last_quiz_at)}</span>
+                <span className="flex items-center gap-1 text-primary font-medium">
+                  Xem chi tiết
+                  <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                </span>
               </div>
             </div>
           ))}
@@ -440,6 +594,404 @@ function StudentsSection({ token }) {
       )}
 
       {showAddModal && <AddStudentModal token={token} onClose={() => setShowAddModal(false)} onAdded={fetchChildren} />}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  STUDENT DETAIL VIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const SUBJECT_COLORS = {
+  'Toán':      'bg-blue-100 text-blue-700 border-blue-200',
+  'Ngữ văn':   'bg-purple-100 text-purple-700 border-purple-200',
+  'Tiếng Anh': 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  'Vật lí':    'bg-orange-100 text-orange-700 border-orange-200',
+  'Hoá học':   'bg-red-100 text-red-700 border-red-200',
+  'Sinh học':  'bg-green-100 text-green-700 border-green-200',
+}
+function subjectColor(s) { return SUBJECT_COLORS[s] || 'bg-surface-container text-on-surface-variant border-outline-variant/30' }
+
+function StarRating({ value }) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {[1,2,3,4,5].map(i => (
+        <span key={i} className={`material-symbols-outlined text-[16px] ${i <= value ? 'text-amber-400' : 'text-outline-variant'}`}
+          style={{ fontVariationSettings: i <= value ? "'FILL' 1" : '' }}>star</span>
+      ))}
+    </div>
+  )
+}
+
+function fmtScheduleTime(dateStr, durationMins) {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  const dow = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][d.getDay()]
+  const date = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })
+  const startH = String(d.getHours()).padStart(2,'0')
+  const startM = String(d.getMinutes()).padStart(2,'0')
+  const end = new Date(d.getTime() + (durationMins || 120) * 60000)
+  const endH = String(end.getHours()).padStart(2,'0')
+  const endM = String(end.getMinutes()).padStart(2,'0')
+  return `${dow}, ${date} • ${startH}:${startM} – ${endH}:${endM}`
+}
+
+function StudentDetailView({ token, student, onBack }) {
+  const [schedule, setSchedule] = useState([])
+  const [reviews, setReviews] = useState([])
+  const [absences, setAbsences] = useState(0)
+  const [scheduleLoading, setScheduleLoading] = useState(true)
+  const [reviewsLoading, setReviewsLoading] = useState(true)
+  const [leaveModal, setLeaveModal] = useState(null)
+  const [messageModal, setMessageModal] = useState(null)
+
+  useEffect(() => {
+    // Fetch schedule + absences
+    fetch(`${API_BASE}/api/parent/children/${student.student_id}/schedule`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => {
+        setSchedule(d.sessions || [])
+        setAbsences(d.absences_this_month || 0)
+        setScheduleLoading(false)
+      })
+      .catch(() => setScheduleLoading(false))
+
+    // Fetch reviews
+    fetch(`${API_BASE}/api/parent/children/${student.student_id}/reviews`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => { setReviews(d.reviews || []); setReviewsLoading(false) })
+      .catch(() => setReviewsLoading(false))
+  }, [student.student_id, token])
+
+  const handleLeaveSubmit = async (sessionId, reason) => {
+    const res = await fetch(
+      `${API_BASE}/api/parent/children/${student.student_id}/schedule/${sessionId}/leave`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason })
+      }
+    )
+    if (!res.ok) throw new Error('Gửi yêu cầu thất bại')
+    // Update local state
+    setSchedule(prev => prev.map(s => s.id === sessionId ? { ...s, status: 'cancelled' } : s))
+  }
+
+  // Derived stats
+  const avgScore = ((parseFloat(student.avg_quiz_score) || 0) + (parseFloat(student.avg_practice_score) || 0)) / 2 || null
+  const totalAttempts = (parseInt(student.quiz_count) || 0) + (parseInt(student.practice_count) || 0) + (parseInt(student.exam_count) || 0)
+  const completionPct = totalAttempts > 0 ? Math.min(100, Math.round((totalAttempts / Math.max(totalAttempts, 10)) * 100)) : 0
+
+  return (
+    <div className="flex flex-col gap-lg max-w-5xl mx-auto">
+
+      {/* ── Back + Header ── */}
+      <div className="flex items-center gap-md">
+        <button onClick={onBack} className="w-10 h-10 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center transition-colors shrink-0">
+          <span className="material-symbols-outlined">arrow_back</span>
+        </button>
+        <div className="flex items-center gap-md flex-1">
+          <Avatar src={student.student_picture} name={student.student_name} size={14} />
+          <div>
+            <h3 className="font-headline-md text-headline-md text-on-surface">{student.nickname || student.student_name}</h3>
+            {student.nickname
+              ? <p className="font-body-sm text-on-surface-variant">{student.student_name} • {student.student_email}</p>
+              : <p className="font-body-sm text-on-surface-variant">{student.student_email}</p>
+            }
+          </div>
+        </div>
+      </div>
+
+      {/* ── 1. Mini Dashboard ── */}
+      <div>
+        <h4 className="font-headline-sm text-on-surface mb-md flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>dashboard</span>
+          Tổng quan
+        </h4>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-md">
+          {/* Điểm trung bình */}
+          <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="material-symbols-outlined text-[20px] text-blue-500" style={{ fontVariationSettings: "'FILL' 1" }}>grade</span>
+              <span className="text-[11px] font-medium text-on-surface-variant bg-surface-container px-2 py-0.5 rounded-full">Tổng hợp</span>
+            </div>
+            <p className={`font-display-sm text-display-sm font-black leading-none ${avgScore ? scoreColor(avgScore) : 'text-on-surface-variant'}`}>
+              {avgScore ? `${Math.round(avgScore)}%` : '—'}
+            </p>
+            <p className="font-label-sm text-on-surface-variant">Điểm trung bình</p>
+          </div>
+
+          {/* Buổi vắng/muộn */}
+          <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="material-symbols-outlined text-[20px] text-amber-500" style={{ fontVariationSettings: "'FILL' 1" }}>event_busy</span>
+              <span className="text-[11px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Tháng này</span>
+            </div>
+            <p className={`font-display-sm text-display-sm font-black leading-none ${absences > 2 ? 'text-red-500' : absences > 0 ? 'text-amber-600' : 'text-green-600'}`}>
+              {scheduleLoading ? '…' : absences}
+            </p>
+            <p className="font-label-sm text-on-surface-variant">Buổi vắng / muộn</p>
+          </div>
+
+          {/* % Hoàn thành */}
+          <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md flex flex-col gap-sm shadow-sm col-span-2">
+            <div className="flex items-center justify-between">
+              <span className="material-symbols-outlined text-[20px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>task_alt</span>
+              <span className="text-[11px] font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">{totalAttempts} bài</span>
+            </div>
+            <div className="flex items-end justify-between gap-md">
+              <div>
+                <p className="font-display-sm text-display-sm font-black leading-none text-green-600">{completionPct}%</p>
+                <p className="font-label-sm text-on-surface-variant mt-1">Hoàn thành bài tập</p>
+              </div>
+              <div className="flex-1 max-w-[140px]">
+                <div className="flex justify-between text-xs text-on-surface-variant mb-1">
+                  <span>Quiz: {student.quiz_count || 0}</span>
+                  <span>Practice: {student.practice_count || 0}</span>
+                </div>
+                <div className="h-2.5 bg-surface-container-high rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-700" style={{ width: `${completionPct}%` }} />
+                </div>
+                <div className="h-2 bg-surface-container-high rounded-full overflow-hidden mt-1">
+                  <div className="h-full rounded-full bg-purple-400 transition-all duration-700"
+                    style={{ width: `${Math.min(100, ((parseInt(student.practice_count) || 0) / Math.max(totalAttempts, 1)) * 100)}%` }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── 2. Lịch học sắp tới ── */}
+      <div>
+        <h4 className="font-headline-sm text-on-surface mb-md flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>calendar_month</span>
+          Lịch học sắp tới
+        </h4>
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          {scheduleLoading ? (
+            <div className="p-md flex items-center gap-2 text-on-surface-variant"><div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /><span className="text-sm">Đang tải lịch học...</span></div>
+          ) : schedule.length === 0 ? (
+            <EmptyState icon="event_available" text="Chưa có buổi học nào sắp tới. Gia sư cần thêm lịch học trong hệ thống." />
+          ) : (
+            <div className="divide-y divide-outline-variant/10">
+              {schedule.map(item => {
+                const isCancelled = item.status === 'cancelled'
+                return (
+                  <div key={item.id} className={`flex items-center gap-md p-4 transition-colors ${isCancelled ? 'opacity-50 bg-surface-container-low' : 'hover:bg-surface-container-low/50'}`}>
+                    <div className={`shrink-0 px-3 py-1.5 rounded-xl border text-sm font-semibold ${subjectColor(item.subject)}`}>
+                      {item.subject}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-label-md text-on-surface flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[15px] text-on-surface-variant">schedule</span>
+                        {fmtScheduleTime(item.scheduled_at, item.duration_mins)}
+                      </p>
+                      <p className="font-label-sm text-on-surface-variant flex items-center gap-1 mt-0.5">
+                        <span className="material-symbols-outlined text-[14px]">person</span>
+                        {item.tutor_name}
+                        {isCancelled && <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">Đã hủy</span>}
+                      </p>
+                    </div>
+                    {!isCancelled && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => setLeaveModal(item)}
+                          className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">event_busy</span>
+                          Xin nghỉ
+                        </button>
+                        <button
+                          onClick={() => setMessageModal({ tutorId: item.tutor_id, tutorName: item.tutor_name })}
+                          className="h-8 px-3 rounded-lg border border-primary/30 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 transition-colors flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">chat</span>
+                          Nhắn gia sư
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── 3. Nhận xét định kỳ (Timeline) ── */}
+      <div>
+        <h4 className="font-headline-sm text-on-surface mb-md flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>rate_review</span>
+          Nhận xét định kỳ
+        </h4>
+        {reviewsLoading ? (
+          <div className="p-md flex items-center gap-2 text-on-surface-variant"><div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /><span className="text-sm">Đang tải nhận xét...</span></div>
+        ) : reviews.length === 0 ? (
+          <EmptyState icon="rate_review" text="Chưa có nhận xét nào từ gia sư" />
+        ) : (
+          <div className="relative">
+            <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-outline-variant/30" />
+            <div className="flex flex-col gap-md">
+              {reviews.map((review, idx) => (
+                <div key={review.id} className="flex gap-md pl-2">
+                  <div className="relative shrink-0 flex flex-col items-center" style={{ width: 24 }}>
+                    <div className={`w-4 h-4 rounded-full border-2 border-surface z-10 mt-1 ${idx === 0 ? 'bg-primary border-primary' : 'bg-surface-container-high border-outline-variant'}`} />
+                  </div>
+                  <div className="flex-1 bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-md mb-2">
+                    <div className="flex items-start justify-between gap-md mb-3">
+                      <div>
+                        <p className="font-label-sm text-on-surface-variant text-xs">{review.period_label}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${subjectColor(review.subject)}`}>{review.subject}</span>
+                          <span className="font-label-sm text-on-surface-variant text-xs flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px]">person</span>
+                            {review.tutor_name}
+                          </span>
+                        </div>
+                      </div>
+                      <StarRating value={review.rating} />
+                    </div>
+                    <p className="font-body-sm text-on-surface leading-relaxed">{review.content}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Modals */}
+      {leaveModal && (
+        <LeaveRequestModal
+          token={token}
+          studentId={student.student_id}
+          scheduleItem={leaveModal}
+          onClose={() => setLeaveModal(null)}
+          onSubmit={handleLeaveSubmit}
+        />
+      )}
+      {messageModal && (
+        <QuickMessageModal tutorName={messageModal.tutorName} onClose={() => setMessageModal(null)} />
+      )}
+    </div>
+  )
+}
+
+function LeaveRequestModal({ token, studentId, scheduleItem, onClose, onSubmit }) {
+  const [reason, setReason] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sent, setSent] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSend = async () => {
+    setSending(true)
+    setError('')
+    try {
+      await onSubmit(scheduleItem.id, reason)
+      setSent(true)
+      setTimeout(onClose, 1500)
+    } catch (e) {
+      setError(e.message || 'Có lỗi xảy ra. Vui lòng thử lại.')
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
+          <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
+            <span className="material-symbols-outlined text-amber-500">event_busy</span>
+            Xin nghỉ phép
+          </h3>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container">
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
+        </div>
+        <div className="p-4 flex flex-col gap-4">
+          {sent ? (
+            <div className="flex flex-col items-center gap-2 py-4 text-center">
+              <span className="material-symbols-outlined text-green-500 text-[40px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+              <p className="font-label-md text-on-surface">Đã gửi yêu cầu nghỉ phép!</p>
+              <p className="font-body-sm text-on-surface-variant">Gia sư {scheduleItem.tutor_name} sẽ nhận được thông báo.</p>
+            </div>
+          ) : (
+            <>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
+                <p className="font-medium text-amber-800">{scheduleItem.subject} — {fmtScheduleTime(scheduleItem.scheduled_at, scheduleItem.duration_mins)}</p>
+                <p className="text-amber-600 text-xs mt-0.5">Gia sư: {scheduleItem.tutor_name}</p>
+              </div>
+              {error && <p className="text-sm text-error bg-error/10 p-2 rounded-lg">{error}</p>}
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Lý do nghỉ (không bắt buộc)</label>
+                <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
+                  placeholder="VD: Bé bệnh, có việc gia đình..."
+                  className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
+                />
+              </div>
+              <button onClick={handleSend} disabled={sending}
+                className="h-11 w-full rounded-xl bg-amber-500 text-white font-medium hover:bg-amber-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {sending && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                {sending ? 'Đang gửi...' : 'Gửi yêu cầu nghỉ'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function QuickMessageModal({ tutorName, onClose }) {
+  const [message, setMessage] = useState('')
+  const [sent, setSent] = useState(false)
+
+  const handleSend = () => {
+    if (!message.trim()) return
+    setSent(true)
+    setTimeout(onClose, 1500)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
+          <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary">chat</span>
+            Nhắn gia sư {tutorName}
+          </h3>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container">
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
+        </div>
+        <div className="p-4 flex flex-col gap-4">
+          {sent ? (
+            <div className="flex flex-col items-center gap-2 py-4 text-center">
+              <span className="material-symbols-outlined text-green-500 text-[40px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+              <p className="font-label-md text-on-surface">Đã gửi tin nhắn!</p>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-on-surface-variant">Tin nhắn sẽ được gửi qua mục Tin nhắn trong hệ thống.</p>
+              <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4}
+                placeholder={`Nhắn cho ${tutorName}...`}
+                className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
+              />
+              <button onClick={handleSend} disabled={!message.trim()}
+                className="h-11 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                Gửi tin nhắn
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -567,6 +1119,179 @@ function AddStudentModal({ token, onClose, onAdded }) {
   )
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: FINANCE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function fmtMoney(n) {
+  return Number(n).toLocaleString('vi-VN') + 'đ'
+}
+
+function FinanceSection({ token }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState('pending')
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/parent/invoices`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <LoadingSkeleton />
+
+  const pending = data?.pending || []
+  const paid    = data?.paid    || []
+  const summary = data?.summary || { total_debt: 0, total_paid: 0, overdue_count: 0 }
+  const overdueInvoices = pending.filter(i => i.status === 'overdue')
+
+  return (
+    <div className="flex flex-col gap-lg max-w-4xl mx-auto">
+      <div>
+        <h3 className="font-headline-md text-headline-md text-on-surface">Quản lý Tài chính</h3>
+        <p className="font-body-sm text-on-surface-variant">Theo dõi học phí và lịch sử thanh toán</p>
+      </div>
+
+      {/* Debt alert banner */}
+      {overdueInvoices.length > 0 && (
+        <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4 flex items-start gap-3">
+          <span className="material-symbols-outlined text-red-500 text-[28px] shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>warning</span>
+          <div className="flex-1">
+            <p className="font-headline-sm text-red-700 font-semibold">{overdueInvoices.length} hóa đơn đã quá hạn thanh toán!</p>
+            <p className="font-body-sm text-red-600 mt-1">
+              {overdueInvoices.map(i => `${i.invoice_no} (${i.student_name} — ${i.period})`).join(', ')}. Vui lòng thanh toán để tránh ảnh hưởng lịch học.
+            </p>
+          </div>
+          <span className="font-headline-sm text-red-700 font-black shrink-0">{fmtMoney(overdueInvoices.reduce((s,i) => s + parseInt(i.amount), 0))}</span>
+        </div>
+      )}
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-md">
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1">
+          <span className="material-symbols-outlined text-[22px] text-amber-500" style={{ fontVariationSettings: "'FILL' 1" }}>pending_actions</span>
+          <p className="font-headline-sm font-black text-amber-600">{fmtMoney(summary.total_debt)}</p>
+          <p className="font-label-sm text-on-surface-variant">Tổng chờ thanh toán</p>
+        </div>
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1">
+          <span className="material-symbols-outlined text-[22px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>payments</span>
+          <p className="font-headline-sm font-black text-green-600">{fmtMoney(summary.total_paid)}</p>
+          <p className="font-label-sm text-on-surface-variant">Đã thanh toán (lịch sử)</p>
+        </div>
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 p-md shadow-sm flex flex-col gap-1 col-span-2 lg:col-span-1">
+          <span className="material-symbols-outlined text-[22px] text-red-500" style={{ fontVariationSettings: "'FILL' 1" }}>receipt_long</span>
+          <p className="font-headline-sm font-black text-red-500">{summary.overdue_count}</p>
+          <p className="font-label-sm text-on-surface-variant">Hóa đơn quá hạn</p>
+        </div>
+      </div>
+
+      {/* Tab switcher */}
+      <div className="flex bg-surface-container-high/60 rounded-xl p-1 gap-1">
+        {[
+          { key: 'pending', label: 'Chờ thanh toán', icon: 'pending_actions' },
+          { key: 'history', label: 'Lịch sử đã đóng', icon: 'receipt_long' },
+        ].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-lg font-label-md transition-all ${tab === t.key ? 'bg-surface shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+          >
+            <span className="material-symbols-outlined text-[18px]" style={tab === t.key ? { fontVariationSettings: "'FILL' 1" } : {}}>{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Pending invoices */}
+      {tab === 'pending' && (
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          {pending.length === 0 ? (
+            <EmptyState icon="check_circle" text="Không có hóa đơn nào đang chờ thanh toán 🎉" />
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface-container-low border-b border-outline-variant/20">
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Mã hóa đơn</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Học sinh</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm hidden md:table-cell">Môn / Kỳ</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Số tiền</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Hạn TT</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm text-right">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/10">
+                {pending.map(inv => (
+                  <tr key={inv.id} className={`hover:bg-surface-container-low/50 transition-colors ${inv.status === 'overdue' ? 'bg-red-50/40' : ''}`}>
+                    <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.invoice_no}</td>
+                    <td className="p-4 font-label-md text-on-surface">{inv.student_name}</td>
+                    <td className="p-4 font-body-sm text-on-surface-variant hidden md:table-cell">
+                      <p>{inv.subject}</p>
+                      <p className="text-xs">{inv.period}</p>
+                    </td>
+                    <td className="p-4 font-label-md text-on-surface font-semibold">{fmtMoney(inv.amount)}</td>
+                    <td className={`p-4 font-label-sm text-sm ${inv.status === 'overdue' ? 'text-red-600 font-semibold' : 'text-on-surface-variant'}`}>
+                      {inv.due_date ? new Date(inv.due_date).toLocaleDateString('vi-VN') : '—'}
+                    </td>
+                    <td className="p-4 text-right">
+                      {inv.status === 'overdue'
+                        ? <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold"><span className="material-symbols-outlined text-[12px]">error</span>Quá hạn</span>
+                        : <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold"><span className="material-symbols-outlined text-[12px]">schedule</span>Chờ TT</span>
+                      }
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Paid history */}
+      {tab === 'history' && (
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+          {paid.length === 0 ? (
+            <EmptyState icon="receipt_long" text="Chưa có lịch sử thanh toán nào" />
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface-container-low border-b border-outline-variant/20">
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Mã hóa đơn</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Học sinh</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm hidden md:table-cell">Môn / Kỳ</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Số tiền</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm">Ngày TT</th>
+                  <th className="p-4 font-label-md text-on-surface-variant text-sm text-right hidden sm:table-cell">Hình thức</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/10">
+                {paid.map(inv => (
+                  <tr key={inv.id} className="hover:bg-surface-container-low/50 transition-colors">
+                    <td className="p-4 font-label-md text-on-surface font-mono text-sm">{inv.invoice_no}</td>
+                    <td className="p-4 font-label-md text-on-surface">{inv.student_name}</td>
+                    <td className="p-4 font-body-sm text-on-surface-variant hidden md:table-cell">
+                      <p>{inv.subject}</p>
+                      <p className="text-xs">{inv.period}</p>
+                    </td>
+                    <td className="p-4 font-label-md text-on-surface font-semibold">{fmtMoney(inv.amount)}</td>
+                    <td className="p-4 font-label-sm text-green-600">{inv.paid_at ? new Date(inv.paid_at).toLocaleDateString('vi-VN') : '—'}</td>
+                    <td className="p-4 text-right hidden sm:table-cell">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-semibold">
+                        <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                        {inv.pay_method || 'Đã thanh toán'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SECTION: TUTORS

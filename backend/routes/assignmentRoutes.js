@@ -20,29 +20,7 @@ function isValidUUID(str) {
   return UUID_REGEX.test(str);
 }
 
-// ── Mock data fallback ──────────────────────────────────────────────────────
-const MOCK_ASSIGNMENTS = [
-  {
-    id: "a0000001-0000-0000-0000-000000000001",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Assignment 1 - UI Wireframe",
-    description: "Create a low-fidelity wireframe for a mobile app.",
-    due_date: "2026-06-30",
-    created_by: "00000000-0000-0000-0000-000000000001",
-    created_at: "2026-06-15T08:00:00.000Z",
-    updated_at: "2026-06-15T08:00:00.000Z",
-  },
-  {
-    id: "a0000002-0000-0000-0000-000000000002",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Assignment 2 - Prototyping",
-    description: "Build an interactive prototype using Figma.",
-    due_date: "2026-07-15",
-    created_by: "00000000-0000-0000-0000-000000000001",
-    created_at: "2026-06-20T10:00:00.000Z",
-    updated_at: "2026-06-20T10:00:00.000Z",
-  },
-];
+
 
 // ── Helper: check class exists ──────────────────────────────────────────────
 async function classExists(classId) {
@@ -88,12 +66,9 @@ router.get("/api/classes/:classId/assignments", async (req, res) => {
     return res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error("[Assignments] GET list error:", error.message);
-    // Trả mock data fallback
-    const mockForClass = MOCK_ASSIGNMENTS.filter((a) => a.class_id === classId);
-    return res.json({
-      success: true,
-      data: mockForClass.length > 0 ? mockForClass : MOCK_ASSIGNMENTS,
-    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error. Please try again." });
   }
 });
 
@@ -120,24 +95,14 @@ router.get("/api/assignments/:assignmentId", async (req, res) => {
       return res.json({ success: true, data: result.rows[0] });
     }
 
-    // Không tìm thấy trong DB → tìm trong mock data
-    const mock = MOCK_ASSIGNMENTS.find((a) => a.id === assignmentId);
-    if (mock) {
-      return res.json({ success: true, data: mock });
-    }
-
     return res
       .status(404)
       .json({ success: false, message: "Assignment not found" });
   } catch (error) {
     console.error("[Assignments] GET detail error:", error.message);
-    const mock = MOCK_ASSIGNMENTS.find((a) => a.id === assignmentId);
-    if (mock) {
-      return res.json({ success: true, data: mock });
-    }
     return res
-      .status(404)
-      .json({ success: false, message: "Assignment not found" });
+      .status(500)
+      .json({ success: false, message: "Server error. Please try again." });
   }
 });
 

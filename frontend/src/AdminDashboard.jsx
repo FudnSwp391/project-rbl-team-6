@@ -156,10 +156,10 @@ export default function AdminDashboard() {
 
       {/* ══ SIDEBAR ══ */}
       <aside className="w-64 h-screen fixed left-0 top-0 bg-white shadow-sm z-20 flex flex-col py-6 px-2">
-        <div className="px-3 pb-8 pt-1">
-          <h1 className="text-2xl font-bold text-primary">AcademiaFlow</h1>
+        <a href="#/" className="block px-3 pb-8 pt-1 no-underline cursor-pointer">
+          <h1 className="text-2xl font-bold text-primary">EduX</h1>
           <p className="text-xs text-on-surface-variant mt-0.5">Bảng điều khiển Admin</p>
-        </div>
+        </a>
 
         <nav className="flex-1 overflow-y-auto space-y-0.5 pr-1">
           {NAV_ITEMS.map(item => {
@@ -208,7 +208,7 @@ export default function AdminDashboard() {
       </aside>
 
       {/* ══ MAIN ══ */}
-      <main className="flex-1 ml-64 min-h-screen flex flex-col">
+      <main className="flex-1 ml-64 min-h-screen flex flex-col overflow-x-hidden">
 
         {/* Top bar */}
         <header className="h-16 fixed top-0 right-0 left-64 z-10 bg-white shadow-sm flex justify-between items-center px-10">
@@ -535,287 +535,500 @@ function OverviewCard({ icon, iconBg, iconColor, label, value, trend, trendUp })
 function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoading, reviewNotes, onSelectTutor, onApprove, onReject, onViewDoc, onRefresh, setReviewNotes }) {
   const completeness = (() => {
     if (!selectedTutor) return 0
-    const fields = [selectedTutor.bio, selectedTutor.subjects, selectedTutor.certificate_url, selectedTutor.cccd_url]
+    const hasCert = (selectedTutor.certificates && selectedTutor.certificates.length > 0) || !!selectedTutor.certificate_url
+    const fields = [selectedTutor.bio, selectedTutor.subjects, hasCert || null, selectedTutor.cccd_url]
     return Math.round((fields.filter(Boolean).length / fields.length) * 100)
   })()
 
   const risk = (() => {
     if (!selectedTutor) return {}
-    const hasCert = !!selectedTutor.certificate_url
+    const hasCert = (selectedTutor.certificates && selectedTutor.certificates.length > 0) || !!selectedTutor.certificate_url
     const hasCccd = !!selectedTutor.cccd_url
-    if (hasCert && hasCccd) return { level: 'Thấp',       color: 'text-green-600',  icon: 'verified_user', note: 'Không có cảnh báo.' }
-    if (hasCert || hasCccd) return { level: 'Trung bình', color: 'text-amber-600',  icon: 'warning',       note: 'Thiếu một tài liệu.' }
-    return                         { level: 'Cao',        color: 'text-red-600',    icon: 'gpp_bad',       note: 'Chưa nộp tài liệu.' }
+    if (hasCert && hasCccd) return { level: 'Thấp',       color: 'text-green-600',  bgClass: 'bg-green-50 text-green-700 border-green-200',  icon: 'verified_user', note: 'Không có cảnh báo về tài liệu.' }
+    if (hasCert || hasCccd) return { level: 'Trung bình', color: 'text-amber-600',  bgClass: 'bg-amber-50 text-amber-700 border-amber-200',   icon: 'warning',       note: 'Thiếu một tài liệu xác minh.' }
+    return                         { level: 'Cao',        color: 'text-red-600',    bgClass: 'bg-red-50 text-red-700 border-red-200',          icon: 'gpp_bad',       note: 'Chưa nộp tài liệu nào.' }
   })()
 
   return (
-    <div className="p-10 flex gap-8 max-w-[1600px] mx-auto w-full">
+    <div className="p-lg flex gap-gutter max-w-[1600px] mx-auto w-full items-start overflow-hidden">
 
-      {/* Left Column */}
-      <div className="flex-1 flex flex-col gap-5 min-w-0">
+      {/* ── Left Column ── */}
+      <div className="flex-[2] flex flex-col gap-md min-w-0">
 
-        {/* Security Notice */}
-        <div className="bg-red-50 rounded-lg p-4 flex items-start gap-3 border border-red-200">
-          <span className="material-symbols-outlined text-red-600 mt-0.5">gpp_bad</span>
-          <div>
-            <h3 className="text-sm font-bold text-red-900 mb-0.5">Thông báo bảo mật</h3>
-            <p className="text-sm text-red-700">Chỉ quản trị viên mới có thể xem các tài liệu nhạy cảm như chứng chỉ và CCCD / giấy tờ tùy thân.</p>
-          </div>
-        </div>
-
-        {/* Header */}
-        <div className="flex justify-between items-end">
-          <div>
-            <h2 className="text-3xl font-bold text-on-surface">Hồ sơ chờ duyệt</h2>
-            <p className="text-sm text-on-surface-variant mt-1">Xem xét và quản lý hồ sơ gia sư mới.</p>
-          </div>
-          <div className="flex gap-2">
-            <button className="px-3 py-2 border border-outline-variant rounded-lg text-sm font-semibold text-on-surface hover:bg-gray-50 transition-colors flex items-center gap-1">
-              <span className="material-symbols-outlined text-[18px]">filter_list</span> Lọc
-            </button>
-            <button className="px-3 py-2 border border-outline-variant rounded-lg text-sm font-semibold text-on-surface hover:bg-gray-50 transition-colors flex items-center gap-1">
-              <span className="material-symbols-outlined text-[18px]">sort</span> Sắp xếp
-            </button>
-          </div>
-        </div>
-
-        {/* Table */}
-        <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
-          {loading && (
-            <div className="flex flex-col items-center justify-center gap-4 py-16 text-on-surface-variant">
-              <span className="material-symbols-outlined text-5xl animate-spin">progress_activity</span>
-              <p className="text-sm">Đang tải hồ sơ...</p>
+        {!selectedTutor ? (
+          /* ────── DANH SÁCH ────── */
+          <>
+            {/* Security Notice */}
+            <div className="bg-red-50 rounded-xl p-md flex items-start gap-sm border border-red-200">
+              <span className="material-symbols-outlined text-red-600 mt-0.5 shrink-0">gpp_bad</span>
+              <div>
+                <h3 className="text-label-md font-label-md text-red-900 mb-0.5">Thông báo bảo mật</h3>
+                <p className="text-label-sm font-label-sm text-red-700">Chỉ quản trị viên mới có thể xem các tài liệu nhạy cảm như chứng chỉ và CCCD / giấy tờ tùy thân.</p>
+              </div>
             </div>
-          )}
-          {!loading && error && (
-            <div className="flex flex-col items-center justify-center gap-4 py-16 text-error">
-              <span className="material-symbols-outlined text-5xl">error_outline</span>
-              <p className="text-sm">{error}</p>
-              <button onClick={onRefresh} className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold hover:opacity-90">Thử lại</button>
+
+            {/* Header */}
+            <div className="flex justify-between items-end flex-wrap gap-sm">
+              <div>
+                <h2 className="text-headline-lg font-headline-lg text-on-surface">Hồ sơ chờ duyệt</h2>
+                <p className="text-body-md font-body-md text-on-surface-variant mt-xs">Xem xét và quản lý hồ sơ gia sư mới đăng ký.</p>
+              </div>
+              <div className="flex gap-2">
+                <button className="px-sm py-xs border border-outline-variant rounded-lg text-label-md font-label-md text-on-surface hover:bg-surface-container transition-colors flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[18px]">filter_list</span>Lọc
+                </button>
+                <button onClick={onRefresh} className="px-sm py-xs border border-outline-variant rounded-lg text-label-md font-label-md text-on-surface hover:bg-surface-container transition-colors flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[18px]">refresh</span>Làm mới
+                </button>
+              </div>
             </div>
-          )}
-          {!loading && !error && tutors.length === 0 && (
-            <div className="flex flex-col items-center justify-center gap-4 py-16 text-on-surface-variant">
-              <span className="material-symbols-outlined text-5xl text-green-500">task_alt</span>
-              <p className="text-sm">Không có hồ sơ chờ duyệt. Tuyệt vời!</p>
-            </div>
-          )}
-          {!loading && !error && tutors.length > 0 && (
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-gray-50 border-b border-outline-variant">
-                <tr>
-                  <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Ứng viên</th>
-                  <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Môn học</th>
-                  <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Kinh nghiệm</th>
-                  <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wide text-right">Tài liệu</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-outline-variant">
-                {tutors.map(tutor => {
-                  const isSelected = selectedTutor?.id === tutor.id
-                  return (
-                    <tr
-                      key={tutor.id}
-                      onClick={() => onSelectTutor(tutor)}
-                      className={`transition-colors group cursor-pointer ${isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
-                    >
-                      <td className="py-4 px-6">
-                        <div className="flex items-center gap-3">
-                          {tutor.profile_photo_url && !tutor.profile_photo_url.startsWith('http://randomuser') ? (
-                            <img src={tutor.profile_photo_url} alt={tutor.full_name} className="w-10 h-10 rounded-full object-cover" />
-                          ) : (
-                            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
-                              {(tutor.full_name || '?').charAt(0).toUpperCase()}
-                            </div>
-                          )}
-                          <div>
-                            <p className="text-sm font-semibold text-on-surface">{tutor.full_name}</p>
-                            <p className="text-xs text-on-surface-variant">{tutor.email}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-4 px-6">
-                        <div className="flex gap-1 flex-wrap">
-                          {(tutor.subjects || 'N/A').split(',').slice(0, 2).map((s, i) => (
-                            <span key={i} className="px-2 py-0.5 bg-blue-50 text-primary text-xs font-semibold rounded">
-                              {s.trim()}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="py-4 px-6">
-                        <p className="text-sm text-on-surface">
-                          {tutor.experience_years != null ? `${tutor.experience_years} năm` : '—'}
-                        </p>
-                      </td>
-                      <td className="py-4 px-6 text-right">
-                        <div className={`flex justify-end items-center gap-1 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                          <button
-                            className="p-1.5 text-primary hover:bg-primary/10 rounded-full transition-colors disabled:opacity-30"
-                            title="Xem chứng chỉ"
-                            onClick={e => { e.stopPropagation(); onViewDoc(tutor.certificate_url) }}
-                            disabled={!tutor.certificate_url}
-                          >
-                            <span className="material-symbols-outlined text-[20px]">workspace_premium</span>
-                          </button>
-                          <button
-                            className="p-1.5 text-primary hover:bg-primary/10 rounded-full transition-colors disabled:opacity-30"
-                            title="Xem CCCD"
-                            onClick={e => { e.stopPropagation(); onViewDoc(tutor.cccd_url) }}
-                            disabled={!tutor.cccd_url}
-                          >
-                            <span className="material-symbols-outlined text-[20px]">badge</span>
-                          </button>
-                          <button
-                            className={`ml-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                              isSelected
-                                ? 'bg-primary text-white'
-                                : 'border border-primary text-primary hover:bg-primary/5'
-                            }`}
-                            onClick={e => { e.stopPropagation(); onSelectTutor(tutor) }}
-                          >
-                            Xem xét
-                          </button>
-                        </div>
-                      </td>
+
+            {/* Table */}
+            <div className="bg-surface-container-lowest rounded-xl shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant overflow-hidden">
+              {loading && (
+                <div className="flex flex-col items-center justify-center gap-md py-16 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-5xl animate-spin">progress_activity</span>
+                  <p className="text-body-md font-body-md">Đang tải hồ sơ...</p>
+                </div>
+              )}
+              {!loading && error && (
+                <div className="flex flex-col items-center justify-center gap-md py-16 text-error">
+                  <span className="material-symbols-outlined text-5xl">error_outline</span>
+                  <p className="text-body-md font-body-md">{error}</p>
+                  <button onClick={onRefresh} className="px-md py-sm bg-primary text-on-primary rounded-lg text-label-md font-label-md hover:opacity-90">Thử lại</button>
+                </div>
+              )}
+              {!loading && !error && tutors.length === 0 && (
+                <div className="flex flex-col items-center justify-center gap-md py-16 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-5xl" style={{ color: '#166534' }}>task_alt</span>
+                  <p className="text-body-md font-body-md">Không có hồ sơ nào đang chờ duyệt. Tuyệt vời!</p>
+                </div>
+              )}
+              {!loading && !error && tutors.length > 0 && (
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-surface-container border-b border-surface-variant">
+                    <tr>
+                      <th className="py-3 px-6 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide">Ứng viên</th>
+                      <th className="py-3 px-6 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide">Môn học</th>
+                      <th className="py-3 px-6 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide">Kinh nghiệm</th>
+                      <th className="py-3 px-6 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide text-right">Thao tác</th>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
-          {!loading && !error && tutors.length > 0 && (
-            <div className="px-6 py-3 bg-gray-50 border-t border-outline-variant">
-              <p className="text-xs text-on-surface-variant">{tutors.length} hồ sơ chờ duyệt</p>
+                  </thead>
+                  <tbody className="divide-y divide-surface-variant">
+                    {tutors.map(tutor => (
+                      <tr
+                        key={tutor.id}
+                        onClick={() => onSelectTutor(tutor)}
+                        className="transition-colors group cursor-pointer hover:bg-surface-container-low"
+                      >
+                        <td className="py-4 px-6">
+                          <div className="flex items-center gap-sm">
+                            {tutor.profile_photo_url && !tutor.profile_photo_url.startsWith('http://randomuser') ? (
+                              <img src={tutor.profile_photo_url} alt={tutor.full_name} className="w-10 h-10 rounded-full object-cover border border-surface-variant" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center text-primary text-label-md font-label-md font-bold">
+                                {(tutor.full_name || '?').charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-label-md font-label-md text-on-surface truncate max-w-[200px]">{tutor.full_name}</p>
+                              <p className="text-label-sm font-label-sm text-on-surface-variant truncate max-w-[200px]">{tutor.email}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-4 px-6">
+                          <div className="flex gap-1 flex-wrap">
+                            {(tutor.subjects || 'N/A').split(',').slice(0, 2).map((s, i) => (
+                              <span key={i} className="px-2 py-0.5 bg-tertiary-fixed-dim/20 text-primary text-label-sm font-label-sm rounded border border-tertiary-fixed">
+                                {s.trim()}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="py-4 px-6">
+                          <p className="text-body-md font-body-md text-on-surface">
+                            {tutor.experience_years != null ? `${tutor.experience_years} năm` : '—'}
+                          </p>
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex justify-end items-center gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              className="p-1.5 text-primary hover:bg-primary-fixed rounded-full transition-colors disabled:opacity-30"
+                              title="Xem chứng chỉ"
+                              onClick={e => { e.stopPropagation(); onViewDoc(tutor.certificate_url) }}
+                              disabled={!tutor.certificate_url}
+                            >
+                              <span className="material-symbols-outlined text-[20px]">workspace_premium</span>
+                            </button>
+                            <button
+                              className="p-1.5 text-primary hover:bg-primary-fixed rounded-full transition-colors disabled:opacity-30"
+                              title="Xem CCCD"
+                              onClick={e => { e.stopPropagation(); onViewDoc(tutor.cccd_url) }}
+                              disabled={!tutor.cccd_url}
+                            >
+                              <span className="material-symbols-outlined text-[20px]">badge</span>
+                            </button>
+                            <button
+                              className="px-sm py-xs rounded-lg text-label-sm font-label-sm border border-primary text-primary hover:bg-primary-fixed transition-colors"
+                              onClick={e => { e.stopPropagation(); onSelectTutor(tutor) }}
+                            >
+                              Xem xét
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {!loading && !error && tutors.length > 0 && (
+                <div className="px-6 py-3 bg-surface-container border-t border-surface-variant">
+                  <p className="text-label-sm font-label-sm text-on-surface-variant">{tutors.length} hồ sơ đang chờ duyệt</p>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+          </>
+        ) : (
+          /* ────── CHI TIẾT HỒ SƠ ────── */
+          <>
+            {/* Back button */}
+            <button
+              onClick={() => onSelectTutor(null)}
+              className="flex items-center gap-xs text-label-md font-label-md text-primary hover:text-primary/80 transition-colors self-start"
+            >
+              <span className="material-symbols-outlined text-[20px]">arrow_back</span>
+              Quay lại danh sách
+            </button>
 
-      {/* Right Column: AI Review Assistant */}
-      <aside className="w-[380px] flex-shrink-0">
-        <div className="bg-white rounded-xl shadow-sm border border-outline-variant p-6 sticky top-[84px]">
-          <div className="flex items-center gap-3 mb-5 pb-4 border-b border-outline-variant">
-            <span className="material-symbols-outlined text-primary text-[28px]">psychology</span>
-            <h3 className="text-lg font-semibold text-on-surface">Trợ lý AI xem xét hồ sơ</h3>
-          </div>
-
-          {!selectedTutor ? (
-            <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-              <span className="material-symbols-outlined text-5xl text-outline">person_search</span>
-              <p className="text-sm text-on-surface-variant">Chọn một gia sư từ bảng để bắt đầu xem xét hồ sơ.</p>
-            </div>
-          ) : (
-            <>
-              {/* Applicant summary */}
-              <div className="flex items-center gap-4 mb-5">
+            {/* Profile Header Card */}
+            <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant flex items-start gap-md relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-24 bg-gradient-to-r from-primary-fixed to-tertiary-fixed opacity-50 z-0" />
+              <div className="w-32 h-32 rounded-xl bg-surface-container border-4 border-surface-container-lowest overflow-hidden z-10 shadow-sm shrink-0">
                 {selectedTutor.profile_photo_url && !selectedTutor.profile_photo_url.startsWith('http://randomuser') ? (
-                  <img src={selectedTutor.profile_photo_url} alt={selectedTutor.full_name} className="w-16 h-16 rounded-full shadow-sm object-cover flex-shrink-0" />
+                  <img src={selectedTutor.profile_photo_url} alt={selectedTutor.full_name} className="w-full h-full object-cover" />
                 ) : (
-                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center text-primary text-2xl font-bold shadow-sm flex-shrink-0">
+                  <div className="w-full h-full bg-primary-fixed flex items-center justify-center text-primary text-4xl font-bold">
                     {(selectedTutor.full_name || '?').charAt(0).toUpperCase()}
                   </div>
                 )}
-                <div className="min-w-0">
-                  <p className="text-base font-bold text-on-surface truncate">{selectedTutor.full_name}</p>
-                  <p className="text-sm text-on-surface-variant">Đang xem xét hồ sơ</p>
-                  <p className="text-xs text-on-surface-variant mt-0.5 truncate">{selectedTutor.email}</p>
-                </div>
               </div>
-
-              {/* Score cards */}
-              <div className="grid grid-cols-2 gap-3 mb-5">
-                <div className="bg-gray-50 rounded-lg p-3 border border-outline-variant">
-                  <p className="text-xs text-on-surface-variant mb-2">Độ hoàn thiện hồ sơ</p>
-                  <div className="flex items-end gap-1">
-                    <span className="text-2xl font-bold text-primary">{completeness}%</span>
-                    <span className={`material-symbols-outlined text-[18px] mb-0.5 ${completeness >= 75 ? 'text-green-600' : 'text-amber-600'}`}>
-                      {completeness >= 75 ? 'check_circle' : 'warning'}
+              <div className="flex-1 min-w-0 z-10 pt-md overflow-hidden">
+                <div className="flex justify-between items-start gap-sm flex-wrap">
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-headline-lg font-headline-lg text-on-surface truncate">{selectedTutor.full_name}</h2>
+                    <p className="text-body-lg font-body-lg text-primary mt-xs font-medium line-clamp-2 break-all">
+                      {selectedTutor.bio ? selectedTutor.bio.slice(0, 90) + (selectedTutor.bio.length > 90 ? '…' : '') : 'Chưa có thông tin học vị'}
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 px-3 py-1 bg-surface-container-low text-on-surface-variant rounded-full text-label-sm font-label-sm border border-outline-variant shrink-0">
+                    <span className="material-symbols-outlined text-[16px]">pending_actions</span>
+                    Chờ duyệt
+                  </span>
+                </div>
+                <div className="flex gap-2 mt-md flex-wrap">
+                  {(selectedTutor.subjects || 'N/A').split(',').slice(0, 5).map((s, i) => (
+                    <span key={i} className="px-3 py-1 bg-tertiary-fixed-dim/20 text-primary rounded border border-tertiary-fixed text-label-sm font-label-sm">
+                      {s.trim()}
                     </span>
-                  </div>
-                  <div className="w-full bg-gray-200 h-1 mt-2 rounded-full overflow-hidden">
-                    <div className="bg-primary h-full rounded-full transition-all" style={{ width: `${completeness}%` }} />
-                  </div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-3 border border-outline-variant">
-                  <p className="text-xs text-on-surface-variant mb-2">Đánh giá rủi ro</p>
-                  <div className="flex items-end gap-1">
-                    <span className={`text-2xl font-bold ${risk.color}`}>{risk.level}</span>
-                    <span className={`material-symbols-outlined text-[18px] mb-0.5 ${risk.color}`}>{risk.icon}</span>
-                  </div>
-                  <p className="text-xs text-on-surface-variant mt-2">{risk.note}</p>
+                  ))}
                 </div>
               </div>
+            </div>
 
-              {/* Document analysis */}
-              <h4 className="text-sm font-bold text-on-surface mb-3">Phân tích tài liệu</h4>
-              <div className="space-y-2 mb-5">
+            {/* Professional Summary */}
+            {selectedTutor.bio && (
+              <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant">
+                <h3 className="text-headline-md font-headline-md text-on-surface mb-sm flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary">person</span>
+                  Giới thiệu bản thân
+                </h3>
+                <p className="text-body-md font-body-md text-on-surface-variant leading-relaxed break-words overflow-hidden">{selectedTutor.bio}</p>
+              </div>
+            )}
+
+            {/* Teaching Methods */}
+            {selectedTutor.teaching_methods && selectedTutor.teaching_methods.length > 0 && (
+              <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant">
+                <h3 className="text-headline-md font-headline-md text-on-surface mb-sm flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary">psychology</span>
+                  Phương pháp giảng dạy
+                </h3>
+                <ol className="flex flex-col gap-sm">
+                  {selectedTutor.teaching_methods.map((method, i) => (
+                    <li key={i} className="flex items-start gap-sm">
+                      <span className="flex items-center justify-center w-6 h-6 mt-0.5 rounded-full bg-primary text-white text-xs font-bold shrink-0">{i + 1}</span>
+                      <p className="text-body-md font-body-md text-on-surface leading-relaxed">{method}</p>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {/* Suitable Students */}
+            {selectedTutor.suitable_students && selectedTutor.suitable_students.length > 0 && (
+              <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant">
+                <h3 className="text-headline-md font-headline-md text-on-surface mb-sm flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary">group</span>
+                  Đối tượng học sinh phù hợp
+                </h3>
+                <div className="flex flex-wrap gap-xs">
+                  {selectedTutor.suitable_students.map((s, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-full text-label-sm font-label-sm border border-primary/20">
+                      <span className="material-symbols-outlined text-[13px]">check_circle</span>
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Professional Info */}
+            <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant">
+              <h3 className="text-headline-md font-headline-md text-on-surface mb-md flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">school</span>
+                Thông tin chuyên môn
+              </h3>
+              <div className="flex flex-col gap-sm">
                 {[
-                  { label: 'Chứng chỉ', icon: 'workspace_premium', url: selectedTutor.certificate_url, sub: selectedTutor.certificate_url ? 'Đã tải lên' : 'Chưa nộp' },
-                  { label: 'CCCD / Giấy tờ tùy thân', icon: 'badge', url: selectedTutor.cccd_url, sub: selectedTutor.cccd_url ? 'Đã tải lên' : 'Chưa nộp' },
-                ].map(doc => (
-                  <div key={doc.label} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-outline-variant">
-                    <div className="flex items-center gap-3">
-                      <span className="material-symbols-outlined text-primary">{doc.icon}</span>
-                      <div>
-                        <p className="text-sm font-semibold text-on-surface">{doc.label}</p>
-                        <p className="text-xs text-on-surface-variant">{doc.sub}</p>
-                      </div>
+                  {
+                    icon: 'work', bgClass: 'bg-primary-fixed', iconClass: 'text-primary',
+                    label: 'Kinh nghiệm giảng dạy',
+                    value: selectedTutor.experience_years != null ? `${selectedTutor.experience_years} năm` : 'Chưa cập nhật',
+                    verified: selectedTutor.experience_years != null,
+                  },
+                  {
+                    icon: 'payments', bgClass: 'bg-surface-container-highest', iconClass: 'text-on-surface',
+                    label: 'Mức học phí',
+                    value: selectedTutor.hourly_rate ? `${Number(selectedTutor.hourly_rate).toLocaleString('vi-VN')}đ / giờ` : 'Thỏa thuận',
+                    verified: !!selectedTutor.hourly_rate,
+                  },
+                  {
+                    icon: 'mail', bgClass: 'bg-surface-container-highest', iconClass: 'text-on-surface',
+                    label: 'Địa chỉ liên hệ',
+                    value: selectedTutor.email,
+                    verified: true,
+                  },
+                ].map(item => (
+                  <div key={item.label} className="flex items-center gap-md p-md rounded-lg bg-surface hover:bg-surface-container-low transition-colors border border-outline-variant/30">
+                    <div className={`w-12 h-12 rounded-full ${item.bgClass} flex items-center justify-center shrink-0`}>
+                      <span className={`material-symbols-outlined ${item.iconClass}`}>{item.icon}</span>
                     </div>
-                    <span className={`material-symbols-outlined ${doc.url ? 'text-green-600' : 'text-red-400'}`}>
-                      {doc.url ? 'check' : 'close'}
-                    </span>
+                    <div className="flex-1 min-w-0 overflow-hidden">
+                      <h4 className="text-label-md font-label-md text-on-surface">{item.label}</h4>
+                      <p className="text-body-md font-body-md text-on-surface-variant truncate break-all">{item.value}</p>
+                    </div>
+                    {item.verified && (
+                      <span className="material-symbols-outlined" style={{ color: '#166534' }} title="Đã xác minh">verified</span>
+                    )}
                   </div>
                 ))}
               </div>
+            </div>
 
-              {/* Review notes */}
-              <div className="mb-4">
-                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">
-                  Ghi chú xem xét <span className="font-normal normal-case">(đính kèm trong email)</span>
-                </label>
-                <textarea
-                  className="w-full bg-gray-50 border border-outline-variant rounded-lg p-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all resize-none"
-                  placeholder="Thêm ghi chú cho ứng viên..."
-                  rows={2}
-                  value={reviewNotes}
-                  onChange={e => setReviewNotes(e.target.value)}
-                />
+            {/* Verification Documents */}
+            <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant flex flex-col gap-md">
+              <h3 className="text-headline-md font-headline-md text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">folder_shared</span>
+                Tài liệu xác minh
+              </h3>
+
+              {/* ── CCCD row ── */}
+              <div>
+                <p className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide mb-xs">Giấy tờ tùy thân</p>
+                <button
+                  className="w-full flex items-center gap-md p-md border rounded-xl transition-all bg-surface text-left disabled:opacity-40 disabled:cursor-not-allowed
+                    border-outline-variant hover:border-primary/50 hover:shadow-sm"
+                  onClick={() => onViewDoc(selectedTutor.cccd_url)}
+                  disabled={!selectedTutor.cccd_url}
+                >
+                  <div className="w-11 h-11 rounded-xl bg-primary-fixed/30 flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-primary text-2xl">badge</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-label-md font-label-md text-on-surface">CCCD / Giấy tờ tùy thân</p>
+                    <p className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">
+                      {selectedTutor.cccd_url ? 'Đã tải lên — Nhấn để xem' : 'Chưa nộp'}
+                    </p>
+                  </div>
+                  {selectedTutor.cccd_url && (
+                    <span className="material-symbols-outlined text-primary text-[20px] shrink-0">open_in_new</span>
+                  )}
+                </button>
               </div>
 
-              {/* Actions */}
-              <div className="space-y-2 pt-4 border-t border-outline-variant">
+              {/* ── Certificates grid ── */}
+              {(() => {
+                const certs = (selectedTutor.certificates && selectedTutor.certificates.length > 0)
+                  ? selectedTutor.certificates
+                  : selectedTutor.certificate_url
+                    ? [{ id: 'legacy', name: 'Chứng chỉ', url: selectedTutor.certificate_url }]
+                    : []
+                return (
+                  <div>
+                    <p className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide mb-xs">
+                      Chứng chỉ / Bằng cấp
+                      {certs.length > 0 && <span className="ml-1 px-1.5 py-0.5 bg-primary/10 text-primary rounded-full">{certs.length}</span>}
+                    </p>
+                    {certs.length === 0 ? (
+                      <div className="flex items-center gap-md p-md border border-dashed border-outline-variant rounded-xl bg-surface opacity-50">
+                        <div className="w-11 h-11 rounded-xl bg-surface-container flex items-center justify-center shrink-0">
+                          <span className="material-symbols-outlined text-on-surface-variant text-2xl">workspace_premium</span>
+                        </div>
+                        <div>
+                          <p className="text-label-md font-label-md text-on-surface">Chứng chỉ / Bằng cấp</p>
+                          <p className="text-label-sm font-label-sm text-on-surface-variant">Chưa nộp tài liệu</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-xs">
+                        {certs.map((cert, i) => (
+                          <button
+                            key={cert.id || i}
+                            className="w-full flex items-center gap-md p-md border border-outline-variant rounded-xl hover:border-primary/50 hover:shadow-sm transition-all bg-surface text-left"
+                            onClick={() => onViewDoc(cert.url)}
+                          >
+                            <div className="w-11 h-11 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
+                              <span className="material-symbols-outlined text-amber-600 text-2xl">workspace_premium</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-label-md font-label-md text-on-surface truncate">
+                                {cert.name && cert.name !== 'Chứng chỉ' ? cert.name : `Chứng chỉ ${i + 1}`}
+                              </p>
+                              <p className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">
+                                {[cert.issuer, cert.issue_year].filter(Boolean).join(' · ') || 'Nhấn để xem'}
+                              </p>
+                            </div>
+                            <span className="material-symbols-outlined text-primary text-[20px] shrink-0">open_in_new</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Right Column: AI Review Assistant ── */}
+      <div className="w-[360px] shrink-0 flex flex-col gap-md sticky top-[88px]">
+
+        {/* AI Header glassmorphism */}
+        <div className="bg-surface-container-lowest/80 backdrop-blur-md rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-primary-fixed/50 relative overflow-hidden" style={{ borderTopWidth: '4px', borderTopColor: 'var(--tw-color-primary, #00288e)' }}>
+          <div className="absolute -right-4 -top-4 w-24 h-24 bg-primary-fixed rounded-full blur-2xl opacity-50 pointer-events-none" />
+          <h3 className="text-headline-md font-headline-md text-on-surface flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary">psychology</span>
+            Trợ lý AI xem xét
+          </h3>
+          <p className="text-label-sm font-label-sm text-on-surface-variant mt-xs">Phân tích sơ bộ tự động</p>
+        </div>
+
+        {!selectedTutor ? (
+          <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] border border-surface-variant flex flex-col items-center justify-center gap-sm py-16 text-center">
+            <span className="material-symbols-outlined text-5xl text-outline">person_search</span>
+            <p className="text-body-md font-body-md text-on-surface-variant">Chọn một gia sư từ danh sách để bắt đầu xem xét hồ sơ.</p>
+          </div>
+        ) : (
+          <>
+            {/* Verification Status */}
+            <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] border border-surface-variant">
+              <h4 className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider mb-sm">Trạng thái xác minh</h4>
+              <ul className="flex flex-col gap-sm">
+                {[
+                  { label: 'Kiểm tra danh tính (CCCD)',  icon: 'badge',   ok: !!selectedTutor.cccd_url },
+                  { label: 'Xác minh bằng cấp / chứng chỉ', icon: 'school', ok: (selectedTutor.certificates && selectedTutor.certificates.length > 0) || !!selectedTutor.certificate_url },
+                  { label: 'Kiểm tra lý lịch',            icon: 'policy',  ok: risk.level === 'Thấp' },
+                ].map(item => (
+                  <li key={item.label} className="flex items-center justify-between text-body-md font-body-md">
+                    <span className="flex items-center gap-2 text-on-surface">
+                      <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '18px' }}>{item.icon}</span>
+                      {item.label}
+                    </span>
+                    <span className="material-symbols-outlined" style={{ color: item.ok ? '#166534' : '#ba1a1a' }}>
+                      {item.ok ? 'check_circle' : 'cancel'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Sentiment & Match Score */}
+            <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] border border-surface-variant">
+              <div className="mb-md">
+                <h4 className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider mb-2">Đánh giá hồ sơ</h4>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`px-3 py-1 rounded-full text-label-md font-label-md border ${risk.bgClass}`}>
+                    Rủi ro {risk.level}
+                  </span>
+                  {completeness >= 75 && (
+                    <span className="px-3 py-1 bg-surface-container-high rounded-full text-label-md font-label-md text-on-surface border border-outline-variant">
+                      Hồ sơ đầy đủ
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <h4 className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider mb-2 flex justify-between items-center">
+                  <span>Độ phù hợp nền tảng</span>
+                  <span className="text-primary font-bold text-label-md font-label-md">{completeness}%</span>
+                </h4>
+                <div className="h-2 w-full bg-surface-container-high rounded-full overflow-hidden">
+                  <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${completeness}%` }} />
+                </div>
+                <p className="text-label-sm font-label-sm text-on-surface-variant mt-2">
+                  {completeness >= 75 ? 'Hồ sơ đáp ứng tốt yêu cầu của nền tảng.' : 'Hồ sơ cần bổ sung thêm thông tin.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Review Notes */}
+            <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] border border-surface-variant">
+              <label className="block text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider mb-2">
+                Ghi chú xem xét <span className="font-normal normal-case">(đính kèm trong email)</span>
+              </label>
+              <textarea
+                className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-sm text-body-md font-body-md focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all resize-none"
+                placeholder="Thêm ghi chú hoặc nhận xét cho ứng viên..."
+                rows={3}
+                value={reviewNotes}
+                onChange={e => setReviewNotes(e.target.value)}
+              />
+            </div>
+
+            {/* Final Decision */}
+            <div className="bg-surface-container-lowest rounded-xl p-md shadow-[0_10px_15px_-3px_rgba(0,0,0,0.08)] border border-primary-fixed">
+              <h4 className="text-label-md font-label-md text-on-surface mb-sm">Quyết định cuối cùng</h4>
+              <div className="flex flex-col gap-sm">
                 <button
-                  className="w-full h-12 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full min-h-[48px] bg-primary text-on-primary rounded-lg text-label-md font-label-md hover:bg-primary-container transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 flex items-center justify-center gap-2 disabled:opacity-50 shadow-sm"
                   onClick={() => onApprove(selectedTutor.id)}
                   disabled={actionLoading}
                 >
-                  <span className="material-symbols-outlined text-[20px]">thumb_up</span>
+                  <span className="material-symbols-outlined">check</span>
                   {actionLoading ? 'Đang xử lý...' : 'Duyệt gia sư'}
                 </button>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    className="h-12 border border-outline-variant bg-gray-50 text-on-surface rounded-lg text-sm font-semibold hover:bg-gray-100 transition-colors flex items-center justify-center gap-1 disabled:opacity-40"
-                    onClick={() => onViewDoc(selectedTutor.certificate_url || selectedTutor.cccd_url)}
-                    disabled={!selectedTutor.certificate_url && !selectedTutor.cccd_url}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">visibility</span>
-                    Xem tài liệu
-                  </button>
-                  <button
-                    className="h-12 border border-red-300 text-red-600 bg-red-50 rounded-lg text-sm font-semibold hover:bg-red-100 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
-                    onClick={() => onReject(selectedTutor)}
-                    disabled={actionLoading}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">thumb_down</span>
-                    Từ chối
-                  </button>
-                </div>
+                <button
+                  className="w-full min-h-[48px] bg-surface-container text-on-surface rounded-lg text-label-md font-label-md hover:bg-surface-container-high transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 border border-outline-variant flex items-center justify-center gap-2 disabled:opacity-40"
+                  onClick={() => onViewDoc((selectedTutor.certificates && selectedTutor.certificates[0]?.url) || selectedTutor.certificate_url || selectedTutor.cccd_url)}
+                  disabled={!(selectedTutor.certificates && selectedTutor.certificates.length > 0) && !selectedTutor.certificate_url && !selectedTutor.cccd_url}
+                >
+                  <span className="material-symbols-outlined">info</span>
+                  Yêu cầu bổ sung thông tin
+                </button>
+                <button
+                  className="w-full min-h-[48px] bg-transparent text-error rounded-lg text-label-md font-label-md hover:bg-error-container/20 transition-colors focus:outline-none focus:ring-2 focus:ring-error focus:ring-offset-2 flex items-center justify-center gap-2 disabled:opacity-50"
+                  onClick={() => onReject(selectedTutor)}
+                  disabled={actionLoading}
+                >
+                  <span className="material-symbols-outlined">close</span>
+                  Từ chối đơn ứng tuyển
+                </button>
               </div>
-            </>
-          )}
-        </div>
-      </aside>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -870,6 +1083,28 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId }) {
             <InfoRow icon="badge" label="Mã người dùng" value={`#${detail.id}`} />
             <InfoRow icon="calendar_today" label="Ngày tham gia" value={fmtDate(detail.created_at)} />
             {detail.google_id && <InfoRow icon="account_circle" label="Xác thực" value="Google OAuth" />}
+            {detail.login_logs?.[0] && (
+              <div className="flex items-start gap-2">
+                <span className={`material-symbols-outlined text-[15px] mt-0.5 ${detail.login_logs[0].is_suspicious ? 'text-orange-500' : 'text-on-surface-variant'}`}>
+                  {detail.login_logs[0].is_suspicious ? 'gpp_maybe' : 'router'}
+                </span>
+                <span className="text-xs text-on-surface-variant min-w-[80px]">IP gần nhất</span>
+                <div className="flex-1 text-right">
+                  <span className={`text-xs font-mono font-semibold ${detail.login_logs[0].is_suspicious ? 'text-orange-600' : 'text-on-surface'}`}>
+                    {detail.login_logs[0].ip_address}
+                  </span>
+                  {detail.login_logs[0].is_suspicious && (
+                    <span className="ml-1 text-[10px] font-bold text-orange-600 bg-orange-100 px-1.5 py-0.5 rounded">IP mới</span>
+                  )}
+                  <p className="text-[10px] text-on-surface-variant mt-0.5">
+                    {new Date(detail.login_logs[0].created_at).toLocaleString('vi-VN')}
+                  </p>
+                </div>
+              </div>
+            )}
+            {!detail.login_logs?.length && (
+              <InfoRow icon="router" label="IP gần nhất" value="Chưa có dữ liệu" />
+            )}
           </div>
 
           {detail.role === 'tutor' && detail.tutor_profile && (
@@ -903,6 +1138,29 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId }) {
             <div className="space-y-2 pt-2 border-t border-outline-variant">
               <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Thống kê học tập</p>
               <InfoRow icon="quiz" label="Số lần làm bài" value={detail.quiz_attempts ?? 0} />
+            </div>
+          )}
+
+          {detail.login_logs?.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-outline-variant">
+              <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide flex items-center gap-1">
+                <span className="material-symbols-outlined text-[14px]">history</span>
+                Lịch sử đăng nhập
+              </p>
+              <div className="space-y-1.5 max-h-[160px] overflow-y-auto">
+                {detail.login_logs.map((log, i) => (
+                  <div key={i} className={`flex items-start gap-2 p-2 rounded-lg text-xs ${log.is_suspicious ? 'bg-orange-50 border border-orange-200' : 'bg-surface-container-low'}`}>
+                    <span className={`material-symbols-outlined text-[14px] mt-0.5 shrink-0 ${log.is_suspicious ? 'text-orange-500' : 'text-on-surface-variant'}`}>
+                      {log.is_suspicious ? 'gpp_maybe' : 'check_circle'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-on-surface truncate">{log.ip_address}</p>
+                      <p className="text-on-surface-variant truncate">{new Date(log.created_at).toLocaleString('vi-VN')}</p>
+                    </div>
+                    {log.is_suspicious && <span className="shrink-0 text-[10px] font-bold text-orange-600 bg-orange-100 px-1.5 py-0.5 rounded">IP mới</span>}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -2109,7 +2367,7 @@ function AuditLogsView() {
 function SettingsView() {
   const [saved, setSaved] = useState(false)
   const [form, setForm] = useState({
-    siteName: 'AcademiaFlow',
+    siteName: 'EduX',
     supportEmail: 'support@academiaflow.com',
     maxPendingDays: '7',
     autoRejectDays: '30',

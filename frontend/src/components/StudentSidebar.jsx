@@ -3,8 +3,12 @@ import React from 'react'
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Dashboard', href: '#/dashboard', id: 'dashboard' },
   { icon: 'school', label: 'My Courses', href: '#/my-courses', id: 'my-courses' },
-  { icon: 'calendar_today', label: 'Schedule', href: '#', id: 'schedule' },
-  { icon: 'chat', label: 'Messages', href: '#', id: 'messages' },
+  { icon: 'calendar_today', label: 'Schedule', href: '#/dashboard/schedule', id: 'schedule' },
+  { icon: 'chat', label: 'Messages', href: '#/dashboard/messages', id: 'messages' },
+  { icon: 'quiz', label: 'Assessments', href: '#/dashboard/assessments', id: 'assessments' },
+  { icon: 'psychology', label: 'AI Practice', href: '#/dashboard/practice', id: 'practice' },
+  { icon: 'description', label: 'Đề thi', href: '#/dashboard/exam-papers', id: 'exam-papers' },
+  { icon: 'family_restroom', label: 'Mã chia sẻ', href: '#/dashboard/parent-link', id: 'parent-link' },
 ]
 
 export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRoute, logout }) {
@@ -30,15 +34,17 @@ export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRout
       >
         {/* Logo */}
         <div className="px-md mb-xl flex items-center gap-sm">
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary">
-            <span className="material-symbols-outlined text-[20px]">school</span>
-          </div>
-          <div>
-            <h1 className="font-headline-md text-headline-md font-black text-primary leading-tight">
-              EduX
-            </h1>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Student Portal</p>
-          </div>
+          <a href="#/" className="flex items-center gap-sm hover:opacity-80 transition-opacity no-underline">
+            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary shrink-0">
+              <span className="material-symbols-outlined text-[20px]">school</span>
+            </div>
+            <div>
+              <h1 className="font-headline-md text-headline-md font-black text-primary leading-tight m-0">
+                EduX
+              </h1>
+              <p className="font-label-sm text-label-sm text-on-surface-variant m-0">Student Portal</p>
+            </div>
+          </a>
         </div>
 
         {/* Nav items */}

@@ -38,17 +38,13 @@ export function AuthProvider({ children }) {
     setUser(newUser)
 
     if (newUser?.role === 'admin') {
-      window.location.hash = '/admin'
-<<<<<<< HEAD
-    } else {
-      window.location.hash = '/'             // Redirect to home page
-=======
+      window.location.hash = '/'
     } else if (newUser?.role === 'tutor') {
-      window.location.hash = '/tutor'
+      window.location.hash = '/'
     } else if (newUser?.role === 'parent') {
-      window.location.hash = '/parent'
+      window.location.hash = '/'
     } else {
-      window.location.hash = '/dashboard'
+      window.location.hash = '/'
     }
   }
 
@@ -64,14 +60,13 @@ export function AuthProvider({ children }) {
     setUser(newUser)
 
     if (newUser?.role === 'admin') {
-      window.location.hash = '/admin'
+      window.location.hash = '/'
     } else if (newUser?.role === 'tutor') {
-      window.location.hash = '/tutor-profile'  // ← Onboarding wizard
+      window.location.hash = '/tutor-profile'
     } else if (newUser?.role === 'parent') {
-      window.location.hash = '/parent'
+      window.location.hash = '/'
     } else {
-      window.location.hash = '/dashboard'
->>>>>>> cac19781017142fbca126d01db84b6453311ac7d
+      window.location.hash = '/'
     }
   }
 

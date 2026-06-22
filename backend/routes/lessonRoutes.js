@@ -20,35 +20,7 @@ function isValidUUID(str) {
   return UUID_REGEX.test(str);
 }
 
-// ── Mock data fallback ──────────────────────────────────────────────────────
-const MOCK_LESSONS = [
-  {
-    id: "l0000001-0000-0000-0000-000000000001",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Introduction to UI/UX",
-    description: "Basic principles of user interface and user experience design.",
-    lesson_order: 1,
-    duration_minutes: 45,
-    video_url: "https://example.com/video1.mp4",
-    material_id: null,
-    status: "published",
-    created_at: "2026-06-15T08:00:00.000Z",
-    updated_at: "2026-06-15T08:00:00.000Z",
-  },
-  {
-    id: "l0000002-0000-0000-0000-000000000002",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Wireframing & Prototyping",
-    description: "How to design low-fidelity and high-fidelity wireframes.",
-    lesson_order: 2,
-    duration_minutes: 60,
-    video_url: "https://example.com/video2.mp4",
-    material_id: null,
-    status: "published",
-    created_at: "2026-06-16T09:00:00.000Z",
-    updated_at: "2026-06-16T09:00:00.000Z",
-  },
-];
+
 
 // ── Helper: check class exists ──────────────────────────────────────────────
 async function classExists(classId) {
@@ -94,11 +66,9 @@ router.get("/api/classes/:classId/lessons", async (req, res) => {
     return res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error("[Lessons] GET list error:", error.message);
-    const mockForClass = MOCK_LESSONS.filter((l) => l.class_id === classId);
-    return res.json({
-      success: true,
-      data: mockForClass.length > 0 ? mockForClass : MOCK_LESSONS,
-    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error. Please try again." });
   }
 });
 
@@ -125,24 +95,14 @@ router.get("/api/lessons/:lessonId", async (req, res) => {
       return res.json({ success: true, data: result.rows[0] });
     }
 
-    // Không tìm thấy trong DB → tìm trong mock data
-    const mock = MOCK_LESSONS.find((l) => l.id === lessonId);
-    if (mock) {
-      return res.json({ success: true, data: mock });
-    }
-
     return res
       .status(404)
       .json({ success: false, message: "Lesson not found" });
   } catch (error) {
     console.error("[Lessons] GET detail error:", error.message);
-    const mock = MOCK_LESSONS.find((l) => l.id === lessonId);
-    if (mock) {
-      return res.json({ success: true, data: mock });
-    }
     return res
-      .status(404)
-      .json({ success: false, message: "Lesson not found" });
+      .status(500)
+      .json({ success: false, message: "Server error. Please try again." });
   }
 });
 
