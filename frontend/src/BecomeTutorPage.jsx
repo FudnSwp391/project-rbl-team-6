@@ -19,7 +19,7 @@ export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
   };
 
   return (
-    <div className="bg-[#f8f9fb] min-h-screen text-[#191c1e] font-sans flex flex-col">
+    <div className="aqua-bg min-h-screen text-[#191c1e] font-sans flex flex-col">
       {/* Top Navigation Bar */}
       <nav className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
         <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">
@@ -33,6 +33,7 @@ export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
           {/* Nav Links (Centered) */}
           <div className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors pb-1" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors pb-1" href="#/ai-suggest">AI Gợi Ý</a>
             <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors pb-1" href="#/subjects">Môn Học</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors pb-1" href="#/courses">Khóa Học</a>

@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import EntityReviews from '../components/EntityReviews'
+import BookingModal from '../components/BookingModal'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -141,6 +143,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
   const [tutor, setTutor] = useState(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [showBooking, setShowBooking] = useState(false)
 
   useEffect(() => {
     window.scrollTo(0, 0)
@@ -239,7 +242,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
   const priceDisplay = fmtPrice(tutor.hourly_rate)
 
   return (
-    <div className="bg-[#f8f9fb] text-[#191c1e] min-h-screen font-sans">
+    <div className="aqua-bg text-[#191c1e] min-h-screen font-sans">
       <style>{`
         .tutor-profile-card {
           box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05);
@@ -255,6 +258,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
           </a>
           <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
             <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/ai-suggest">AI Gợi Ý</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
@@ -362,14 +366,14 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               </div>
             </section>
 
-            {/* Trust stats */}
+            {/* Trust stats — số liệu THẬT của gia sư đang xem */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               {[
-                { value: tutor.completedLessons ?? 245, label: 'Buổi học', color: 'text-[#00288e]' },
-                { value: tutor.onTimeRate ?? '98%',     label: 'Đúng giờ',  color: 'text-green-600' },
-                { value: tutor.responseRate ?? '96%',   label: 'Phản hồi',  color: 'text-blue-600' },
-                { value: Number(tutor.avg_r || 4.8).toFixed(1), label: 'Đánh giá', color: 'text-[#FFB800]' },
-                { value: tutor.studentsCount ?? '150+', label: 'Học sinh',  color: 'text-indigo-800' },
+                { value: tutor.experience_years || 0,          label: 'Năm kinh nghiệm', color: 'text-[#00288e]' },
+                { value: subjectList.length,                   label: 'Môn dạy',         color: 'text-green-600' },
+                { value: Number(tutor.avg_r || 0).toFixed(1),  label: 'Đánh giá',        color: 'text-[#FFB800]' },
+                { value: tutor.review_count || 0,              label: 'Lượt đánh giá',   color: 'text-blue-600' },
+                { value: tutor.total_students || 0,            label: 'Học sinh',        color: 'text-indigo-800' },
               ].map(stat => (
                 <div key={stat.label} className="bg-white rounded-xl p-3 tutor-profile-card flex flex-col items-center text-center">
                   <span className={`text-2xl font-bold ${stat.color}`}>{stat.value}</span>
@@ -452,36 +456,8 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               </div>
             </SectionCard>
 
-            {/* Đánh giá */}
-            <SectionCard icon="star" title={`Đánh giá từ học sinh (${tutor.review_count || (tutor.studentReviews || BASE_PROFILE.studentReviews).length})`}>
-              <div className="flex items-center gap-4 mb-5 p-4 bg-[#f8f9fb] rounded-xl">
-                <span className="text-5xl font-bold text-[#00288e]">{Number(tutor.avg_r || 4.8).toFixed(1)}</span>
-                <div>
-                  <StarRating value={Number(tutor.avg_r || 4.8)} size={20} />
-                  <p className="text-sm text-[#444653] mt-1">{tutor.review_count || 128} đánh giá</p>
-                </div>
-              </div>
-              <div className="space-y-4">
-                {(tutor.studentReviews || BASE_PROFILE.studentReviews).map(r => (
-                  <div key={r.id} className="p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
-                        style={{ background: r.bg, color: r.color }}>
-                        {r.initials}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between flex-wrap gap-1">
-                          <span className="font-semibold text-[#191c1e] text-sm">{r.name}</span>
-                          <StarRating value={r.rating} size={13} />
-                        </div>
-                        <p className="text-xs text-[#757684] mt-0.5">{r.subject} · Đã học {r.lessonCount} buổi</p>
-                        <p className="text-sm text-[#444653] mt-2 leading-relaxed">"{r.comment}"</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </SectionCard>
+            {/* Đánh giá THẬT từ học sinh (lấy từ DB theo gia sư đang xem) */}
+            <EntityReviews targetType="tutor" targetId={tutorId} title="Đánh giá từ học sinh" />
 
             {/* Chính sách */}
             <SectionCard icon="policy" title="Chính sách học thử & hủy lịch">
@@ -525,8 +501,8 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 <div className="space-y-3 mb-6">
                   <div className="flex items-center gap-2 text-[#444653] text-sm">
                     <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>star</span>
-                    <span className="font-semibold text-[#191c1e]">{Number(tutor.avg_r || 4.8).toFixed(1)}</span>
-                    <span>({tutor.review_count || 128} đánh giá)</span>
+                    <span className="font-semibold text-[#191c1e]">{Number(tutor.avg_r || 0).toFixed(1)}</span>
+                    <span>({tutor.review_count || 0} đánh giá)</span>
                   </div>
                   {tutor.experience_years > 0 && (
                     <div className="flex items-center gap-2 text-[#444653] text-sm">
@@ -593,13 +569,15 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             Nhắn Tin
           </button>
           <button
-            onClick={() => window.location.hash = '/booking/' + id}
+            onClick={() => window.location.hash = '/booking/' + tutorId}
             className="px-5 py-2.5 bg-[#00288e] text-white rounded-xl text-sm font-semibold hover:bg-[#1e40af] transition-colors"
           >
             Đặt Lịch
           </button>
         </div>
       </main>
+
+      {showBooking && <BookingModal tutor={tutor} onClose={() => setShowBooking(false)} />}
     </div>
   )
 }

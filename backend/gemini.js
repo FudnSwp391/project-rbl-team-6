@@ -4,7 +4,7 @@ const dotenv = require("dotenv");
 dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || "" });
 const GROQ_MODEL = "llama-3.3-70b-versatile";
@@ -597,4 +597,92 @@ IMPORTANT: Return ONLY a valid JSON object. No markdown, no extra text.
   }
 }
 
-module.exports = { generateQuizQuestions, chatWithAI, gradeEssayAnswer };
+// ─────────────────────────────────────────────────────────────────────────────
+//  AI Gợi ý Gia sư (TV3) — nhận prompt + danh sách gia sư đã duyệt → chọn phù hợp
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Parse 1 JSON OBJECT (khác parseJsonResponse vốn ép mảng)
+function parseObjectResponse(text) {
+  let clean = (text || "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  try {
+    return JSON.parse(clean);
+  } catch {
+    const a = clean.indexOf("{"), b = clean.lastIndexOf("}");
+    if (a !== -1 && b > a) return JSON.parse(clean.slice(a, b + 1));
+    throw new Error("AI không trả JSON object hợp lệ");
+  }
+}
+
+function normalizeSuggest(o) {
+  return {
+    reply: typeof o?.reply === "string" ? o.reply : "",
+    tutorIds: Array.isArray(o?.tutorIds) ? o.tutorIds.map(String) : [],
+  };
+}
+
+/**
+ * suggestTutors — chọn tối đa 3 gia sư phù hợp với yêu cầu người dùng.
+ * @param {string} userPrompt
+ * @param {Array}  tutorList  danh sách gia sư ĐÃ DUYỆT (status='approved')
+ * @returns {Promise<{reply:string, tutorIds:string[]}|null>} null nếu AI lỗi → caller tự fallback
+ */
+async function suggestTutors(userPrompt, tutorList) {
+  const compact = (tutorList || []).map((t) => ({
+    id: t.id,
+    name: t.full_name || t.name,
+    subjects: t.subjects,
+    methods: t.teaching_methods || t.methods,
+    pricePerHour: t.hourly_rate,
+    location: t.city || t.location,
+    experience: t.experience_years,
+    rating: t.avg_r ?? t.avg_rating,
+    bio: t.bio,
+  }));
+
+  const prompt = `Bạn là trợ lý AI của EduX giúp học sinh tìm gia sư. Dựa trên YÊU CẦU của người dùng và DANH SÁCH GIA SƯ (đã được duyệt) bên dưới:
+- Nếu là chào hỏi/trò chuyện phiếm: trả lời thân thiện 1-2 câu, "tutorIds": [].
+- Nếu mô tả nhu cầu tìm gia sư (môn, cấp lớp, giá, hình thức...): xác nhận ngắn gọn (1-2 câu) rồi chọn TỐI ĐA 3 gia sư phù hợp nhất.
+- Nếu không có gia sư phù hợp: nói nhẹ nhàng và gợi ý nới tiêu chí, "tutorIds": [].
+Luôn trả lời bằng tiếng Việt, ấm áp, KHÔNG dùng markdown.
+CHỈ trả về JSON thuần dạng: {"reply":"câu trả lời","tutorIds":["<id gia sư>", "..."]}
+
+DANH SÁCH GIA SƯ:
+${JSON.stringify(compact, null, 1)}
+
+YÊU CẦU CỦA NGƯỜI DÙNG: "${userPrompt}"`;
+
+  async function viaGemini() {
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+    const r = await model.generateContent(prompt);
+    return parseObjectResponse(r.response.text().trim());
+  }
+  async function viaGroq() {
+    const c = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [
+        { role: "system", content: "Bạn là trợ lý tìm gia sư. CHỈ trả về 1 JSON object hợp lệ, không markdown, không giải thích." },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.5,
+      max_tokens: 1024,
+    });
+    return parseObjectResponse((c.choices[0]?.message?.content || "{}").trim());
+  }
+
+  try {
+    return normalizeSuggest(await viaGemini());
+  } catch (e) {
+    if (isQuotaError(e)) console.warn("⚠️  suggestTutors: Gemini hết quota — thử Groq");
+    else console.error("❌ suggestTutors Gemini:", e.message);
+  }
+  if (hasGroq) {
+    try {
+      return normalizeSuggest(await viaGroq());
+    } catch (e) {
+      console.error("❌ suggestTutors Groq:", e.message);
+    }
+  }
+  return null;
+}
+
+module.exports = { generateQuizQuestions, chatWithAI, gradeEssayAnswer, suggestTutors };
