@@ -99,7 +99,6 @@ export default function CoursesPage({ user }) {
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         const rows = (d && Array.isArray(d.courses) ? d.courses : [])
-          .filter(c => (c.title || '').trim().length >= 6 && CATEGORIES.includes(c.subject))
           .map(c => ({
             id: c.id, title: c.title, description: c.description || '',
             category: c.subject, level: c.level || 'Khóa đại học',
