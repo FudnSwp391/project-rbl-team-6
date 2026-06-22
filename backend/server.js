@@ -2823,7 +2823,9 @@ const cleanupAbandonedPracticeSessions = async () => {
       console.log(`🧹 Cleaned up ${res.rowCount} abandoned practice sessions.`);
     }
   } catch (err) {
-    console.error('Error cleaning up practice sessions:', err);
+    if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
+      console.error('Error cleaning up practice sessions:', err.message || err);
+    }
   }
 };
 // Run once on startup, then every hour
@@ -5451,7 +5453,9 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
         }
       }
     } catch (err) {
-      console.error('❌ Cron auto-release error:', err.message);
+      if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
+        console.error('❌ Cron auto-release error:', err.message);
+      }
     }
   }, 5 * 60 * 1000); // chạy mỗi 5 phút
 
@@ -5498,7 +5502,9 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
         }
       }
     } catch (err) {
-      console.error('❌ Cron auto-cancel error:', err.message);
+      if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
+        console.error('❌ Cron auto-cancel error:', err.message);
+      }
     }
   }, 10 * 60 * 1000); // chạy mỗi 10 phút
 
