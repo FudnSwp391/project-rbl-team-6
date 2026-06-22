@@ -68,6 +68,14 @@ export default function CourseDetail({ courseId }) {
       return;
     }
 
+    const price = Number(course?.price || 0);
+    if (price > 0) {
+      const confirmMsg = `Khóa học này có giá ${price.toLocaleString('vi-VN')} VNĐ. Số tiền này sẽ được trừ trực tiếp vào ví của bạn. Bạn có chắc chắn muốn mua?`;
+      if (!window.confirm(confirmMsg)) {
+        return;
+      }
+    }
+
     setEnrollLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/courses/${course.id}/enroll`, {
@@ -75,7 +83,16 @@ export default function CourseDetail({ courseId }) {
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Lỗi khi đăng ký khóa học.');
+      
+      if (!res.ok) {
+        if (data.code === 'INSUFFICIENT_FUNDS') {
+          // Xử lý báo thiếu tiền
+          setToast('Số dư ví không đủ. Vui lòng vào Nền tảng học tập để Nạp tiền.');
+          setTimeout(() => setToast(''), 5000);
+          return;
+        }
+        throw new Error(data.message || 'Lỗi khi đăng ký khóa học.');
+      }
       
       setEnrolled(true);
       setToast('Đăng ký khóa học thành công!');
