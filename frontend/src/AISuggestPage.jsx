@@ -100,7 +100,7 @@ export default function AISuggestPage({ onGoSignIn, onGoSignUp, user }) {
   };
 
   return (
-    <div className="bg-[#f8f9fb] min-h-screen text-[#191c1e] font-sans">
+    <div className="aqua-bg min-h-screen text-[#191c1e] font-sans">
       {/* Header (đồng bộ style các trang Tailwind của Assigement) */}
       <header className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
         <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">

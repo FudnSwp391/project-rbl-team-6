@@ -4,7 +4,7 @@ const dotenv = require("dotenv");
 dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || "" });
 const GROQ_MODEL = "llama-3.3-70b-versatile";

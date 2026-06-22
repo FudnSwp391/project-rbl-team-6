@@ -19,7 +19,7 @@ export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
   };
 
   return (
-    <div className="bg-[#f8f9fb] min-h-screen text-[#191c1e] font-sans flex flex-col">
+    <div className="aqua-bg min-h-screen text-[#191c1e] font-sans flex flex-col">
       {/* Top Navigation Bar */}
       <nav className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
         <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">

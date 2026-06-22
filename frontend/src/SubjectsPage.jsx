@@ -2,7 +2,7 @@ import React from 'react';
 
 export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
   return (
-    <div className="bg-[#f8f9fb] min-h-screen text-[#191c1e] font-sans flex flex-col">
+    <div className="aqua-bg min-h-screen text-[#191c1e] font-sans flex flex-col">
       <style>{`
         .glass-card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.3); }
         .card-hover:hover { transform: translateY(-4px); transition: all 0.2s ease-in-out; }

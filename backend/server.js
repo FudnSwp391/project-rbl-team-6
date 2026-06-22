@@ -2908,14 +2908,9 @@ app.get("/api/tutors/:id", async (req, res) => {
          tp.education, tp.language, tp.teaching_style, tp.qualifications,
          tp.first_name, tp.last_name, tp.display_name, tp.phone,
          tp.headline, tp.teaching_methods, tp.suitable_students,
-         COALESCE(
-           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.reviewer_id = u.id),
-           0
-         ) AS avg_r,
-         COALESCE(
-           (SELECT COUNT(*) FROM reviews r WHERE r.reviewer_id = u.id),
-           0
-         ) AS review_count
+         COALESCE(tp.total_students, 0) AS total_students,
+         COALESCE(tp.avg_rating, 0)  AS avg_r,
+         COALESCE(tp.review_count, 0) AS review_count
        FROM tutor_profiles tp
        JOIN users u ON tp.user_id = u.id
        WHERE u.id = $1 AND tp.status = 'approved'
@@ -2928,6 +2923,29 @@ app.get("/api/tutors/:id", async (req, res) => {
     return res.json(result.rows[0]);
   } catch (err) {
     console.error("GET /api/tutors/:id error:", err.message);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── GET /api/courses (TV3) — danh sách khóa học published + lọc ──────────────
+app.get("/api/courses", async (req, res) => {
+  const { search = "", subject = "", level = "", sort = "newest", min_rating = "" } = req.query;
+  const cond = ["c.status = 'published'"]; const vals = []; let i = 1;
+  if (search.trim())  { cond.push(`(c.title ILIKE $${i} OR c.description ILIKE $${i} OR c.subject ILIKE $${i})`); vals.push(`%${search.trim()}%`); i++; }
+  if (subject.trim()) { cond.push(`c.subject ILIKE $${i}`); vals.push(`%${subject.trim()}%`); i++; }
+  if (level.trim())   { cond.push(`c.level ILIKE $${i}`);   vals.push(`%${level.trim()}%`); i++; }
+  if (min_rating && !isNaN(min_rating)) { cond.push(`c.avg_rating >= $${i}`); vals.push(Number(min_rating)); i++; }
+  const order = { price_asc: "c.price ASC", price_desc: "c.price DESC", rating: "c.avg_rating DESC NULLS LAST", newest: "c.created_at DESC" }[sort] || "c.created_at DESC";
+  try {
+    const r = await pool.query(
+      `SELECT c.id, c.title, c.description, c.subject, c.level, c.thumbnail_url,
+              c.price, c.original_price, c.avg_rating, c.review_count, c.total_lessons, c.created_at
+       FROM courses c WHERE ${cond.join(" AND ")} ORDER BY ${order} LIMIT 60`,
+      vals
+    );
+    return res.json({ courses: r.rows, total: r.rowCount });
+  } catch (e) {
+    console.error("GET /api/courses:", e.message);
     return res.status(500).json({ message: "Server error." });
   }
 });
@@ -2962,8 +2980,29 @@ app.post("/api/ai-suggest", async (req, res) => {
       return res.json({ success: true, aiUsed: true, reply: ai.reply, tutors: chosen });
     }
 
-    // Fallback: AI lỗi/hết quota → lọc thủ công theo từ khóa (spec TV3 mục 6.2)
-    const t = prompt.toLowerCase();
+    // Fallback (khi chưa cấu hình AI key): xử lý theo từ khóa NHƯNG tự nhiên như chatbot
+    const t = prompt.toLowerCase().trim();
+    const greetRe  = /^(hi|hello|hey+|chào|xin chào|alo+|hế ?lô|helo|yo)\b|bạn là ai|bạn tên|khoẻ không|khỏe không|cảm ơn|cám ơn|thanks|thank you/i;
+    const searchRe = /(gia sư|giáo viên|tìm|dạy|học|môn|lớp|cấp|toán|lý|vật lý|hoá|hóa|văn|ngữ văn|anh|tiếng|ielts|toeic|sinh|sử|địa|tin|lập trình|python|java|online|offline|ôn thi|luyện thi|gia sư)/i;
+
+    // 1) Chào hỏi / trò chuyện → trả lời thân thiện, KHÔNG đổ danh sách gia sư
+    if (greetRe.test(t) && !searchRe.test(t)) {
+      return res.json({
+        success: true, aiUsed: false,
+        reply: "Xin chào! 👋 Mình là trợ lý EduX. Bạn cần tìm gia sư môn gì, cấp lớp nào, học online hay offline? Mô tả giúp mình nhé!",
+        tutors: [],
+      });
+    }
+    // 2) Không rõ nhu cầu tìm gia sư → hỏi lại, KHÔNG đổ danh sách
+    if (!searchRe.test(t)) {
+      return res.json({
+        success: true, aiUsed: false,
+        reply: 'Bạn mô tả nhu cầu học giúp mình nhé — ví dụ: "Gia sư Toán lớp 10 dạy online" — mình sẽ gợi ý gia sư phù hợp.',
+        tutors: [],
+      });
+    }
+
+    // 3) Có nhu cầu tìm gia sư → lọc theo từ khóa
     const method = t.includes("online") ? "online" : t.includes("offline") ? "offline" : null;
     const matchSubject = (x) => (x.subjects || "").toLowerCase().split(/[,;]/)
       .some(s => s.trim() && t.includes(s.trim().toLowerCase()));
@@ -2971,10 +3010,17 @@ app.post("/api/ai-suggest", async (req, res) => {
     const pool2 = all.filter(okMethod);
     const subjHits = pool2.filter(matchSubject);
     const result = (subjHits.length ? subjHits : pool2).slice(0, 3);
+
+    if (result.length === 0) {
+      return res.json({
+        success: true, aiUsed: false,
+        reply: "Mình chưa tìm thấy gia sư khớp tiêu chí. Bạn thử nới điều kiện (giá, hình thức, môn học) xem nhé.",
+        tutors: [],
+      });
+    }
     return res.json({
-      success: true,
-      aiUsed: false,
-      reply: "Trợ lý AI tạm thời không khả dụng, mình dùng bộ lọc thủ công để gợi ý gia sư phù hợp:",
+      success: true, aiUsed: false,
+      reply: "Dưới đây là một số gia sư phù hợp với nhu cầu của bạn:",
       tutors: result,
     });
   } catch (e) {
@@ -3108,18 +3154,72 @@ app.delete("/api/entity-reviews/:id", verifyToken, async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// ── Đặt lịch học với gia sư (TV3) ────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// POST /api/bookings — học sinh tạo yêu cầu đặt lịch (status mặc định 'Pending')
+app.post("/api/bookings", verifyToken, async (req, res) => {
+  const { tutor_id, tutor_name, subject, lesson_date, time_slot, note } = req.body || {};
+  if (!tutor_id || !lesson_date || !time_slot) {
+    return res.status(400).json({ message: "Cần chọn gia sư, ngày học và khung giờ." });
+  }
+  try {
+    const t = await pool.query(`SELECT 1 FROM tutor_profiles WHERE user_id = $1 AND status = 'approved'`, [tutor_id]);
+    if (t.rowCount === 0) return res.status(400).json({ message: "Gia sư không hợp lệ hoặc chưa được duyệt." });
+
+    const r = await pool.query(
+      `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, booking_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', 'regular')
+       RETURNING id, lesson_date, time_slot, status`,
+      [req.user.userId, tutor_id, tutor_name || null, subject || null, lesson_date, time_slot, note || null]
+    );
+    return res.status(201).json(r.rows[0]);
+  } catch (e) {
+    console.error("POST /api/bookings:", e.message);
+    return res.status(500).json({ message: "Server error.", detail: e.message });
+  }
+});
+
+// GET /api/bookings — danh sách lịch học của học sinh đang đăng nhập
+app.get("/api/bookings", verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, b.lesson_date, b.time_slot,
+              b.note, b.status, b.created_at, u.full_name AS tutor_full_name
+       FROM bookings b LEFT JOIN users u ON u.id = b.tutor_id
+       WHERE b.student_id = $1
+       ORDER BY b.lesson_date DESC NULLS LAST, b.created_at DESC`,
+      [req.user.userId]
+    );
+    return res.json(r.rows);
+  } catch (e) {
+    console.error("GET /api/bookings:", e.message);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 // ── GET /api/reviews/featured ─────────────────────────────────────────────────
 // Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)
 app.get("/api/reviews/featured", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 30);
   try {
     const result = await pool.query(
-      `SELECT r.id, r.reviewer_name, r.reviewer_role, r.reviewer_picture,
-              r.rating, r.subject, r.content, r.created_at,
-              u.picture AS user_picture, u.full_name AS user_full_name
+      `SELECT r.id,
+              u.full_name AS reviewer_name,
+              u.role      AS reviewer_role,
+              u.picture   AS reviewer_picture,
+              u.picture   AS user_picture,
+              u.full_name AS user_full_name,
+              r.rating,
+              COALESCE(tu.full_name, c.title) AS subject,
+              r.comment   AS content,
+              r.created_at
        FROM reviews r
-       LEFT JOIN users u ON u.id = r.reviewer_id
-       WHERE r.rating = 5
+       LEFT JOIN users u           ON u.id  = r.user_id
+       LEFT JOIN tutor_profiles tp ON tp.id = r.tutor_id
+       LEFT JOIN users tu          ON tu.id = tp.user_id
+       LEFT JOIN courses c         ON c.id  = r.course_id
+       WHERE r.rating = 5 AND r.is_visible = TRUE AND COALESCE(TRIM(r.comment), '') <> ''
        ORDER BY r.created_at DESC
        LIMIT $1`,
       [limit]

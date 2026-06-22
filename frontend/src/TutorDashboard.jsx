@@ -262,6 +262,9 @@ export default function TutorDashboard() {
         })
         if (res.status === 404) {
           setProfileStatus('no_profile')
+        } else if (res.status === 401 || res.status === 403) {
+          // Token hết hạn / không hợp lệ → đăng xuất để đăng nhập lại (tránh màn "không kết nối" gây hiểu nhầm)
+          logout()
         } else if (res.ok) {
           const data = await res.json()
           setProfileStatus(data.status || 'pending')

@@ -17,6 +17,7 @@ import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
 import AISuggestPage from './AISuggestPage'
+import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
@@ -85,7 +86,6 @@ const tutors = [
 const footerLinks = {
   platform: [
     { label: 'Tìm Gia Sư', href: '#/find-tutors' },
-    { label: 'AI Gợi Ý', href: '#/ai-suggest' },
     { label: 'Trở Thành Gia Sư', href: '#/become-tutor' },
     { label: 'Môn Học', href: '#/subjects' }
   ],
@@ -115,6 +115,7 @@ const getRouteFromHash = () => {
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/ai-suggest') return { name: 'ai-suggest' }
+  if (normalized === '/courses') return { name: 'courses' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
 
@@ -276,7 +277,7 @@ function HomePage({ onGoSignIn }) {
 
           <nav className="header-nav">
             <a href="#/find-tutors">Tìm Gia Sư</a>
-            <a href="#/ai-suggest">AI Gợi Ý</a>
+            <a href="#/courses">Khóa Học</a>
             <a href="#/become-tutor">Trở Thành Gia Sư</a>
             <a href="#/subjects">Môn Học</a>
             {/* Show Admin link if user is admin */}
@@ -757,6 +758,9 @@ function App() {
   }
   if (routeName === 'ai-suggest') {
     return <AISuggestPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'courses') {
+    return <CoursesPage user={user} />
   }
   if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />

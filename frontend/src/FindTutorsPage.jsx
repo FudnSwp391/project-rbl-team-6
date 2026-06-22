@@ -115,7 +115,7 @@ function TutorCard({ tutor, isMock }) {
               sessionStorage.setItem('viewingTutor', JSON.stringify(tutor));
               window.location.hash = `/tutor-detail/${tutor.id}`;
             }}
-            className="px-5 py-2 border border-[#00288e] text-[#00288e] hover:bg-[#00288e] hover:text-white rounded-lg text-sm font-semibold transition-all"
+            className="btn-shine px-5 py-2 border border-[#00288e] text-[#00288e] hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 rounded-lg text-sm font-semibold transition-all"
           >
             Xem Hồ Sơ
           </button>
@@ -202,10 +202,15 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
     : tutors.filter(t => !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice);
 
   return (
-    <div className="bg-[#f8f9fb] min-h-screen text-[#191c1e] font-sans">
+    <div className="aqua-bg min-h-screen text-[#191c1e] font-sans">
       <style>{`
         .filter-sidebar { scrollbar-width: none; }
         .filter-sidebar::-webkit-scrollbar { display: none; }
+        .ftb-blob { position:absolute; border-radius:50%; filter:blur(60px); pointer-events:none; }
+        .ftb-1 { width:280px; height:280px; top:-90px; left:-40px; background:radial-gradient(circle,#4c6ef5,transparent 70%); opacity:.6; animation:ftbFloat 13s ease-in-out infinite; }
+        .ftb-2 { width:320px; height:320px; bottom:-130px; right:-60px; background:radial-gradient(circle,#7c5cff,transparent 70%); opacity:.5; animation:ftbFloat 17s ease-in-out infinite reverse; }
+        @keyframes ftbFloat { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(30px,-20px) scale(1.1)} }
+        @media (prefers-reduced-motion: reduce){ .ftb-1,.ftb-2{ animation:none } }
       `}</style>
 
       {/* Header */}
@@ -236,7 +241,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             ) : (
               <>
                 <button onClick={onGoSignIn} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Đăng Nhập</button>
-                <button onClick={onGoSignUp} className="bg-[#00288e] text-white px-6 py-2.5 rounded-lg font-semibold text-sm hover:bg-[#1e40af] transition-all active:scale-95 shadow-sm">
+                <button onClick={onGoSignUp} className="btn-shine bg-gradient-to-r from-[#00288e] via-[#2747c4] to-[#3a6fe0] text-white px-6 py-2.5 rounded-lg font-semibold text-sm hover:-translate-y-0.5 hover:shadow-[0_14px_30px_-8px_rgba(55,85,195,0.55)] transition-all active:scale-95 shadow-sm">
                   Tham Gia Miễn Phí
                 </button>
               </>
@@ -246,25 +251,34 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       </header>
 
       <main className="pt-24 pb-16 max-w-[1280px] mx-auto px-6">
-        {/* Search */}
-        <section className="mb-10">
-          <div className="bg-white rounded-xl shadow-sm p-4 md:p-6 flex flex-col md:flex-row gap-4 items-center">
-            <div className="relative w-full">
-              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#757684]">search</span>
-              <input
-                className="w-full pl-12 pr-4 py-3 rounded-lg border border-[#c4c5d5] focus:outline-none focus:ring-2 focus:ring-[#00288e]/20 focus:border-[#00288e] transition-all text-base"
-                placeholder="Bạn cần hỗ trợ môn học nào?"
-                value={searchInput}
-                onChange={e => setSearchInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-              />
+        {/* Search — banner tối + họa tiết ánh sáng động */}
+        <section className="relative mb-10 overflow-hidden rounded-2xl border border-[#1e2a4a]"
+          style={{ background: 'radial-gradient(60% 90% at 15% 8%, rgba(76,110,245,.35), transparent 60%), radial-gradient(50% 80% at 85% 18%, rgba(124,92,255,.30), transparent 60%), linear-gradient(135deg,#0b1840,#122163 60%,#0c1538)' }}>
+          <span className="ftb-blob ftb-1" aria-hidden="true" />
+          <span className="ftb-blob ftb-2" aria-hidden="true" />
+          <div className="relative z-10 px-6 py-10 md:px-10 text-center">
+            <h2 className="text-2xl md:text-3xl font-extrabold text-white">
+              Tìm <span style={{ background: 'linear-gradient(100deg,#f6d98c,#ffd76a 60%,#f6d98c)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>gia sư hoàn hảo</span> cho hành trình học tập
+            </h2>
+            <p className="text-white/70 mt-2 text-sm md:text-base">Hàng trăm gia sư chuyên nghiệp sẵn sàng đồng hành cùng bạn.</p>
+            <div className="mt-6 flex flex-col md:flex-row gap-3 max-w-[760px] mx-auto">
+              <div className="relative flex-grow">
+                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-white/50">search</span>
+                <input
+                  className="w-full pl-12 pr-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/50 backdrop-blur focus:outline-none focus:border-[#6ea8ff] focus:ring-2 focus:ring-[#6ea8ff]/30 transition-all"
+                  placeholder="Bạn cần hỗ trợ môn học nào?"
+                  value={searchInput}
+                  onChange={e => setSearchInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                />
+              </div>
+              <button
+                onClick={handleSearch}
+                className="btn-shine bg-gradient-to-r from-[#3b6fe0] to-[#7c5cff] text-white px-8 py-3 rounded-xl font-semibold text-sm hover:-translate-y-0.5 hover:shadow-[0_12px_30px_-8px_rgba(124,92,255,.7)] transition-all whitespace-nowrap"
+              >
+                Tìm Kiếm Gia Sư
+              </button>
             </div>
-            <button
-              onClick={handleSearch}
-              className="w-full md:w-auto bg-[#00288e] text-white px-8 py-3 rounded-lg font-semibold text-sm hover:bg-[#1e40af] transition-all whitespace-nowrap"
-            >
-              Tìm Kiếm Gia Sư
-            </button>
           </div>
         </section>
 
