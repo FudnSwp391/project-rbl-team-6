@@ -2,7 +2,7 @@ import React from 'react';
 
 export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
   return (
-    <div className="bg-[#f8f9fb] min-h-screen text-[#191c1e] font-sans flex flex-col">
+    <div className="aqua-bg min-h-screen text-[#191c1e] font-sans flex flex-col">
       <style>{`
         .glass-card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.3); }
         .card-hover:hover { transform: translateY(-4px); transition: all 0.2s ease-in-out; }
@@ -23,6 +23,7 @@ export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors pb-1" href="#/find-tutors">Tìm Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors pb-1" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/subjects">Môn Học</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors pb-1" href="#/courses">Khóa Học</a>
           </div>
 
           {/* Auth Buttons */}

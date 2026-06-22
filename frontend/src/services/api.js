@@ -1,4 +1,4 @@
-﻿/**
+/**
  * api.js
  * API client for EduX.
  * Uses native fetch to connect to the backend, with a complete Mock + LocalStorage fallback
@@ -220,7 +220,45 @@ export async function markBookingAttendance(bookingId, status, note = '') {
 
 export async function getTutorEarnings() {
   return request('/api/tutor/earnings');
-}// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+}
+
+// ── Student Booking & Escrow APIs ──────────────────────────────────────────
+export async function getStudentBookings() {
+  return request('/api/student/bookings');
+}
+
+export async function confirmLessonComplete(bookingId) {
+  return request(`/api/escrow/manual-release/${bookingId}`, { method: 'POST' });
+}
+
+export async function reportTutor(bookingId, reason) {
+  return request(`/api/bookings/${bookingId}/report`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function getWalletFull() {
+  return request('/api/payment/wallet/full');
+}
+
+export async function getTransactionHistory() {
+  return request('/api/payment/transactions');
+}
+
+// ── Admin Dispute APIs ─────────────────────────────────────────────────────
+export async function getAdminDisputes() {
+  return request('/api/admin/disputes');
+}
+
+export async function resolveDispute(disputeId, decision, adminNote = '') {
+  return request('/api/escrow/resolve-dispute-v2', {
+    method: 'POST',
+    body: JSON.stringify({ disputeId, decision, adminNote }),
+  });
+}
+
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // â”€â”€ TUTOR PROFILE APIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
@@ -483,4 +521,4 @@ export async function updateCourseProgress(courseId, lessonId, payload = {}) {
     body: JSON.stringify(payload),
   })
 }
-
+export const apiRequest = request;

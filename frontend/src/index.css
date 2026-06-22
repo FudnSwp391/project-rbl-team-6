@@ -39,3 +39,19 @@ h4,
 p {
   margin: 0;
 }
+
+/* Nền xanh biển loãng + flow nhẹ (dùng chung cho các trang sáng) */
+.aqua-bg {
+  background:
+    radial-gradient(50% 55% at 12% 6%,   rgba(56,160,235,.12), transparent 60%),
+    radial-gradient(46% 50% at 90% 12%,   rgba(20,184,166,.10), transparent 60%),
+    radial-gradient(55% 60% at 70% 104%,  rgba(99,179,237,.10), transparent 60%),
+    linear-gradient(180deg, #eef6fc, #f4f9fc 50%, #eef6fc);
+  background-size: 150% 150%, 150% 150%, 150% 150%, 100% 100%;
+  animation: aquaFlow 22s ease-in-out infinite;
+}
+@keyframes aquaFlow {
+  0%, 100% { background-position: 0% 0%, 100% 0%, 50% 100%, 0 0; }
+  50%      { background-position: 25% 15%, 75% 20%, 40% 80%, 0 0; }
+}
+@media (prefers-reduced-motion: reduce) { .aqua-bg { animation: none; } }

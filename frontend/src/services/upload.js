@@ -15,29 +15,42 @@ function fileToDataUrl(file) {
 
 async function uploadViaBackend(file, folder) {
   const token = localStorage.getItem('token')
-  const dataUrl = await fileToDataUrl(file)
 
-  const response = await fetch(`${API_BASE_URL}/api/uploads`, {
+  // Xin quyền upload từ Backend (Lấy Presigned URL)
+  const resUrl = await fetch(`${API_BASE_URL}/api/tutor/presigned-url`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({
-      fileName: file.name,
-      mimeType: file.type,
-      dataUrl,
-      folder,
-    }),
+      filename: file.name,
+      bucket: 'tutor-documents'
+    })
   })
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.message || 'Upload thất bại.')
+  if (!resUrl.ok) {
+    const errorData = await resUrl.json().catch(() => ({}))
+    throw new Error(errorData.message || 'Không thể xin quyền upload.')
   }
 
-  const data = await response.json()
-  return data.url
+  const { signedUrl, publicUrl } = await resUrl.json()
+
+  // Upload thẳng từ trình duyệt lên Supabase
+  const uploadRes = await fetch(signedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+    body: file
+  })
+
+  if (!uploadRes.ok) {
+    throw new Error('Upload lên Supabase thất bại.')
+  }
+
+  // Trả về full URL để lưu vào Database
+  return publicUrl
 }
 
 export function validateProofFile(file) {

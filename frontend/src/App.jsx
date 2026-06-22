@@ -13,15 +13,20 @@ import TutorDashboard from './TutorDashboard'
 import ParentDashboard from './ParentDashboard'
 import MyCourses from './pages/MyCourses'
 import CourseDetail from './pages/CourseDetail'
+import CoursePlayer from './pages/CoursePlayer'
 import QuizTaking from './QuizTaking'
 import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
 import FindTutorRequest from './pages/FindTutorRequest'
 import TutorMatchesPage from './pages/TutorMatchesPage'
+import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
+import CourseMarketplace from './pages/CourseMarketplace'
+import BookingCalendar from './pages/BookingCalendar'
+import PaymentResult from './pages/PaymentResult'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -111,6 +116,10 @@ const getRouteFromHash = () => {
   if (normalized === '/tutor-profile') return { name: 'tutor-profile' }
 
   const tutorDetailMatch = normalized.match(/^\/tutor-detail\/([^/]+)$/)
+  const bookingMatch = normalized.match(/^\/booking\/([^/]+)$/)
+  const coursePlayerMatch = normalized.match(/^\/course-player\/([^/]+)$/)
+  if (coursePlayerMatch) return { name: 'courseplayer', id: coursePlayerMatch[1] }
+  if (bookingMatch) return { name: 'booking', id: bookingMatch[1] }
   if (tutorDetailMatch) return { name: 'tutor-detail', id: tutorDetailMatch[1] }
   if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
@@ -118,6 +127,8 @@ const getRouteFromHash = () => {
   if (normalized === '/tutor-matches') return { name: 'tutor-matches' }
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
+  if (normalized === '/courses') return { name: 'courses' }
+  if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
 
@@ -211,11 +222,28 @@ function formatTimeAgo(dateStr) {
   return `${Math.floor(diff / 86400)} ngày trước`
 }
 
+// Map 1 dòng gia sư từ /api/tutors → shape mà card "Gia Sư Nổi Bật" cần
+function mapApiTutor(t) {
+  return {
+    id: t.id,
+    name: t.full_name,
+    subjects: t.subjects ? t.subjects.split(',').map(s => s.trim()).filter(Boolean).slice(0, 3) : [],
+    rating: Number(t.avg_r || 0).toFixed(1),
+    reviews: t.review_count || 0,
+    rate: t.hourly_rate || 0,
+    description: t.bio || '',
+    avatar: t.profile_photo_url || t.picture
+      || `https://ui-avatars.com/api/?name=${encodeURIComponent(t.full_name || 'Tutor')}&background=00288e&color=fff&size=128`,
+    _raw: t,
+  }
+}
+
 function HomePage({ onGoSignIn }) {
   const { user, logout } = useAuth()
   const [topic, setTopic] = useState('')
   const [place, setPlace] = useState('')
   const [liveReviews, setLiveReviews] = useState([])
+  const [featuredTutors, setFeaturedTutors] = useState([])
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
 
@@ -223,6 +251,17 @@ function HomePage({ onGoSignIn }) {
     fetch(`${API_BASE}/api/reviews/featured?limit=12`)
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (Array.isArray(data) && data.length > 0) setLiveReviews(data) })
+      .catch(() => {})
+  }, [])
+
+  // Gia sư nổi bật: lấy top theo đánh giá từ DB thật (TV3)
+  useEffect(() => {
+    fetch(`${API_BASE}/api/tutors?sort=rating&limit=4`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const rows = data && Array.isArray(data.tutors) ? data.tutors : []
+        if (rows.length > 0) setFeaturedTutors(rows.map(mapApiTutor))
+      })
       .catch(() => {})
   }, [])
 
@@ -238,6 +277,7 @@ function HomePage({ onGoSignIn }) {
 
   const reviewsToShow = liveReviews.length > 0 ? liveReviews : feedbackData
   const displayFeedbackLive = [...reviewsToShow, ...reviewsToShow]
+  const featuredToShow = featuredTutors.length > 0 ? featuredTutors : tutors
 
   return (
     <div className="academia-page">
@@ -250,6 +290,7 @@ function HomePage({ onGoSignIn }) {
 
           <nav className="header-nav">
             <a href="#/find-tutors">Tìm Gia Sư</a>
+            <a href="#/courses">Khóa Học</a>
             <a href="#/become-tutor">Trở Thành Gia Sư</a>
             <a href="#/subjects">Môn Học</a>
             {/* Show Admin link if user is admin */}
@@ -324,8 +365,37 @@ function HomePage({ onGoSignIn }) {
       <main>
         <section className="hero">
           <div className="hero-overlay" />
+          <div className="hero-glow-ring" aria-hidden="true" />
+          <div className="hero-bg-anim" aria-hidden="true">
+            <span className="hero-blob hero-blob-1" />
+            <span className="hero-blob hero-blob-2" />
+            <span className="hero-blob hero-blob-3" />
+            <span className="hero-grid" />
+            <span className="hero-particle hero-particle-1" />
+            <span className="hero-particle hero-particle-2" />
+            <span className="hero-particle hero-particle-3" />
+            <span className="hero-particle hero-particle-4" />
+            <span className="hero-particle hero-particle-5" />
+          </div>
+          <div className="hero-shine" aria-hidden="true" />
+
+          {/* Thẻ kính nổi — phong cách sàn khóa học */}
+          <div className="hero-stat hero-stat-1" aria-hidden="true">
+            <div className="hero-stat-ico"><span className="material-symbols-outlined" style={{ fontSize: 20 }}>menu_book</span></div>
+            <div><div className="hero-stat-num">12K+</div><div className="hero-stat-label">Khóa học</div></div>
+          </div>
+          <div className="hero-stat hero-stat-2" aria-hidden="true">
+            <div className="hero-stat-ico"><span className="material-symbols-outlined" style={{ fontSize: 20 }}>groups</span></div>
+            <div><div className="hero-stat-num">500+</div><div className="hero-stat-label">Giảng viên</div></div>
+          </div>
+          <div className="hero-stat hero-stat-3" aria-hidden="true">
+            <div className="hero-stat-ico"><span className="material-symbols-outlined icon-fill" style={{ fontSize: 20 }}>star</span></div>
+            <div><div className="hero-stat-num">4.9★</div><div className="hero-stat-label">Đánh giá</div></div>
+          </div>
+
           <div className="container hero-content">
-            <h1>Tìm gia sư hoàn hảo cho hành trình học tập của bạn</h1>
+            <div className="hero-badge"><span className="hero-badge-dot" />Cộng đồng học tập hàng đầu Việt Nam</div>
+            <h1>Tìm <span className="hero-highlight">gia sư &amp; khóa học</span> hoàn hảo cho hành trình học tập của bạn</h1>
             <p>
               Các nhà giáo dục chuyên nghiệp sẵn sàng giúp bạn nắm vững các môn học mới
               và đạt được mục tiêu học tập của bạn.
@@ -395,14 +465,14 @@ function HomePage({ onGoSignIn }) {
           <div className="container">
             <div className="section-head">
               <h2>Gia Sư Nổi Bật</h2>
-              <a href="#" className="see-all">
+              <a href="#/find-tutors" className="see-all">
                 Xem tất cả
                 <span className="material-symbols-outlined">arrow_forward</span>
               </a>
             </div>
 
             <div className="tutor-grid">
-              {tutors.map((tutor) => (
+              {featuredToShow.map((tutor) => (
                 <article className="tutor-card" key={tutor.id}>
                   <div className="tutor-top">
                     <img src={tutor.avatar} alt={tutor.name} loading="lazy" />
@@ -432,7 +502,18 @@ function HomePage({ onGoSignIn }) {
                       <strong>${tutor.rate}</strong>
                       <span>/giờ</span>
                     </p>
-                    <button type="button" className="btn btn-outline">
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => {
+                        if (tutor._raw) {
+                          sessionStorage.setItem('viewingTutor', JSON.stringify(tutor._raw))
+                          window.location.hash = `/tutor-detail/${tutor.id}`
+                        } else {
+                          window.location.hash = '/find-tutors'
+                        }
+                      }}
+                    >
                       Xem Hồ Sơ
                     </button>
                   </div>
@@ -610,9 +691,12 @@ function App() {
     return <AdminDashboard />
   }
 
-  // ── Route: Student Dashboard ──
+  // ── Route: Dashboard ──
   if (routeName === 'dashboard') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    if (user.role === 'admin') return <AdminDashboard />
+    if (user.role === 'tutor') return <TutorDashboard />
+    if (user.role === 'parent') return <ParentDashboard />
     return <StudentDashboard />
   }
 
@@ -715,6 +799,9 @@ function App() {
   }
 
   // ── Route: Public Pages ──
+  if (routeName === 'payment-result') {
+    return <PaymentResult />
+  }
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
@@ -724,6 +811,9 @@ function App() {
   if (routeName === 'tutor-matches') {
     return <TutorMatchesPage />
   }
+  if (routeName === 'courses') {
+    return <CoursesPage user={user} />
+  }
   if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
@@ -731,7 +821,15 @@ function App() {
     return <BecomeTutorPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
 
-  // ── Route: Tutor Detail Page ──
+  // ── Route: Course Marketplace ──
+  if (routeName === 'courses') {
+    return <CourseMarketplace />;
+  }
+
+  if (routeName === 'booking') {
+    return <BookingCalendar tutorId={route.id} onGoHome={() => navigateTo('home')} />
+  }
+
   if (routeName === 'tutor-detail') {
     return <TutorProfile tutorId={route.id} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
@@ -750,16 +848,13 @@ function App() {
   }
 
   // ── Route: Course Detail (protected) ──
+  if (routeName === 'courseplayer') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <CoursePlayer courseId={route.id} onGoHome={() => navigateTo('home')} />
+  }
+
   if (routeName === 'coursedetail') {
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
-    return <CourseDetail />
+    return <CourseDetail courseId={route.id} />
   }
 
   // ── Route: Home ──
@@ -767,4 +862,3 @@ function App() {
 }
 
 export default App
-
