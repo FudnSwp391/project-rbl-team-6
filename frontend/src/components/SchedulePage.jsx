@@ -447,19 +447,19 @@ const SchedulePage = () => {
                         
                         {index === 0 && (
                           <div className="flex items-center justify-between border-t border-surface-variant/50 pt-4 mt-2">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center text-white font-bold text-lg">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center text-white font-bold text-lg shrink-0">
                                 {(session.tutor_name || 'T').charAt(0)}
                               </div>
-                              <div>
-                                <p className="text-label-md font-label-md text-on-surface">{session.tutor_name}</p>
+                              <div className="min-w-0">
+                                <p className="text-label-md font-label-md text-on-surface truncate" title={session.tutor_name}>{session.tutor_name}</p>
                                 <p className="text-[12px] text-on-surface-variant">Tutor</p>
                               </div>
                             </div>
                             <button 
                               type="button" 
                               onClick={() => handleJoinClass(session.meeting_url)} 
-                              className="bg-primary text-on-primary px-4 py-2 rounded-lg text-label-md font-label-md hover:bg-primary/90 transition-colors shadow-sm h-10"
+                              className="bg-primary text-on-primary px-4 py-2 rounded-lg text-label-md font-label-md hover:bg-primary/90 transition-colors shadow-sm h-10 shrink-0 whitespace-nowrap"
                             >
                               Join Class
                             </button>
