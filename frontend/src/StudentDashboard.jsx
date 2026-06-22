@@ -12,6 +12,7 @@ import ExamPapers from './ExamPapers'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
+import SchedulePage from './components/SchedulePage'
 import { getStudentBookings, confirmLessonComplete, reportTutor } from './services/api'
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
 const MY_TUTORS = [
@@ -175,7 +176,7 @@ export default function StudentDashboard() {
 
             {/* ── Lịch học Section ── */}
             {activeSection === 'schedule' && (
-              <StudentBookingsSection token={token} />
+              <SchedulePage />
             )}
 
             {/* ── Dashboard Home ── */}
