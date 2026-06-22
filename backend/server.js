@@ -3902,12 +3902,17 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
     let weeklyTotal = 0;
 
     result.rows.forEach(row => {
-      const timeParts = row.time_slot.split('-').map(t => t.trim());
-      const startTimeStr = timeParts[0] || '00:00';
-      const endTimeStr = timeParts[1] || '01:00';
+      const timeParts = (row.time_slot || '').split('-').map(t => t.trim());
+      let startTimeStr = timeParts[0] || '00:00';
+      let endTimeStr = timeParts[1] || '01:00';
       
-      const startDate = new Date(`${row.lesson_date_str}T${startTimeStr}:00+07:00`);
-      const endDate = new Date(`${row.lesson_date_str}T${endTimeStr}:00+07:00`);
+      let [sh, sm] = startTimeStr.split(':');
+      let [eh, em] = endTimeStr.split(':');
+      sh = (sh || '00').padStart(2, '0'); sm = (sm || '00').padStart(2, '0');
+      eh = (eh || '01').padStart(2, '0'); em = (em || '00').padStart(2, '0');
+      
+      const startDate = new Date(`${row.lesson_date_str}T${sh}:${sm}:00+07:00`);
+      const endDate = new Date(`${row.lesson_date_str}T${eh}:${em}:00+07:00`);
 
       let status = row.status;
       if (status === 'accepted') {
