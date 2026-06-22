@@ -4,7 +4,6 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 import { AuthProvider } from './AuthContext'   // ← NEW: Auth state wrapper
 import './index.css'
 import App from './App.jsx'
-import AIChatWidget from './components/AIChatWidget'
 
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || 'dummy_client_id'
 
@@ -14,8 +13,6 @@ createRoot(document.getElementById('root')).render(
       {/* AuthProvider makes user/token available to the whole app */}
       <AuthProvider>
         <App />
-        {/* Chatbox AI nổi — hiện ở mọi trang */}
-        <AIChatWidget />
       </AuthProvider>
     </GoogleOAuthProvider>
   </StrictMode>,

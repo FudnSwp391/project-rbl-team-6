@@ -17,7 +17,6 @@ import QuizTaking from './QuizTaking'
 import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
-import AISuggestPage from './AISuggestPage'
 import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
@@ -122,7 +121,6 @@ const getRouteFromHash = () => {
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
-  if (normalized === '/ai-suggest') return { name: 'ai-suggest' }
   if (normalized === '/courses') return { name: 'courses' }
   if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
@@ -770,9 +768,6 @@ function App() {
   }
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
-  }
-  if (routeName === 'ai-suggest') {
-    return <AISuggestPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
   if (routeName === 'courses') {
     return <CoursesPage user={user} />
