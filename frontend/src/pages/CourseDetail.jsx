@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../AuthContext';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -27,10 +28,14 @@ function Stars({ value, size = 18 }) {
 }
 
 export default function CourseDetail({ courseId }) {
+  const { user, token } = useAuth();
   const [course, setCourse] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
+  const [enrolled, setEnrolled] = useState(false);
+  const [enrollLoading, setEnrollLoading] = useState(false);
+  const [toast, setToast] = useState('');
 
   useEffect(() => {
     const id = courseId || window.location.hash.match(/#\/course\/([^/]+)/)?.[1];
@@ -40,7 +45,48 @@ export default function CourseDetail({ courseId }) {
       .then(r => { if (!r.ok) throw new Error('Không tìm thấy khóa học.'); return r.json(); })
       .then(d => { setCourse(d); setLoading(false); })
       .catch(e => { setError(e.message); setLoading(false); });
-  }, [courseId]);
+
+    if (user && token) {
+      fetch(`${API_BASE}/api/courses/${id}/enrollment-status`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      .then(r => r.json())
+      .then(d => { if (d.enrolled) setEnrolled(true); })
+      .catch(console.error);
+    }
+  }, [courseId, user, token]);
+
+  const handleEnroll = async () => {
+    if (!user) {
+      window.location.hash = '#/signin';
+      return;
+    }
+    
+    if (course && course.tutor_id === user.userId) {
+      setToast('Bạn không thể đăng ký khóa học của chính mình.');
+      setTimeout(() => setToast(''), 3000);
+      return;
+    }
+
+    setEnrollLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/courses/${course.id}/enroll`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Lỗi khi đăng ký khóa học.');
+      
+      setEnrolled(true);
+      setToast('Đăng ký khóa học thành công!');
+      setTimeout(() => setToast(''), 3000);
+    } catch (err) {
+      setToast(err.message);
+      setTimeout(() => setToast(''), 3000);
+    } finally {
+      setEnrollLoading(false);
+    }
+  };
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-[#f8f9fb]">
@@ -268,10 +314,23 @@ export default function CourseDetail({ courseId }) {
               </div>
 
               {/* Action buttons */}
-              <button className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white font-bold text-base flex items-center justify-center gap-2 hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)] transition-all mb-3">
-                <span className="material-symbols-outlined" style={{ fontSize: 20 }}>shopping_cart</span>
-                Đăng ký khóa học
-              </button>
+              {enrolled ? (
+                <button onClick={() => window.location.hash = '#/my-courses'} className="w-full py-3.5 rounded-xl bg-[#16a34a] text-white font-bold text-base flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors mb-3">
+                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>check_circle</span>
+                  Đã đăng ký (Đến lớp học)
+                </button>
+              ) : (
+                <button onClick={handleEnroll} disabled={enrollLoading} className={`w-full py-3.5 rounded-xl text-white font-bold text-base flex items-center justify-center gap-2 transition-all mb-3 ${enrollLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)]'}`}>
+                  {enrollLoading ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <>
+                      <span className="material-symbols-outlined" style={{ fontSize: 20 }}>shopping_cart</span>
+                      Đăng ký khóa học
+                    </>
+                  )}
+                </button>
+              )}
               <button onClick={() => window.location.hash = '#/courses'} className="w-full py-3 rounded-xl border-2 border-[#00288e] text-[#00288e] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#00288e]/5 transition-colors">
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
                 Quay lại danh sách
@@ -280,6 +339,13 @@ export default function CourseDetail({ courseId }) {
           </div>
         </div>
       </main>
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[70] bg-[#1e40af] text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-2 text-sm font-semibold">
+          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>info</span>{toast}
+        </div>
+      )}
     </div>
   );
 }

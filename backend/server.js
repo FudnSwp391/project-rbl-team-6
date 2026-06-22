@@ -3129,6 +3129,91 @@ app.get("/api/courses/:id", async (req, res) => {
   }
 });
 
+// ── GET /api/courses/:id/enrollment-status ── Kiểm tra đã đăng ký chưa ──────
+app.get("/api/courses/:id/enrollment-status", verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, status, created_at FROM course_enrollments WHERE course_id = $1 AND student_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (r.rowCount > 0) return res.json({ enrolled: true, enrollment: r.rows[0] });
+    return res.json({ enrolled: false });
+  } catch (err) {
+    console.error("GET enrollment-status error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── POST /api/courses/:id/enroll ── Đăng ký khóa học ────────────────────────
+app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
+  const courseId = req.params.id;
+  const studentId = req.user.userId;
+
+  try {
+    // Kiểm tra khóa học tồn tại
+    const courseRes = await pool.query(
+      `SELECT c.id, c.title, c.tutor_id, c.price, u.full_name AS tutor_name
+       FROM courses c JOIN users u ON c.tutor_id = u.id
+       WHERE c.id = $1 AND c.status IN ('published', 'approved', 'active')`, [courseId]
+    );
+    if (courseRes.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const course = courseRes.rows[0];
+
+    // Không cho gia sư tự đăng ký khóa của mình
+    if (course.tutor_id === studentId) {
+      return res.status(400).json({ message: "Bạn không thể đăng ký khóa học của chính mình." });
+    }
+
+    // Kiểm tra đã đăng ký chưa
+    const existingRes = await pool.query(
+      `SELECT id, status FROM course_enrollments WHERE course_id = $1 AND student_id = $2`, [courseId, studentId]
+    );
+    if (existingRes.rowCount > 0) {
+      const existing = existingRes.rows[0];
+      if (existing.status === 'active') {
+        return res.status(400).json({ message: "Bạn đã đăng ký khóa học này rồi." });
+      }
+      // Nếu đã hủy/hoàn tiền → kích hoạt lại
+      await pool.query(`UPDATE course_enrollments SET status = 'active', updated_at = NOW() WHERE id = $1`, [existing.id]);
+      return res.json({ success: true, message: "Đã đăng ký lại khóa học thành công!", enrollment_id: existing.id });
+    }
+
+    // Lấy tên học sinh
+    const studentRes = await pool.query(`SELECT full_name FROM users WHERE id = $1`, [studentId]);
+    const studentName = studentRes.rows[0]?.full_name || 'Học sinh';
+
+    // Tạo enrollment mới
+    const enrollRes = await pool.query(
+      `INSERT INTO course_enrollments (course_id, student_id, student_name, status)
+       VALUES ($1, $2, $3, 'active') RETURNING id`,
+      [courseId, studentId, studentName]
+    );
+    const enrollmentId = enrollRes.rows[0].id;
+
+    // Tăng enrollment_count
+    await pool.query(`UPDATE courses SET enrollment_count = COALESCE(enrollment_count, 0) + 1 WHERE id = $1`, [courseId]);
+
+    // Gửi thông báo cho gia sư
+    try {
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'course_enrollment', 'Học sinh mới đăng ký khóa học', $2, 'school', $3, 'course')`,
+        [course.tutor_id, `${studentName} vừa đăng ký khóa học "${course.title}"`, courseId]
+      );
+    } catch (_) { /* ignore notification errors */ }
+
+    return res.json({
+      success: true,
+      message: "Đăng ký khóa học thành công!",
+      enrollment_id: enrollmentId
+    });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ message: "Bạn đã đăng ký khóa học này rồi." });
+    console.error("POST /api/courses/:id/enroll error:", err);
+    return res.status(500).json({ message: "Lỗi server khi đăng ký." });
+  }
+});
+
 
 // Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
 app.get("/api/tutors", async (req, res) => {
