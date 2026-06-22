@@ -156,10 +156,6 @@ const SchedulePage = () => {
             <button type="button" onClick={() => setTimeFrame('This Week')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Week' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>This Week</button>
             <button type="button" onClick={() => setTimeFrame('This Month')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Month' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>This Month</button>
           </div>
-          <button type="button" className="bg-primary text-on-primary px-5 py-2.5 rounded-lg font-label-md text-label-md flex items-center gap-2 hover:bg-primary/90 transition-colors shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] h-12" onClick={() => window.location.hash = '#/tutor'}>
-            <span className="material-symbols-outlined text-sm">add</span>
-            Đặt Lịch Mới
-          </button>
         </div>
       </section>
 
