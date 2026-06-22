@@ -495,5 +495,154 @@ router.post("/api/tutor-requests/matches/:matchId/reject", async (req, res) => {
   }
 });
 
-module.exports = router;
+// ─── HẠNG MỤC 5: LỊCH SỬ TÌM GIA SƯ ───────────────────────────────────────
 
+// Middleware bắt buộc đăng nhập (dùng cho API cần xác thực)
+const requireAuth = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ success: false, message: "Vui lòng đăng nhập." });
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(401).json({ success: false, message: "Token không hợp lệ." });
+    req.user = decoded;
+    next();
+  });
+};
+
+// GET /api/my-tutor-requests
+// Lấy danh sách request của student hiện tại
+router.get("/api/my-tutor-requests", requireAuth, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    const result = await pool.query(`
+      SELECT 
+        tr.id,
+        tr.subject,
+        tr.grade_level,
+        tr.match_status,
+        tr.matched_tutor_count,
+        tr.created_at,
+        tr.description,
+        tr.current_level,
+        tr.learning_style,
+        (SELECT COUNT(*) FROM tutor_request_matches trm WHERE trm.request_id = tr.id AND trm.is_selected = true) AS selected_count,
+        (SELECT COUNT(*) FROM tutor_request_matches trm WHERE trm.request_id = tr.id AND trm.status = 'tutor_accepted') AS accepted_count
+      FROM tutor_requests tr
+      WHERE tr.student_id = $1
+      ORDER BY tr.created_at DESC
+    `, [studentId]);
+
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error("[MyTutorRequests] GET error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// GET /api/my-tutor-requests/:id
+// Lấy chi tiết request + danh sách matches + accepted tutor
+router.get("/api/my-tutor-requests/:id", requireAuth, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    const { id } = req.params;
+
+    // 1. Lấy request
+    const reqResult = await pool.query(
+      `SELECT * FROM tutor_requests WHERE id = $1 AND student_id = $2`, 
+      [id, studentId]
+    );
+    if (reqResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy yêu cầu." });
+    }
+    const request = reqResult.rows[0];
+
+    // 2. Lấy tất cả matches với thông tin tutor
+    const matchesResult = await pool.query(`
+      SELECT 
+        trm.id AS match_id,
+        trm.tutor_id,
+        trm.match_score,
+        trm.match_tier,
+        trm.is_selected,
+        trm.is_interested,
+        trm.status,
+        trm.selected_at,
+        trm.responded_at,
+        COALESCE(
+          NULLIF(TRIM(COALESCE(tp.display_name, '')), ''),
+          NULLIF(TRIM(COALESCE(tp.first_name,'') || ' ' || COALESCE(tp.last_name,'')), ''),
+          u.full_name
+        ) AS tutor_name,
+        COALESCE(tp.profile_photo_url, u.picture) AS tutor_avatar,
+        tp.experience_years,
+        tp.hourly_rate,
+        COALESCE(
+          (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = tp.id),
+          0
+        ) AS tutor_rating,
+        COALESCE(
+          (SELECT COUNT(*) FROM reviews r WHERE r.tutor_id = tp.id),
+          0
+        ) AS tutor_review_count
+      FROM tutor_request_matches trm
+      JOIN users u ON trm.tutor_id = u.id
+      LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+      WHERE trm.request_id = $1
+      ORDER BY trm.match_score DESC
+    `, [id]);
+
+    // 3. Tìm accepted tutor (nếu có)
+    const acceptedTutor = matchesResult.rows.find(m => m.status === 'tutor_accepted') || null;
+
+    return res.json({
+      success: true,
+      data: {
+        request,
+        matches: matchesResult.rows,
+        acceptedTutor
+      }
+    });
+  } catch (error) {
+    console.error("[MyTutorRequests] GET detail error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// POST /api/tutor-requests/:requestId/cancel
+// Student hủy request
+router.post("/api/tutor-requests/:requestId/cancel", requireAuth, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    const { requestId } = req.params;
+
+    // 1. Kiểm tra request thuộc về student này
+    const reqResult = await pool.query(
+      `SELECT id, match_status FROM tutor_requests WHERE id = $1 AND student_id = $2`,
+      [requestId, studentId]
+    );
+    if (reqResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy yêu cầu." });
+    }
+
+    const currentStatus = reqResult.rows[0].match_status;
+    if (currentStatus === 'closed' || currentStatus === 'matched') {
+      return res.status(400).json({ success: false, message: "Yêu cầu đã hoàn tất, không thể hủy." });
+    }
+
+    // 2. Đóng request
+    await pool.query(`UPDATE tutor_requests SET match_status = 'closed' WHERE id = $1`, [requestId]);
+
+    // 3. Cancel toàn bộ match đang pending
+    await pool.query(`
+      UPDATE tutor_request_matches 
+      SET status = 'cancelled' 
+      WHERE request_id = $1 AND status = 'pending'
+    `, [requestId]);
+
+    return res.json({ success: true, message: "Đã hủy yêu cầu tìm gia sư." });
+  } catch (error) {
+    console.error("[CancelRequest] POST error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+module.exports = router;

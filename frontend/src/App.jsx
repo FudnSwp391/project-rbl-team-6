@@ -20,6 +20,7 @@ import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
 import FindTutorRequest from './pages/FindTutorRequest'
 import TutorMatchesPage from './pages/TutorMatchesPage'
+import MyTutorRequests from './pages/MyTutorRequests'
 import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
@@ -125,6 +126,7 @@ const getRouteFromHash = () => {
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
   if (normalized === '/tutor-request') return { name: 'tutor-request' }
   if (normalized === '/tutor-matches') return { name: 'tutor-matches' }
+  if (normalized === '/my-tutor-requests') return { name: 'my-tutor-requests' }
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
@@ -810,6 +812,9 @@ function App() {
   }
   if (routeName === 'tutor-matches') {
     return <TutorMatchesPage />
+  }
+  if (routeName === 'my-tutor-requests') {
+    return <MyTutorRequests />
   }
   if (routeName === 'courses') {
     return <CoursesPage user={user} />
