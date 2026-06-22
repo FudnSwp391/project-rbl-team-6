@@ -166,12 +166,21 @@ export default function MyTutorsPage() {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => window.location.hash = `/tutor-detail/${t.tutor_id}`}
-                    className="w-full py-2 bg-white border border-[#00288e] text-[#00288e] rounded-lg text-sm font-semibold hover:bg-[#00288e] hover:text-white transition-colors"
-                  >
-                    Xem hồ sơ chi tiết
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => window.location.hash = `/tutor-interaction/${t.tutor_id}`}
+                      className="flex-1 py-2 bg-[#f0fdf4] border border-[#10b981] text-[#059669] rounded-lg text-sm font-semibold hover:bg-[#d1fae5] transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>manage_accounts</span>
+                      Tương tác
+                    </button>
+                    <button
+                      onClick={() => window.location.hash = `/tutor-detail/${t.tutor_id}`}
+                      className="flex-1 py-2 bg-white border border-[#00288e] text-[#00288e] rounded-lg text-sm font-semibold hover:bg-[#00288e] hover:text-white transition-colors"
+                    >
+                      Hồ sơ
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

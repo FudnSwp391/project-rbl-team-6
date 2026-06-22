@@ -22,6 +22,7 @@ import FindTutorRequest from './pages/FindTutorRequest'
 import TutorMatchesPage from './pages/TutorMatchesPage'
 import MyTutorRequests from './pages/MyTutorRequests'
 import MyTutorsPage from './pages/MyTutorsPage'
+import TutorInteractionPage from './pages/TutorInteractionPage'
 import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
@@ -129,6 +130,10 @@ const getRouteFromHash = () => {
   if (normalized === '/tutor-matches') return { name: 'tutor-matches' }
   if (normalized === '/my-tutor-requests') return { name: 'my-tutor-requests' }
   if (normalized === '/my-tutors') return { name: 'my-tutors' }
+  
+  const tutorInteractionMatch = normalized.match(/^\/tutor-interaction\/([^/]+)$/)
+  if (tutorInteractionMatch) return { name: 'tutor-interaction', id: tutorInteractionMatch[1] }
+
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
@@ -820,6 +825,9 @@ function App() {
   }
   if (routeName === 'my-tutors') {
     return <MyTutorsPage />
+  }
+  if (routeName === 'tutor-interaction') {
+    return <TutorInteractionPage />
   }
   if (routeName === 'courses') {
     return <CoursesPage user={user} />

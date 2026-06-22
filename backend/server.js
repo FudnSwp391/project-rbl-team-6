@@ -1385,6 +1385,7 @@ const lessonRoutes = require("./routes/lessonRoutes");
 const learningPathRoutes = require("./routes/learningPathRoutes");
 const scheduleRoutes = require("./routes/scheduleRoutes");
 const tutorRequestRoutes = require("./routes/tutorRequestRoutes");
+const tutorInteractionRoutes = require("./routes/tutorInteractionRoutes");
 
 app.use("/api/classes/:classId/materials", materialRoutes);
 app.use("/api/classes", classRoutes);
@@ -1394,6 +1395,7 @@ app.use("/", lessonRoutes);
 app.use("/", learningPathRoutes);
 app.use("/api", scheduleRoutes);
 app.use("/", tutorRequestRoutes);
+app.use("/", tutorInteractionRoutes);
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
