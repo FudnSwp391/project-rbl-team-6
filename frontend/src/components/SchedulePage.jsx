@@ -317,7 +317,7 @@ const SchedulePage = () => {
             {/* Weekly Schedule Board */}
             <section className="bg-surface rounded-xl shadow-sm border border-surface-variant w-full lg:w-[70%] flex flex-col h-full overflow-x-auto">
               {/* Days Header */}
-              <div className={`grid ${timeFrame === 'Today' ? 'grid-cols-1' : 'grid-cols-7 min-w-[700px]'} ${timeFrame === 'This Month' ? 'border-b-0' : 'border-b'} border-surface-variant bg-surface-container-lowest rounded-t-xl shrink-0`}>
+              <div className={`grid ${timeFrame === 'Today' ? 'grid-cols-1' : 'grid-cols-7 min-w-[1100px]'} ${timeFrame === 'This Month' ? 'border-b-0' : 'border-b'} border-surface-variant bg-surface-container-lowest rounded-t-xl shrink-0`}>
                 {displayDates.map((wd, index) => {
                   if (!wd) return <div key={index} className="py-3 border-r border-b border-surface-variant last:border-r-0 bg-surface/30"></div>;
                   return (
@@ -335,7 +335,8 @@ const SchedulePage = () => {
               </div>
 
               {/* Compact Calendar Grid */}
-              <div className={`grid ${timeFrame === 'Today' ? 'grid-cols-1' : 'grid-cols-7 min-w-[700px]'} bg-surface-container-lowest rounded-b-xl flex-1`}>
+              <div className={`grid ${timeFrame === 'Today' ? 'grid-cols-1' : 'grid-cols-7 min-w-[1100px]'} bg-surface-container-lowest rounded-b-xl flex-1`}>
+
                 {displayDates.map((wd, index) => {
                   if (!wd) return <div key={index} className="border-r border-b border-surface-variant last:border-r-0 p-2 bg-surface/30 h-full min-h-[120px]"></div>;
                   // Find sessions that happen on this day
