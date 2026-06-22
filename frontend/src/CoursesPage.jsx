@@ -21,18 +21,7 @@ const SORTS = [
   { v: 'rating', l: 'Đánh giá cao nhất' },
 ];
 
-// Dữ liệu mẫu (hiển thị đẹp khi DB chưa có khóa học thật)
-const MOCK_COURSES = [
-  { id: 'm1', title: 'Cấp tốc FE PRF192 / MAE101 - FA25', description: 'Ôn tập kiến thức FE PRF192 với 100 câu bài tập phân hóa đa dạng, kĩ năng bấm máy (trick casio) và phân tích để chọn nhanh đáp án FE MAE101.', category: 'Toán Học', level: 'Khóa đại học', price: 123000, original_price: 200000, rating: 5.0, reviews: 128, lessons: 24 },
-  { id: 'm2', title: 'CSD201 - CTDL và Giải Thuật cùng Java (Video Only)', description: 'Làm việc trực tiếp với Java: mảng, danh sách liên kết, ngăn xếp, hàng đợi, cây, đồ thị và các thuật toán sắp xếp, tìm kiếm, đệ quy.', category: 'Kỹ Thuật Phần Mềm', level: 'Khóa đại học', price: 299000, original_price: 400000, rating: 5.0, reviews: 95, lessons: 40 },
-  { id: 'm3', title: 'Lập trình OOP với Java', description: 'Nền tảng lập trình hướng đối tượng: class, kế thừa, đa hình, đóng gói — kèm dự án thực hành cuối khóa.', category: 'Kỹ Thuật Phần Mềm', level: 'Khóa đại học', price: 199000, original_price: 350000, rating: 4.8, reviews: 73, lessons: 32 },
-  { id: 'm4', title: 'IELTS 6.5+ Cấp tốc 8 tuần', description: 'Lộ trình luyện 4 kỹ năng Listening - Reading - Writing - Speaking, chữa đề thực chiến, cam kết đầu ra 6.5+.', category: 'Ngoại Ngữ', level: 'Khóa học sinh', price: 499000, original_price: 800000, rating: 4.9, reviews: 210, lessons: 48 },
-  { id: 'm5', title: 'Giải tích 1 - Cơ bản đến nâng cao', description: 'Giới hạn, đạo hàm, tích phân và ứng dụng — giảng giải trực quan, nhiều ví dụ và bài tập có lời giải.', category: 'Toán Học', level: 'Khóa đại học', price: 0, original_price: 0, rating: 4.7, reviews: 64, lessons: 28 },
-  { id: 'm6', title: 'Thiết kế Vi mạch số cơ bản (Verilog)', description: 'Nhập môn thiết kế mạch số với Verilog HDL: cổng logic, FSM, mô phỏng và tổng hợp trên FPGA.', category: 'Vi Mạch', level: 'Khóa đại học', price: 350000, original_price: 500000, rating: 4.6, reviews: 31, lessons: 36 },
-  { id: 'm7', title: 'Tiếng Anh giao tiếp cho người mới', description: 'Phản xạ giao tiếp hằng ngày, phát âm chuẩn, từ vựng và mẫu câu thông dụng — học là nói được.', category: 'Ngoại Ngữ', level: 'Khóa học sinh', price: 0, original_price: 0, rating: 4.8, reviews: 156, lessons: 30 },
-  { id: 'm8', title: 'Python cho người mới bắt đầu', description: 'Từ cú pháp cơ bản đến xử lý dữ liệu, viết script tự động hóa và mini-project thực tế.', category: 'Kỹ Thuật Phần Mềm', level: 'Khóa học sinh', price: 149000, original_price: 250000, rating: 4.9, reviews: 188, lessons: 26 },
-  { id: 'm9', title: 'Đại số tuyến tính - MAS291', description: 'Ma trận, định thức, hệ phương trình, không gian vector và trị riêng — trọng tâm thi cử.', category: 'Toán Học', level: 'Khóa đại học', price: 199000, original_price: 300000, rating: 4.5, reviews: 42, lessons: 22 },
-];
+
 
 function fmtVnd(v) {
   if (!v || Number(v) === 0) return 'Miễn phí';
@@ -122,7 +111,7 @@ export default function CoursesPage({ user }) {
       .catch(() => {});
   }, []);
 
-  const all = useMemo(() => [...apiCourses, ...MOCK_COURSES], [apiCourses]);
+  const all = apiCourses;
 
   const filtered = useMemo(() => {
     let list = all.filter(c =>
