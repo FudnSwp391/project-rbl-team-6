@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
+import CourseGoldShowcase from '../components/CourseGoldShowcase';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -299,6 +300,9 @@ export default function CourseDetail({ courseId }) {
                 )}
               </div>
             </div>
+
+            {/* ── Phần vàng: Video demo · Bảng vàng thành tích · Phản hồi ── */}
+            <CourseGoldShowcase course={c} courseId={c.id} onEnroll={handleEnroll} enrolled={enrolled} />
           </div>
 
           {/* Right sidebar: Price & actions */}

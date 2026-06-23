@@ -3122,7 +3122,7 @@ app.get("/api/courses/:id", async (req, res) => {
     let lessons = [];
     try {
       const lessonsRes = await pool.query(
-        `SELECT id, title, description, duration_label, is_preview, position
+        `SELECT id, title, description, video_url, duration_label, is_preview, position
          FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`, [id]
       );
       lessons = lessonsRes.rows;
