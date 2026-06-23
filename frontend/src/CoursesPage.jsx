@@ -179,52 +179,66 @@ export default function CoursesPage({ user }) {
       </header>
 
       <main className="max-w-[1280px] mx-auto px-6 py-8">
-        <h1 className="text-2xl font-extrabold mb-6 text-[#191c1e]">{filtered.length} kết quả tất cả khóa học</h1>
+        <h1 className="text-[28px] font-extrabold mb-6 text-[#191c1e]"><span className="text-[#00288e]">{filtered.length}</span> kết quả · tất cả khóa học</h1>
 
         <div className="flex flex-col lg:flex-row gap-8">
           {/* Sidebar */}
-          <aside className="w-full lg:w-72 shrink-0 space-y-6">
-            <div className="bg-white border border-[#e5e7eb] rounded-2xl p-5 shadow-sm">
-              <h2 className="font-bold mb-3 flex items-center gap-2 text-[#191c1e]"><span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 20 }}>kid_star</span>Xếp hạng</h2>
+          <aside className="w-full lg:w-72 shrink-0 space-y-5">
+            {/* Xếp hạng */}
+            <div className="bg-white border-2 border-[#d7e0f4] rounded-2xl p-5 shadow-[0_10px_26px_-12px_rgba(0,40,142,0.22)] hover:border-[#00288e]/45 hover:shadow-[0_14px_32px_-12px_rgba(0,40,142,0.3)] transition-all">
+              <h2 className="flex items-center gap-2.5 mb-4">
+                <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-[#00288e] to-[#3b6fe0]" />
+                <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 22 }}>kid_star</span>
+                <span className="text-[17px] font-extrabold text-[#191c1e]">Xếp hạng</span>
+              </h2>
               <div className="flex items-center gap-1">
                 {[1, 2, 3, 4, 5].map(s => (
                   <button key={s} onClick={() => setMin(minRating === s ? 0 : s)}>
-                    <span className="material-symbols-outlined" style={{ fontSize: 28, color: s <= minRating ? '#f5a623' : '#d1d5db', fontVariationSettings: s <= minRating ? "'FILL' 1" : "'FILL' 0" }}>star</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 30, color: s <= minRating ? '#f5a623' : '#d1d5db', fontVariationSettings: s <= minRating ? "'FILL' 1" : "'FILL' 0" }}>star</span>
                   </button>
                 ))}
               </div>
               {minRating > 0 && <button onClick={() => setMin(0)} className="text-[#757684] text-xs mt-2 hover:text-[#00288e]">Bỏ chọn ({minRating}★ trở lên)</button>}
             </div>
 
-            <div className="bg-white border border-[#e5e7eb] rounded-2xl p-5 shadow-sm">
-              <h2 className="font-bold mb-3 text-[#191c1e]">Danh mục khóa học</h2>
-              <div className="space-y-2.5">
+            {/* Danh mục khóa học */}
+            <div className="bg-white border-2 border-[#d7e0f4] rounded-2xl p-5 shadow-[0_10px_26px_-12px_rgba(0,40,142,0.22)] hover:border-[#00288e]/45 hover:shadow-[0_14px_32px_-12px_rgba(0,40,142,0.3)] transition-all">
+              <h2 className="flex items-center gap-2.5 mb-4">
+                <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-[#00288e] to-[#3b6fe0]" />
+                <span className="text-[17px] font-extrabold text-[#191c1e]">Danh mục khóa học</span>
+              </h2>
+              <div className="space-y-3">
                 {CATEGORIES.map(c => (
                   <label key={c} className="flex items-center gap-3 cursor-pointer group">
                     <input type="radio" name="cat" checked={cat === c} onChange={() => setCat(cat === c ? '' : c)}
                       onClick={() => cat === c && setCat('')}
-                      className="accent-[#00288e] w-4 h-4" />
-                    <span className="text-sm text-[#444653] group-hover:text-[#00288e]">{c}</span>
+                      className="accent-[#00288e] w-[18px] h-[18px]" />
+                    <span className={`text-[15px] transition-colors group-hover:text-[#00288e] ${cat === c ? 'text-[#00288e] font-bold' : 'text-[#444653] font-semibold'}`}>{c}</span>
                   </label>
                 ))}
               </div>
             </div>
 
-            <div className="bg-white border border-[#e5e7eb] rounded-2xl p-5 shadow-sm">
-              <h2 className="font-bold mb-3 text-[#191c1e]">Cấp độ</h2>
-              <div className="space-y-2.5">
+            {/* Cấp độ */}
+            <div className="bg-white border-2 border-[#d7e0f4] rounded-2xl p-5 shadow-[0_10px_26px_-12px_rgba(0,40,142,0.22)] hover:border-[#00288e]/45 hover:shadow-[0_14px_32px_-12px_rgba(0,40,142,0.3)] transition-all">
+              <h2 className="flex items-center gap-2.5 mb-4">
+                <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-[#00288e] to-[#3b6fe0]" />
+                <span className="text-[17px] font-extrabold text-[#191c1e]">Cấp độ</span>
+              </h2>
+              <div className="space-y-3">
                 {LEVELS.map(l => (
                   <label key={l} className="flex items-center gap-3 cursor-pointer group">
                     <input type="radio" name="level" checked={level === l} onChange={() => setLevel(level === l ? '' : l)}
                       onClick={() => level === l && setLevel('')}
-                      className="accent-[#00288e] w-4 h-4" />
-                    <span className="text-sm text-[#444653] group-hover:text-[#00288e]">{l}</span>
+                      className="accent-[#00288e] w-[18px] h-[18px]" />
+                    <span className={`text-[15px] transition-colors group-hover:text-[#00288e] ${level === l ? 'text-[#00288e] font-bold' : 'text-[#444653] font-semibold'}`}>{l}</span>
                   </label>
                 ))}
               </div>
             </div>
 
-            <button onClick={resetFilters} className="w-full py-3 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white font-bold hover:-translate-y-0.5 transition-all btn-shine">
+            <button onClick={resetFilters} className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white font-extrabold text-[15px] shadow-[0_12px_26px_-10px_rgba(30,64,175,0.7)] hover:-translate-y-0.5 transition-all btn-shine flex items-center justify-center gap-2">
+              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>filter_alt_off</span>
               Xóa bộ lọc
             </button>
           </aside>
