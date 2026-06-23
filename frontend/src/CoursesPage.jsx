@@ -111,20 +111,21 @@ export default function CoursesPage({ user }) {
     fetch(`${API_BASE}/api/courses`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        const rows = (d && Array.isArray(d.courses) ? d.courses : [])
-          .filter(c => (c.title || '').trim().length >= 6 && CATEGORIES.includes(c.subject))
-          .map(c => ({
-            id: c.id, title: c.title, description: c.description || '',
-            category: c.subject, level: c.level || 'Khóa đại học',
-            price: c.price || 0, original_price: c.original_price || 0,
-            rating: Number(c.avg_rating) || 0, reviews: c.review_count || 0, lessons: c.total_lessons || 0,
-          }));
-        if (rows.length) setApiCourses(rows);
+        // /api/courses trả về mảng thuần [...] (đôi khi {courses:[...]}) — lấy hết khóa học THẬT từ DB
+        const raw = Array.isArray(d) ? d : (d && Array.isArray(d.courses) ? d.courses : []);
+        const rows = raw.map(c => ({
+          id: c.id, title: c.title, description: c.description || '',
+          category: c.subject, level: c.level || 'Khóa đại học',
+          price: c.price || 0, original_price: c.original_price || 0,
+          rating: Number(c.avg_rating) || 0, reviews: c.review_count || 0, lessons: c.total_lessons || 0,
+        }));
+        setApiCourses(rows);
       })
       .catch(() => {});
   }, []);
 
-  const all = useMemo(() => [...apiCourses, ...MOCK_COURSES], [apiCourses]);
+  // Chỉ dùng khóa học THẬT từ database (không trộn dữ liệu demo)
+  const all = useMemo(() => apiCourses, [apiCourses]);
 
   const filtered = useMemo(() => {
     let list = all.filter(c =>
