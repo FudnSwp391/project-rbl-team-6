@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
+import { useAuth } from '../AuthContext'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 export default function CartPage({ onGoSignIn, user }) {
+  const { logout } = useAuth();
   const [cartItems, setCartItems] = useState([]);
   const [loadingPayment, setLoadingPayment] = useState(false);
 
@@ -68,8 +70,17 @@ export default function CartPage({ onGoSignIn, user }) {
         },
         body: JSON.stringify({ amount: totalPrice, returnUrl })
       });
+
+      // Token hết hạn / không hợp lệ → đăng xuất và đưa về trang đăng nhập
+      if (res.status === 401 || res.status === 403) {
+        alert('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại để tiếp tục thanh toán.');
+        logout();
+        window.location.hash = '/signin';
+        return;
+      }
+
       const data = await res.json();
-      
+
       if (data.success && data.url) {
         window.location.href = data.url;
       } else {
