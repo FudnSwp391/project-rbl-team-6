@@ -3105,7 +3105,200 @@ app.get("/api/courses", async (req, res) => {
   }
 });
 
-// ── GET /api/tutors (public) ──────────────────────────────────────────────────
+// ── GET /api/courses/:id ── Chi tiết 1 khóa học (public) ─────────────────────
+app.get("/api/courses/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const courseRes = await pool.query(
+      `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture, u.email AS tutor_email
+       FROM courses c
+       JOIN users u ON c.tutor_id = u.id
+       WHERE c.id = $1`, [id]
+    );
+    if (courseRes.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const course = courseRes.rows[0];
+
+    // Lấy danh sách bài học
+    let lessons = [];
+    try {
+      const lessonsRes = await pool.query(
+        `SELECT id, title, description, duration_label, is_preview, position
+         FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`, [id]
+      );
+      lessons = lessonsRes.rows;
+    } catch (_) { /* bảng chưa tồn tại thì bỏ qua */ }
+
+    return res.json({ ...course, lessons });
+  } catch (err) {
+    console.error("GET /api/courses/:id error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── GET /api/courses/:id/enrollment-status ── Kiểm tra đã đăng ký chưa ──────
+app.get("/api/courses/:id/enrollment-status", verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, status, created_at FROM course_enrollments WHERE course_id = $1 AND student_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (r.rowCount > 0) return res.json({ enrolled: true, enrollment: r.rows[0] });
+    return res.json({ enrolled: false });
+  } catch (err) {
+    console.error("GET enrollment-status error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ── POST /api/courses/:id/enroll ── Đăng ký khóa học ────────────────────────
+app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
+  const courseId = req.params.id;
+  const studentId = req.user.userId;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN"); // Bắt đầu transaction
+
+    // Kiểm tra khóa học tồn tại
+    const courseRes = await client.query(
+      `SELECT c.id, c.title, c.tutor_id, c.price, u.full_name AS tutor_name
+       FROM courses c JOIN users u ON c.tutor_id = u.id
+       WHERE c.id = $1 AND c.status IN ('published', 'approved', 'active')`, [courseId]
+    );
+    if (courseRes.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    }
+    const course = courseRes.rows[0];
+
+    // Không cho gia sư tự đăng ký khóa của mình
+    if (course.tutor_id === studentId) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Bạn không thể đăng ký khóa học của chính mình." });
+    }
+
+    // Kiểm tra đã đăng ký chưa
+    const existingRes = await client.query(
+      `SELECT id, status FROM course_enrollments WHERE course_id = $1 AND student_id = $2`, [courseId, studentId]
+    );
+    if (existingRes.rowCount > 0) {
+      const existing = existingRes.rows[0];
+      if (existing.status === 'active') {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Bạn đã đăng ký khóa học này rồi." });
+      }
+      // Khôi phục trạng thái active nếu bị hủy (nếu trước đó đã mua)
+      await client.query(`UPDATE course_enrollments SET status = 'active', updated_at = NOW() WHERE id = $1`, [existing.id]);
+      await client.query("COMMIT");
+      return res.json({ success: true, message: "Đã đăng ký lại khóa học thành công!", enrollment_id: existing.id });
+    }
+
+    // XỬ LÝ THANH TOÁN NẾU KHÓA HỌC CÓ GIÁ > 0
+    const price = Number(course.price);
+    if (price > 0) {
+      // 1. Lock ví học sinh để tránh ghi đè
+      const studentWalletRes = await client.query(`SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [studentId]);
+      if (studentWalletRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Không tìm thấy ví của bạn." });
+      }
+      const studentWallet = studentWalletRes.rows[0];
+      
+      if (Number(studentWallet.balance) < price) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư trong ví không đủ. Vui lòng nạp thêm tiền." });
+      }
+
+      // 2. Lấy ví gia sư
+      const tutorWalletRes = await client.query(`SELECT id FROM wallets WHERE user_id = $1 FOR UPDATE`, [course.tutor_id]);
+      if (tutorWalletRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Không tìm thấy ví của gia sư để thanh toán." });
+      }
+      const tutorWalletId = tutorWalletRes.rows[0].id;
+
+      // 3. Lấy ví Admin
+      let adminWalletId = process.env.ADMIN_WALLET_ID;
+      if (!adminWalletId) {
+        const adminWalletRes = await client.query(`SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1 FOR UPDATE`);
+        if (adminWalletRes.rowCount === 0) {
+          await client.query("ROLLBACK");
+          return res.status(500).json({ message: "Lỗi hệ thống: Không tìm thấy ví Admin." });
+        }
+        adminWalletId = adminWalletRes.rows[0].id;
+      } else {
+        await client.query(`SELECT id FROM wallets WHERE id = $1 FOR UPDATE`, [adminWalletId]);
+      }
+
+      // 4. Phân bổ tiền (Hoa hồng admin 10%, gia sư 90%)
+      const commissionRate = 0.1;
+      const adminShare = Math.round(price * commissionRate);
+      const tutorShare = price - adminShare;
+
+      // Cập nhật số dư các ví
+      await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [price, studentWallet.id]);
+      await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [tutorShare, tutorWalletId]);
+      await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [adminShare, adminWalletId]);
+
+      // 5. Ghi log Transactions
+      // Học viên trừ tiền mua khóa
+      await client.query(`
+        INSERT INTO transactions (wallet_id, amount, type, status, description)
+        VALUES ($1, $2, 'PAYMENT', 'SUCCESS', $3)
+      `, [studentWallet.id, -price, `Thanh toán mua khóa học: ${course.title}`]);
+
+      // Gia sư nhận doanh thu
+      await client.query(`
+        INSERT INTO transactions (wallet_id, amount, type, status, description)
+        VALUES ($1, $2, 'EARNING', 'SUCCESS', $3)
+      `, [tutorWalletId, tutorShare, `Doanh thu bán khóa học: ${course.title} (Đã trừ ${commissionRate*100}% phí)`]);
+    }
+
+    // Lấy tên học sinh
+    const studentRes = await client.query(`SELECT full_name FROM users WHERE id = $1`, [studentId]);
+    const studentName = studentRes.rows[0]?.full_name || 'Học sinh';
+
+    // Tạo enrollment mới
+    const enrollRes = await client.query(
+      `INSERT INTO course_enrollments (course_id, student_id, student_name, status)
+       VALUES ($1, $2, $3, 'active') RETURNING id`,
+      [courseId, studentId, studentName]
+    );
+    const enrollmentId = enrollRes.rows[0].id;
+
+    // Tăng enrollment_count
+    await client.query(`UPDATE courses SET enrollment_count = COALESCE(enrollment_count, 0) + 1 WHERE id = $1`, [courseId]);
+
+    // Gửi thông báo
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1, 'course_enrollment', 'Học sinh mới đăng ký khóa học', $2, 'school', $3, 'course')`,
+      [course.tutor_id, `${studentName} vừa mua khóa học "${course.title}"`, courseId]
+    );
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1, 'course_enrollment', 'Đăng ký khóa học thành công', $2, 'check_circle', $3, 'course')`,
+      [studentId, `Bạn đã đăng ký thành công khóa học "${course.title}"`, courseId]
+    );
+
+    await client.query("COMMIT");
+
+    return res.json({
+      success: true,
+      message: "Đăng ký khóa học thành công!",
+      enrollment_id: enrollmentId
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (err.code === '23505') return res.status(400).json({ message: "Bạn đã đăng ký khóa học này rồi." });
+    console.error("POST /api/courses/:id/enroll error:", err);
+    return res.status(500).json({ message: "Lỗi server khi đăng ký." });
+  } finally {
+    client.release();
+  }
+});
+
+
 // Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
 app.get("/api/tutors", async (req, res) => {
   const { search = "", subjects = "", sort = "rating", page = "1", limit = "12" } = req.query;

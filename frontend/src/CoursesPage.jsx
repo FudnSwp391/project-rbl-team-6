@@ -21,18 +21,7 @@ const SORTS = [
   { v: 'rating', l: 'Đánh giá cao nhất' },
 ];
 
-// Dữ liệu mẫu (hiển thị đẹp khi DB chưa có khóa học thật)
-const MOCK_COURSES = [
-  { id: 'm1', title: 'Cấp tốc FE PRF192 / MAE101 - FA25', description: 'Ôn tập kiến thức FE PRF192 với 100 câu bài tập phân hóa đa dạng, kĩ năng bấm máy (trick casio) và phân tích để chọn nhanh đáp án FE MAE101.', category: 'Toán Học', level: 'Khóa đại học', price: 123000, original_price: 200000, rating: 5.0, reviews: 128, lessons: 24 },
-  { id: 'm2', title: 'CSD201 - CTDL và Giải Thuật cùng Java (Video Only)', description: 'Làm việc trực tiếp với Java: mảng, danh sách liên kết, ngăn xếp, hàng đợi, cây, đồ thị và các thuật toán sắp xếp, tìm kiếm, đệ quy.', category: 'Kỹ Thuật Phần Mềm', level: 'Khóa đại học', price: 299000, original_price: 400000, rating: 5.0, reviews: 95, lessons: 40 },
-  { id: 'm3', title: 'Lập trình OOP với Java', description: 'Nền tảng lập trình hướng đối tượng: class, kế thừa, đa hình, đóng gói — kèm dự án thực hành cuối khóa.', category: 'Kỹ Thuật Phần Mềm', level: 'Khóa đại học', price: 199000, original_price: 350000, rating: 4.8, reviews: 73, lessons: 32 },
-  { id: 'm4', title: 'IELTS 6.5+ Cấp tốc 8 tuần', description: 'Lộ trình luyện 4 kỹ năng Listening - Reading - Writing - Speaking, chữa đề thực chiến, cam kết đầu ra 6.5+.', category: 'Ngoại Ngữ', level: 'Khóa học sinh', price: 499000, original_price: 800000, rating: 4.9, reviews: 210, lessons: 48 },
-  { id: 'm5', title: 'Giải tích 1 - Cơ bản đến nâng cao', description: 'Giới hạn, đạo hàm, tích phân và ứng dụng — giảng giải trực quan, nhiều ví dụ và bài tập có lời giải.', category: 'Toán Học', level: 'Khóa đại học', price: 0, original_price: 0, rating: 4.7, reviews: 64, lessons: 28 },
-  { id: 'm6', title: 'Thiết kế Vi mạch số cơ bản (Verilog)', description: 'Nhập môn thiết kế mạch số với Verilog HDL: cổng logic, FSM, mô phỏng và tổng hợp trên FPGA.', category: 'Vi Mạch', level: 'Khóa đại học', price: 350000, original_price: 500000, rating: 4.6, reviews: 31, lessons: 36 },
-  { id: 'm7', title: 'Tiếng Anh giao tiếp cho người mới', description: 'Phản xạ giao tiếp hằng ngày, phát âm chuẩn, từ vựng và mẫu câu thông dụng — học là nói được.', category: 'Ngoại Ngữ', level: 'Khóa học sinh', price: 0, original_price: 0, rating: 4.8, reviews: 156, lessons: 30 },
-  { id: 'm8', title: 'Python cho người mới bắt đầu', description: 'Từ cú pháp cơ bản đến xử lý dữ liệu, viết script tự động hóa và mini-project thực tế.', category: 'Kỹ Thuật Phần Mềm', level: 'Khóa học sinh', price: 149000, original_price: 250000, rating: 4.9, reviews: 188, lessons: 26 },
-  { id: 'm9', title: 'Đại số tuyến tính - MAS291', description: 'Ma trận, định thức, hệ phương trình, không gian vector và trị riêng — trọng tâm thi cử.', category: 'Toán Học', level: 'Khóa đại học', price: 199000, original_price: 300000, rating: 4.5, reviews: 42, lessons: 22 },
-];
+
 
 function fmtVnd(v) {
   if (!v || Number(v) === 0) return 'Miễn phí';
@@ -67,7 +56,8 @@ function CourseCard({ course, onAdd, user }) {
   const discount = course.original_price && course.original_price > course.price
     ? Math.round((1 - course.price / course.original_price) * 100) : 0;
   return (
-    <div className="group flex gap-4 bg-white border border-[#e5e7eb] rounded-2xl overflow-hidden shadow-sm hover:border-[#00288e]/40 hover:shadow-[0_12px_40px_-12px_rgba(0,40,142,0.25)] transition-all">
+    <div onClick={() => window.location.hash = `#/course/${course.id}`} style={{ cursor: 'pointer' }}
+      className="group flex gap-4 bg-white border border-[#e5e7eb] rounded-2xl overflow-hidden shadow-sm hover:border-[#00288e]/40 hover:shadow-[0_12px_40px_-12px_rgba(0,40,142,0.25)] transition-all">
       <div className="w-[200px] min-w-[200px] h-[150px] shrink-0"><CourseCover course={course} /></div>
       <div className="flex-grow py-4 pr-2 min-w-0">
         <h3 className="text-[#191c1e] font-bold text-lg leading-snug">{course.title}</h3>
@@ -111,21 +101,20 @@ export default function CoursesPage({ user }) {
     fetch(`${API_BASE}/api/courses`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        // /api/courses trả về mảng thuần [...] (đôi khi {courses:[...]}) — lấy hết khóa học THẬT từ DB
+        // API có thể trả về mảng trực tiếp hoặc { courses: [...] }
         const raw = Array.isArray(d) ? d : (d && Array.isArray(d.courses) ? d.courses : []);
         const rows = raw.map(c => ({
-          id: c.id, title: c.title, description: c.description || '',
-          category: c.subject, level: c.level || 'Khóa đại học',
-          price: c.price || 0, original_price: c.original_price || 0,
-          rating: Number(c.avg_rating) || 0, reviews: c.review_count || 0, lessons: c.total_lessons || 0,
-        }));
+            id: c.id, title: c.title, description: c.description || '',
+            category: c.subject, level: c.level || '',
+            price: c.price || 0, original_price: c.original_price || 0,
+            rating: Number(c.avg_rating) || 0, reviews: c.review_count || 0, lessons: c.total_lessons || 0,
+          }));
         setApiCourses(rows);
       })
       .catch(() => {});
   }, []);
 
-  // Chỉ dùng khóa học THẬT từ database (không trộn dữ liệu demo)
-  const all = useMemo(() => apiCourses, [apiCourses]);
+  const all = apiCourses;
 
   const filtered = useMemo(() => {
     let list = all.filter(c =>
