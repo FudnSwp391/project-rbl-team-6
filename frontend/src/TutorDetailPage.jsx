@@ -38,7 +38,12 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
           </nav>
 
           {/* Auth Buttons */}
-          <div className="flex items-center gap-4 z-10">
+          <div className="flex items-center gap-6 z-10">
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a href="#/cart" className="text-[#444653] hover:text-[#00288e] flex items-center transition-colors" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
             {user ? (
                <button
                  onClick={() => {

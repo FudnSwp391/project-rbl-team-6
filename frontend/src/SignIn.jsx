@@ -10,11 +10,15 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   // 'login' | 'forgot_email' | 'forgot_otp' | 'forgot_new_pwd'
   const [viewMode, setViewMode] = useState('login')
 
-  const savedEmail = localStorage.getItem('rememberedEmail') || ''
-  const [rememberMe, setRememberMe] = useState(!!savedEmail)
+  const savedAccountsStr = localStorage.getItem('rememberedAccounts')
+  const savedAccounts = savedAccountsStr ? JSON.parse(savedAccountsStr) : {}
+  const lastEmail = localStorage.getItem('lastEmail') || localStorage.getItem('rememberedEmail') || ''
+  const lastPassword = savedAccounts[lastEmail] || localStorage.getItem('rememberedPassword') || ''
+
+  const [rememberMe, setRememberMe] = useState(!!lastEmail)
   const [formData, setFormData] = useState({
-    email: savedEmail,
-    password: '',
+    email: lastEmail,
+    password: lastPassword,
   })
   
   const [forgotData, setForgotData] = useState({
@@ -35,7 +39,11 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
 
   const handleChange = (event) => {
     const { name, value } = event.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
+    if (name === 'email' && savedAccounts[value] && rememberMe) {
+      setFormData((prev) => ({ ...prev, email: value, password: savedAccounts[value] }))
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }))
+    }
     setErrors((prev) => ({ ...prev, [name]: '', submit: '' }))
   }
 
@@ -76,10 +84,19 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data?.message || 'Đăng nhập thất bại.')
+      
+      // Save credentials for quick testing
       if (rememberMe) {
-        localStorage.setItem('rememberedEmail', formData.email)
+        const updatedAccounts = { ...savedAccounts, [formData.email]: formData.password }
+        localStorage.setItem('rememberedAccounts', JSON.stringify(updatedAccounts))
+        localStorage.setItem('lastEmail', formData.email)
+        localStorage.setItem('rememberedPassword', formData.password) // backward comp
       } else {
-        localStorage.removeItem('rememberedEmail')
+        const updatedAccounts = { ...savedAccounts }
+        delete updatedAccounts[formData.email]
+        localStorage.setItem('rememberedAccounts', JSON.stringify(updatedAccounts))
+        localStorage.removeItem('lastEmail')
+        localStorage.removeItem('rememberedPassword')
       }
       if (data.suspiciousLogin) {
         setSuspiciousAlert(data.loginIP)
