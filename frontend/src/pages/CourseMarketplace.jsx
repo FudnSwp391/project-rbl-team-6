@@ -240,7 +240,12 @@ export default function CourseMarketplace() {
               <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
               <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/courses">Khóa Học</a>
             </nav>
-            <div className="flex items-center gap-4 z-10">
+            <div className="flex items-center gap-6 z-10">
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
               {user ? (
                 <button
                   onClick={() => {

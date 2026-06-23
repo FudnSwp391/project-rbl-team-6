@@ -52,7 +52,7 @@ function CourseCover({ course }) {
   );
 }
 
-function CourseCard({ course, onAdd }) {
+function CourseCard({ course, onAdd, user }) {
   const discount = course.original_price && course.original_price > course.price
     ? Math.round((1 - course.price / course.original_price) * 100) : 0;
   return (
@@ -77,10 +77,12 @@ function CourseCard({ course, onAdd }) {
           <div className="text-[#00288e] font-extrabold text-xl">{fmtVnd(course.price)}</div>
           {discount > 0 && <div className="text-[#16a34a] text-xs font-semibold">-{discount}%</div>}
         </div>
-        <button onClick={() => onAdd(course)} title="Thêm vào giỏ"
-          className="btn-shine w-11 h-11 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white flex items-center justify-center hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)] transition-all">
-          <span className="material-symbols-outlined">add_shopping_cart</span>
-        </button>
+        {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+          <button onClick={() => onAdd(course)} title="Thêm vào giỏ"
+            className="btn-shine w-11 h-11 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white flex items-center justify-center hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)] transition-all">
+            <span className="material-symbols-outlined">add_shopping_cart</span>
+          </button>
+        )}
       </div>
     </div>
   );
@@ -128,7 +130,21 @@ export default function CoursesPage({ user }) {
   }, [all, cat, level, minRating, search, sort]);
 
   const addToCart = (c) => {
-    setToast(`Đã thêm "${c.title.slice(0, 30)}${c.title.length > 30 ? '…' : ''}" vào giỏ`);
+    let cart = [];
+    try {
+      const stored = localStorage.getItem('edux_cart');
+      if (stored) cart = JSON.parse(stored);
+    } catch (e) {}
+    
+    const exists = cart.find(item => item.id === c.id);
+    if (exists) {
+      setToast(`Khóa học đã có trong giỏ hàng!`);
+    } else {
+      cart.push({ ...c, quantity: 1, addedAt: Date.now() });
+      localStorage.setItem('edux_cart', JSON.stringify(cart));
+      window.dispatchEvent(new Event('cartUpdated'));
+      setToast(`Đã thêm "${c.title.slice(0, 30)}${c.title.length > 30 ? '…' : ''}" vào giỏ`);
+    }
     setTimeout(() => setToast(''), 2200);
   };
   const resetFilters = () => { setCat(''); setLevel(''); setMin(0); setSearch(''); setSort('newest'); };
@@ -152,6 +168,13 @@ export default function CoursesPage({ user }) {
             <a href="#/courses" className="text-[#00288e]">Khóa học</a>
             <a href="#/find-tutors" className="text-[#5d5f5f] hover:text-[#00288e] transition-colors">Tìm gia sư</a>
           </nav>
+          {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+            <div className="flex items-center gap-4 z-10 ml-4 md:ml-0">
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            </div>
+          )}
         </div>
       </header>
 
@@ -218,7 +241,7 @@ export default function CoursesPage({ user }) {
             <div className="space-y-5">
               {filtered.length === 0 ? (
                 <div className="text-center text-[#757684] py-16">Không tìm thấy khóa học phù hợp. Thử xóa bớt bộ lọc nhé.</div>
-              ) : filtered.map(c => <CourseCard key={c.id} course={c} onAdd={addToCart} />)}
+              ) : filtered.map(c => <CourseCard key={c.id} course={c} onAdd={addToCart} user={user} />)}
             </div>
           </div>
         </div>
