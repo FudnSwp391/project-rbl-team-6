@@ -23,7 +23,13 @@ const jwtSecret = process.env.JWT_SECRET || "dev_jwt_secret_change_me";
 const googleClient = new OAuth2Client(googleClientId);
 
 // ─── Middleware ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-app.use(cors({ origin: frontendOrigin }));
+app.use(cors({
+  origin: (origin, cb) => {
+    // Cho phép: request không có origin (curl/Postman), FRONTEND_ORIGIN, và mọi cổng localhost khi dev
+    if (!origin || origin === frontendOrigin || /^http:\/\/localhost:\d+$/.test(origin)) return cb(null, true);
+    return cb(new Error("Not allowed by CORS"));
+  },
+}));
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
