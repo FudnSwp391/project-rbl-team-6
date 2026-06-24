@@ -7,6 +7,10 @@ export default function CartPage({ onGoSignIn, user }) {
   const { logout } = useAuth();
   const [cartItems, setCartItems] = useState([]);
   const [loadingPayment, setLoadingPayment] = useState(false);
+  const [promoCode, setPromoCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState(null); // { code, discount, message }
+  const [promoErr, setPromoErr] = useState('');
+  const [promoLoading, setPromoLoading] = useState(false);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -26,6 +30,9 @@ export default function CartPage({ onGoSignIn, user }) {
     window.addEventListener('cartUpdated', loadCart);
     return () => window.removeEventListener('cartUpdated', loadCart);
   }, [user]);
+
+  // Giỏ hàng thay đổi → bỏ mã đã áp (cần áp lại theo tổng mới)
+  useEffect(() => { setAppliedCoupon(null); setPromoErr(''); }, [cartItems]);
 
   const removeItem = (id) => {
     const newCart = cartItems.filter(item => item.id !== id);
@@ -48,6 +55,34 @@ export default function CartPage({ onGoSignIn, user }) {
   };
 
   const totalPrice = cartItems.reduce((acc, item) => acc + ((Number(item.price) || 0) * (item.quantity || 1)), 0);
+  const fmt = (n) => new Intl.NumberFormat('vi-VN').format(Math.round(Number(n) || 0));
+  const discount = appliedCoupon?.discount || 0;
+  const finalTotal = Math.max(0, totalPrice - discount);
+
+  const applyPromo = async () => {
+    const code = promoCode.trim();
+    if (!code) { setPromoErr('Vui lòng nhập mã giảm giá.'); return; }
+    setPromoLoading(true); setPromoErr('');
+    try {
+      const res = await fetch(`${API_BASE}/api/coupons/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, amount: totalPrice }),
+      });
+      const data = await res.json();
+      if (data.valid) {
+        setAppliedCoupon({ code: data.code, discount: data.discount, message: data.message });
+      } else {
+        setAppliedCoupon(null);
+        setPromoErr(data.message || 'Mã không hợp lệ.');
+      }
+    } catch {
+      setPromoErr('Không kiểm tra được mã, vui lòng thử lại.');
+    } finally {
+      setPromoLoading(false);
+    }
+  };
+  const removeCoupon = () => { setAppliedCoupon(null); setPromoCode(''); setPromoErr(''); };
 
   const handleCheckout = async () => {
     if (!user) {
@@ -60,18 +95,13 @@ export default function CartPage({ onGoSignIn, user }) {
     setLoadingPayment(true);
     try {
       const token = localStorage.getItem('token');
-      const returnUrl = `${window.location.origin}/#/payment/result`;
-      
-      const res = await fetch(`${API_BASE}/api/payment/create-url`, {
+      // Thanh toán bằng VÍ: trừ số dư + đăng ký các khóa trong giỏ
+      const res = await fetch(`${API_BASE}/api/cart/checkout`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ amount: totalPrice, returnUrl })
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ items: cartItems.map(i => i.id), couponCode: appliedCoupon?.code || null }),
       });
 
-      // Token hết hạn / không hợp lệ → đăng xuất và đưa về trang đăng nhập
       if (res.status === 401 || res.status === 403) {
         alert('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại để tiếp tục thanh toán.');
         logout();
@@ -81,14 +111,45 @@ export default function CartPage({ onGoSignIn, user }) {
 
       const data = await res.json();
 
-      if (data.success && data.url) {
-        window.location.href = data.url;
-      } else {
-        alert(data.message || 'Lỗi khởi tạo thanh toán VNPAY');
-        setLoadingPayment(false);
+      if (res.ok && data.success) {
+        localStorage.setItem('edux_cart', '[]');
+        window.dispatchEvent(new Event('cartUpdated'));
+        window.dispatchEvent(new Event('walletUpdated'));
+        alert(`Thanh toán thành công! Đã trừ ${fmt(data.total)} đ từ ví. Bạn đã sở hữu ${data.enrolled} khóa học.`);
+        window.location.hash = '/my-courses';
+        return;
       }
+
+      if (data.code === 'INSUFFICIENT_FUNDS') {
+        const go = window.confirm(`Số dư ví không đủ (cần ${fmt(data.needed)} đ, ví đang có ${fmt(data.balance)} đ).\nNạp thêm tiền qua VNPAY?`);
+        if (go) return topUp(data.needed - data.balance);
+        setLoadingPayment(false);
+        return;
+      }
+
+      alert(data.message || 'Thanh toán thất bại.');
+      setLoadingPayment(false);
     } catch (e) {
-      alert('Không thể kết nối với máy chủ thanh toán');
+      alert('Không thể kết nối máy chủ thanh toán.');
+      setLoadingPayment(false);
+    }
+  };
+
+  // Nạp tiền vào ví qua VNPAY (khi số dư không đủ)
+  const topUp = async (amount) => {
+    try {
+      const token = localStorage.getItem('token');
+      const returnUrl = `${window.location.origin}/#/payment/result`;
+      const res = await fetch(`${API_BASE}/api/payment/create-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ amount: Math.max(10000, Math.ceil(Number(amount) || 0)), returnUrl }),
+      });
+      const data = await res.json();
+      if (data.success && data.url) window.location.href = data.url;
+      else { alert(data.message || 'Lỗi tạo giao dịch nạp tiền.'); setLoadingPayment(false); }
+    } catch {
+      alert('Không thể kết nối cổng nạp tiền.');
       setLoadingPayment(false);
     }
   };
@@ -267,22 +328,59 @@ export default function CartPage({ onGoSignIn, user }) {
           {/* Right Column - Order Summary */}
           <div className="space-y-6">
             <div className="bg-white rounded-xl card-shadow border border-[#e1e2e4] p-6">
-              <div className="text-xl font-bold text-[#191c1e] mb-6">
-                Tổng: <span className="text-[#00288e]">{formattedTotal}</span>
+              {/* Tạm tính / Giảm giá / Tổng */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm text-[#444653]">
+                  <span>Tạm tính</span>
+                  <span className="font-semibold text-[#191c1e]">{fmt(totalPrice)} đ</span>
+                </div>
+                {discount > 0 && (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-[#16a34a] font-semibold flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[16px]">sell</span>Giảm giá ({appliedCoupon.code})
+                    </span>
+                    <span className="text-[#16a34a] font-semibold">− {fmt(discount)} đ</span>
+                  </div>
+                )}
               </div>
-              
+              <div className="text-xl font-bold text-[#191c1e] mt-3 pt-3 mb-6 border-t border-[#e1e2e4] flex items-center justify-between">
+                <span>Tổng:</span>
+                <span className="text-[#00288e]">{fmt(finalTotal)} đ</span>
+              </div>
+
+              {/* Mã khuyến mãi */}
               <div className="border-t border-[#e1e2e4] pt-6 mb-6">
                 <label className="block text-sm font-semibold text-[#191c1e] mb-2">Mã khuyến mãi</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    placeholder="Nhập mã khuyến mãi" 
-                    className="flex-1 border border-[#c4c5d5] rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-[#00288e] focus:ring-1 focus:ring-[#00288e]"
-                  />
-                  <button className="bg-white border border-[#00288e] text-[#00288e] font-semibold text-sm px-4 py-2 rounded-lg hover:bg-[#f8f9fb] transition-colors whitespace-nowrap">
-                    Áp dụng
-                  </button>
-                </div>
+                {appliedCoupon ? (
+                  <div className="flex items-center justify-between bg-[#ecfdf5] border border-[#a7f3d0] rounded-lg px-4 py-2.5">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="material-symbols-outlined text-[#16a34a] text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
+                      <span className="font-bold text-[#15803d]">{appliedCoupon.code}</span>
+                      <span className="text-[#16a34a]">− {fmt(discount)}đ</span>
+                    </div>
+                    <button onClick={removeCoupon} className="text-[#757684] hover:text-[#ba1a1a]" title="Bỏ mã">
+                      <span className="material-symbols-outlined text-[18px]">close</span>
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex gap-2">
+                      <input
+                        type="text" value={promoCode}
+                        onChange={e => { setPromoCode(e.target.value); setPromoErr(''); }}
+                        onKeyDown={e => { if (e.key === 'Enter') applyPromo(); }}
+                        placeholder="Nhập mã (vd: EDUX10)"
+                        className="flex-1 border border-[#c4c5d5] rounded-lg px-4 py-2 text-sm uppercase placeholder:normal-case focus:outline-none focus:border-[#00288e] focus:ring-1 focus:ring-[#00288e]"
+                      />
+                      <button onClick={applyPromo} disabled={promoLoading}
+                        className="bg-white border border-[#00288e] text-[#00288e] font-semibold text-sm px-4 py-2 rounded-lg hover:bg-[#f8f9fb] transition-colors whitespace-nowrap disabled:opacity-50">
+                        {promoLoading ? '...' : 'Áp dụng'}
+                      </button>
+                    </div>
+                    {promoErr && <p className="text-xs text-[#ba1a1a] mt-1.5">{promoErr}</p>}
+                    <p className="text-xs text-[#757684] mt-1.5">Mã thử: <b>EDUX10</b> · <b>GIAM50K</b> · <b>WELCOME20</b> · <b>SALE100K</b></p>
+                  </>
+                )}
               </div>
 
               <div className="border-t border-[#e1e2e4] pt-6 mb-6">
@@ -309,7 +407,7 @@ export default function CartPage({ onGoSignIn, user }) {
                 ) : (
                   <span className="material-symbols-outlined text-[18px]">payments</span>
                 )}
-                {loadingPayment ? 'Đang chuyển hướng...' : `Thanh toán ${formattedTotal}`}
+                {loadingPayment ? 'Đang xử lý...' : `Thanh toán ${fmt(finalTotal)} đ (trừ ví)`}
               </button>
             </div>
           </div>

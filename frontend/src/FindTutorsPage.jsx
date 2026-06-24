@@ -42,7 +42,7 @@ function fmtPrice(val) {
   return `$${n}`;
 }
 
-function TutorCard({ tutor, isMock }) {
+function TutorCard({ tutor, isMock, onFav }) {
   const avatar = tutor.profile_photo_url || tutor.picture;
   const rating = Number(tutor.avg_r || 0).toFixed(1);
   const subjects = tutor.subjects
@@ -73,6 +73,12 @@ function TutorCard({ tutor, isMock }) {
             <span className="material-symbols-outlined text-[13px]">location_on</span>
             {tutor.city}
           </div>
+        )}
+        {onFav && !isMock && (
+          <button onClick={(e) => { e.stopPropagation(); onFav(tutor); }} title="Yêu thích"
+            className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white/90 backdrop-blur text-[#e11d48] flex items-center justify-center shadow hover:scale-110 transition-transform">
+            <span className="material-symbols-outlined text-[20px]">favorite</span>
+          </button>
         )}
       </div>
 
@@ -140,6 +146,20 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   const [sort, setSort]               = useState('rating');
   const [method, setMethod]           = useState('');
   const [level, setLevel]             = useState('');
+  const [favMsg, setFavMsg]           = useState('');
+
+  const addFav = (t) => {
+    const token = localStorage.getItem('token');
+    if (!token) { setFavMsg('Đăng nhập để lưu yêu thích.'); setTimeout(() => setFavMsg(''), 2500); return; }
+    fetch(`${API_BASE}/api/wishlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ item_type: 'tutor', item_id: t.id }),
+    })
+      .then(() => setFavMsg(`Đã thêm ${t.full_name} vào Yêu thích ❤`))
+      .catch(() => setFavMsg('Lỗi, thử lại.'))
+      .finally(() => setTimeout(() => setFavMsg(''), 2500));
+  };
 
   const fetchTutors = useCallback(async (pg = 1) => {
     setLoading(true);
@@ -417,8 +437,13 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {displayTutors.map(tutor => (
-                  <TutorCard key={tutor.id} tutor={tutor} isMock={isMock} />
+                  <TutorCard key={tutor.id} tutor={tutor} isMock={isMock} onFav={addFav} />
                 ))}
+              </div>
+            )}
+            {favMsg && (
+              <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] bg-[#1e40af] text-white px-5 py-3 rounded-xl shadow-2xl text-sm font-semibold flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>favorite</span>{favMsg}
               </div>
             )}
 

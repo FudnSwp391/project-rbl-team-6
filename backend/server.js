@@ -3135,6 +3135,250 @@ app.get("/api/courses/:id", async (req, res) => {
   }
 });
 
+// ── POST /api/coupons/validate ── Kiểm tra mã giảm giá ──────────────────────
+app.post("/api/coupons/validate", async (req, res) => {
+  try {
+    const code = String(req.body?.code || "").trim().toUpperCase();
+    const amount = Math.max(0, Number(req.body?.amount) || 0);
+    if (!code) return res.status(400).json({ valid: false, message: "Vui lòng nhập mã giảm giá." });
+
+    const r = await pool.query(
+      `SELECT * FROM coupons
+       WHERE UPPER(code) = $1 AND active = TRUE
+         AND (expires_at IS NULL OR expires_at > NOW())
+       LIMIT 1`,
+      [code]
+    );
+    if (r.rowCount === 0) {
+      return res.json({ valid: false, message: "Mã giảm giá không hợp lệ hoặc đã hết hạn." });
+    }
+
+    const c = r.rows[0];
+    const minOrder = Number(c.min_order) || 0;
+    if (amount < minOrder) {
+      return res.json({ valid: false, message: `Đơn tối thiểu ${minOrder.toLocaleString("vi-VN")}đ mới dùng được mã này.` });
+    }
+
+    let discount = 0;
+    if (c.discount_type === "percent") {
+      discount = Math.floor((amount * (Number(c.discount_value) || 0)) / 100);
+      if (c.max_discount != null) discount = Math.min(discount, Number(c.max_discount));
+    } else {
+      discount = Number(c.discount_value) || 0;
+    }
+    discount = Math.min(discount, amount); // không giảm vượt quá tổng đơn
+
+    return res.json({
+      valid: true,
+      code: c.code,
+      description: c.description,
+      discount,
+      finalAmount: Math.max(0, amount - discount),
+      message: `Áp dụng mã ${c.code} — giảm ${discount.toLocaleString("vi-VN")}đ.`,
+    });
+  } catch (err) {
+    console.error("POST /api/coupons/validate error:", err.message);
+    return res.status(500).json({ valid: false, message: "Lỗi máy chủ khi kiểm tra mã." });
+  }
+});
+
+// ══ Wishlist (yêu thích) ══════════════════════════════════════════════════
+app.get("/api/wishlist", verifyToken, async (req, res) => {
+  try {
+    const uid = req.user.userId;
+    const courses = await pool.query(
+      `SELECT w.item_id AS id, c.title, c.subject, c.price, c.thumbnail_url, u.full_name AS tutor_name
+       FROM wishlists w JOIN courses c ON c.id = w.item_id LEFT JOIN users u ON u.id = c.tutor_id
+       WHERE w.user_id = $1 AND w.item_type = 'course' ORDER BY w.created_at DESC`, [uid]);
+    const tutors = await pool.query(
+      `SELECT w.item_id AS id, u.full_name, u.picture, tp.subjects, tp.hourly_rate,
+              COALESCE(tp.avg_rating,0) AS avg_r, COALESCE(tp.review_count,0) AS review_count
+       FROM wishlists w JOIN users u ON u.id = w.item_id LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+       WHERE w.user_id = $1 AND w.item_type = 'tutor' ORDER BY w.created_at DESC`, [uid]);
+    return res.json({ courses: courses.rows, tutors: tutors.rows });
+  } catch (e) { console.error("GET /api/wishlist:", e.message); return res.status(500).json({ message: "Server error." }); }
+});
+
+app.post("/api/wishlist", verifyToken, async (req, res) => {
+  try {
+    const { item_type, item_id } = req.body || {};
+    if (!["course", "tutor"].includes(item_type) || !item_id) return res.status(400).json({ message: "Thiếu item_type/item_id." });
+    await pool.query(
+      `INSERT INTO wishlists (user_id, item_type, item_id) VALUES ($1,$2,$3)
+       ON CONFLICT (user_id, item_type, item_id) DO NOTHING`, [req.user.userId, item_type, item_id]);
+    return res.status(201).json({ ok: true });
+  } catch (e) { console.error("POST /api/wishlist:", e.message); return res.status(500).json({ message: "Server error." }); }
+});
+
+app.delete("/api/wishlist/:type/:id", verifyToken, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM wishlists WHERE user_id=$1 AND item_type=$2 AND item_id=$3`,
+      [req.user.userId, req.params.type, req.params.id]);
+    return res.json({ ok: true });
+  } catch (e) { console.error("DELETE /api/wishlist:", e.message); return res.status(500).json({ message: "Server error." }); }
+});
+
+// ══ Lịch sử đơn hàng (khóa đã đăng ký/mua) ════════════════════════════════
+app.get("/api/student/orders", verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT ce.id, ce.status, ce.created_at,
+              c.id AS course_id, c.title, c.subject, c.price, c.thumbnail_url,
+              u.full_name AS tutor_name
+       FROM course_enrollments ce
+       JOIN courses c ON c.id = ce.course_id
+       LEFT JOIN users u ON u.id = c.tutor_id
+       WHERE ce.student_id = $1
+       ORDER BY ce.created_at DESC`, [req.user.userId]);
+    return res.json(r.rows);
+  } catch (e) { console.error("GET /api/student/orders:", e.message); return res.status(500).json({ message: "Server error." }); }
+});
+
+// ══ Chứng chỉ hoàn thành khóa học ═════════════════════════════════════════
+app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const en = await pool.query(
+      `SELECT ce.id AS enrollment_id, ce.status, ce.created_at, c.title, c.subject,
+              u.full_name AS tutor_name, su.full_name AS student_name
+       FROM course_enrollments ce
+       JOIN courses c ON c.id = ce.course_id
+       LEFT JOIN users u  ON u.id  = c.tutor_id
+       LEFT JOIN users su ON su.id = ce.student_id
+       WHERE ce.course_id = $1 AND ce.student_id = $2 LIMIT 1`, [courseId, req.user.userId]);
+    if (en.rowCount === 0) return res.status(403).json({ eligible: false, message: "Bạn chưa đăng ký khóa học này." });
+    const row = en.rows[0];
+
+    // Tính tiến độ: số bài đã hoàn thành / tổng số bài
+    const totalRes = await pool.query(`SELECT COUNT(*)::int AS n FROM course_lessons WHERE course_id = $1`, [courseId]);
+    const total = totalRes.rows[0].n || 0;
+    const doneRes = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM course_progress cp
+       JOIN course_lessons cl ON cl.id = cp.lesson_id
+       WHERE cp.enrollment_id = $1 AND cp.is_completed = TRUE AND cl.course_id = $2`,
+      [row.enrollment_id, courseId]);
+    const done = doneRes.rows[0].n || 0;
+    const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+    const completed = row.status === "completed" || (total > 0 && done >= total);
+
+    if (!completed) {
+      return res.json({
+        eligible: false,
+        progress, completed: done, total,
+        message: total > 0
+          ? `Bạn đã hoàn thành ${done}/${total} bài học (${progress}%). Hãy học hết khóa để nhận chứng chỉ.`
+          : "Khóa học chưa có bài học để hoàn thành.",
+      });
+    }
+
+    return res.json({
+      eligible: true,
+      progress: 100,
+      courseTitle: row.title,
+      subject: row.subject,
+      tutorName: row.tutor_name || "EduX",
+      studentName: row.student_name || req.user.name || "Học viên",
+      issuedAt: new Date().toISOString(),
+      certId: `EDUX-${String(courseId).slice(0, 8).toUpperCase()}-${String(req.user.userId).slice(0, 6).toUpperCase()}`,
+    });
+  } catch (e) { console.error("GET certificate:", e.message); return res.status(500).json({ message: "Server error." }); }
+});
+
+// ══ Thanh toán giỏ hàng bằng VÍ (trừ số dư + đăng ký nhiều khóa) ══════════
+app.post("/api/cart/checkout", verifyToken, async (req, res) => {
+  const studentId = req.user.userId;
+  const { items, couponCode } = req.body || {};
+  const ids = Array.isArray(items) ? [...new Set(items.filter(Boolean))] : [];
+  if (ids.length === 0) return res.status(400).json({ message: "Giỏ hàng trống." });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const coursesRes = await client.query(
+      `SELECT id, title, price, tutor_id FROM courses WHERE id = ANY($1::uuid[])`, [ids]);
+    if (coursesRes.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy khóa học." }); }
+
+    const activeRes = await client.query(
+      `SELECT course_id FROM course_enrollments WHERE student_id=$1 AND course_id = ANY($2::uuid[]) AND status='active'`,
+      [studentId, ids]);
+    const active = new Set(activeRes.rows.map(r => r.course_id));
+    const toBuy = coursesRes.rows.filter(c => c.tutor_id !== studentId && !active.has(c.id));
+    if (toBuy.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Các khóa này bạn đã đăng ký hoặc không hợp lệ." }); }
+
+    const sumPrices = toBuy.reduce((s, c) => s + Number(c.price || 0), 0);
+
+    // Áp mã giảm giá phía server (chống chỉnh client)
+    let discount = 0;
+    if (couponCode) {
+      const cp = await client.query(
+        `SELECT * FROM coupons WHERE UPPER(code)=UPPER($1) AND active=TRUE AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1`, [couponCode]);
+      if (cp.rowCount > 0) {
+        const c = cp.rows[0];
+        if (sumPrices >= Number(c.min_order || 0)) {
+          if (c.discount_type === "percent") {
+            discount = Math.floor((sumPrices * Number(c.discount_value)) / 100);
+            if (c.max_discount != null) discount = Math.min(discount, Number(c.max_discount));
+          } else discount = Number(c.discount_value) || 0;
+          discount = Math.min(discount, sumPrices);
+        }
+      }
+    }
+    const finalTotal = Math.max(0, sumPrices - discount);
+
+    if (finalTotal > 0) {
+      const sw = await client.query(`SELECT id, balance FROM wallets WHERE user_id=$1 FOR UPDATE`, [studentId]);
+      if (sw.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy ví của bạn." }); }
+      if (Number(sw.rows[0].balance) < finalTotal) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư ví không đủ. Vui lòng nạp thêm tiền.", needed: finalTotal, balance: Number(sw.rows[0].balance) });
+      }
+      const swId = sw.rows[0].id;
+      await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id=$2`, [finalTotal, swId]);
+      await client.query(
+        `INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'PAYMENT','SUCCESS',$3)`,
+        [swId, -finalTotal, `Thanh toán giỏ hàng ${toBuy.length} khóa học${discount > 0 ? ` (giảm ${discount})` : ""}`]);
+
+      // Chia doanh thu theo tỉ lệ sau giảm: gia sư 90%, admin 10%
+      const ratio = sumPrices > 0 ? finalTotal / sumPrices : 1;
+      const adminW = await client.query(`SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1 FOR UPDATE`);
+      const adminWalletId = adminW.rows[0]?.id || null;
+      for (const c of toBuy) {
+        const eff = Math.round(Number(c.price || 0) * ratio);
+        if (eff <= 0) continue;
+        const adminShare = Math.round(eff * 0.1);
+        const tutorShare = eff - adminShare;
+        const tw = await client.query(`SELECT id FROM wallets WHERE user_id=$1 FOR UPDATE`, [c.tutor_id]);
+        if (tw.rowCount > 0) {
+          await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id=$2`, [tutorShare, tw.rows[0].id]);
+          await client.query(`INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'EARNING','SUCCESS',$3)`,
+            [tw.rows[0].id, tutorShare, `Doanh thu bán khóa học: ${c.title}`]);
+        }
+        if (adminWalletId) await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id=$2`, [adminShare, adminWalletId]);
+      }
+    }
+
+    // Đăng ký khóa (update nếu từng hủy, insert nếu mới)
+    const sName = (await client.query(`SELECT full_name FROM users WHERE id=$1`, [studentId])).rows[0]?.full_name || "Học sinh";
+    for (const c of toBuy) {
+      const upd = await client.query(`UPDATE course_enrollments SET status='active', updated_at=NOW() WHERE course_id=$1 AND student_id=$2`, [c.id, studentId]);
+      if (upd.rowCount === 0) {
+        await client.query(`INSERT INTO course_enrollments (course_id, student_id, student_name, status) VALUES ($1,$2,$3,'active')`, [c.id, studentId, sName]);
+      }
+    }
+
+    await client.query("COMMIT");
+    const bal = (await pool.query(`SELECT balance FROM wallets WHERE user_id=$1`, [studentId])).rows[0]?.balance ?? null;
+    return res.json({ success: true, enrolled: toBuy.length, total: finalTotal, discount, balance: bal });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    console.error("POST /api/cart/checkout:", e.message);
+    return res.status(500).json({ message: "Lỗi thanh toán: " + e.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ── GET /api/courses/:id/enrollment-status ── Kiểm tra đã đăng ký chưa ──────
 app.get("/api/courses/:id/enrollment-status", verifyToken, async (req, res) => {
   try {
@@ -3909,6 +4153,55 @@ async function startServer() {
     }
   } catch (err) {
     console.error("⚠️  DB migration (reviews) warning:", err.message);
+  }
+
+  // ── Mã giảm giá (coupons) ──
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS coupons (
+        id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        code           TEXT UNIQUE NOT NULL,
+        description    TEXT,
+        discount_type  TEXT NOT NULL DEFAULT 'percent',
+        discount_value NUMERIC NOT NULL,
+        max_discount   NUMERIC,
+        min_order      NUMERIC NOT NULL DEFAULT 0,
+        active         BOOLEAN NOT NULL DEFAULT TRUE,
+        expires_at     TIMESTAMPTZ,
+        created_at     TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    const { rows: cc } = await pool.query("SELECT COUNT(*) FROM coupons");
+    if (parseInt(cc[0].count) === 0) {
+      await pool.query(`
+        INSERT INTO coupons (code, description, discount_type, discount_value, max_discount, min_order) VALUES
+        ('EDUX10',    'Giảm 10% toàn đơn (tối đa 200.000đ)',       'percent', 10,     200000, 0),
+        ('WELCOME20', 'Giảm 20% cho đơn từ 100k (tối đa 100.000đ)','percent', 20,     100000, 100000),
+        ('GIAM50K',   'Giảm 50.000đ',                              'fixed',   50000,  NULL,   0),
+        ('SALE100K',  'Giảm 100.000đ cho đơn từ 500.000đ',         'fixed',   100000, NULL,   500000)
+      `);
+      console.log("✅ DB seed: 4 sample coupons inserted");
+    }
+    console.log("✅ DB migration: coupons table ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (coupons) warning:", err.message);
+  }
+
+  // ── Yêu thích (wishlist) ──
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS wishlists (
+        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        item_type  TEXT NOT NULL CHECK (item_type IN ('course','tutor')),
+        item_id    UUID NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_id, item_type, item_id)
+      )
+    `);
+    console.log("✅ DB migration: wishlists table ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (wishlists) warning:", err.message);
   }
 
   async function ensureCourseSchema() {

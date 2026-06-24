@@ -52,7 +52,7 @@ function CourseCover({ course }) {
   );
 }
 
-function CourseCard({ course, onAdd, user }) {
+function CourseCard({ course, onAdd, onFav, user }) {
   const discount = course.original_price && course.original_price > course.price
     ? Math.round((1 - course.price / course.original_price) * 100) : 0;
   return (
@@ -60,7 +60,7 @@ function CourseCard({ course, onAdd, user }) {
       className="group flex gap-4 bg-white border border-[#e5e7eb] rounded-2xl overflow-hidden shadow-sm hover:border-[#00288e]/40 hover:shadow-[0_12px_40px_-12px_rgba(0,40,142,0.25)] transition-all">
       <div className="w-[200px] min-w-[200px] h-[150px] shrink-0"><CourseCover course={course} /></div>
       <div className="flex-grow py-4 pr-2 min-w-0">
-        <h3 className="text-[#191c1e] font-bold text-lg leading-snug">{course.title}</h3>
+        <h3 className="text-[#191c1e] font-bold text-lg leading-snug group-hover:text-[#00288e] transition-colors">{course.title}</h3>
         <p className="text-[#5d5f5f] text-sm mt-1.5 line-clamp-2">{course.description}</p>
         <div className="flex items-center gap-2 mt-3">
           <span className="text-[#191c1e] font-bold text-sm">{(course.rating || 0).toFixed(1)}</span>
@@ -78,10 +78,16 @@ function CourseCard({ course, onAdd, user }) {
           {discount > 0 && <div className="text-[#16a34a] text-xs font-semibold">-{discount}%</div>}
         </div>
         {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-          <button onClick={() => onAdd(course)} title="Thêm vào giỏ"
-            className="btn-shine w-11 h-11 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white flex items-center justify-center hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)] transition-all">
-            <span className="material-symbols-outlined">add_shopping_cart</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={(e) => { e.stopPropagation(); onFav(course); }} title="Yêu thích"
+              className="w-11 h-11 rounded-xl border border-[#e11d48]/30 text-[#e11d48] flex items-center justify-center hover:bg-[#e11d48]/10 hover:-translate-y-0.5 transition-all">
+              <span className="material-symbols-outlined">favorite</span>
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); onAdd(course); }} title="Thêm vào giỏ"
+              className="btn-shine w-11 h-11 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white flex items-center justify-center hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)] transition-all">
+              <span className="material-symbols-outlined">add_shopping_cart</span>
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -147,6 +153,19 @@ export default function CoursesPage({ user }) {
     }
     setTimeout(() => setToast(''), 2200);
   };
+
+  const addFav = (c) => {
+    const token = localStorage.getItem('token');
+    if (!token) { setToast('Đăng nhập để lưu yêu thích.'); setTimeout(() => setToast(''), 2500); return; }
+    fetch(`${API_BASE}/api/wishlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ item_type: 'course', item_id: c.id }),
+    })
+      .then(() => setToast('Đã thêm vào Yêu thích ❤'))
+      .catch(() => setToast('Lỗi, thử lại.'))
+      .finally(() => setTimeout(() => setToast(''), 2500));
+  };
   const resetFilters = () => { setCat(''); setLevel(''); setMin(0); setSearch(''); setSort('newest'); };
 
   return (
@@ -170,6 +189,12 @@ export default function CoursesPage({ user }) {
           </nav>
           {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
             <div className="flex items-center gap-4 z-10 ml-4 md:ml-0">
+              <a href="#/wishlist" className="text-[#e11d48] flex items-center" title="Yêu thích">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>favorite</span>
+              </a>
+              <a href="#/orders" className="text-[#00288e] flex items-center" title="Đơn hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>receipt_long</span>
+              </a>
               <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
                 <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
               </a>
@@ -255,7 +280,7 @@ export default function CoursesPage({ user }) {
             <div className="space-y-5">
               {filtered.length === 0 ? (
                 <div className="text-center text-[#757684] py-16">Không tìm thấy khóa học phù hợp. Thử xóa bớt bộ lọc nhé.</div>
-              ) : filtered.map(c => <CourseCard key={c.id} course={c} onAdd={addToCart} user={user} />)}
+              ) : filtered.map(c => <CourseCard key={c.id} course={c} onAdd={addToCart} onFav={addFav} user={user} />)}
             </div>
           </div>
         </div>
