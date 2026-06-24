@@ -19,7 +19,7 @@ export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
   };
 
   return (
-    <div className="bg-[#f8f9fb] min-h-screen text-[#191c1e] font-sans flex flex-col">
+    <div className="aqua-bg min-h-screen text-[#191c1e] font-sans flex flex-col">
       {/* Top Navigation Bar */}
       <nav className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
         <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">
@@ -39,7 +39,12 @@ export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
           </div>
 
           {/* Auth Buttons */}
-          <div className="flex items-center gap-4 z-10">
+          <div className="flex items-center gap-6 z-10">
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
              {user ? (
                <button
                  onClick={() => {

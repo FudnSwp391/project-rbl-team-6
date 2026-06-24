@@ -17,6 +17,7 @@ import QuizTaking from './QuizTaking'
 import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
+import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import THPTSubjectsPage from './THPTSubjectsPage'
 import TieuHocSubjectsPage from './TieuHocSubjectsPage'
@@ -26,6 +27,10 @@ import TutorProfile from './pages/TutorProfile'
 import CourseMarketplace from './pages/CourseMarketplace'
 import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
+import CartPage from './pages/CartPage'
+import OrdersPage from './pages/OrdersPage'
+import WishlistPage from './pages/WishlistPage'
+import CertificatePage from './pages/CertificatePage'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -127,6 +132,11 @@ const getRouteFromHash = () => {
   if (normalized === '/subjects/thcs') return { name: 'thcs-subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
+  if (normalized === '/cart') return { name: 'cart' }
+  if (normalized === '/orders') return { name: 'orders' }
+  if (normalized === '/wishlist') return { name: 'wishlist' }
+  const certMatch = normalized.match(/^\/certificate\/([^/]+)$/)
+  if (certMatch) return { name: 'certificate', id: certMatch[1] }
   if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
@@ -221,11 +231,28 @@ function formatTimeAgo(dateStr) {
   return `${Math.floor(diff / 86400)} ngày trước`
 }
 
+// Map 1 dòng gia sư từ /api/tutors → shape mà card "Gia Sư Nổi Bật" cần
+function mapApiTutor(t) {
+  return {
+    id: t.id,
+    name: t.full_name,
+    subjects: t.subjects ? t.subjects.split(',').map(s => s.trim()).filter(Boolean).slice(0, 3) : [],
+    rating: Number(t.avg_r || 0).toFixed(1),
+    reviews: t.review_count || 0,
+    rate: t.hourly_rate || 0,
+    description: t.bio || '',
+    avatar: t.profile_photo_url || t.picture
+      || `https://ui-avatars.com/api/?name=${encodeURIComponent(t.full_name || 'Tutor')}&background=00288e&color=fff&size=128`,
+    _raw: t,
+  }
+}
+
 function HomePage({ onGoSignIn }) {
   const { user, logout } = useAuth()
   const [topic, setTopic] = useState('')
   const [place, setPlace] = useState('')
   const [liveReviews, setLiveReviews] = useState([])
+  const [featuredTutors, setFeaturedTutors] = useState([])
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
 
@@ -233,6 +260,17 @@ function HomePage({ onGoSignIn }) {
     fetch(`${API_BASE}/api/reviews/featured?limit=12`)
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (Array.isArray(data) && data.length > 0) setLiveReviews(data) })
+      .catch(() => {})
+  }, [])
+
+  // Gia sư nổi bật: lấy top theo đánh giá từ DB thật (TV3)
+  useEffect(() => {
+    fetch(`${API_BASE}/api/tutors?sort=rating&limit=4`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const rows = data && Array.isArray(data.tutors) ? data.tutors : []
+        if (rows.length > 0) setFeaturedTutors(rows.map(mapApiTutor))
+      })
       .catch(() => {})
   }, [])
 
@@ -248,6 +286,7 @@ function HomePage({ onGoSignIn }) {
 
   const reviewsToShow = liveReviews.length > 0 ? liveReviews : feedbackData
   const displayFeedbackLive = [...reviewsToShow, ...reviewsToShow]
+  const featuredToShow = featuredTutors.length > 0 ? featuredTutors : tutors
 
   return (
     <div className="academia-page">
@@ -260,9 +299,9 @@ function HomePage({ onGoSignIn }) {
 
           <nav className="header-nav">
             <a href="#/find-tutors">Tìm Gia Sư</a>
+            <a href="#/courses">Khóa Học</a>
             <a href="#/become-tutor">Trở Thành Gia Sư</a>
             <a href="#/subjects">Môn Học</a>
-            <a href="#/courses">Khóa Học</a>
             {/* Show Admin link if user is admin */}
             {user?.role === 'admin' && (
               <a href="#/admin" style={{ color: 'var(--primary)', fontWeight: 700 }}>
@@ -271,67 +310,130 @@ function HomePage({ onGoSignIn }) {
             )}
           </nav>
 
-          {/* Show user info + logout OR login button */}
-          {user ? (
-            <div className="header-user" style={{ position: 'relative' }} ref={dropdownRef}>
-              <div 
-                style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}
-                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+          {/* Shopping Cart & User Actions */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a 
+                href="#/cart" 
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  color: 'var(--on-surface-variant, #444653)', 
+                  textDecoration: 'none',
+                  transition: 'color 0.2s'
+                }}
+                onMouseOver={(e) => e.currentTarget.style.color = 'var(--primary, #00288e)'}
+                onMouseOut={(e) => e.currentTarget.style.color = 'var(--on-surface-variant, #444653)'}
+                title="Giỏ hàng"
               >
-                {user.picture ? (
-                  <img
-                    src={user.picture}
-                    alt={user.name}
-                    className="header-avatar"
-                  />
-                ) : (
-                  <span className="material-symbols-outlined">account_circle</span>
-                )}
-                <span className="header-username">{user.name || user.email}</span>
-                <span style={{ fontSize: '0.8em' }}>▼</span>
-              </div>
-              
-              {isDropdownOpen && (
-                <div style={{
-                  position: 'absolute',
-                  top: '100%',
-                  right: 0,
-                  marginTop: '8px',
-                  backgroundColor: 'var(--surface, #fff)',
-                  border: '1px solid var(--outline-variant, #ccc)',
-                  borderRadius: '8px',
-                  boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-                  minWidth: '150px',
-                  zIndex: 1000,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  overflow: 'hidden'
-                }}>
-                  <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Dashboard</a>
-                  <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
-                  <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
-                  <button 
-                    onClick={logout} 
-                    style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
-                  >
-                    Logout
-                  </button>
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
+
+            {user ? (
+              <div className="header-user" style={{ position: 'relative' }} ref={dropdownRef}>
+                <div 
+                  style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}
+                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                >
+                  {user.picture ? (
+                    <img
+                      src={user.picture}
+                      alt={user.name}
+                      className="header-avatar"
+                    />
+                  ) : (
+                    <span className="material-symbols-outlined">account_circle</span>
+                  )}
+                  <span className="header-username">{user.name || user.email}</span>
+                  <span style={{ fontSize: '0.8em' }}>▼</span>
                 </div>
-              )}
-            </div>
-          ) : (
-            <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
-              Đăng Nhập
-            </button>
-          )}
+                
+                {isDropdownOpen && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: '8px',
+                    backgroundColor: 'var(--surface, #fff)',
+                    border: '1px solid var(--outline-variant, #ccc)',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                    minWidth: '150px',
+                    zIndex: 1000,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden'
+                  }}>
+                    <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Dashboard</a>
+                    <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
+                    <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
+                    <button 
+                      onClick={logout} 
+                      style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
+                    >
+                      Logout
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
+                Đăng Nhập
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
       <main>
         <section className="hero">
           <div className="hero-overlay" />
+          <div className="hero-glow-ring" aria-hidden="true" />
+          <div className="hero-bg-anim" aria-hidden="true">
+            <span className="hero-blob hero-blob-1" />
+            <span className="hero-blob hero-blob-2" />
+            <span className="hero-blob hero-blob-3" />
+            <span className="hero-grid" />
+            <span className="hero-particle hero-particle-1" />
+            <span className="hero-particle hero-particle-2" />
+            <span className="hero-particle hero-particle-3" />
+            <span className="hero-particle hero-particle-4" />
+            <span className="hero-particle hero-particle-5" />
+          </div>
+          <div className="hero-shine" aria-hidden="true" />
+
+          {/* Thẻ kính nổi — phong cách sàn khóa học */}
+          <div className="hero-stat hero-stat-1" aria-hidden="true">
+            <div className="hero-stat-ico"><span className="material-symbols-outlined" style={{ fontSize: 20 }}>menu_book</span></div>
+            <div><div className="hero-stat-num">12K+</div><div className="hero-stat-label">Khóa học</div></div>
+          </div>
+          <div className="hero-stat hero-stat-2" aria-hidden="true">
+            <div className="hero-stat-ico"><span className="material-symbols-outlined" style={{ fontSize: 20 }}>groups</span></div>
+            <div><div className="hero-stat-num">500+</div><div className="hero-stat-label">Giảng viên</div></div>
+          </div>
+          <div className="hero-stat hero-stat-3" aria-hidden="true">
+            <div className="hero-stat-ico"><span className="material-symbols-outlined icon-fill" style={{ fontSize: 20 }}>star</span></div>
+            <div><div className="hero-stat-num">4.9★</div><div className="hero-stat-label">Đánh giá</div></div>
+          </div>
+
+          {/* Thẻ khóa học nổi — đậm chất sàn bán khóa học */}
+          <div className="hero-course-card" aria-hidden="true">
+            <div className="hcc-thumb">
+              <span className="material-symbols-outlined" style={{ fontSize: 46 }}>code</span>
+              <span className="hcc-badge">★ Bán chạy</span>
+            </div>
+            <div className="hcc-body">
+              <div className="hcc-cat">Lập trình</div>
+              <div className="hcc-title">Python cơ bản đến nâng cao</div>
+              <div className="hcc-meta"><span className="hcc-stars">★★★★★</span><b>4.9</b><span className="hcc-dot">·</span>1.240 học viên</div>
+              <div className="hcc-foot"><span className="hcc-price">499.000đ</span><span className="hcc-old">800.000đ</span></div>
+            </div>
+          </div>
+
           <div className="container hero-content">
-            <h1>Tìm gia sư hoàn hảo cho hành trình học tập của bạn</h1>
+            <div className="hero-badge"><span className="hero-badge-dot" />Cộng đồng học tập hàng đầu Việt Nam</div>
+            <h1>Tìm <span className="hero-highlight">gia sư &amp; khóa học</span> hoàn hảo cho hành trình học tập của bạn</h1>
             <p>
               Các nhà giáo dục chuyên nghiệp sẵn sàng giúp bạn nắm vững các môn học mới
               và đạt được mục tiêu học tập của bạn.
@@ -359,6 +461,18 @@ function HomePage({ onGoSignIn }) {
                 Tìm Kiếm
               </button>
             </div>
+            <div className="hero-trust">
+              <div className="hero-avatars">
+                <span style={{ background: 'linear-gradient(135deg,#4c6ef5,#7c5cff)' }}>K</span>
+                <span style={{ background: 'linear-gradient(135deg,#f6d98c,#e0a82e)' }}>M</span>
+                <span style={{ background: 'linear-gradient(135deg,#10b981,#065f46)' }}>T</span>
+                <span style={{ background: 'linear-gradient(135deg,#f43f5e,#831843)' }}>L</span>
+                <span className="hero-avatars-more">+9K</span>
+              </div>
+              <div className="hero-trust-text">
+                <b>10.000+</b> học viên đang học · <span className="hero-trust-stars">★★★★★</span> <b>4.9/5</b>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -382,14 +496,14 @@ function HomePage({ onGoSignIn }) {
           <div className="container">
             <div className="section-head">
               <h2>Gia Sư Nổi Bật</h2>
-              <a href="#" className="see-all">
+              <a href="#/find-tutors" className="see-all">
                 Xem tất cả
                 <span className="material-symbols-outlined">arrow_forward</span>
               </a>
             </div>
 
             <div className="tutor-grid">
-              {tutors.map((tutor) => (
+              {featuredToShow.map((tutor) => (
                 <article className="tutor-card" key={tutor.id}>
                   <div className="tutor-top">
                     <img src={tutor.avatar} alt={tutor.name} loading="lazy" />
@@ -419,7 +533,18 @@ function HomePage({ onGoSignIn }) {
                       <strong>${tutor.rate}</strong>
                       <span>/giờ</span>
                     </p>
-                    <button type="button" className="btn btn-outline">
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => {
+                        if (tutor._raw) {
+                          sessionStorage.setItem('viewingTutor', JSON.stringify(tutor._raw))
+                          window.location.hash = `/tutor-detail/${tutor.id}`
+                        } else {
+                          window.location.hash = '/find-tutors'
+                        }
+                      }}
+                    >
                       Xem Hồ Sơ
                     </button>
                   </div>
@@ -705,6 +830,9 @@ function App() {
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
+  if (routeName === 'courses') {
+    return <CoursesPage user={user} />
+  }
   if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
@@ -724,6 +852,20 @@ function App() {
   // ── Route: Course Marketplace ──
   if (routeName === 'courses') {
     return <CourseMarketplace />;
+  }
+
+  // ── Route: Cart ──
+  if (routeName === 'cart') {
+    return <CartPage onGoSignIn={() => navigateTo('signin')} user={user} />
+  }
+  if (routeName === 'orders') {
+    return <OrdersPage user={user} onGoSignIn={() => navigateTo('signin')} />
+  }
+  if (routeName === 'wishlist') {
+    return <WishlistPage user={user} onGoSignIn={() => navigateTo('signin')} />
+  }
+  if (routeName === 'certificate') {
+    return <CertificatePage courseId={route.id} user={user} onGoSignIn={() => navigateTo('signin')} />
   }
 
   if (routeName === 'booking') {
@@ -754,14 +896,6 @@ function App() {
   }
 
   if (routeName === 'coursedetail') {
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
     return <CourseDetail courseId={route.id} />
   }
 

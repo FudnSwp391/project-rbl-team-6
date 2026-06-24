@@ -10,10 +10,12 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   // 'login' | 'forgot_email' | 'forgot_otp' | 'forgot_new_pwd'
   const [viewMode, setViewMode] = useState('login')
 
-  const savedEmail = localStorage.getItem('rememberedEmail') || ''
-  const [rememberMe, setRememberMe] = useState(!!savedEmail)
+  // Ghi nhớ EMAIL đã đăng nhập (KHÔNG lưu mật khẩu — an toàn hơn)
+  const lastEmail = localStorage.getItem('lastEmail') || localStorage.getItem('rememberedEmail') || ''
+
+  const [rememberMe, setRememberMe] = useState(true)
   const [formData, setFormData] = useState({
-    email: savedEmail,
+    email: lastEmail,
     password: '',
   })
   
@@ -76,11 +78,16 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data?.message || 'Đăng nhập thất bại.')
+      
+      // Ghi nhớ EMAIL (KHÔNG lưu mật khẩu)
       if (rememberMe) {
-        localStorage.setItem('rememberedEmail', formData.email)
+        localStorage.setItem('lastEmail', formData.email)
       } else {
-        localStorage.removeItem('rememberedEmail')
+        localStorage.removeItem('lastEmail')
       }
+      // Dọn dữ liệu mật khẩu lưu kiểu cũ (nếu có) cho an toàn
+      localStorage.removeItem('rememberedAccounts')
+      localStorage.removeItem('rememberedPassword')
       if (data.suspiciousLogin) {
         setSuspiciousAlert(data.loginIP)
         setTimeout(() => { login(data.token, data.user) }, 3500)
@@ -253,7 +260,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
               )}
             </div>
           </div>
-          <span className="font-label-sm text-label-sm text-on-surface-variant">Nhớ mật khẩu</span>
+          <span className="font-label-sm text-label-sm text-on-surface-variant">Ghi nhớ email</span>
         </label>
 
         {errors.success ? (
