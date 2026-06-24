@@ -231,8 +231,52 @@
 .hero-stat-2 { top: 24%; right: 4%; animation-delay: 1.1s; }
 .hero-stat-3 { bottom: 16%; left: 6%; animation-delay: 2.1s; }
 
+/* ── Thẻ khóa học nổi (đậm chất sàn bán khóa học) ── */
+.hero-course-card {
+  position: absolute; z-index: 3; right: 3%; bottom: 11%; width: 250px;
+  border-radius: 18px; overflow: hidden;
+  background: rgb(255 255 255 / 10%); backdrop-filter: blur(16px);
+  border: 1px solid rgb(255 255 255 / 22%);
+  box-shadow: 0 26px 56px -16px rgb(0 0 0 / 62%), inset 0 1px 0 rgb(255 255 255 / 14%);
+  animation: heroFloatY 6.5s ease-in-out infinite; animation-delay: .6s;
+}
+.hcc-thumb { position: relative; height: 100px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, #0ea5e9, #1e3a8a); }
+.hcc-thumb::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 40%, rgb(0 0 0 / 35%)); }
+.hcc-badge { position: absolute; top: 8px; left: 8px; z-index: 1; font-size: 10px; font-weight: 800; color: #1a1205; background: linear-gradient(135deg,#ffd76a,#e0a82e); padding: 3px 9px; border-radius: 999px; box-shadow: 0 4px 12px rgb(224 168 46 / 45%); }
+.hcc-body { padding: 12px 14px 14px; }
+.hcc-cat { font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: #ffd76a; }
+.hcc-title { font-size: 14.5px; font-weight: 800; color: #fff; line-height: 1.25; margin-top: 3px; }
+.hcc-meta { display: flex; align-items: center; gap: 5px; font-size: 11px; color: rgb(255 255 255 / 70%); margin-top: 7px; }
+.hcc-meta b { color: #fff; }
+.hcc-stars { color: #ffce4d; letter-spacing: -1px; }
+.hcc-dot { opacity: .5; }
+.hcc-foot { display: flex; align-items: baseline; gap: 8px; margin-top: 9px; }
+.hcc-price { font-size: 17px; font-weight: 900; color: #ffd76a; }
+.hcc-old { font-size: 12px; color: rgb(255 255 255 / 50%); text-decoration: line-through; }
+
+/* ── Social proof (avatar học viên + đánh giá) ── */
+.hero-trust { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+.hero-avatars { display: flex; }
+.hero-avatars span { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #fff; border: 2px solid #122163; margin-left: -9px; box-shadow: 0 3px 10px rgb(0 0 0 / 35%); }
+.hero-avatars span:first-child { margin-left: 0; }
+.hero-avatars-more { background: rgb(255 255 255 / 20%) !important; backdrop-filter: blur(6px); }
+.hero-trust-text { font-size: 13.5px; color: rgb(255 255 255 / 82%); }
+.hero-trust-text b { color: #fff; font-weight: 800; }
+.hero-trust-stars { color: #ffce4d; letter-spacing: -1px; }
+
+/* Nút tìm kiếm vàng premium */
+.search-button {
+  background: linear-gradient(135deg, #fde68a, #f5b301 55%, #d4900e) !important;
+  color: #2a1f04 !important; font-weight: 800 !important;
+  box-shadow: 0 10px 26px -8px rgb(224 168 46 / 70%), inset 0 1px 0 rgb(255 255 255 / 55%) !important;
+  border: none !important;
+}
+.search-button:hover { transform: translateY(-2px); box-shadow: 0 16px 34px -8px rgb(224 168 46 / 90%) !important; }
+
+@media (max-width: 1180px) { .hero-course-card { display: none; } }
+
 @media (prefers-reduced-motion: reduce) {
-  .hero, .hero-glow-ring, .hero-shine::after, .hero-stat, .hero-blob, .hero-grid, .hero-particle, .hero-highlight { animation: none !important; }
+  .hero, .hero-glow-ring, .hero-shine::after, .hero-stat, .hero-course-card, .hero-blob, .hero-grid, .hero-particle, .hero-highlight { animation: none !important; }
 }
 
 .hero-content {
