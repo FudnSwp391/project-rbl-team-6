@@ -139,7 +139,10 @@ export default function CoursesPage({ user }) {
     let cart = [];
     try {
       const stored = localStorage.getItem('edux_cart');
-      if (stored) cart = JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) cart = parsed;
+      }
     } catch (e) {}
     
     const exists = cart.find(item => item.id === c.id);

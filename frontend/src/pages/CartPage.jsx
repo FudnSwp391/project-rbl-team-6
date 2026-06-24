@@ -22,9 +22,16 @@ export default function CartPage({ onGoSignIn, user }) {
       try {
         const stored = localStorage.getItem('edux_cart');
         if (stored) {
-          setCartItems(JSON.parse(stored));
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            setCartItems(parsed);
+          } else {
+            setCartItems([]);
+          }
         }
-      } catch (e) {}
+      } catch (e) {
+        setCartItems([]);
+      }
     };
     loadCart();
     window.addEventListener('cartUpdated', loadCart);
