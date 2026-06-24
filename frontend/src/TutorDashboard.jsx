@@ -1,11 +1,13 @@
 /**
  * TutorDashboard.jsx
- * Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
+ * Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬
  * Dashboard dÄ‚Â nh cho gia sĂ†Â° (role: tutor).
- * HiĂ¡Â»Æ’n thĂ¡Â»â€¹: thu nhĂ¡ÂºÂ­p, giĂ¡Â»Â dĂ¡ÂºÂ¡y, hĂ¡Â»Âc sinh, yÄ‚Âªu cĂ¡ÂºÂ§u chĂ¡Â»Â duyĂ¡Â»â€¡t, lĂ¡Â»â€¹ch hÄ‚Â´m nay.
+ * HiĂ¡Â»Æ’n thĂ¡Â»â€¹: thu nhĂ¡ÂºÂ­p, giĂ¡Â»Â  dĂ¡ÂºÂ¡y, hĂ¡Â»Â c sinh, yÄ‚Âªu cĂ¡ÂºÂ§u chĂ¡Â»Â  duyĂ¡Â»â€¡t, lĂ¡Â»â€¹ch hÄ‚Â´m nay.
  */
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
+import AIChatBox from './AIChatBox'
+import TutorFeedbackModal from './components/MicroFeedback/TutorFeedbackModal'
 import { getBookings, updateBookingStatus,
          getTutorProfile, updateTutorBio, updateTutorAvatar, updateTutorCv, submitTutorProfile,
          addTutorCredential, deleteTutorCredential,
@@ -830,6 +832,7 @@ function TutorStudentsTab() {
   const [error, setError] = useState('')
   const [savingId, setSavingId] = useState('')
   const [attendanceNotes, setAttendanceNotes] = useState({})
+  const [feedbackLesson, setFeedbackLesson] = useState(null)
 
   const loadStudents = async () => {
     setLoading(true)
@@ -866,6 +869,41 @@ function TutorStudentsTab() {
       alert(e.message || 'Failed to update attendance.')
     } finally {
       setSavingId('')
+    }
+  }
+
+  const handleFeedbackSubmit = async (data) => {
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const payload = {
+        lesson_id: feedbackLesson.bookingId,
+        student_id: selectedStudent.studentId,
+        subject_name: feedbackLesson.subject || selectedStudent.subjects[0] || 'General',
+        focus_rating: data.focusRating,
+        understanding_level: data.understandingLevel,
+        homework_status: data.homeworkStatus,
+        tutor_note: data.tutorNote
+      };
+
+      const res = await fetch('/api/feedbacks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        setFeedbackLesson(null);
+        alert('Đã gửi đánh giá thành công!');
+      } else {
+        const err = await res.json();
+        throw new Error(err.error || 'Server error');
+      }
+    } catch (error) {
+      console.error('Lỗi khi gửi feedback:', error);
+      alert('Không thể gửi đánh giá: ' + error.message);
     }
   }
 
@@ -932,12 +970,21 @@ function TutorStudentsTab() {
                 <span className="text-[12px] font-bold text-on-surface-variant">{selectedStudent?.lessons?.length || 0} records</span>
               </div>
               <div className="divide-y divide-outline-variant/10">
-                {(selectedStudent?.lessons || []).map((lesson) => <AttendanceRow key={lesson.bookingId} lesson={lesson} saving={savingId === lesson.bookingId} note={attendanceNotes[lesson.bookingId] ?? lesson.attendanceNote ?? ''} onNoteChange={(value) => setAttendanceNotes((prev) => ({ ...prev, [lesson.bookingId]: value }))} onMark={(status) => handleAttendance(lesson, status)} />)}
+                {(selectedStudent?.lessons || []).map((lesson) => <AttendanceRow key={lesson.bookingId} lesson={lesson} saving={savingId === lesson.bookingId} note={attendanceNotes[lesson.bookingId] ?? lesson.attendanceNote ?? ''} onNoteChange={(value) => setAttendanceNotes((prev) => ({ ...prev, [lesson.bookingId]: value }))} onMark={(status) => handleAttendance(lesson, status)} onFeedback={() => setFeedbackLesson(lesson)} />)}
               </div>
             </div>
             <AbsenceTimeline lessons={selectedStudent?.lessons || allLessons} />
           </div>
         </div>
+      )}
+
+      {feedbackLesson && (
+        <TutorFeedbackModal
+          isOpen={!!feedbackLesson}
+          onClose={() => setFeedbackLesson(null)}
+          lessonData={{ studentName: selectedStudent?.childName || selectedStudent?.studentName, datetime: `${feedbackLesson.date} ${feedbackLesson.timeSlot}` }}
+          onSubmit={handleFeedbackSubmit}
+        />
       )}
     </div>
   )
@@ -952,10 +999,10 @@ function StudentDetailCard({ student }) {
   return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Selected student</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'No email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Lessons</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Absent</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Rate</p></div></div></div>{student.nextLesson && <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Next lesson: <strong>{student.nextLesson.date}</strong> at <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div>}</div>
 }
 
-function AttendanceRow({ lesson, saving, note, onNoteChange, onMark }) {
+function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback }) {
   const approved = lesson.bookingStatus === 'Approved'
   const statusConfig = { present: 'bg-[#dcfce7] text-[#16a34a] border-[#bbf7d0]', absent: 'bg-red-50 text-red-600 border-red-200', excused: 'bg-amber-50 text-amber-700 border-amber-200' }
-  return <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center"><div><p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'General'}</p><p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p><span className={`inline-flex mt-2 px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>{lesson.attendanceStatus || lesson.bookingStatus}</span></div><input value={note} onChange={(e) => onNoteChange(e.target.value)} placeholder="Attendance note..." disabled={!approved || saving} className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" /><div className="flex flex-wrap gap-2 justify-start lg:justify-end"><button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Present</button><button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Absent</button><button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Excused</button></div></div>
+  return <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center"><div><p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'General'}</p><p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p><span className={`inline-flex mt-2 px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>{lesson.attendanceStatus || lesson.bookingStatus}</span></div><input value={note} onChange={(e) => onNoteChange(e.target.value)} placeholder="Attendance note..." disabled={!approved || saving} className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" /><div className="flex flex-wrap gap-2 justify-start lg:justify-end"><button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Present</button><button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Absent</button><button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Excused</button><button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">edit_note</span>Feedback</button></div></div>
 }
 
 function AbsenceTimeline({ lessons }) {

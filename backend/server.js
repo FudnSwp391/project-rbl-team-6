@@ -5519,7 +5519,73 @@ app.post("/api/ai-suggest", askAiHandler);
 app.post("/api/ask-ai", askAiHandler);
 
 // ─── Start server ─────────────────────────────────────────────────────────────
-app.listen(port, () => {
+
+  // ==========================================
+  // MICRO-FEEDBACK ROUTES
+  // ==========================================
+
+  // [POST] /api/feedbacks - Gia sư submit đánh giá
+  app.post('/api/feedbacks', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const tutorId = req.user.id;
+      const { lesson_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note } = req.body;
+
+      // Validate data
+      if (!student_id || !focus_rating || !understanding_level || !homework_status) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      // Insert feedback
+      const query = `
+        INSERT INTO lesson_feedbacks 
+        (lesson_id, tutor_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *
+      `;
+      const values = [
+        lesson_id || null, 
+        tutorId, 
+        student_id, 
+        subject_name, 
+        focus_rating, 
+        understanding_level, 
+        homework_status, 
+        tutor_note
+      ];
+      
+      const result = await pool.query(query, values);
+      const data = result.rows[0];
+
+      res.status(201).json({ message: "Feedback submitted successfully", data });
+    } catch (err) {
+      console.error('Error submitting feedback:', err.message);
+      res.status(500).json({ error: "Server error while submitting feedback", details: err.message });
+    }
+  });
+
+  // [GET] /api/feedbacks/student/:studentId - Phụ huynh/Học sinh lấy danh sách đánh giá
+  app.get('/api/feedbacks/student/:studentId', verifyToken, async (req, res) => {
+    try {
+      const { studentId } = req.params;
+      
+      // Sử dụng pg pool thay vì supabase client
+      const query = `
+        SELECT * FROM lesson_feedbacks
+        WHERE student_id = $1
+        ORDER BY created_at DESC
+      `;
+      const result = await pool.query(query, [studentId]);
+      const data = result.rows;
+
+      res.status(200).json({ data });
+    } catch (err) {
+      console.error('Error fetching feedbacks:', err.message);
+      res.status(500).json({ error: "Server error while fetching feedbacks", details: err.message });
+    }
+  });
+
+
+  app.listen(port, () => {
   console.log(`🚀 Server is running on http://localhost:${port}`);
 });
 

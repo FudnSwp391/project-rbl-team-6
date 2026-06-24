@@ -9,12 +9,14 @@ import { useAuth } from './AuthContext'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
+import ParentTimeline from './components/MicroFeedback/ParentTimeline'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
 const NAV = [
   { key: 'overview',  icon: 'dashboard',       label: 'Tổng quan' },
   { key: 'students',  icon: 'group',            label: 'Học sinh' },
+  { key: 'microfeedback', icon: 'rate_review',  label: 'Đánh giá buổi học' },
   { key: 'tutors',    icon: 'school',           label: 'Gia sư' },
   { key: 'messages',  icon: 'chat',             label: 'Tin nhắn' },
   { key: 'activity',  icon: 'analytics',        label: 'Hoạt động' },
@@ -191,12 +193,66 @@ export default function ParentDashboard() {
         <main className={`flex-1 overflow-y-auto ${section === 'messages' ? 'p-0' : 'p-md lg:p-lg'}`}>
           {section === 'overview'  && <OverviewSection  token={token} />}
           {section === 'students'  && <StudentsSection  token={token} />}
+          {section === 'microfeedback' && <MicrofeedbackSection token={token} />}
           {section === 'tutors'    && <TutorsSection    token={token} onOpenMessages={() => setSection('messages')} />}
           {section === 'messages'  && <MessagesSection  token={token} user={user} />}
           {section === 'activity'  && <ActivitySection  token={token} />}
           {section === 'finance'   && <FinanceSection   token={token} />}
           {section === 'settings'  && <SettingsSection  user={user} displayName={displayName} />}
         </main>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: MICROFEEDBACK
+// ═══════════════════════════════════════════════════════════════════════════════
+function MicrofeedbackSection({ token }) {
+  const [children, setChildren] = useState([])
+  const [selectedStudentId, setSelectedStudentId] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/parent/children`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => {
+        const list = d.children || [];
+        setChildren(list);
+        if (list.length > 0) setSelectedStudentId(list[0].student_id);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <LoadingSkeleton />
+
+  if (children.length === 0) {
+    return <EmptyState icon="sentiment_dissatisfied" text="Bạn chưa có học sinh nào. Hãy thêm học sinh ở mục Học sinh trước." />
+  }
+
+  return (
+    <div className="flex flex-col gap-lg max-w-5xl mx-auto">
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {children.map(child => (
+          <button
+            key={child.student_id}
+            onClick={() => setSelectedStudentId(child.student_id)}
+            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border ${
+              selectedStudentId === child.student_id 
+                ? 'bg-primary text-white border-primary shadow-sm scale-105'
+                : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+            }`}
+          >
+            {child.nickname || child.student_name}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+        {selectedStudentId && <ParentTimeline studentId={selectedStudentId} />}
       </div>
     </div>
   )
@@ -739,6 +795,11 @@ function StudentDetailView({ token, student, onBack }) {
             </div>
           </div>
         )}
+      </div>
+
+      {/* ── 4. Đánh giá nhanh từ gia sư (Micro-feedback) ── */}
+      <div className="mt-4">
+        <ParentTimeline studentId={student.student_id} />
       </div>
 
       {/* Modals */}
