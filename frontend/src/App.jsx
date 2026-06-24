@@ -404,6 +404,20 @@ function HomePage({ onGoSignIn }) {
             <div><div className="hero-stat-num">4.9★</div><div className="hero-stat-label">Đánh giá</div></div>
           </div>
 
+          {/* Thẻ khóa học nổi — đậm chất sàn bán khóa học */}
+          <div className="hero-course-card" aria-hidden="true">
+            <div className="hcc-thumb">
+              <span className="material-symbols-outlined" style={{ fontSize: 46 }}>code</span>
+              <span className="hcc-badge">★ Bán chạy</span>
+            </div>
+            <div className="hcc-body">
+              <div className="hcc-cat">Lập trình</div>
+              <div className="hcc-title">Python cơ bản đến nâng cao</div>
+              <div className="hcc-meta"><span className="hcc-stars">★★★★★</span><b>4.9</b><span className="hcc-dot">·</span>1.240 học viên</div>
+              <div className="hcc-foot"><span className="hcc-price">499.000đ</span><span className="hcc-old">800.000đ</span></div>
+            </div>
+          </div>
+
           <div className="container hero-content">
             <div className="hero-badge"><span className="hero-badge-dot" />Cộng đồng học tập hàng đầu Việt Nam</div>
             <h1>Tìm <span className="hero-highlight">gia sư &amp; khóa học</span> hoàn hảo cho hành trình học tập của bạn</h1>
@@ -433,6 +447,18 @@ function HomePage({ onGoSignIn }) {
               <button type="button" className="btn btn-primary search-button">
                 Tìm Kiếm
               </button>
+            </div>
+            <div className="hero-trust">
+              <div className="hero-avatars">
+                <span style={{ background: 'linear-gradient(135deg,#4c6ef5,#7c5cff)' }}>K</span>
+                <span style={{ background: 'linear-gradient(135deg,#f6d98c,#e0a82e)' }}>M</span>
+                <span style={{ background: 'linear-gradient(135deg,#10b981,#065f46)' }}>T</span>
+                <span style={{ background: 'linear-gradient(135deg,#f43f5e,#831843)' }}>L</span>
+                <span className="hero-avatars-more">+9K</span>
+              </div>
+              <div className="hero-trust-text">
+                <b>10.000+</b> học viên đang học · <span className="hero-trust-stars">★★★★★</span> <b>4.9/5</b>
+              </div>
             </div>
           </div>
         </section>
