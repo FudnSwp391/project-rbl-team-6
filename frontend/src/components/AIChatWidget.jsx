@@ -87,7 +87,7 @@ export default function AIChatWidget() {
           aria-label="Mở trợ lý AI"
           className="fixed bottom-6 right-6 z-[60] w-14 h-14 rounded-full bg-[#00288e] text-white shadow-lg hover:bg-[#1e40af] hover:scale-105 transition-all flex items-center justify-center"
         >
-          <span className="material-symbols-outlined text-[26px]" style={{ fontVariationSettings: "'FILL' 1" }}>chat</span>
+          <span className="material-symbols-outlined text-[26px]" style={{ fontVariationSettings: "'FILL' 1" }}>smart_toy</span>
         </button>
       )}
 

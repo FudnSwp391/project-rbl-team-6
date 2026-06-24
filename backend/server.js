@@ -2568,10 +2568,14 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
         FROM users u
         LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
         WHERE 
-          (u.role = 'tutor' AND tp.status = 'approved' AND u.id IN (
+          (u.role = 'tutor' AND u.id IN (
+            -- Đã vào class/course
             SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1
             UNION
             SELECT crs.tutor_id FROM courses crs JOIN course_enrollments ce ON crs.id = ce.course_id WHERE ce.student_id = $1
+            UNION
+            -- Đã có booking với gia sư (dù chưa vào class/course — để trao đổi trước/sau khi đặt lịch)
+            SELECT b.tutor_id FROM bookings b WHERE b.student_id = $1 AND b.tutor_id IS NOT NULL
           ))
           OR
           (u.role = 'parent' AND u.id IN (
@@ -2590,13 +2594,18 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
             SELECT student_id FROM parent_children WHERE parent_id = $1
           ))
           OR
-          (u.role = 'tutor' AND tp.status = 'approved' AND u.id IN (
+          (u.role = 'tutor' AND u.id IN (
             SELECT c.tutor_id FROM classes c 
             JOIN class_members cm ON c.id = cm.class_id 
             JOIN parent_children pc ON cm.student_id = pc.student_id 
             WHERE pc.parent_id = $1
             UNION
             SELECT crs.tutor_id FROM courses crs JOIN course_enrollments ce ON crs.id = ce.course_id JOIN parent_children pc ON ce.student_id = pc.student_id WHERE pc.parent_id = $1
+            UNION
+            -- Phụ huynh cũng thấy gia sư của học sinh có booking
+            SELECT b.tutor_id FROM bookings b 
+            JOIN parent_children pc ON b.student_id = pc.student_id 
+            WHERE pc.parent_id = $1 AND b.tutor_id IS NOT NULL
           ))
         ORDER BY u.full_name
       `, [userId]);
@@ -2609,6 +2618,9 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
             SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1
             UNION
             SELECT ce.student_id FROM course_enrollments ce JOIN courses crs ON ce.course_id = crs.id WHERE crs.tutor_id = $1
+            UNION
+            -- Học sinh đã book lịch với gia sư
+            SELECT b.student_id FROM bookings b WHERE b.tutor_id = $1 AND b.student_id IS NOT NULL
           ))
           OR
           (u.role = 'parent' AND u.id IN (
@@ -2618,6 +2630,9 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
             WHERE c.tutor_id = $1
             UNION
             SELECT pc.parent_id FROM parent_children pc JOIN course_enrollments ce ON pc.student_id = ce.student_id JOIN courses crs ON ce.course_id = crs.id WHERE crs.tutor_id = $1
+            UNION
+            -- Phụ huynh của học sinh có booking
+            SELECT pc.parent_id FROM parent_children pc JOIN bookings b ON b.student_id = pc.student_id WHERE b.tutor_id = $1
           ))
         ORDER BY u.full_name
       `, [userId]);
@@ -2630,16 +2645,17 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
 
 async function checkChatPermission(userId, userRole, otherId) {
   if (userRole === 'admin') return true; // admin can chat with anyone
-  // For simplicity, we just check if otherId is in the allowed contacts list.
-  // This isn't the most efficient (fetches full list) but it's safe and DRY enough for now.
   let allowed = false;
   if (userRole === 'student') {
     const res = await pool.query(`
       SELECT 1 FROM users u WHERE u.id = $2 AND (
         (u.role = 'tutor' AND u.id IN (
+           -- Đã vào class/course hoặc đã có booking
            SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id WHERE cm.student_id = $1
            UNION
            SELECT crs.tutor_id FROM courses crs JOIN course_enrollments ce ON crs.id = ce.course_id WHERE ce.student_id = $1
+           UNION
+           SELECT b.tutor_id FROM bookings b WHERE b.student_id = $1 AND b.tutor_id IS NOT NULL
         ))
         OR
         (u.role = 'parent' AND u.id IN (SELECT parent_id FROM parent_children WHERE student_id = $1))
@@ -2655,6 +2671,8 @@ async function checkChatPermission(userId, userRole, otherId) {
            SELECT c.tutor_id FROM classes c JOIN class_members cm ON c.id = cm.class_id JOIN parent_children pc ON cm.student_id = pc.student_id WHERE pc.parent_id = $1
            UNION
            SELECT crs.tutor_id FROM courses crs JOIN course_enrollments ce ON crs.id = ce.course_id JOIN parent_children pc ON ce.student_id = pc.student_id WHERE pc.parent_id = $1
+           UNION
+           SELECT b.tutor_id FROM bookings b JOIN parent_children pc ON b.student_id = pc.student_id WHERE pc.parent_id = $1 AND b.tutor_id IS NOT NULL
         ))
       )
     `, [userId, otherId]);
@@ -2666,12 +2684,16 @@ async function checkChatPermission(userId, userRole, otherId) {
            SELECT cm.student_id FROM class_members cm JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1
            UNION
            SELECT ce.student_id FROM course_enrollments ce JOIN courses crs ON ce.course_id = crs.id WHERE crs.tutor_id = $1
+           UNION
+           SELECT b.student_id FROM bookings b WHERE b.tutor_id = $1 AND b.student_id IS NOT NULL
         ))
         OR
         (u.role = 'parent' AND u.id IN (
            SELECT pc.parent_id FROM parent_children pc JOIN class_members cm ON pc.student_id = cm.student_id JOIN classes c ON c.id = cm.class_id WHERE c.tutor_id = $1
            UNION
            SELECT pc.parent_id FROM parent_children pc JOIN course_enrollments ce ON pc.student_id = ce.student_id JOIN courses crs ON ce.course_id = crs.id WHERE crs.tutor_id = $1
+           UNION
+           SELECT pc.parent_id FROM parent_children pc JOIN bookings b ON b.student_id = pc.student_id WHERE b.tutor_id = $1
         ))
       )
     `, [userId, otherId]);
@@ -2680,6 +2702,55 @@ async function checkChatPermission(userId, userRole, otherId) {
   return allowed;
 }
 
+// POST /api/chat/start — học sinh bắt đầu chat với gia sư (cho phép hỏi trước khi đặt lịch)
+// ⚠️ MUST be before /api/chat/:otherId to avoid wildcard match
+app.post('/api/chat/start', verifyToken, async (req, res) => {
+  try {
+    const senderId = req.user.userId;
+    const userRole = req.user.role;
+    const { tutor_id, content } = req.body;
+
+    if (!tutor_id) return res.status(400).json({ message: 'tutor_id là bắt buộc.' });
+
+    // Kiểm tra gia sư tồn tại và là tutor
+    const tutorCheck = await pool.query(
+      `SELECT u.id, u.full_name, u.email, u.picture, u.role, tp.status
+       FROM users u
+       LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+       WHERE u.id = $1 AND u.role = 'tutor'`,
+      [tutor_id]
+    );
+    if (!tutorCheck.rows.length) {
+      return res.status(404).json({ message: 'Gia sư không tồn tại.' });
+    }
+
+    // Nếu có content, gửi tin nhắn đầu tiên
+    let firstMsg = null;
+    if (content?.trim()) {
+      const msg = await pool.query(
+        `INSERT INTO chat_messages (sender_id, receiver_id, content, msg_type)
+         VALUES ($1, $2, $3, 'text') RETURNING *`,
+        [senderId, tutor_id, content.trim()]
+      );
+      firstMsg = msg.rows[0];
+
+      // Thêm thông báo cho gia sư
+      try {
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+           VALUES ($1, 'new_message', $2, $3, 'chat', $4, 'chat')`,
+          [tutor_id, `Tin nhắn mới từ ${req.user.name || 'một học sinh'}`, content.trim(), senderId]
+        );
+      } catch (_) {}
+    }
+
+    return res.status(201).json({
+      tutor: tutorCheck.rows[0],
+      message: firstMsg,
+    });
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
 // GET /api/chat/:otherId — lịch sử tin nhắn + đánh dấu đã đọc
 app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
   try {
@@ -2687,8 +2758,15 @@ app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
     const userRole = req.user.role;
     const { otherId } = req.params;
 
+    // Kiểm tra quyền: hoặc là liên hệ được phép, hoặc đã có tin nhắn từ trước (chat_messages)
     const allowed = await checkChatPermission(userId, userRole, otherId);
-    if (!allowed) {
+    const hasExistingMessages = await pool.query(
+      `SELECT 1 FROM chat_messages
+       WHERE (sender_id=$1 AND receiver_id=$2) OR (sender_id=$2 AND receiver_id=$1)
+       LIMIT 1`,
+      [userId, otherId]
+    );
+    if (!allowed && hasExistingMessages.rowCount === 0) {
       return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
     }
 
@@ -2723,7 +2801,16 @@ app.post('/api/chat', verifyToken, async (req, res) => {
     const userRole = req.user.role;
     const allowed = await checkChatPermission(senderId, userRole, receiver_id);
     if (!allowed) {
-      return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+      // Cho phép tiếp tục nếu đã có lịch sử chat từ trước (ví dụ: đã nhắn tin hỏi trước khi đặt lịch)
+      const hasExisting = await pool.query(
+        `SELECT 1 FROM chat_messages
+         WHERE (sender_id=$1 AND receiver_id=$2) OR (sender_id=$2 AND receiver_id=$1)
+         LIMIT 1`,
+        [senderId, receiver_id]
+      );
+      if (hasExisting.rowCount === 0) {
+        return res.status(403).json({ message: 'Bạn không có quyền nhắn tin với người dùng này.' });
+      }
     }
 
     const receiver = await pool.query(`SELECT id FROM users WHERE id=$1`, [receiver_id]);
