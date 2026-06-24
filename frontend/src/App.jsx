@@ -25,6 +25,9 @@ import CourseMarketplace from './pages/CourseMarketplace'
 import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
 import CartPage from './pages/CartPage'
+import OrdersPage from './pages/OrdersPage'
+import WishlistPage from './pages/WishlistPage'
+import CertificatePage from './pages/CertificatePage'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -124,6 +127,10 @@ const getRouteFromHash = () => {
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
   if (normalized === '/cart') return { name: 'cart' }
+  if (normalized === '/orders') return { name: 'orders' }
+  if (normalized === '/wishlist') return { name: 'wishlist' }
+  const certMatch = normalized.match(/^\/certificate\/([^/]+)$/)
+  if (certMatch) return { name: 'certificate', id: certMatch[1] }
   if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
@@ -835,6 +842,15 @@ function App() {
   // ── Route: Cart ──
   if (routeName === 'cart') {
     return <CartPage onGoSignIn={() => navigateTo('signin')} user={user} />
+  }
+  if (routeName === 'orders') {
+    return <OrdersPage user={user} onGoSignIn={() => navigateTo('signin')} />
+  }
+  if (routeName === 'wishlist') {
+    return <WishlistPage user={user} onGoSignIn={() => navigateTo('signin')} />
+  }
+  if (routeName === 'certificate') {
+    return <CertificatePage courseId={route.id} user={user} onGoSignIn={() => navigateTo('signin')} />
   }
 
   if (routeName === 'booking') {
