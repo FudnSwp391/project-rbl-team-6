@@ -27,7 +27,8 @@ export default function CartPage({ onGoSignIn, user }) {
     const loadCart = () => {
       try {
         const stored = localStorage.getItem('edux_cart');
-        const arr = stored ? JSON.parse(stored) : [];
+        const parsed = stored ? JSON.parse(stored) : [];
+        const arr = Array.isArray(parsed) ? parsed : []; // an toàn nếu localStorage hỏng
         // Loại bỏ khóa demo cũ (id không phải UUID) — không mua được
         const clean = arr.filter(it => UUID_RE.test(String(it.id)));
         if (clean.length !== arr.length) {
@@ -35,7 +36,9 @@ export default function CartPage({ onGoSignIn, user }) {
           setDemoRemoved(arr.length - clean.length);
         }
         setCartItems(clean);
-      } catch (e) {}
+      } catch (e) {
+        setCartItems([]);
+      }
     };
     loadCart();
     window.addEventListener('cartUpdated', loadCart);

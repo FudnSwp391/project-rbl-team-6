@@ -105,10 +105,13 @@ export default function CoursesPage({ user }) {
 
   useEffect(() => {
     fetch(`${API_BASE}/api/courses`)
-      .then(r => r.ok ? r.json() : null)
+      .then(async r => {
+        if (!r.ok) throw new Error('API failed');
+        return r.json();
+      })
       .then(d => {
-        // API có thể trả về mảng trực tiếp hoặc { courses: [...] }
         const raw = Array.isArray(d) ? d : (d && Array.isArray(d.courses) ? d.courses : []);
+        if (raw.length === 0) throw new Error('No courses found');
         const rows = raw.map(c => ({
             id: c.id, title: c.title, description: c.description || '',
             category: c.subject, level: c.level || '',
@@ -117,15 +120,23 @@ export default function CoursesPage({ user }) {
           }));
         setApiCourses(rows);
       })
-      .catch(() => {});
+      .catch(() => {
+        // Fallback mock data when API fails or DB is empty
+        setApiCourses([
+          { id: 1, title: 'Toán Cao Cấp 1', description: 'Đại số tuyến tính & Hình học giải tích', category: 'Toán Học', level: 'Khóa đại học', price: 500000, original_price: 600000, rating: 4.8, reviews: 120, lessons: 30 },
+          { id: 2, title: 'Lập Trình C++ Cơ Bản', description: 'Nhập môn lập trình với C++', category: 'Kỹ Thuật Phần Mềm', level: 'Khóa đại học', price: 400000, original_price: 550000, rating: 4.5, reviews: 85, lessons: 25 },
+          { id: 3, title: 'Thiết Kế Vi Mạch VLSI', description: 'Nguyên lý và ứng dụng', category: 'Vi Mạch', level: 'Khóa đại học', price: 800000, original_price: 900000, rating: 4.9, reviews: 45, lessons: 40 },
+          { id: 4, title: 'Tiếng Anh Giao Tiếp', description: 'Tiếng Anh giao tiếp cơ bản', category: 'Ngoại Ngữ', level: 'Khóa học sinh', price: 0, original_price: 0, rating: 4.2, reviews: 210, lessons: 20 },
+        ]);
+      });
   }, []);
 
   const all = apiCourses;
 
   const filtered = useMemo(() => {
     let list = all.filter(c =>
-      (!cat || c.category === cat) &&
-      (!level || c.level === level) &&
+      (!cat || (c.category || '').toLowerCase() === cat.toLowerCase()) &&
+      (!level || (c.level || '').toLowerCase() === level.toLowerCase()) &&
       (!minRating || (c.rating || 0) >= minRating) &&
       (!search.trim() || `${c.title} ${c.description} ${c.category}`.toLowerCase().includes(search.trim().toLowerCase()))
     );
@@ -139,7 +150,10 @@ export default function CoursesPage({ user }) {
     let cart = [];
     try {
       const stored = localStorage.getItem('edux_cart');
-      if (stored) cart = JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) cart = parsed;
+      }
     } catch (e) {}
     
     const exists = cart.find(item => item.id === c.id);

@@ -25,6 +25,20 @@ export default function MessagesSection({ token, user }) {
     if (msgEndRef.current) msgEndRef.current.scrollIntoView({ behavior: 'smooth' })
   }
 
+  // ── Auto-open chat với gia sư cụ thể (khi điều hướng từ TutorProfile) ──
+  useEffect(() => {
+    const raw = sessionStorage.getItem('openChatWith')
+    if (raw) {
+      try {
+        const person = JSON.parse(raw)
+        if (person?.id) {
+          setActiveChat(person)
+        }
+      } catch {}
+      sessionStorage.removeItem('openChatWith')
+    }
+  }, [])
+
   // ── Fetch conversations ──
   const fetchConversations = useCallback(() => {
     fetch(`${API_BASE}/api/chat/conversations`, { headers: { Authorization: `Bearer ${token}` } })
