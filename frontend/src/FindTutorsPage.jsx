@@ -217,9 +217,31 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
     setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setPage(1);
   };
 
-  const displayTutors = isMock
-    ? MOCK_TUTORS
-    : tutors.filter(t => !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice);
+  const displayTutors = (isMock ? MOCK_TUTORS : tutors).filter(t => {
+    // 1. Max price
+    const matchPrice = !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice;
+    
+    // 2. Search text
+    const matchSearch = !search.trim() || 
+      `${t.full_name} ${t.subjects || ''} ${t.bio || ''}`.toLowerCase().includes(search.toLowerCase().trim());
+      
+    // 3. Subjects
+    const matchSubjects = selectedSubjects.length === 0 || 
+      selectedSubjects.some(sub => (t.subjects || '').toLowerCase().includes(sub.toLowerCase()));
+      
+    // 4. Method
+    const matchMethod = !method || 
+      (t.teaching_methods && Array.isArray(t.teaching_methods) ? t.teaching_methods.some(m => m.toLowerCase() === method.toLowerCase()) : false) || 
+      (t.method && t.method.toLowerCase() === method.toLowerCase());
+      
+    // 5. Level
+    const matchLevel = !level || 
+      (t.suitable_students && Array.isArray(t.suitable_students) && t.suitable_students.some(l => l.toLowerCase() === level.toLowerCase())) ||
+      (t.level && typeof t.level === 'string' && t.level.toLowerCase().includes(level.toLowerCase())) || 
+      (!t.suitable_students && !t.level);
+
+    return matchPrice && matchSearch && matchSubjects && matchMethod && matchLevel;
+  });
 
   return (
     <div className="aqua-bg min-h-screen text-[#191c1e] font-sans">

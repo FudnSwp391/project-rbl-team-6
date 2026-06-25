@@ -451,7 +451,7 @@ function HomePage({ onGoSignIn }) {
                   placeholder="Học trực tuyến hay tại địa điểm cụ thể?"
                 />
               </label>
-              <button type="button" className="btn btn-primary search-button">
+              <button type="button" className="btn btn-primary search-button" onClick={() => window.location.hash = '#/find-tutors'}>
                 Tìm Kiếm
               </button>
             </div>
