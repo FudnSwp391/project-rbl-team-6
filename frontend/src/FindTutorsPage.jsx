@@ -298,6 +298,15 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       </header>
 
       <main className="pt-24 pb-16 max-w-[1280px] mx-auto px-6">
+        {isMock && (
+          <div className="mb-6 flex items-start gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-900 shadow-[0_10px_26px_-12px_rgba(180,120,0,0.3)]">
+            <span className="material-symbols-outlined text-amber-500 mt-0.5">warning</span>
+            <div className="text-sm leading-relaxed">
+              <b>Đang hiển thị gia sư mẫu</b> — không kết nối được máy chủ (backend chưa chạy hoặc DB lỗi).
+              Đây <u>không phải</u> gia sư thật. Hãy khởi động lại backend rồi tải lại trang (F5).
+            </div>
+          </div>
+        )}
         {/* Search — banner tối + họa tiết ánh sáng động */}
         <section className="relative mb-10 overflow-hidden rounded-2xl border border-[#1e2a4a]"
           style={{ background: 'radial-gradient(60% 90% at 15% 8%, rgba(76,110,245,.35), transparent 60%), radial-gradient(50% 80% at 85% 18%, rgba(124,92,255,.30), transparent 60%), linear-gradient(135deg,#0b1840,#122163 60%,#0c1538)' }}>
