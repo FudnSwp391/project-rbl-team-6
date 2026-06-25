@@ -10,13 +10,15 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   // 'login' | 'forgot_email' | 'forgot_otp' | 'forgot_new_pwd'
   const [viewMode, setViewMode] = useState('login')
 
-  // Ghi nhớ EMAIL đã đăng nhập (KHÔNG lưu mật khẩu — an toàn hơn)
+  const savedAccountsStr = localStorage.getItem('rememberedAccounts')
+  const savedAccounts = savedAccountsStr ? JSON.parse(savedAccountsStr) : {}
   const lastEmail = localStorage.getItem('lastEmail') || localStorage.getItem('rememberedEmail') || ''
+  const lastPassword = savedAccounts[lastEmail] || localStorage.getItem('rememberedPassword') || ''
 
-  const [rememberMe, setRememberMe] = useState(true)
+  const [rememberMe, setRememberMe] = useState(!!lastEmail)
   const [formData, setFormData] = useState({
     email: lastEmail,
-    password: '',
+    password: lastPassword,
   })
   
   const [forgotData, setForgotData] = useState({
@@ -37,7 +39,11 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
 
   const handleChange = (event) => {
     const { name, value } = event.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
+    if (name === 'email' && savedAccounts[value] && rememberMe) {
+      setFormData((prev) => ({ ...prev, email: value, password: savedAccounts[value] }))
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }))
+    }
     setErrors((prev) => ({ ...prev, [name]: '', submit: '' }))
   }
 
@@ -79,15 +85,19 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
       const data = await response.json()
       if (!response.ok) throw new Error(data?.message || 'Đăng nhập thất bại.')
       
-      // Ghi nhớ EMAIL (KHÔNG lưu mật khẩu)
+      // Save credentials for quick testing
       if (rememberMe) {
+        const updatedAccounts = { ...savedAccounts, [formData.email]: formData.password }
+        localStorage.setItem('rememberedAccounts', JSON.stringify(updatedAccounts))
         localStorage.setItem('lastEmail', formData.email)
+        localStorage.setItem('rememberedPassword', formData.password) // backward comp
       } else {
+        const updatedAccounts = { ...savedAccounts }
+        delete updatedAccounts[formData.email]
+        localStorage.setItem('rememberedAccounts', JSON.stringify(updatedAccounts))
         localStorage.removeItem('lastEmail')
+        localStorage.removeItem('rememberedPassword')
       }
-      // Dọn dữ liệu mật khẩu lưu kiểu cũ (nếu có) cho an toàn
-      localStorage.removeItem('rememberedAccounts')
-      localStorage.removeItem('rememberedPassword')
       if (data.suspiciousLogin) {
         setSuspiciousAlert(data.loginIP)
         setTimeout(() => { login(data.token, data.user) }, 3500)
@@ -260,7 +270,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
               )}
             </div>
           </div>
-          <span className="font-label-sm text-label-sm text-on-surface-variant">Ghi nhớ email</span>
+          <span className="font-label-sm text-label-sm text-on-surface-variant">Nhớ mật khẩu</span>
         </label>
 
         {errors.success ? (

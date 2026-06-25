@@ -44,7 +44,7 @@ function createToken(user) {
       role: user.role || "student",
     },
     jwtSecret,
-    { expiresIn: "7d" }
+    { expiresIn: "365d" }
   );
 }
 
@@ -3374,9 +3374,11 @@ app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
 // ══ Thanh toán giỏ hàng bằng VÍ (trừ số dư + đăng ký nhiều khóa) ══════════
 app.post("/api/cart/checkout", verifyToken, async (req, res) => {
   const studentId = req.user.userId;
-  const { items, couponCode } = req.body || {};
-  const ids = Array.isArray(items) ? [...new Set(items.filter(Boolean))] : [];
-  if (ids.length === 0) return res.status(400).json({ message: "Giỏ hàng trống." });
+  const { items, couponCode, source } = req.body || {};
+  const paidViaVnpay = source === "vnpay"; // VNPAY đã thu tiền → không trừ ví
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const ids = (Array.isArray(items) ? [...new Set(items.filter(Boolean))] : []).filter((id) => UUID_RE.test(String(id)));
+  if (ids.length === 0) return res.status(400).json({ message: "Giỏ hàng không có khóa học hợp lệ (khóa demo không thể mua — vui lòng xóa khỏi giỏ)." });
 
   const client = await pool.connect();
   try {
@@ -3386,12 +3388,9 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
       `SELECT id, title, price, tutor_id FROM courses WHERE id = ANY($1::uuid[])`, [ids]);
     if (coursesRes.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy khóa học." }); }
 
-    const activeRes = await client.query(
-      `SELECT course_id FROM course_enrollments WHERE student_id=$1 AND course_id = ANY($2::uuid[]) AND status='active'`,
-      [studentId, ids]);
-    const active = new Set(activeRes.rows.map(r => r.course_id));
-    const toBuy = coursesRes.rows.filter(c => c.tutor_id !== studentId && !active.has(c.id));
-    if (toBuy.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Các khóa này bạn đã đăng ký hoặc không hợp lệ." }); }
+    // Đang test → cho phép mua lại khóa đã đăng ký; chỉ loại khóa của chính mình
+    const toBuy = coursesRes.rows.filter(c => c.tutor_id !== studentId);
+    if (toBuy.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không có khóa hợp lệ (không thể mua khóa của chính bạn)." }); }
 
     const sumPrices = toBuy.reduce((s, c) => s + Number(c.price || 0), 0);
 
@@ -3414,17 +3413,20 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
     const finalTotal = Math.max(0, sumPrices - discount);
 
     if (finalTotal > 0) {
-      const sw = await client.query(`SELECT id, balance FROM wallets WHERE user_id=$1 FOR UPDATE`, [studentId]);
-      if (sw.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy ví của bạn." }); }
-      if (Number(sw.rows[0].balance) < finalTotal) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư ví không đủ. Vui lòng nạp thêm tiền.", needed: finalTotal, balance: Number(sw.rows[0].balance) });
+      // Trừ ví học sinh — CHỈ khi trả bằng ví (qua VNPAY thì cổng đã thu tiền)
+      if (!paidViaVnpay) {
+        const sw = await client.query(`SELECT id, balance FROM wallets WHERE user_id=$1 FOR UPDATE`, [studentId]);
+        if (sw.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy ví của bạn." }); }
+        if (Number(sw.rows[0].balance) < finalTotal) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư ví không đủ. Vui lòng nạp thêm tiền.", needed: finalTotal, balance: Number(sw.rows[0].balance) });
+        }
+        const swId = sw.rows[0].id;
+        await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id=$2`, [finalTotal, swId]);
+        await client.query(
+          `INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'PAYMENT','SUCCESS',$3)`,
+          [swId, -finalTotal, `Thanh toán giỏ hàng ${toBuy.length} khóa học${discount > 0 ? ` (giảm ${discount})` : ""}`]);
       }
-      const swId = sw.rows[0].id;
-      await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id=$2`, [finalTotal, swId]);
-      await client.query(
-        `INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'PAYMENT','SUCCESS',$3)`,
-        [swId, -finalTotal, `Thanh toán giỏ hàng ${toBuy.length} khóa học${discount > 0 ? ` (giảm ${discount})` : ""}`]);
 
       // Chia doanh thu theo tỉ lệ sau giảm: gia sư 90%, admin 10%
       const ratio = sumPrices > 0 ? finalTotal / sumPrices : 1;
@@ -3438,7 +3440,7 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
         const tw = await client.query(`SELECT id FROM wallets WHERE user_id=$1 FOR UPDATE`, [c.tutor_id]);
         if (tw.rowCount > 0) {
           await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id=$2`, [tutorShare, tw.rows[0].id]);
-          await client.query(`INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'EARNING','SUCCESS',$3)`,
+          await client.query(`INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'DEPOSIT','SUCCESS',$3)`,
             [tw.rows[0].id, tutorShare, `Doanh thu bán khóa học: ${c.title}`]);
         }
         if (adminWalletId) await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id=$2`, [adminShare, adminWalletId]);
@@ -3581,7 +3583,7 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       // Gia sư nhận doanh thu
       await client.query(`
         INSERT INTO transactions (wallet_id, amount, type, status, description)
-        VALUES ($1, $2, 'EARNING', 'SUCCESS', $3)
+        VALUES ($1, $2, 'DEPOSIT', 'SUCCESS', $3)
       `, [tutorWalletId, tutorShare, `Doanh thu bán khóa học: ${course.title} (Đã trừ ${commissionRate*100}% phí)`]);
     }
 
