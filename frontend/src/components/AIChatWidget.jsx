@@ -139,7 +139,7 @@ export default function AIChatWidget() {
                           <div className="flex-grow min-w-0">
                             <div className="text-sm font-semibold text-[#191c1e] truncate">{t.full_name}</div>
                             <div className="text-xs text-[#757684] truncate">
-                              {(t.subjects || '').split(',')[0] || 'Gia sư'} · {fmtPrice(t.hourly_rate)}/giờ
+                              {t.matched_subject || (t.subjects || '').split(',')[0] || 'Gia sư'} · {fmtPrice(t.hourly_rate)}/giờ
                             </div>
                           </div>
                           <span className="material-symbols-outlined text-[18px] text-[#00288e] shrink-0">chevron_right</span>
