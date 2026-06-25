@@ -3831,14 +3831,61 @@ app.post("/api/ai-suggest", async (req, res) => {
       });
     }
 
-    // 3) Có nhu cầu tìm gia sư → lọc theo từ khóa
+    // 3) Có nhu cầu tìm gia sư → lọc theo MÔN + GIÁ + hình thức
     const method = t.includes("online") ? "online" : t.includes("offline") ? "offline" : null;
-    const matchSubject = (x) => (x.subjects || "").toLowerCase().split(/[,;]/)
-      .some(s => s.trim() && t.includes(s.trim().toLowerCase()));
     const okMethod = (x) => !method || (Array.isArray(x.teaching_methods) && x.teaching_methods.includes(method));
-    const pool2 = all.filter(okMethod);
-    const subjHits = pool2.filter(matchSubject);
-    const result = (subjHits.length ? subjHits : pool2).slice(0, 3);
+
+    // Bảng môn: promptRe nhận diện môn trong câu hỏi; subjRe khớp với chuỗi subjects của gia sư.
+    // Dùng cụm rõ ràng để tránh nhầm ("học sinh" → Sinh, "xử lý" → Lý, "anh ấy" → Anh).
+    const SUBJECTS = [
+      { canon: "Toán",      promptRe: /\btoán\b/,                                   subjRe: /toán/ },
+      { canon: "Vật Lý",    promptRe: /vật\s*l[ýí]|\bmôn\s*l[ýí]\b/,                 subjRe: /l[ýí]/ },
+      { canon: "Hóa Học",   promptRe: /ho[áa]\s*học|\bmôn\s*ho[áa]\b/,              subjRe: /ho[áa]/ },
+      { canon: "Ngữ Văn",   promptRe: /ng[ữu]\s*văn|\bmôn\s*văn\b/,                  subjRe: /văn/ },
+      { canon: "Tiếng Anh", promptRe: /ti[ếe]ng\s*anh|anh\s*văn|\bielts\b|\btoeic\b/, subjRe: /anh|ielts|toeic/ },
+      { canon: "Sinh Học",  promptRe: /sinh\s*học|\bmôn\s*sinh\b/,                   subjRe: /sinh/ },
+      { canon: "Lịch Sử",   promptRe: /l[ịi]ch\s*s[ử]|\bmôn\s*sử\b/,                 subjRe: /sử/ },
+      { canon: "Địa Lý",    promptRe: /đ[ịi]a\s*l[ýí]|\bmôn\s*địa\b/,                subjRe: /địa/ },
+      { canon: "Tin Học",   promptRe: /tin\s*học|lập\s*trình|python|java/,           subjRe: /tin|lập trình|python|java/ },
+    ];
+    const mentioned = SUBJECTS.filter(s => s.promptRe.test(t));
+    const matchedSubjectOf = (x) => {
+      const subj = (x.subjects || "").toLowerCase();
+      const hit = mentioned.find(s => s.subjRe.test(subj));
+      return hit ? hit.canon : null;
+    };
+
+    let pool2 = all.filter(okMethod);
+
+    // Lọc theo môn (chỉ khi người dùng nêu môn) — KHÔNG đổ gia sư sai môn
+    if (mentioned.length) {
+      const hits = pool2.filter(x => matchedSubjectOf(x));
+      if (hits.length === 0) {
+        return res.json({
+          success: true, aiUsed: false,
+          reply: `Hiện chưa có gia sư dạy môn ${mentioned[0].canon} (đã duyệt). Bạn thử môn khác hoặc nới điều kiện nhé.`,
+          tutors: [],
+        });
+      }
+      pool2 = hits;
+    }
+
+    // Xử lý GIÁ: trần giá ("dưới 200k", "150 nghìn", "200000") + ý muốn "giá rẻ"
+    let priceCap = null;
+    const mTrieu = t.match(/(\d+(?:[.,]\d+)?)\s*(tr|triệu)/);
+    const mNghin = t.match(/(\d+)\s*(k|nghìn|ngàn)\b/);
+    const mRaw   = t.match(/\b(\d{5,7})\b/);
+    if (mTrieu) priceCap = Math.round(parseFloat(mTrieu[1].replace(",", ".")) * 1e6);
+    else if (mNghin) priceCap = Number(mNghin[1]) * 1000;
+    else if (mRaw && /(giá|tiền|dưới|tối đa|không quá|tầm|khoảng|\/\s*giờ|mỗi giờ)/.test(t)) priceCap = Number(mRaw[1]);
+    const cheap = /(rẻ|giá tốt|giá thấp|thấp nhất|tiết kiệm|bình dân|ít tiền|sinh viên)/.test(t);
+
+    if (priceCap) pool2 = pool2.filter(x => !x.hourly_rate || Number(x.hourly_rate) <= priceCap);
+    if (priceCap || cheap) {
+      pool2 = [...pool2].sort((a, b) => (Number(a.hourly_rate) || 0) - (Number(b.hourly_rate) || 0));
+    }
+
+    const result = pool2.slice(0, 3).map(x => ({ ...x, matched_subject: matchedSubjectOf(x) }));
 
     if (result.length === 0) {
       return res.json({
@@ -3847,9 +3894,12 @@ app.post("/api/ai-suggest", async (req, res) => {
         tutors: [],
       });
     }
+
+    const subjLabel  = mentioned.length ? ` môn ${mentioned[0].canon}` : "";
+    const priceLabel = priceCap ? ` (giá ≤ ${new Intl.NumberFormat("vi-VN").format(priceCap)}đ)` : (cheap ? ", ưu tiên giá tốt" : "");
     return res.json({
       success: true, aiUsed: false,
-      reply: "Dưới đây là một số gia sư phù hợp với nhu cầu của bạn:",
+      reply: `Dưới đây là một số gia sư${subjLabel}${priceLabel} phù hợp với bạn:`,
       tutors: result,
     });
   } catch (e) {
