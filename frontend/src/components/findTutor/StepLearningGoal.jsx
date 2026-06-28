@@ -23,7 +23,7 @@ const urgencies = [
   { value: "high", label: "Cần bắt đầu ngay", desc: "Càng sớm càng tốt", icon: "local_fire_department" },
 ];
 
-export function StepLearningGoal({ formData, setFormData }) {
+export function StepLearningGoal({ formData, setFormData, errors = {} }) {
   const handleChange = (e) => {
     const { id, value } = e.target;
     setFormData(prev => ({ ...prev, [id]: value }));
@@ -97,7 +97,7 @@ export function StepLearningGoal({ formData, setFormData }) {
               <h2 className="font-headline-sm text-headline-sm text-on-surface">Kỳ vọng điểm số</h2>
               <p className="font-label-md text-label-md text-on-surface-variant mt-xs">Hệ số 10</p>
             </div>
-            <div className="flex items-center gap-md mt-auto">
+            <div className="flex items-center gap-md mt-auto relative pb-6">
               <div className="flex-1">
                 <label className="block font-label-sm text-label-sm text-on-surface-variant mb-xs" htmlFor="current_score">Hiện tại</label>
                 <input 
@@ -108,19 +108,20 @@ export function StepLearningGoal({ formData, setFormData }) {
                   className="w-full bg-surface border border-outline-variant rounded-lg px-md py-sm font-body-md text-body-md text-on-surface opacity-70 cursor-not-allowed" 
                 />
               </div>
-              <div className="flex items-center justify-center pt-lg text-outline-variant">
+              <div className="flex items-center justify-center text-outline-variant mt-6">
                 <span className="material-symbols-outlined">arrow_forward</span>
               </div>
               <div className="flex-1">
-                <label className="block font-label-sm text-label-sm text-primary mb-xs font-semibold" htmlFor="targetScore">Mục tiêu</label>
+                <label className="block font-label-sm text-label-sm text-primary mb-xs font-semibold" htmlFor="targetScore">Mục tiêu <span className="text-error">*</span></label>
                 <input 
                   id="targetScore"
                   type="number" min="0" max="10" step="0.5" 
                   value={formData.targetScore}
                   onChange={handleChange}
-                  className="w-full bg-primary-fixed/20 border border-primary text-primary rounded-lg px-md py-sm font-body-md text-body-md font-semibold focus:border-primary focus:ring-1 focus:ring-primary transition-colors" 
+                  className={`w-full ${errors.targetScore ? 'bg-error/10 text-error border-error' : 'bg-primary-fixed/20 border-primary text-primary'} border rounded-lg px-md py-sm font-body-md text-body-md font-semibold focus:border-primary focus:ring-1 focus:ring-primary transition-colors`} 
                 />
               </div>
+              {errors.targetScore && <span className="absolute bottom-0 left-0 right-0 text-center text-error text-sm mt-1 animate-fade-in">{errors.targetScore}</span>}
             </div>
           </section>
 

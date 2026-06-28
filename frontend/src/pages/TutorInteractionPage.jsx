@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
@@ -6,23 +6,26 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 export default function TutorInteractionPage() {
   const { token, user } = useAuth();
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [savingNote, setSavingNote] = useState(false);
   const [noteContent, setNoteContent] = useState('');
 
   // Extract tutorId from hash router (assuming /tutor-interaction/:tutorId)
-  const hashObj = window.location.hash.match(/^\#\/tutor-interaction\/([^/]+)$/);
+  const hashObj = window.location.hash.match(/^#\/tutor-interaction\/([^/]+)$/);
   const tutorId = hashObj ? hashObj[1] : null;
+
+  // Derive initial loading & error from whether tutorId is present
+  const [loading, setLoading] = useState(!!tutorId);
+  const [error, setError] = useState(tutorId ? null : 'Không tìm thấy mã gia sư trong URL.');
 
   useEffect(() => {
     if (!token || !tutorId) return;
-    setLoading(true);
+    let cancelled = false;
     fetch(`${API_BASE}/api/tutor-interaction/${tutorId}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => r.json())
       .then(json => {
+        if (cancelled) return;
         if (json.success) {
           setData(json.data);
           setNoteContent(json.data.interaction.notes || '');
@@ -30,9 +33,12 @@ export default function TutorInteractionPage() {
           setError(json.message);
         }
       })
-      .catch(() => setError('Lỗi kết nối đến máy chủ.'))
-      .finally(() => setLoading(false));
+      .catch(() => { if (!cancelled) setError('Lỗi kết nối đến máy chủ.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [token, tutorId]);
+
+
 
   const toggleFavorite = async () => {
     if (!token || !tutorId) return;

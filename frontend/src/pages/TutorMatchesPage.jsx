@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import CompareModal from '../components/CompareModal';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -14,6 +15,35 @@ const formatExp = (y) => {
   if (!y) return 'Chưa cập nhật';
   return `${y} năm`;
 };
+
+// ─── AI Reasons Generator ─────────────────────────────────────────────────────
+function generateAIReasons(tutor, formData) {
+  const rawReasons = tutor?.reasons || [];
+  const reasonsSet = new Set(Array.isArray(rawReasons) && rawReasons.length > 0 ? rawReasons : ["Gia sư phù hợp trong hệ thống"]);
+  
+  // Rule-based inference based on concrete evidence
+  if (tutor.matchScore >= 90) reasonsSet.add(`Tỷ lệ phù hợp (Match Score) xuất sắc: ${tutor.matchScore}%.`);
+  else if (tutor.matchScore >= 80) reasonsSet.add(`Mức độ phù hợp với yêu cầu cao: ${tutor.matchScore}%.`);
+  
+  if (parseFloat(tutor.rating) >= 4.8 && tutor.reviewCount > 0) reasonsSet.add("Chất lượng giảng dạy được học viên đánh giá xuất sắc.");
+  else if (parseFloat(tutor.rating) >= 4.5 && tutor.reviewCount > 0) reasonsSet.add("Nhận được nhiều phản hồi tích cực từ học viên.");
+  
+  if (parseInt(tutor.experienceYears) >= 5) reasonsSet.add("Giảng viên kỳ cựu với nhiều năm kinh nghiệm thực chiến.");
+  
+  if (formData?.budgetMax && parseFloat(tutor.pricePerSession) <= parseFloat(formData.budgetMax)) {
+    reasonsSet.add("Mức học phí đề xuất nằm an toàn trong ngân sách của bạn.");
+  }
+
+  if (formData?.learningFormat && tutor.teachingFormats) {
+    const isOnline = tutor.teachingFormats.some(f => f.toLowerCase().includes('online') || f.toLowerCase().includes('tuyến'));
+    const isOffline = tutor.teachingFormats.some(f => f.toLowerCase().includes('offline') || f.toLowerCase().includes('tiếp'));
+    
+    if (formData.learningFormat === 'online' && isOnline) reasonsSet.add("Đáp ứng chuẩn xác hình thức học Trực tuyến (Online).");
+    if (formData.learningFormat === 'offline' && isOffline) reasonsSet.add("Sẵn sàng giảng dạy Trực tiếp (Offline) theo nguyện vọng.");
+  }
+
+  return Array.from(reasonsSet);
+}
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 function Avatar({ url, name, className }) {
@@ -35,105 +65,143 @@ function Avatar({ url, name, className }) {
   );
 }
 
-// ─── Best-match card (featured) ───────────────────────────────────────────────
-function BestMatchCard({ tutor, formData }) {
-  const reasons = tutor.reasons || ["Gia sư phù hợp trong hệ thống"];
+// ─── Shared Components ────────────────────────────────────────────────────────
+function ProgressRing({ radius, stroke, progress }) {
+  const normalizedRadius = radius - stroke * 2;
+  const circumference = normalizedRadius * 2 * Math.PI;
+  const strokeDashoffset = circumference - (progress / 100) * circumference;
 
   return (
-    <div className="bg-surface-container-lowest rounded-[16px] p-lg flex flex-col xl:flex-row gap-lg border border-primary shadow-[0_4px_20px_-5px_rgba(0,40,142,0.15)] relative overflow-hidden">
-      <div className="absolute top-0 right-0 bg-primary text-on-primary px-4 py-1.5 rounded-bl-[12px] text-label-sm font-label-md shadow-sm">
+    <div className="relative inline-flex items-center justify-center" style={{ width: radius * 2, height: radius * 2 }}>
+      <svg height={radius * 2} width={radius * 2} className="transform -rotate-90">
+        <circle stroke="#e2e8f0" fill="transparent" strokeWidth={stroke} r={normalizedRadius} cx={radius} cy={radius} />
+        <circle 
+          stroke="currentColor" 
+          fill="transparent" 
+          strokeWidth={stroke} 
+          strokeDasharray={circumference + ' ' + circumference} 
+          style={{ strokeDashoffset, transition: 'stroke-dashoffset 0.5s ease-in-out' }} 
+          r={normalizedRadius} 
+          cx={radius} 
+          cy={radius} 
+          className="text-primary"
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center justify-center">
+        <span className="text-sm font-bold text-on-surface">{progress}%</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Best-match card (featured) ───────────────────────────────────────────────
+function BestMatchCard({ tutor, formData, onSelect, onInterest, onToggleCompare, selectedForCompare, selectingTutorId }) {
+  const reasons = generateAIReasons(tutor, formData);
+  const isSelected = selectedForCompare?.some(t => t.id === tutor.id);
+  const isSelecting = selectingTutorId === tutor.id;
+
+  return (
+    <div className="bg-surface-container-lowest rounded-[16px] p-6 flex flex-col md:flex-row gap-6 border-2 border-primary shadow-[0_4px_20px_-5px_rgba(0,40,142,0.15)] relative overflow-hidden group hover:shadow-[0_8px_30px_-5px_rgba(0,40,142,0.2)] transition-shadow">
+      <div className="absolute top-0 right-0 bg-primary text-on-primary px-4 py-1.5 rounded-bl-[12px] text-xs font-bold shadow-sm">
         Đề xuất tốt nhất
       </div>
 
-      {/* Profile */}
-      <div className="flex flex-col items-center gap-sm min-w-[200px]">
+      {/* Avatar Section */}
+      <div className="flex flex-col items-center gap-3 shrink-0">
         <div className="relative">
-          <Avatar url={tutor.avatarUrl} name={tutor.name} className="w-[120px] h-[120px] border-4 border-surface" />
-          <div className="absolute bottom-1 right-1 bg-surface-container-lowest rounded-full p-1 shadow-sm">
-            <span className="material-symbols-outlined text-primary text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
+          <Avatar url={tutor.avatarUrl} name={tutor.name} className="w-[100px] h-[100px] border-4 border-surface shadow-sm group-hover:scale-105 transition-transform" />
+          <div className="absolute bottom-0 right-0 bg-surface-container-lowest rounded-full p-0.5 shadow-sm">
+            <span className="material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
           </div>
         </div>
-        <div className="text-center">
-          <h3 className="text-headline-md font-headline-md text-on-surface">{tutor.name}</h3>
-          {formatRating(tutor.rating) ? (
-            <div className="flex items-center justify-center gap-1 text-on-surface-variant text-label-md mt-1">
-              <span className="material-symbols-outlined text-sm text-[#F59E0B]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
-              {formatRating(tutor.rating)} ({tutor.reviewCount} đánh giá)
-            </div>
-          ) : (
-            <div className="text-on-surface-variant text-label-sm mt-1">Chưa có đánh giá</div>
-          )}
-          <div className="inline-flex items-center gap-xs text-primary font-bold mt-2 bg-primary/10 px-3 py-1 rounded-full text-label-sm">
-            <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>favorite</span>
-            {tutor.matchScore}% ({tutor.matchTier || 'Phù hợp'})
-          </div>
-        </div>
+        <ProgressRing radius={36} stroke={4} progress={tutor.matchScore || 0} />
       </div>
 
-      {/* Stats */}
-      <div className="flex flex-col gap-md border-t xl:border-t-0 xl:border-l border-surface-container pt-md xl:pt-0 xl:pl-lg flex-1">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1">
-            <span className="text-label-sm font-label-sm text-on-surface-variant flex items-center gap-1">
-              <span className="material-symbols-outlined text-sm">school</span> Kinh nghiệm
-            </span>
-            <span className="text-body-md font-headline-md text-on-surface">{formatExp(tutor.experienceYears)}</span>
+      {/* Info Section */}
+      <div className="flex flex-col flex-1 min-w-0">
+        <div className="flex justify-between items-start">
+            <div>
+              <h3 className="text-xl font-bold text-on-surface line-clamp-1">{tutor.name}</h3>
+              {formatRating(tutor.rating) ? (
+                <div className="flex items-center gap-1 text-on-surface-variant text-sm mt-1">
+                  <span className="material-symbols-outlined text-[16px] text-[#F59E0B]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                  <span className="font-semibold text-on-surface">{formatRating(tutor.rating)}</span>
+                  <span>({tutor.reviewCount} đánh giá)</span>
+                </div>
+              ) : (
+                <div className="text-on-surface-variant text-sm mt-1">Chưa có đánh giá</div>
+              )}
+            </div>
+            
+            {/* Compare Checkbox for Best Match */}
+            <button 
+              onClick={() => onToggleCompare(tutor)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all border shrink-0 ${isSelected ? 'bg-primary text-on-primary border-primary hover:bg-[#0042a3]' : 'bg-surface-container-lowest text-on-surface-variant border-outline-variant hover:bg-surface-variant hover:text-on-surface'}`}
+            >
+              {isSelected ? (
+                <><span className="material-symbols-outlined text-[14px]">check</span>Đã thêm</>
+              ) : (
+                <><span className="material-symbols-outlined text-[14px]">add</span>So sánh</>
+              )}
+            </button>
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-on-surface-variant flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">school</span> Kinh nghiệm</span>
+            <span className="text-sm font-semibold text-on-surface truncate">{formatExp(tutor.experienceYears)}</span>
           </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-label-sm font-label-sm text-on-surface-variant flex items-center gap-1">
-              <span className="material-symbols-outlined text-sm">payments</span> Học phí
-            </span>
-            <span className="text-body-md font-headline-md text-primary">{formatPrice(tutor.pricePerSession)}</span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-on-surface-variant flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">payments</span> Học phí</span>
+            <span className="text-sm font-bold text-emerald-700 truncate">{formatPrice(tutor.pricePerSession)}</span>
           </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-label-sm font-label-sm text-on-surface-variant flex items-center gap-1">
-              <span className="material-symbols-outlined text-sm">location_on</span> Khu vực
-            </span>
-            <span className="text-body-md font-headline-md text-on-surface">{tutor.location || 'Chưa cập nhật'}</span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-on-surface-variant flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">location_on</span> Khu vực</span>
+            <span className="text-sm font-semibold text-on-surface truncate">{tutor.location || 'Chưa cập nhật'}</span>
           </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-label-sm font-label-sm text-on-surface-variant flex items-center gap-1">
-              <span className="material-symbols-outlined text-sm">cast_for_education</span> Hình thức
-            </span>
-            <span className="text-body-md font-headline-md text-on-surface">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-on-surface-variant flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">cast_for_education</span> Hình thức</span>
+            <span className="text-sm font-semibold text-on-surface truncate">
               {tutor.teachingFormats?.length > 0 ? tutor.teachingFormats.join(', ') : 'Chưa cập nhật'}
             </span>
           </div>
         </div>
-        {tutor.bio && (
-          <p className="text-body-md text-on-surface-variant text-sm line-clamp-3 mt-sm">{tutor.bio}</p>
-        )}
       </div>
 
-      {/* Reasons & CTA */}
-      <div className="flex flex-col gap-md border-t xl:border-t-0 xl:border-l border-surface-container pt-md xl:pt-0 xl:pl-lg min-w-[210px]">
+      {/* Reasons & CTA Section */}
+      <div className="flex flex-col gap-4 border-t md:border-t-0 md:border-l border-surface-variant pt-4 md:pt-0 md:pl-6 md:w-[280px] shrink-0">
         <div>
-          <h4 className="text-label-md font-label-md text-on-surface mb-3 flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary text-sm">lightbulb</span>
-            Vì sao gia sư này phù hợp?
+          <h4 className="text-sm font-bold text-on-surface mb-2 flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-primary text-[16px]">lightbulb</span>
+            Vì sao AI đề xuất?
           </h4>
-          <ul className="flex flex-col gap-2">
-            {reasons.map((r, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-on-surface-variant">
-                <span className="material-symbols-outlined text-primary text-[18px] mt-0.5 shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-                {r}
+          <ul className="flex flex-col gap-1.5">
+            {reasons.slice(0, 6).map((r, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-xs text-on-surface-variant">
+                <span className="material-symbols-outlined text-primary text-[14px] mt-0.5 shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                <span className="line-clamp-2">{r}</span>
               </li>
             ))}
           </ul>
         </div>
-        <div className="mt-auto flex gap-sm">
-          <button
-            onClick={() => tutor.id && (window.location.hash = `/tutor-detail/${tutor.id}`)}
-            disabled={!tutor.id}
-            className="flex-1 bg-surface-container text-on-surface px-4 py-2.5 rounded-lg text-label-md font-label-md hover:bg-surface-variant transition-colors border border-outline-variant disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Xem hồ sơ
-          </button>
-          <button onClick={() => onInterest(tutor.id)} className={`flex items-center justify-center p-2.5 rounded-lg border transition-colors ${tutor.is_interested ? 'bg-pink-50 border-pink-200 text-pink-500' : 'bg-surface-container text-on-surface hover:bg-surface-variant border-outline-variant'}`}>
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: tutor.is_interested ? "'FILL' 1" : "'FILL' 0" }}>favorite</span>
-          </button>
-          <button onClick={() => onSelect(tutor.id)} disabled={tutor.is_selected} className="flex-[2] bg-primary text-on-primary px-4 py-2.5 rounded-lg text-label-md font-label-md hover:bg-primary-container transition-colors shadow-sm focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed">
-            {tutor.is_selected ? 'Đã gửi yêu cầu' : 'Chọn gia sư này'}
+        <div className="mt-auto flex flex-col gap-2">
+          <div className="flex gap-2">
+              <button
+                onClick={() => tutor.id && (window.location.hash = `/tutor-detail/${tutor.id}`)}
+                disabled={!tutor.id}
+                className="flex-1 bg-surface-container text-on-surface py-2 rounded-lg text-sm font-bold hover:bg-surface-variant transition-colors border border-outline-variant disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+              >
+                Hồ sơ
+              </button>
+              <button onClick={() => onInterest(tutor.id)} className={`flex items-center justify-center p-2 rounded-lg border transition-colors ${tutor.is_interested ? 'bg-pink-50 border-pink-200 text-pink-500' : 'bg-surface-container text-on-surface hover:bg-surface-variant border-outline-variant'}`}>
+                <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: tutor.is_interested ? "'FILL' 1" : "'FILL' 0" }}>favorite</span>
+              </button>
+          </div>
+          <button onClick={() => onSelect(tutor.id)} disabled={tutor.is_selected || isSelecting} className="w-full bg-primary text-on-primary py-2.5 rounded-lg text-sm font-bold hover:bg-[#0042a3] transition-colors shadow-sm focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            {isSelecting ? (
+              <><span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span> Đang xử lý...</>
+            ) : tutor.is_selected ? 'Đã gửi yêu cầu' : 'Chọn gia sư này'}
+            {!tutor.is_selected && !isSelecting && <span className="material-symbols-outlined text-[16px]">arrow_forward</span>}
           </button>
         </div>
       </div>
@@ -141,121 +209,155 @@ function BestMatchCard({ tutor, formData }) {
   );
 }
 
-// ─── Regular tutor card ───────────────────────────────────────────────────────
-function TutorCard({ tutor, onSelect, onInterest }) {
+// ─── Tutor Match Card (Horizontal layout) ────────────────────────────────────
+function TutorMatchCard({ tutor, formData, onSelect, onInterest, selectedForCompare, onToggleCompare, selectingTutorId }) {
+  const reasons = generateAIReasons(tutor, formData);
+  const isSelected = selectedForCompare?.some(t => t.id === tutor.id);
+  const isSelecting = selectingTutorId === tutor.id;
+
   return (
-    <div className="bg-surface-container-lowest rounded-[12px] p-md border border-surface-container hover:border-outline-variant shadow-sm hover:shadow-md transition-all duration-200 flex flex-col gap-md">
-      <div className="flex justify-between items-start">
-        <div className="flex items-center gap-sm">
-          <div className="relative">
-            <Avatar url={tutor.avatarUrl} name={tutor.name} className="w-14 h-14 border border-outline-variant" />
-            <div className="absolute -bottom-1 -right-1 bg-surface-container-lowest rounded-full p-0.5">
-              <span className="material-symbols-outlined text-primary text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
+    <div className="bg-surface-container-lowest rounded-[16px] p-5 flex flex-col md:flex-row gap-5 border border-surface-variant hover:border-primary/50 hover:shadow-md transition-all relative group">
+      {/* Avatar Section */}
+      <div className="flex flex-col items-center gap-3 shrink-0">
+        <div className="relative">
+          <Avatar url={tutor.avatarUrl} name={tutor.name} className="w-[80px] h-[80px] border-2 border-surface shadow-sm group-hover:scale-105 transition-transform" />
+          <div className="absolute bottom-0 right-0 bg-surface-container-lowest rounded-full p-0.5 shadow-sm">
+            <span className="material-symbols-outlined text-primary text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
+          </div>
+        </div>
+        <ProgressRing radius={28} stroke={4} progress={tutor.matchScore || 0} />
+      </div>
+
+      {/* Info Section */}
+      <div className="flex flex-col flex-1 min-w-0">
+        <div className="flex justify-between items-start">
+            <div>
+              <h3 className="text-lg font-bold text-on-surface line-clamp-1">{tutor.name}</h3>
+              {formatRating(tutor.rating) ? (
+                <div className="flex items-center gap-1 text-on-surface-variant text-xs mt-1">
+                  <span className="material-symbols-outlined text-[14px] text-[#F59E0B]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                  <span className="font-semibold text-on-surface">{formatRating(tutor.rating)}</span>
+                  <span>({tutor.reviewCount})</span>
+                </div>
+              ) : (
+                <div className="text-on-surface-variant text-xs mt-1">Chưa có đánh giá</div>
+              )}
             </div>
+            
+            {/* Compare Checkbox */}
+            <button 
+              onClick={() => onToggleCompare(tutor)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all border shrink-0 ${isSelected ? 'bg-primary text-on-primary border-primary hover:bg-[#0042a3]' : 'bg-surface-container-lowest text-on-surface-variant border-outline-variant hover:bg-surface-variant hover:text-on-surface'}`}
+            >
+              {isSelected ? (
+                <><span className="material-symbols-outlined text-[14px]">check</span>Đã thêm</>
+              ) : (
+                <><span className="material-symbols-outlined text-[14px]">add</span>So sánh</>
+              )}
+            </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[11px] text-on-surface-variant flex items-center gap-1"><span className="material-symbols-outlined text-[12px]">school</span> Kinh nghiệm</span>
+            <span className="text-sm font-semibold text-on-surface truncate">{formatExp(tutor.experienceYears)}</span>
           </div>
-          <div>
-            <h3 className="text-label-md font-headline-md text-on-surface">{tutor.name}</h3>
-            {formatRating(tutor.rating) ? (
-              <div className="flex items-center gap-xs text-on-surface-variant text-label-sm mt-0.5">
-                <span className="material-symbols-outlined text-sm text-[#F59E0B]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
-                {formatRating(tutor.rating)} ({tutor.reviewCount})
-              </div>
-            ) : (
-              <div className="text-on-surface-variant text-label-sm mt-0.5">Chưa có đánh giá</div>
-            )}
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[11px] text-on-surface-variant flex items-center gap-1"><span className="material-symbols-outlined text-[12px]">payments</span> Học phí</span>
+            <span className="text-sm font-bold text-emerald-700 truncate">{formatPrice(tutor.pricePerSession)}</span>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[11px] text-on-surface-variant flex items-center gap-1"><span className="material-symbols-outlined text-[12px]">location_on</span> Khu vực</span>
+            <span className="text-sm font-semibold text-on-surface truncate">{tutor.location || 'Chưa cập nhật'}</span>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[11px] text-on-surface-variant flex items-center gap-1"><span className="material-symbols-outlined text-[12px]">cast_for_education</span> Hình thức</span>
+            <span className="text-sm font-semibold text-on-surface truncate">
+              {tutor.teachingFormats?.length > 0 ? tutor.teachingFormats.join(', ') : 'Chưa cập nhật'}
+            </span>
           </div>
         </div>
-        <span className="bg-primary/10 text-primary px-2 py-1 rounded text-label-sm font-label-md shrink-0">
-          {tutor.matchScore}%
-        </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-y-2 gap-x-1 text-sm">
-        <div className="flex flex-col">
-          <span className="text-on-surface-variant text-[11px]">Kinh nghiệm</span>
-          <span className="font-medium text-on-surface">{formatExp(tutor.experienceYears)}</span>
+      {/* Reasons & CTA Section */}
+      <div className="flex flex-col gap-3 border-t md:border-t-0 md:border-l border-surface-variant pt-4 md:pt-0 md:pl-5 md:w-[240px] shrink-0">
+        <div>
+          <h4 className="text-xs font-bold text-on-surface mb-1.5 flex items-center gap-1">
+            <span className="material-symbols-outlined text-primary text-[14px]">psychology</span>
+            AI phân tích:
+          </h4>
+          <ul className="flex flex-col gap-1">
+            {reasons.slice(0, 4).map((r, i) => (
+              <li key={i} className="flex items-start gap-1 text-[11px] text-on-surface-variant">
+                <span className="material-symbols-outlined text-primary text-[12px] mt-0.5 shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                <span className="line-clamp-2">{r}</span>
+              </li>
+            ))}
+          </ul>
         </div>
-        <div className="flex flex-col">
-          <span className="text-on-surface-variant text-[11px]">Học phí</span>
-          <span className="font-medium text-primary">{formatPrice(tutor.pricePerSession)}</span>
-        </div>
-        {tutor.location && (
-          <div className="flex flex-col col-span-2">
-            <span className="text-on-surface-variant text-[11px]">Khu vực</span>
-            <span className="font-medium text-on-surface">{tutor.location}</span>
+        <div className="mt-auto flex flex-col gap-2">
+          <div className="flex gap-2">
+              <button
+                onClick={() => tutor.id && (window.location.hash = `/tutor-detail/${tutor.id}`)}
+                disabled={!tutor.id}
+                className="flex-1 bg-surface-container text-on-surface py-1.5 rounded-lg text-sm font-bold hover:bg-surface-variant transition-colors border border-outline-variant disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+              >
+                Hồ sơ
+              </button>
+              <button onClick={() => onInterest(tutor.id)} className={`flex items-center justify-center px-3 py-1.5 rounded-lg border transition-colors ${tutor.is_interested ? 'bg-pink-50 border-pink-200 text-pink-500' : 'bg-surface-container text-on-surface hover:bg-surface-variant border-outline-variant'}`}>
+                <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: tutor.is_interested ? "'FILL' 1" : "'FILL' 0" }}>favorite</span>
+              </button>
           </div>
-        )}
-      </div>
-
-      <div className="mt-auto flex gap-2 pt-3 border-t border-surface-container">
-        <button
-          onClick={() => tutor.id && (window.location.hash = `/tutor-detail/${tutor.id}`)}
-          disabled={!tutor.id}
-          className="flex-1 bg-surface-container text-on-surface px-2 py-2 rounded-lg text-label-sm font-label-md hover:bg-surface-variant transition-colors border border-outline-variant disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Xem hồ sơ
-        </button>
-        <button onClick={() => onInterest(tutor.id)} className={`px-2 py-2 rounded-lg border flex items-center justify-center ${tutor.is_interested ? 'bg-pink-50 border-pink-200 text-pink-500' : 'bg-surface-container text-on-surface hover:bg-surface-variant border-outline-variant'}`}>
-          <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: tutor.is_interested ? "'FILL' 1" : "'FILL' 0" }}>favorite</span>
-        </button>
-        <button onClick={() => onSelect(tutor.id)} disabled={tutor.is_selected} className="flex-[1.5] bg-primary text-on-primary px-2 py-2 rounded-lg text-label-sm font-label-md hover:bg-primary-container transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-          {tutor.is_selected ? 'Đã gửi' : 'Chọn gia sư'}
-        </button>
+          <button onClick={() => onSelect(tutor.id)} disabled={tutor.is_selected || isSelecting} className="w-full bg-surface-container-highest text-on-surface py-1.5 rounded-lg text-sm font-bold hover:bg-surface-variant transition-colors border border-outline-variant disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5">
+            {isSelecting ? (
+              <><span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span> Đang xử lý...</>
+            ) : tutor.is_selected ? 'Đã gửi' : 'Chọn gia sư'}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ─── Main page ────────────────────────────────────────────────────────────────
+// ─── Main page ───────────────────────────────────────────────────────────────
 export default function TutorMatchesPage() {
   const [formData, setFormData]       = useState(null);
   const [tutors, setTutors]           = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState(null);
+  const [selectingTutorId, setSelectingTutorId] = useState(null);
+  
+  // Compare state
+  const [selectedForCompare, setSelectedForCompare] = useState([]);
+  const [showCompareModal, setShowCompareModal] = useState(false);
 
-  // client-side filter state
+  const handleToggleCompare = (tutor) => {
+    setSelectedForCompare(prev => {
+      const isSelected = prev.some(t => t.id === tutor.id);
+      if (isSelected) {
+        return prev.filter(t => t.id !== tutor.id);
+      } else {
+        if (prev.length >= 3) {
+          alert('Chỉ có thể so sánh tối đa 3 gia sư');
+          return prev;
+        }
+        return [...prev, tutor];
+      }
+    });
+  };
+
+  const handleClearCompare = () => {
+    setSelectedForCompare([]);
+  };
+
+  // Filter state
+  const [minPrice,   setMinPrice]     = useState('');
+  const [maxPrice,   setMaxPrice]     = useState('');
   const [fmtOnline,  setFmtOnline]    = useState(true);
   const [fmtOffline, setFmtOffline]   = useState(true);
   const [minRating,  setMinRating]    = useState(0);
 
-
-  const handleSelect = async (tutorId) => {
-    const requestId = formData?.tutorRequestId;
-    if (!requestId) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/tutor-requests/${requestId}/select`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tutorId })
-      });
-      const data = await res.json();
-      if (!data.success) {
-        alert(data.message || 'Có lỗi xảy ra');
-        return;
-      }
-      setTutors(prev => prev.map(t => t.id === tutorId ? { ...t, is_selected: true, status: 'pending' } : t));
-      alert('Đã gửi yêu cầu thành công!');
-    } catch (e) {
-      alert('Lỗi kết nối');
-    }
-  };
-
-  const handleInterest = async (tutorId) => {
-    const requestId = formData?.tutorRequestId;
-    if (!requestId) return;
-    try {
-      await fetch(`${API_BASE}/api/tutor-requests/${requestId}/interest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tutorId })
-      });
-      setTutors(prev => prev.map(t => t.id === tutorId ? { ...t, is_interested: !t.is_interested } : t));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Fetch from real API
+  // Fetch logic
   const fetchMatches = useCallback(async (data) => {
     setLoading(true);
     setError(null);
@@ -287,221 +389,323 @@ export default function TutorMatchesPage() {
     fetchMatches(data);
   }, [fetchMatches]);
 
+  const handleSelect = async (tutorId) => {
+    if (selectingTutorId) return;
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert("Vui lòng đăng nhập để thực hiện chức năng này.");
+        return;
+      }
+      
+      const requestId = formData?.tutorRequestId;
+      if (!requestId) {
+        alert("Không tìm thấy thông tin yêu cầu.");
+        return;
+      }
+
+      if (!window.confirm("Bạn có chắc chắn muốn chọn gia sư này?")) return;
+
+      setSelectingTutorId(tutorId);
+      const res = await fetch(`${API_BASE}/api/tutor-requests/${requestId}/select`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ tutorId })
+      });
+      const json = await res.json();
+      
+      if (!res.ok || !json.success) {
+        alert(json.message || "Có lỗi xảy ra khi chọn gia sư.");
+        return;
+      }
+      
+      setTutors(prev => prev.map(t => t.id === tutorId ? { ...t, is_selected: true, status: 'pending' } : t));
+      
+      if (window.confirm("Đã gửi yêu cầu thành công! Bạn có muốn chuyển sang trang Quản lý yêu cầu để theo dõi không?")) {
+        window.location.hash = "#/my-tutor-requests";
+      }
+    } catch (err) {
+      console.error("[SelectTutor] Error:", err);
+      alert("Lỗi kết nối đến máy chủ.");
+    } finally {
+      setSelectingTutorId(null);
+    }
+  };
+
+  const handleInterest = async (tutorId) => {
+    alert("Tính năng yêu thích đang cập nhật.");
+  };
+
   // Client-side filtering
   const filtered = tutors.filter(t => {
-    if (!fmtOnline || !fmtOffline) {
-      const m = (t.teachingFormats || []).join(' ').toLowerCase();
-      const hasOnline  = m.includes('online')  || m.includes('tuyến');
-      const hasOffline = m.includes('offline') || m.includes('tiếp');
-      if (fmtOnline && !fmtOffline && !hasOnline)  return false;
-      if (!fmtOnline && fmtOffline && !hasOffline) return false;
-    }
-    if (minRating > 0 && t.rating < minRating) return false;
+    const price = parseFloat(t.pricePerSession) || 0;
+    if (minPrice && price < parseFloat(minPrice)) return false;
+    if (maxPrice && price > parseFloat(maxPrice)) return false;
+
+    const rating = parseFloat(t.rating) || 0;
+    if (rating < minRating) return false;
+
+    const formats = t.teachingFormats || [];
+    const isOnline = formats.some(f => f.toLowerCase().includes('trực tuyến') || f.toLowerCase().includes('online'));
+    const isOffline = formats.some(f => f.toLowerCase().includes('trực tiếp') || f.toLowerCase().includes('offline'));
+
+    if (!fmtOnline && !fmtOffline) return false;
+    if (fmtOnline && !fmtOffline && !isOnline) return false;
+    if (!fmtOnline && fmtOffline && !isOffline) return false;
+
     return true;
   });
 
-  const bestMatch   = filtered[0] || null;
-  const otherTutors = filtered.slice(1);
+  const bestMatch = filtered.length > 0 ? filtered[0] : null;
+  const otherTutors = filtered.length > 1 ? filtered.slice(1) : [];
 
+  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="bg-background text-on-background min-h-screen font-body-md text-body-md flex flex-col pb-24">
-      {/* Header */}
-      <header className="bg-surface-container-lowest shadow-sm sticky top-0 z-50">
-        <div className="flex justify-between items-center w-full px-lg max-w-container-max mx-auto h-16">
-          <div className="flex items-center gap-md">
-            <span className="text-headline-md font-headline-md text-primary font-bold">EduX</span>
-            <nav className="hidden md:flex items-center gap-md ml-lg">
-              <a className="text-primary border-b-2 border-primary pb-1 text-label-md font-label-md" href="#/find-tutors">Tìm gia sư</a>
-              <a className="text-on-surface-variant text-label-md font-label-md hover:text-primary transition-colors" href="#">Buổi học của tôi</a>
-            </nav>
-          </div>
-          <div className="flex items-center gap-md">
-            <div className="relative hidden lg:block">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
-              <input className="pl-10 pr-4 py-2 border border-outline rounded-lg focus:outline-none focus:border-primary focus:ring-2 w-64 text-body-md bg-surface" placeholder="Tìm kiếm gia sư..." type="text"/>
-            </div>
-            <button className="text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center w-10 h-10 rounded-full hover:bg-surface-variant">
-              <span className="material-symbols-outlined">notifications</span>
-            </button>
-            <div className="w-10 h-10 rounded-full bg-surface-variant overflow-hidden border border-outline-variant flex items-center justify-center cursor-pointer">
-              <span className="material-symbols-outlined text-on-surface-variant">person</span>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <div className="flex-1 max-w-container-max mx-auto w-full px-lg py-md flex gap-lg relative">
-        {/* Sidebar Filters */}
-        <aside className="hidden lg:flex flex-col p-md gap-sm bg-surface-container-lowest h-[calc(100vh-80px)] w-[280px] sticky top-[80px] rounded-xl border border-surface-container overflow-y-auto">
-          <div className="mb-sm flex justify-between items-center border-b border-surface-container pb-sm">
-            <h2 className="text-headline-sm font-headline-md text-on-surface">Bộ lọc</h2>
-            <button
-              className="text-primary text-label-sm font-label-md hover:underline"
-              onClick={() => { setFmtOnline(true); setFmtOffline(true); setMinRating(0); }}
-            >
+    <div className="min-h-screen bg-surface py-8 relative">
+      <style>{`
+        .animate-slide-up {
+          animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes slideUp {
+          from { transform: translate(-50%, 150%); opacity: 0; }
+          to { transform: translate(-50%, 0); opacity: 1; }
+        }
+        .skeleton-pulse {
+          animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: .5; }
+        }
+      `}</style>
+      <div className="max-w-[1400px] mx-auto px-4 md:px-6 lg:px-8 flex flex-col md:flex-row gap-8 items-start">
+        
+        {/* Sidebar Filter */}
+        <aside className="w-full md:w-[280px] lg:w-[300px] shrink-0 bg-surface-container-lowest rounded-2xl p-6 border border-surface-variant shadow-sm sticky top-24 z-10">
+          <div className="flex items-center justify-between mb-6 pb-4 border-b border-surface-variant">
+            <h2 className="text-lg font-bold text-on-surface flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary">filter_list</span>
+              Bộ lọc
+            </h2>
+            <button onClick={() => { setMinPrice(''); setMaxPrice(''); setFmtOnline(true); setFmtOffline(true); setMinRating(0); }} className="text-sm font-semibold text-primary hover:text-[#0042a3] transition-colors">
               Xóa tất cả
             </button>
           </div>
 
-          <div className="flex flex-col gap-md">
-            {/* Mức giá */}
-            <div className="flex flex-col gap-xs">
-              <h3 className="text-label-md font-headline-md text-on-surface">Mức giá (/buổi)</h3>
-              <div className="flex items-center gap-2 mt-2">
-                <input className="w-full p-2 border border-outline rounded-lg text-body-md text-center bg-surface" readOnly type="text" value={formData?.budgetMin || '0'}/>
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-3">
+              <h3 className="text-sm font-bold text-on-surface">Mức giá (/buổi)</h3>
+              <div className="flex items-center gap-2">
+                <input 
+                  type="number" 
+                  value={minPrice} 
+                  onChange={e => setMinPrice(e.target.value)} 
+                  placeholder="Từ" 
+                  className="w-full bg-surface px-3 py-2 rounded-lg text-sm border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                />
                 <span className="text-on-surface-variant">-</span>
-                <input className="w-full p-2 border border-outline rounded-lg text-body-md text-center bg-surface" readOnly type="text" value={formData?.budgetMax || '∞'}/>
+                <input 
+                  type="number" 
+                  value={maxPrice} 
+                  onChange={e => setMaxPrice(e.target.value)} 
+                  placeholder="Đến" 
+                  className="w-full bg-surface px-3 py-2 rounded-lg text-sm border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                />
               </div>
             </div>
 
-            {/* Hình thức */}
-            <div className="flex flex-col gap-xs border-t border-surface-container pt-md">
-              <h3 className="text-label-md font-headline-md text-on-surface mb-2">Hình thức học</h3>
-              <label className="flex items-center gap-2 text-body-md text-on-surface cursor-pointer">
-                <input checked={fmtOffline} onChange={e => setFmtOffline(e.target.checked)} className="rounded border-outline text-primary focus:ring-primary w-4 h-4" type="checkbox"/> Trực tiếp
+            <div className="w-full h-px bg-surface-variant" />
+
+            <div className="flex flex-col gap-3">
+              <h3 className="text-sm font-bold text-on-surface">Hình thức học</h3>
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input type="checkbox" checked={fmtOffline} onChange={e => setFmtOffline(e.target.checked)} className="w-4 h-4 text-primary rounded border-outline-variant focus:ring-primary cursor-pointer" />
+                <span className="text-sm text-on-surface group-hover:text-primary transition-colors">Trực tiếp</span>
               </label>
-              <label className="flex items-center gap-2 text-body-md text-on-surface cursor-pointer">
-                <input checked={fmtOnline} onChange={e => setFmtOnline(e.target.checked)} className="rounded border-outline text-primary focus:ring-primary w-4 h-4" type="checkbox"/> Trực tuyến
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input type="checkbox" checked={fmtOnline} onChange={e => setFmtOnline(e.target.checked)} className="w-4 h-4 text-primary rounded border-outline-variant focus:ring-primary cursor-pointer" />
+                <span className="text-sm text-on-surface group-hover:text-primary transition-colors">Trực tuyến</span>
               </label>
             </div>
 
-            {/* Đánh giá */}
-            <div className="flex flex-col gap-xs border-t border-surface-container pt-md">
-              <h3 className="text-label-md font-headline-md text-on-surface mb-2">Đánh giá tối thiểu</h3>
-              {[{ v: 0, label: 'Tất cả' }, { v: 3, label: '3 trở lên' }, { v: 4, label: '4 trở lên' }, { v: 4.5, label: '4.5 trở lên' }].map(({ v, label }) => (
-                <label key={v} className="flex items-center gap-2 text-body-md text-on-surface cursor-pointer">
-                  <input checked={minRating === v} onChange={() => setMinRating(v)} className="border-outline text-primary focus:ring-primary w-4 h-4" name="rating" type="radio"/>
-                  {v === 0 ? label : (
-                    <span className="flex items-center">
-                      <span className="material-symbols-outlined text-sm text-[#F59E0B] mr-1" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
-                      {label}
+            <div className="w-full h-px bg-surface-variant" />
+
+            <div className="flex flex-col gap-3">
+              <h3 className="text-sm font-bold text-on-surface">Đánh giá tối thiểu</h3>
+              {[0, 3, 4, 4.5].map((v) => (
+                <label key={v} className="flex items-center gap-3 cursor-pointer group">
+                  <input type="radio" name="rating" checked={minRating === v} onChange={() => setMinRating(v)} className="w-4 h-4 text-primary border-outline-variant focus:ring-primary cursor-pointer" />
+                  {v === 0 ? <span className="text-sm text-on-surface group-hover:text-primary transition-colors">Tất cả</span> : (
+                    <span className="flex items-center text-sm text-on-surface group-hover:text-primary transition-colors">
+                      <span className="material-symbols-outlined text-[16px] text-[#F59E0B] mr-1" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                      {v} trở lên
                     </span>
                   )}
                 </label>
               ))}
             </div>
           </div>
-
-          <div className="mt-auto pt-md sticky bottom-0 bg-surface-container-lowest pb-2">
-            <button
-              onClick={() => fetchMatches(formData)}
-              className="w-full bg-primary text-on-primary py-3 rounded-lg text-label-md font-label-md hover:bg-primary-container transition-colors focus:ring-2 focus:ring-primary/50"
-            >
-              Tải lại kết quả
-            </button>
-          </div>
         </aside>
 
-        {/* Main */}
-        <main className="flex-1 flex flex-col gap-lg pb-xl max-w-[1000px]">
-          {/* Breadcrumb + title */}
-          <div className="flex flex-col gap-base">
-            <nav className="text-label-sm font-label-sm text-on-surface-variant flex items-center gap-xs">
-              <a className="hover:text-primary transition-colors" href="#">Trang chủ</a>
-              <span className="material-symbols-outlined text-sm">chevron_right</span>
-              <a className="hover:text-primary transition-colors" href="#/tutor-request">Tìm gia sư</a>
-              <span className="material-symbols-outlined text-sm">chevron_right</span>
-              <span className="text-on-surface">Kết quả</span>
-            </nav>
-            <div>
-              <h1 className="text-headline-lg font-headline-lg text-on-surface mb-xs">Gia sư phù hợp với bạn</h1>
-              {!loading && !error && (
-                <p className="text-body-md font-body-md text-on-surface-variant">
-                  {filtered.length > 0
-                    ? `Tìm thấy ${filtered.length} gia sư phù hợp với nhu cầu của bạn.`
-                    : 'Chưa tìm thấy gia sư phù hợp với bộ lọc hiện tại.'}
-                </p>
-              )}
-            </div>
-
-            {/* Request summary */}
+        {/* Main Content */}
+        <main className="flex-1 flex flex-col min-w-0 pb-20">
+          
+          {/* Header & Breadcrumb */}
+          <div className="mb-6">
+            <h1 className="text-2xl md:text-3xl font-bold text-on-surface mb-2">Gia sư phù hợp với bạn</h1>
             {formData && (
-              <div className="flex flex-wrap items-center justify-between gap-md bg-surface-container-lowest p-md rounded-xl border border-surface-container mt-base">
-                <div className="flex flex-wrap gap-sm">
-                  {formData.subject && (
-                    <span className="px-3 py-1 bg-surface-container text-on-surface rounded-full text-label-sm font-label-md border border-outline-variant">
-                      {formData.subject}{formData.grade ? ` – Lớp ${formData.grade}` : ''}
-                    </span>
-                  )}
-                  {formData.learningFormat && (
-                    <span className="px-3 py-1 bg-surface-container text-on-surface rounded-full text-label-sm font-label-md border border-outline-variant">
-                      {formData.learningFormat === 'online' ? 'Học trực tuyến' : formData.learningFormat === 'offline' ? 'Học trực tiếp' : 'Cả hai'}
-                    </span>
-                  )}
-                  {formData.learningFormat !== 'online' && formData.city && (
-                    <span className="px-3 py-1 bg-surface-container text-on-surface rounded-full text-label-sm font-label-md border border-outline-variant">
-                      {formData.district ? `${formData.district}, ` : ''}{formData.city}
-                    </span>
-                  )}
-                  {(formData.budgetMin || formData.budgetMax) && (
-                    <span className="px-3 py-1 bg-surface-container text-on-surface rounded-full text-label-sm font-label-md border border-outline-variant">
-                      {formData.budgetMin || 0} – {formData.budgetMax || '∞'}đ/buổi
-                    </span>
-                  )}
+              <div className="flex flex-wrap items-center gap-2 text-sm text-on-surface-variant">
+                <span>{filtered.length} gia sư phù hợp</span>
+                <span>•</span>
+                <span className="font-semibold text-primary">{formData.subject}{formData.grade ? ` - Lớp ${formData.grade}` : ''}</span>
+                <span>•</span>
+                <span>{formData.learningFormat === 'online' ? 'Trực tuyến' : formData.learningFormat === 'offline' ? 'Trực tiếp' : 'Tất cả hình thức'}</span>
+                {(formData.budgetMin || formData.budgetMax) && (
+                  <>
+                    <span>•</span>
+                    <span>{formData.budgetMin || 0} - {formData.budgetMax || 'Vô hạn'}đ/buổi</span>
+                  </>
+                )}
+                <a href="#/tutor-request" className="ml-2 text-primary hover:underline font-bold flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px]">edit</span> Chỉnh sửa yêu cầu
+                </a>
+              </div>
+            )}
+
+            {/* AI Summary Short */}
+            {!loading && !error && filtered.length > 0 && bestMatch && (
+              <div className="mt-4 bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-start gap-3">
+                <span className="material-symbols-outlined text-blue-600 mt-0.5">psychology</span>
+                <div>
+                  <h4 className="text-sm font-bold text-blue-900 mb-1">AI nhận thấy:</h4>
+                  <ul className="text-sm text-blue-800 flex flex-col md:flex-row gap-x-6 gap-y-1">
+                    <li className="flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">check</span> Gia sư cao điểm nhất đạt {bestMatch.matchScore}%</li>
+                    <li className="flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">check</span> {filtered.filter(t => parseFloat(t.pricePerSession) <= parseFloat(formData?.budgetMax || Infinity)).length} gia sư nằm trong ngân sách</li>
+                    <li className="flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">check</span> {filtered.filter(t => parseFloat(t.rating) >= 4.5).length} gia sư có trên 4.5★</li>
+                  </ul>
                 </div>
-                <button onClick={() => window.location.hash = '/tutor-request'} className="text-primary hover:underline text-label-md font-label-md flex items-center gap-xs shrink-0">
-                  <span className="material-symbols-outlined text-sm">edit</span> Chỉnh sửa yêu cầu
-                </button>
               </div>
             )}
           </div>
 
-          {/* ── Loading ── */}
+          {/* Loading Skeleton */}
           {loading && (
-            <div className="flex flex-col items-center justify-center py-2xl gap-md">
-              <div className="w-12 h-12 border-4 border-surface-variant border-t-primary rounded-full animate-spin" />
-              <p className="text-on-surface-variant text-body-md">Đang tìm gia sư phù hợp...</p>
+            <div className="flex flex-col gap-6">
+              <div className="h-[260px] bg-surface-variant rounded-[16px] skeleton-pulse" />
+              <div className="flex flex-col gap-4">
+                {[1, 2, 3].map(i => <div key={i} className="h-[180px] bg-surface-variant rounded-[16px] skeleton-pulse" />)}
+              </div>
             </div>
           )}
 
-          {/* ── Error ── */}
+          {/* Error State */}
           {!loading && error && (
-            <div className="flex flex-col items-center justify-center py-2xl gap-md text-center">
-              <span className="material-symbols-outlined text-6xl text-error">wifi_off</span>
-              <h2 className="text-headline-md font-headline-md text-on-surface">Không thể tải dữ liệu</h2>
-              <p className="text-body-md text-on-surface-variant max-w-md">{error}</p>
-              <button onClick={() => fetchMatches(formData)} className="bg-primary text-on-primary px-6 py-2.5 rounded-lg text-label-md font-label-md hover:bg-primary-container transition-colors">
-                Thử lại
+            <div className="bg-error-container text-on-error-container rounded-2xl p-8 flex flex-col items-center justify-center text-center gap-4 border border-error/20">
+              <span className="material-symbols-outlined text-5xl text-error">wifi_off</span>
+              <h2 className="text-xl font-bold">Không thể tải danh sách gia sư</h2>
+              <p className="max-w-md">{error}</p>
+              <button onClick={() => fetchMatches(formData)} className="bg-error text-on-error px-6 py-2.5 rounded-lg font-bold hover:opacity-90 transition-opacity mt-2">
+                Tải lại trang
               </button>
             </div>
           )}
 
-          {/* ── Empty ── */}
+          {/* Empty State */}
           {!loading && !error && filtered.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-2xl gap-md text-center">
-              <span className="material-symbols-outlined text-6xl text-on-surface-variant">search_off</span>
-              <h2 className="text-headline-md font-headline-md text-on-surface">Chưa tìm thấy gia sư phù hợp</h2>
-              <p className="text-body-md text-on-surface-variant max-w-md">
-                Hệ thống chưa có gia sư khớp với yêu cầu của bạn. Hãy thử chỉnh sửa yêu cầu hoặc mở rộng bộ lọc.
+            <div className="bg-surface-container-lowest rounded-2xl p-10 flex flex-col items-center justify-center text-center gap-4 border border-surface-variant shadow-sm">
+              <div className="w-20 h-20 bg-surface-variant rounded-full flex items-center justify-center mb-2">
+                <span className="material-symbols-outlined text-4xl text-on-surface-variant">search_off</span>
+              </div>
+              <h2 className="text-xl font-bold text-on-surface">Không tìm thấy gia sư phù hợp</h2>
+              <p className="text-on-surface-variant max-w-md">
+                Hiện tại hệ thống chưa tìm thấy gia sư nào khớp với các tiêu chí lọc của bạn. Bạn hãy thử nới lỏng mức học phí hoặc thay đổi bộ lọc nhé.
               </p>
-              <button onClick={() => window.location.hash = '/tutor-request'} className="bg-primary text-on-primary px-6 py-2.5 rounded-lg text-label-md font-label-md hover:bg-primary-container transition-colors">
-                Chỉnh sửa yêu cầu
+              <button onClick={() => { setMinPrice(''); setMaxPrice(''); setFmtOnline(true); setFmtOffline(true); setMinRating(0); }} className="mt-2 bg-primary text-on-primary px-6 py-2.5 rounded-lg font-bold hover:bg-[#0042a3] transition-colors">
+                Xóa bộ lọc
               </button>
             </div>
           )}
 
-          {/* ── Best match ── */}
+          {/* Best Match */}
           {!loading && !error && bestMatch && (
-            <section className="flex flex-col gap-md mt-md">
-              <h2 className="text-headline-md font-headline-md text-on-surface flex items-center gap-sm">
+            <div className="mb-8">
+              <h2 className="text-lg font-bold text-on-surface mb-4 flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>workspace_premium</span>
                 Gợi ý hàng đầu
               </h2>
-              <BestMatchCard tutor={bestMatch} formData={formData} />
-            </section>
+              <BestMatchCard 
+                tutor={bestMatch} 
+                formData={formData} 
+                onSelect={handleSelect} 
+                onInterest={handleInterest} 
+                selectedForCompare={selectedForCompare} 
+                onToggleCompare={handleToggleCompare} 
+                selectingTutorId={selectingTutorId}
+              />
+            </div>
           )}
 
-          {/* ── Other tutors ── */}
+          {/* Other Tutors Grid (Horizontal list) */}
           {!loading && !error && otherTutors.length > 0 && (
-            <section className="flex flex-col gap-md mt-lg">
-              <h2 className="text-headline-md font-headline-md text-on-surface">Các gia sư phù hợp khác</h2>
-              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-md">
-                {otherTutors.map(t => <TutorCard key={t.id} tutor={t} onSelect={handleSelect} onInterest={handleInterest} />)}
+            <div className="flex flex-col gap-4">
+              <h2 className="text-lg font-bold text-on-surface mb-1">Các gia sư phù hợp khác</h2>
+              <div className="flex flex-col gap-4">
+                {otherTutors.map(t => (
+                  <TutorMatchCard 
+                    key={t.id} 
+                    tutor={t} 
+                    formData={formData}
+                    onSelect={handleSelect} 
+                    onInterest={handleInterest} 
+                    selectedForCompare={selectedForCompare} 
+                    onToggleCompare={handleToggleCompare} 
+                    selectingTutorId={selectingTutorId}
+                  />
+                ))}
               </div>
-            </section>
+            </div>
           )}
+
         </main>
       </div>
+
+      {/* Floating Compare Bar */}
+      {selectedForCompare.length >= 2 && !showCompareModal && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 animate-slide-up w-[95%] max-w-[600px]">
+          <div className="bg-surface-container-highest/95 backdrop-blur-md text-on-surface shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] rounded-2xl px-6 py-4 border border-outline-variant/30 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex -space-x-3 hidden sm:flex">
+                {selectedForCompare.map(t => (
+                  <Avatar key={t.id} url={t.avatarUrl} name={t.name} className="w-10 h-10 border-2 border-surface-container-highest shadow-sm relative z-10" />
+                ))}
+              </div>
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-on-surface">Compare ({selectedForCompare.length}/3)</span>
+                <button onClick={handleClearCompare} className="text-xs text-error hover:underline text-left mt-0.5">Bỏ chọn tất cả</button>
+              </div>
+            </div>
+            <button 
+              onClick={() => setShowCompareModal(true)}
+              className="bg-primary text-on-primary px-5 sm:px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-primary/20 hover:bg-[#0042a3] transition-colors flex items-center gap-2 whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-[18px]">compare_arrows</span>
+              So sánh ngay
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Compare Modal Component */}
+      {showCompareModal && (
+        <CompareModal 
+          tutors={selectedForCompare} 
+          onClose={() => setShowCompareModal(false)} 
+          onSelect={handleSelect}
+        />
+      )}
     </div>
   );
 }

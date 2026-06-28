@@ -10,6 +10,7 @@
 const express = require("express");
 const multer = require("multer");
 const pool = require("../db");
+const { requireAuth, requireClassMember } = require("../middleware/auth");
 const {
   validateFile,
   uploadToSupabase,
@@ -17,7 +18,7 @@ const {
   formatFileSize,
 } = require("../services/storageService");
 
-const router = express.Router({ mergeParams: true }); // mergeParams để nhận :classId từ parent
+const router = express.Router({ mergeParams: true });
 
 // ── Multer: lưu file vào memory buffer (không lưu disk) ─────────────────────
 const upload = multer({
@@ -52,7 +53,7 @@ async function classExists(classId) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/classes/:classId/materials
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/", async (req, res) => {
+router.get("/", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
 
   if (!isValidUUID(classId)) {
@@ -102,10 +103,10 @@ router.get("/", async (req, res) => {
 // POST /api/classes/:classId/materials
 // Tạo metadata tài liệu (JSON body, không upload file)
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
-  const { title, description, file_url, file_type, file_size, uploaded_by } =
-    req.body || {};
+  const { title, description, file_url, file_type, file_size } = req.body || {};
+  const uploaded_by = req.user.userId; // Override with authenticated user
 
   if (!isValidUUID(classId)) {
     return res
@@ -180,9 +181,10 @@ router.post("/", async (req, res) => {
 //   description  — mô tả (optional)
 //   uploaded_by  — UUID of uploader (required)
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/upload", upload.single("file"), async (req, res) => {
+router.post("/upload", requireAuth, requireClassMember, upload.single("file"), async (req, res) => {
   const { classId } = req.params;
-  const { title, description, uploaded_by } = req.body || {};
+  const { title, description } = req.body || {};
+  const uploaded_by = req.user.userId;
   const file = req.file;
 
   // Validate UUID

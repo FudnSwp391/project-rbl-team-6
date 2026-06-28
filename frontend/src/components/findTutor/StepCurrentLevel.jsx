@@ -23,7 +23,7 @@ const learningSpeeds = [
   { value: "nhanh", label: "Nhanh, tập trung giải đề" },
 ];
 
-export function StepCurrentLevel({ formData, setFormData }) {
+export function StepCurrentLevel({ formData, setFormData, errors = {} }) {
   const handleChange = (e) => {
     const { id, value } = e.target;
     setFormData(prev => ({ ...prev, [id]: value }));
@@ -81,15 +81,16 @@ export function StepCurrentLevel({ formData, setFormData }) {
           <h3 className="font-headline-sm text-headline-sm mb-md">Điểm số tham khảo</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-lg">
             <div>
-              <label className="block font-label-md text-label-md text-on-surface-variant mb-xs" htmlFor="recentAverageScore">Điểm trung bình học kỳ gần nhất</label>
+              <label className="block font-label-md text-label-md text-on-surface-variant mb-xs" htmlFor="recentAverageScore">Điểm trung bình học kỳ gần nhất <span className="text-error">*</span></label>
               <input 
                 id="recentAverageScore"
                 type="number" min="0" max="10" step="0.1" 
                 value={formData.recentAverageScore}
                 onChange={handleChange}
                 placeholder="VD: 5.5"
-                className="w-full bg-surface border border-outline-variant rounded-lg p-md focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition-all font-body-md text-on-surface" 
+                className={`w-full bg-surface border rounded-lg p-md focus:ring-1 focus:outline-none transition-all font-body-md text-on-surface ${errors.recentAverageScore ? 'border-error focus:border-error focus:ring-error' : 'border-outline-variant focus:border-primary focus:ring-primary'}`} 
               />
+              {errors.recentAverageScore && <span className="text-error text-sm mt-1 block animate-fade-in">{errors.recentAverageScore}</span>}
             </div>
             <div>
               <label className="block font-label-md text-label-md text-on-surface-variant mb-xs" htmlFor="recentTestScore">Điểm bài kiểm tra mới nhất (tùy chọn)</label>

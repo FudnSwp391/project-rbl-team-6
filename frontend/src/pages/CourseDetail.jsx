@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+import { apiRequest } from '../services/api';
 
 const CAT_STYLE = {
   'Kỹ Thuật Phần Mềm': { gradient: 'linear-gradient(135deg,#0ea5e9,#1e3a8a)', icon: 'code' },
@@ -41,18 +40,14 @@ export default function CourseDetail({ courseId }) {
     const id = courseId || window.location.hash.match(/#\/course\/([^/]+)/)?.[1];
     if (!id) { setError('Không tìm thấy ID khóa học.'); setLoading(false); return; }
 
-    fetch(`${API_BASE}/api/courses/${id}`)
-      .then(r => { if (!r.ok) throw new Error('Không tìm thấy khóa học.'); return r.json(); })
+    apiRequest(`/api/courses/${id}`)
       .then(d => { setCourse(d); setLoading(false); })
-      .catch(e => { setError(e.message); setLoading(false); });
+      .catch(e => { setError(e.message || 'Không tìm thấy khóa học.'); setLoading(false); });
 
     if (user && token) {
-      fetch(`${API_BASE}/api/courses/${id}/enrollment-status`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      .then(r => r.json())
-      .then(d => { if (d.enrolled) setEnrolled(true); })
-      .catch(console.error);
+      apiRequest(`/api/courses/${id}/enrollment-status`)
+        .then(d => { if (d.enrolled) setEnrolled(true); })
+        .catch(console.error);
     }
   }, [courseId, user, token]);
 
@@ -78,28 +73,21 @@ export default function CourseDetail({ courseId }) {
 
     setEnrollLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/courses/${course.id}/enroll`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      const data = await apiRequest(`/api/courses/${course.id}/enroll`, {
+        method: 'POST'
       });
-      const data = await res.json();
-      
-      if (!res.ok) {
-        if (data.code === 'INSUFFICIENT_FUNDS') {
-          // Xử lý báo thiếu tiền
-          setToast('Số dư ví không đủ. Vui lòng vào Nền tảng học tập để Nạp tiền.');
-          setTimeout(() => setToast(''), 5000);
-          return;
-        }
-        throw new Error(data.message || 'Lỗi khi đăng ký khóa học.');
-      }
       
       setEnrolled(true);
       setToast('Đăng ký khóa học thành công!');
       setTimeout(() => setToast(''), 3000);
     } catch (err) {
-      setToast(err.message);
-      setTimeout(() => setToast(''), 3000);
+      if (err.message && err.message.includes('INSUFFICIENT_FUNDS') || err.code === 'INSUFFICIENT_FUNDS') {
+        setToast('Số dư ví không đủ. Vui lòng vào Nền tảng học tập để Nạp tiền.');
+        setTimeout(() => setToast(''), 5000);
+      } else {
+        setToast(err.message || 'Lỗi khi đăng ký khóa học.');
+        setTimeout(() => setToast(''), 3000);
+      }
     } finally {
       setEnrollLoading(false);
     }

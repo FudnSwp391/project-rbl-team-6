@@ -7,9 +7,10 @@
  *
  * Nếu DB lỗi hoặc chưa tạo bảng → trả mock data fallback.
  */
-const express = require("express");
 const pool = require("../db");
+const { requireAuth, requireClassMember } = require("../middleware/auth");
 
+const express = require("express");
 const router = express.Router();
 
 // ── UUID v4 regex ────────────────────────────────────────────────────────────
@@ -39,7 +40,7 @@ async function classExists(classId) {
 // GET /api/classes/:classId/lessons
 // Lấy danh sách lessons của một class, sort theo lesson_order ASC
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/classes/:classId/lessons", async (req, res) => {
+router.get("/api/classes/:classId/lessons", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
 
   if (!isValidUUID(classId)) {
@@ -76,8 +77,9 @@ router.get("/api/classes/:classId/lessons", async (req, res) => {
 // GET /api/lessons/:lessonId
 // Lấy chi tiết một lesson
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/lessons/:lessonId", async (req, res) => {
+router.get("/api/lessons/:lessonId", requireAuth, async (req, res) => {
   const { lessonId } = req.params;
+  const userId = req.user.userId;
 
   if (!isValidUUID(lessonId)) {
     return res
@@ -91,13 +93,24 @@ router.get("/api/lessons/:lessonId", async (req, res) => {
       [lessonId]
     );
 
-    if (result.rows.length > 0) {
-      return res.json({ success: true, data: result.rows[0] });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Lesson not found" });
+    }
+    
+    const lesson = result.rows[0];
+    
+    // Check membership
+    const memRes = await pool.query(
+      `SELECT 1 FROM class_members WHERE class_id = $1 AND student_id = $2
+       UNION
+       SELECT 1 FROM classes WHERE id = $1 AND tutor_id = $2`,
+      [lesson.class_id, userId]
+    );
+    if (memRes.rows.length === 0) {
+      return res.status(403).json({ success: false, message: "403 Forbidden: Bạn không có quyền truy cập lớp học này." });
     }
 
-    return res
-      .status(404)
-      .json({ success: false, message: "Lesson not found" });
+    return res.json({ success: true, data: lesson });
   } catch (error) {
     console.error("[Lessons] GET detail error:", error.message);
     return res
@@ -110,7 +123,7 @@ router.get("/api/lessons/:lessonId", async (req, res) => {
 // POST /api/classes/:classId/lessons
 // Tạo lesson mới
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/api/classes/:classId/lessons", async (req, res) => {
+router.post("/api/classes/:classId/lessons", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
   const {
     title,

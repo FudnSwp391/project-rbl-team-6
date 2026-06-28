@@ -12,7 +12,11 @@ const mandatoryConditions = [
 const availablePriorities = [
   { id: 'style', title: 'Phong cách giảng dạy dễ hiểu', desc: 'Kiên nhẫn, giải thích cặn kẽ từng bước' },
   { id: 'experience', title: 'Kinh nghiệm dạy học sinh phù hợp', desc: 'Có phương pháp truyền đạt tốt' },
-  { id: 'flexibility', title: 'Sự linh hoạt trong lịch học', desc: 'Có thể sắp xếp bù buổi nếu bận đột xuất' }
+  { id: 'flexibility', title: 'Sự linh hoạt trong lịch học', desc: 'Có thể sắp xếp bù buổi nếu bận đột xuất' },
+  { id: 'budget', title: 'Học phí ưu đãi / Giá rẻ', desc: 'Ưu tiên các gia sư có mức học phí tốt nhất' },
+  { id: 'start_soon', title: 'Có thể bắt đầu học ngay', desc: 'Không cần chờ đợi xếp lịch quá lâu' },
+  { id: 'achievement', title: 'Thành tích học tập xuất sắc', desc: 'Gia sư từng đạt giải thưởng, học sinh giỏi quốc gia' },
+  { id: 'distance', title: 'Gần khu vực sống', desc: 'Tiện lợi cho việc di chuyển (áp dụng học trực tiếp)' }
 ];
 
 export function StepPriorityReview({ formData, setFormData }) {

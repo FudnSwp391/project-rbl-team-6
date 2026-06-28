@@ -1,6 +1,6 @@
 import React from 'react';
 
-export function StepReviewConfirm({ formData, setFormData, setCurrentStep }) {
+export function StepReviewConfirm({ formData, setFormData, setCurrentStep, user }) {
   const handleChange = (e) => {
     const { checked } = e.target;
     setFormData(prev => ({ ...prev, isConfirmed: checked }));
@@ -14,6 +14,16 @@ export function StepReviewConfirm({ formData, setFormData, setCurrentStep }) {
   const getLevelLabel = (val) => {
     const map = { cap1: 'Cấp 1', cap2: 'Cấp 2', cap3: 'Cấp 3' };
     return map[val] || val || 'Chưa chọn';
+  };
+
+  const renderAvailableTimes = (times) => {
+    if (!times || !times.length) return 'Chưa chọn';
+    const dayLabels = {
+      'monday': 'Thứ 2', 'tuesday': 'Thứ 3', 'wednesday': 'Thứ 4',
+      'thursday': 'Thứ 5', 'friday': 'Thứ 6', 'saturday': 'Thứ 7', 'sunday': 'Chủ nhật'
+    };
+    if (typeof times[0] === 'string') return times.join(', ');
+    return times.map(t => `${dayLabels[t.day] || t.day} (${t.start} - ${t.end})`).join(', ');
   };
 
   return (
@@ -192,7 +202,7 @@ export function StepReviewConfirm({ formData, setFormData, setCurrentStep }) {
             </button>
           </div>
           <div className="flex flex-col mt-sm gap-xs font-body-md text-body-md text-on-surface">
-            <p>Khung giờ: <strong>{(formData.availableTimes || []).join(', ')}</strong></p>
+            <p>Khung giờ: <strong>{renderAvailableTimes(formData.availableTimes)}</strong></p>
             <p>Tần suất: <strong>{formData.sessionsPerWeek}</strong> ({formData.durationPerSession})</p>
             <p>Bắt đầu: <strong>{formData.startTimePreference}</strong></p>
           </div>

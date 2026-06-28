@@ -9,9 +9,12 @@ import { StepPriorityReview } from '../components/findTutor/StepPriorityReview';
 import { StepReviewConfirm } from '../components/findTutor/StepReviewConfirm';
 import { MatchingLoading } from '../components/findTutor/MatchingLoading';
 
-export default function FindTutorRequest({ user, onGoSignIn, onGoSignUp }) {
-  const [currentStep, setCurrentStep] = useState(1);
-  const [formData, setFormData] = useState({
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+
+
+const STORAGE_KEY = 'findTutorProgress';
+
+const defaultFormData = {
     subject: "",
     educationLevel: "",
     grade: "",
@@ -62,9 +65,118 @@ export default function FindTutorRequest({ user, onGoSignIn, onGoSignUp }) {
     tutorExperiencePreference: "",
     tutorPriority: [],
     finalNote: ""
-  });
+  };
+
+function loadSavedProgress() {
+  try {
+    const saved = sessionStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        step: parsed.step || 1,
+        formData: { ...defaultFormData, ...parsed.formData }
+      };
+    }
+  } catch (e) {
+    console.warn('Failed to restore tutor request progress:', e);
+  }
+  return { step: 1, formData: defaultFormData };
+}
+
+export default function FindTutorRequest({ user, onGoSignIn, onGoSignUp }) {
+  const saved = loadSavedProgress();
+  const [currentStep, setCurrentStep] = useState(saved.step);
+  const [formData, setFormData] = useState(saved.formData);
+
+  const [errors, setErrors] = useState({});
+
+  // Auto-save step + formData to sessionStorage on every change
+  useEffect(() => {
+    // Clear errors when a value becomes truthy/valid
+    setErrors(prev => {
+      if (Object.keys(prev).length === 0) return prev;
+      const newErrors = { ...prev };
+      let changed = false;
+      if (newErrors.educationLevel && formData.educationLevel) { delete newErrors.educationLevel; changed = true; }
+      if (newErrors.subject && formData.subject) { delete newErrors.subject; changed = true; }
+      if (newErrors.grade && formData.grade) { delete newErrors.grade; changed = true; }
+      if (newErrors.recentAverageScore && formData.recentAverageScore) { delete newErrors.recentAverageScore; changed = true; }
+      if (newErrors.targetScore && formData.targetScore && Number(formData.targetScore) > Number(formData.recentAverageScore)) { delete newErrors.targetScore; changed = true; }
+      if (newErrors.learningFormat && formData.learningFormat) { delete newErrors.learningFormat; changed = true; }
+      if (newErrors.city && formData.city) { delete newErrors.city; changed = true; }
+      if (newErrors.district && formData.district) { delete newErrors.district; changed = true; }
+      if (newErrors.availableTimes && formData.availableTimes?.length > 0) { delete newErrors.availableTimes; changed = true; }
+      if (newErrors.budgetMin && formData.budgetMin) { delete newErrors.budgetMin; changed = true; }
+      if (newErrors.budgetMax && formData.budgetMax && Number(formData.budgetMin) <= Number(formData.budgetMax)) { delete newErrors.budgetMax; delete newErrors.budgetMin; changed = true; }
+      return changed ? newErrors : prev;
+    });
+
+    if (currentStep === "matching") return; // Don't save matching state
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+        step: currentStep,
+        formData
+      }));
+    } catch (e) {
+      console.warn('Failed to save tutor request progress:', e);
+    }
+  }, [currentStep, formData]);
+
+  const validateStep = (step) => {
+    const newErrors = {};
+    switch(step) {
+      case 1:
+        if (!formData.educationLevel) newErrors.educationLevel = "Vui lòng chọn cấp học.";
+        if (!formData.subject) newErrors.subject = "Vui lòng chọn môn học.";
+        if (!formData.grade) newErrors.grade = "Vui lòng chọn cấp học/khối lớp.";
+        break;
+      case 2:
+        if (!formData.recentAverageScore) newErrors.recentAverageScore = "Vui lòng nhập điểm trung bình hiện tại.";
+        break;
+      case 3:
+        if (!formData.targetScore) newErrors.targetScore = "Vui lòng nhập mục tiêu điểm số.";
+        else if (Number(formData.targetScore) <= Number(formData.recentAverageScore)) {
+          newErrors.targetScore = "Mục tiêu điểm số phải lớn hơn điểm hiện tại."; 
+        }
+        break;
+      case 4:
+        break;
+      case 5:
+        if (!formData.learningFormat) newErrors.learningFormat = "Vui lòng chọn hình thức học tập.";
+        if (formData.learningFormat !== 'online') {
+          if (!formData.city) newErrors.city = "Với hình thức học trực tiếp, vui lòng chọn Tỉnh/Thành phố.";
+          if (!formData.district) newErrors.district = "Với hình thức học trực tiếp, vui lòng chọn Quận/Huyện.";
+        }
+        if (!formData.availableTimes || formData.availableTimes.length === 0) {
+          newErrors.availableTimes = "Vui lòng chọn ít nhất một khung giờ có thể học.";
+        }
+        if (!formData.budgetMin) newErrors.budgetMin = "Vui lòng nhập ngân sách tối thiểu.";
+        if (!formData.budgetMax) newErrors.budgetMax = "Vui lòng nhập ngân sách tối đa.";
+        if (formData.budgetMin && formData.budgetMax && Number(formData.budgetMin) > Number(formData.budgetMax)) {
+          newErrors.budgetMin = "Ngân sách tối thiểu không được lớn hơn tối đa.";
+        }
+        break;
+      default:
+        break;
+    }
+
+    setErrors(newErrors);
+
+    if (Object.keys(newErrors).length > 0) {
+      setTimeout(() => {
+        const errorElements = document.querySelectorAll('.border-red-500, .border-error');
+        if (errorElements.length > 0) {
+          errorElements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 50);
+      return false;
+    }
+    return true;
+  };
 
   const nextStep = () => {
+    if (!validateStep(currentStep)) return;
+    setErrors({});
     if (currentStep < 7) {
       setCurrentStep(currentStep + 1);
     } else if (currentStep === 7) {
@@ -73,6 +185,7 @@ export default function FindTutorRequest({ user, onGoSignIn, onGoSignUp }) {
   };
 
   const prevStep = () => {
+    setErrors({});
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
     }
@@ -87,30 +200,38 @@ export default function FindTutorRequest({ user, onGoSignIn, onGoSignUp }) {
         headers['Authorization'] = `Bearer ${token}`;
       }
       
-      const response = await fetch('/api/tutor-requests', {
+      const response = await fetch(`${API_BASE}/api/tutor-requests`, {
         method: 'POST',
         headers,
         body: JSON.stringify(formData)
       });
       
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const resData = await response.json();
       if (resData.success) {
         // Lưu lại requestId để các bước sau (matching) có thể cập nhật
         const finalData = { ...formData, tutorRequestId: resData.data.id, status: resData.data.match_status };
         sessionStorage.setItem('tutorRequestData', JSON.stringify(finalData));
+        sessionStorage.removeItem(STORAGE_KEY); // Clear draft progress after successful submission
+        console.log("API RESPONSE =", resData);
+        console.log("FINAL DATA =", finalData);
+        console.log("SESSION AFTER SAVE =", sessionStorage.getItem("tutorRequestData"));
+        
+        setCurrentStep("matching");
+        setTimeout(() => {
+          window.location.hash = '/tutor-matches';
+        }, 2500);
       } else {
-        sessionStorage.setItem('tutorRequestData', JSON.stringify(formData));
+        alert("Không thể tạo yêu cầu tìm gia sư. " + (resData.message || "Vui lòng kiểm tra backend."));
         console.error("Lỗi lưu request:", resData.message);
       }
     } catch (e) {
       console.error("Lỗi kết nối:", e);
-      sessionStorage.setItem('tutorRequestData', JSON.stringify(formData));
+      alert("Không thể tạo yêu cầu tìm gia sư. Vui lòng kiểm tra backend.");
     }
-    
-    setCurrentStep("matching");
-    setTimeout(() => {
-      window.location.hash = '/tutor-matches';
-    }, 2500);
   };
 
   const handleSaveDraft = () => {
@@ -126,21 +247,21 @@ export default function FindTutorRequest({ user, onGoSignIn, onGoSignUp }) {
   const renderStep = () => {
     switch (currentStep) {
       case 1:
-        return <StepLearningNeeds formData={formData} setFormData={setFormData} />;
+        return <StepLearningNeeds formData={formData} setFormData={setFormData} errors={errors} />;
       case 2:
-        return <StepCurrentLevel formData={formData} setFormData={setFormData} />;
+        return <StepCurrentLevel formData={formData} setFormData={setFormData} errors={errors} />;
       case 3:
-        return <StepLearningGoal formData={formData} setFormData={setFormData} />;
+        return <StepLearningGoal formData={formData} setFormData={setFormData} errors={errors} />;
       case 4:
-        return <StepLearningStyle formData={formData} setFormData={setFormData} />;
+        return <StepLearningStyle formData={formData} setFormData={setFormData} errors={errors} />;
       case 5:
-        return <StepScheduleBudget formData={formData} setFormData={setFormData} />;
+        return <StepScheduleBudget formData={formData} setFormData={setFormData} errors={errors} />;
       case 6:
-        return <StepPriorityReview formData={formData} setFormData={setFormData} />;
+        return <StepPriorityReview formData={formData} setFormData={setFormData} errors={errors} />;
       case 7:
         return <StepReviewConfirm formData={formData} setFormData={setFormData} setCurrentStep={setCurrentStep} user={user} />;
       default:
-        return <StepLearningNeeds formData={formData} setFormData={setFormData} />;
+        return <StepLearningNeeds formData={formData} setFormData={setFormData} errors={errors} />;
     }
   };
 

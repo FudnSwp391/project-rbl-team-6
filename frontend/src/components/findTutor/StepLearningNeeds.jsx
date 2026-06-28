@@ -186,7 +186,7 @@ const textbooks = [
 ];
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export function StepLearningNeeds({ formData, setFormData }) {
+export function StepLearningNeeds({ formData, setFormData, errors = {} }) {
   const level   = formData.educationLevel || "";
   const subject = formData.subject || "";
 
@@ -262,38 +262,40 @@ export function StepLearningNeeds({ formData, setFormData }) {
               {/* Cấp học */}
               <div className="flex flex-col gap-xs">
                 <label className="font-label-md text-label-md text-on-surface" htmlFor="educationLevel">
-                  Cấp học
+                  Cấp học <span className="text-error">*</span>
                 </label>
                 <select
                   id="educationLevel"
                   value={level}
                   onChange={handleLevelChange}
-                  className="form-select w-full bg-surface border border-outline-variant text-on-surface font-body-md text-body-md rounded-lg focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none py-sm px-md h-12 transition-colors"
+                  className={`form-select w-full bg-surface border text-on-surface font-body-md text-body-md rounded-lg focus:ring-1 focus:outline-none py-sm px-md h-12 transition-colors ${errors.educationLevel ? 'border-error focus:border-error focus:ring-error' : 'border-outline-variant focus:border-primary focus:ring-primary'}`}
                 >
                   <option value="" disabled>-- Chọn cấp học --</option>
                   {educationLevels.map(l => (
                     <option key={l.value} value={l.value}>{l.label}</option>
                   ))}
                 </select>
+                {errors.educationLevel && <span className="text-error text-sm mt-1 animate-fade-in">{errors.educationLevel}</span>}
               </div>
 
               {/* Lớp – chỉ hiện sau khi chọn cấp học */}
               {level && gradeOptions.length > 0 && (
                 <div className="flex flex-col gap-xs">
                   <label className="font-label-md text-label-md text-on-surface" htmlFor="grade">
-                    Lớp
+                    Lớp <span className="text-error">*</span>
                   </label>
                   <select
                     id="grade"
                     value={formData.grade || ""}
                     onChange={handleGradeChange}
-                    className="form-select w-full bg-surface border border-outline-variant text-on-surface font-body-md text-body-md rounded-lg focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none py-sm px-md h-12 transition-colors"
+                    className={`form-select w-full bg-surface border text-on-surface font-body-md text-body-md rounded-lg focus:ring-1 focus:outline-none py-sm px-md h-12 transition-colors ${errors.grade ? 'border-error focus:border-error focus:ring-error' : 'border-outline-variant focus:border-primary focus:ring-primary'}`}
                   >
                     <option value="" disabled>-- Chọn lớp --</option>
                     {gradeOptions.map(g => (
                       <option key={g} value={g}>Lớp {g}</option>
                     ))}
                   </select>
+                  {errors.grade && <span className="text-error text-sm mt-1 animate-fade-in">{errors.grade}</span>}
                 </div>
               )}
 
@@ -301,19 +303,20 @@ export function StepLearningNeeds({ formData, setFormData }) {
               {level && availableSubjects.length > 0 && (
                 <div className="flex flex-col gap-xs">
                   <label className="font-label-md text-label-md text-on-surface" htmlFor="subject">
-                    Môn học
+                    Môn học <span className="text-error">*</span>
                   </label>
                   <select
                     id="subject"
                     value={subject}
                     onChange={handleSubjectChange}
-                    className="form-select w-full bg-surface border border-outline-variant text-on-surface font-body-md text-body-md rounded-lg focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none py-sm px-md h-12 transition-colors"
+                    className={`form-select w-full bg-surface border text-on-surface font-body-md text-body-md rounded-lg focus:ring-1 focus:outline-none py-sm px-md h-12 transition-colors ${errors.subject ? 'border-error focus:border-error focus:ring-error' : 'border-outline-variant focus:border-primary focus:ring-primary'}`}
                   >
                     <option value="" disabled>-- Chọn môn học --</option>
                     {availableSubjects.map(s => (
                       <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
+                  {errors.subject && <span className="text-error text-sm mt-1 animate-fade-in">{errors.subject}</span>}
                 </div>
               )}
             </div>

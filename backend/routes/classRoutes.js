@@ -8,6 +8,7 @@
  */
 const express = require("express");
 const pool = require("../db");
+const { requireAuth, requireClassMember } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -15,8 +16,9 @@ const router = express.Router();
 // GET /api/classes/student/:studentId
 // Trả về danh sách classes mà student đã tham gia (qua class_members)
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/student/:studentId", async (req, res) => {
-  const { studentId } = req.params;
+router.get("/student/:studentId", requireAuth, async (req, res) => {
+  // Override studentId param with the logged-in user's ID
+  const studentId = req.user.userId;
 
   try {
     const result = await pool.query(
@@ -65,7 +67,7 @@ router.get("/student/:studentId", async (req, res) => {
 //   - materials[] (2 gần nhất cho sidebar Quick Materials)
 //   - upcoming_session (buổi học sắp tới nếu có trong schedule_sessions)
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/:classId", async (req, res) => {
+router.get("/:classId", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
 
   try {

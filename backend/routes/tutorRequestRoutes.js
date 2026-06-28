@@ -5,7 +5,6 @@ const jwt = require("jsonwebtoken");
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "your_super_secret_key_change_in_production";
 
-// Middleware để xác thực tuỳ chọn (cho phép cả Guest và User đăng nhập)
 const optionalAuth = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
   if (token) {
@@ -16,6 +15,16 @@ const optionalAuth = (req, res, next) => {
   } else {
     next();
   }
+};
+
+const requireAuth = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ success: false, message: "Vui lòng đăng nhập." });
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(401).json({ success: false, message: "Token không hợp lệ." });
+    req.user = decoded;
+    next();
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,14 +68,14 @@ router.post("/api/tutor-requests", optionalAuth, async (req, res) => {
         student_id, grade_level, education_program, textbook, subject, topics, description,
         current_level, current_score, recent_test_score, learning_difficulties, self_learning_ability, learning_speed,
         learning_goals, current_target_score, desired_target_score, deadline_months, urgency_level,
-        learning_style, preferred_schedule, budget,
+        learning_style, preferred_schedule, budget, learning_format, city, district,
         match_status, matched_tutor_count, request_source, contact_name, contact_phone, contact_email
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12, $13,
         $14, $15, $16, $17, $18,
-        $19, $20, $21,
-        'pending', 0, $22, $23, $24, $25
+        $19, $20, $21, $22, $23, $24,
+        'pending', 0, $25, $26, $27, $28
       ) RETURNING *;
     `;
 
@@ -92,6 +101,9 @@ router.post("/api/tutor-requests", optionalAuth, async (req, res) => {
       data.teachingStyle || null,
       preferred_schedule,
       budget,
+      data.learningFormat || null,
+      data.city || null,
+      data.district || null,
       request_source,
       data.contact_name || null,
       data.contact_phone || null,
@@ -172,171 +184,368 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
     
     let matchedTutors = [];
 
-    // Lấy thông tin từ request
+    // --- XỬ LÝ DỮ LIỆU TỪ REQUEST ---
     const reqSubject = (tutorReq.subject || "").toLowerCase();
     const reqGrade = (tutorReq.grade_level || "").toLowerCase();
     const reqTopics = Array.isArray(tutorReq.topics) ? tutorReq.topics : [];
     const reqGoals = Array.isArray(tutorReq.learning_goals) ? tutorReq.learning_goals : [];
+    const reqDifficulties = Array.isArray(tutorReq.learning_difficulties) ? tutorReq.learning_difficulties : [];
     const reqBudget = tutorReq.budget || {};
+    const normalizeLocation = (str) => {
+      if (!str) return "";
+      let s = String(str).toLowerCase();
+      s = s.replace(/(thành phố|tỉnh|quận|huyện|thị xã|phường|xã|thị trấn)\s+/g, '');
+      // Chuẩn hóa một số tên viết tắt thường gặp nhưng không xóa dữ liệu quận
+      s = s.replace(/hồ chí minh/g, 'hcm');
+      s = s.replace(/tp\.hcm/g, 'hcm');
+      s = s.replace(/tp hcm/g, 'hcm');
+      s = s.replace(/hà nội/g, 'hn');
+      s = s.replace(/đà nẵng/g, 'dn');
+      return s.trim();
+    };
+
+    const reqLearningFormat = (tutorReq.learning_format || "").toLowerCase(); // online/offline/both
     const reqLearningStyle = (tutorReq.learning_style || "").toLowerCase();
+    const reqCity = normalizeLocation(tutorReq.city);
+    const reqDistrict = normalizeLocation(tutorReq.district);
+
+    const isOfflineRequest = reqLearningFormat === "offline" || reqLearningFormat === "both";
     
-    // Xử lý preferred_schedule
     let reqAvailableTimes = [];
-    if (tutorReq.preferred_schedule && tutorReq.preferred_schedule.availableTimes) {
+    if (tutorReq.preferred_schedule && Array.isArray(tutorReq.preferred_schedule.availableTimes)) {
       reqAvailableTimes = tutorReq.preferred_schedule.availableTimes;
     }
 
     tutorsRes.rows.forEach(tutor => {
       let score = 0;
-      let reasons = [];
+      let reasonsObj = []; // { priority: number, text: string }
+      let componentScores = {
+        subject: 0,
+        grade: 0,
+        goal: 0,
+        budget: 0,
+        schedule: 0,
+        teachingFormat: 0,
+        experience: 0,
+        rating: 0,
+        location: 0
+      };
 
-      // Dữ liệu tutor
+      // --- DỮ LIỆU TUTOR ---
       const tSubjects = (tutor.subjects || "").toLowerCase();
       const tSuitableStudents = Array.isArray(tutor.suitable_students) ? tutor.suitable_students.map(s => String(s).toLowerCase()) : [];
       const tTeachingMethods = Array.isArray(tutor.teaching_methods) ? tutor.teaching_methods.map(m => String(m).toLowerCase()) : [];
       const tBio = (tutor.bio || "").toLowerCase();
       const tHeadline = (tutor.headline || "").toLowerCase();
+      const tCity = normalizeLocation(tutor.city);
+      const tLoc = normalizeLocation(tutor.location);
       const textToScan = tBio + " " + tHeadline;
+      
+      const exp = parseInt(tutor.experience_years) || 0;
+      const rate = parseFloat(tutor.hourly_rate);
+      const rating = parseFloat(tutor.avg_rating) || 0;
+      const reviewCount = parseInt(tutor.review_count) || 0;
 
-      // 1. Subject Match (30%)
-      // Ưu tiên dữ liệu cấu trúc
-      if (reqSubject && tSubjects.includes(reqSubject)) {
-        score += 30;
-        reasons.push(`Dạy đúng môn ${tutorReq.subject}`);
+      // 0. Hard Filter for Offline Request
+      if (isOfflineRequest && reqCity) {
+        if (!tCity.includes(reqCity) && !tLoc.includes(reqCity)) {
+          return; // Bắt buộc phải có tutor ở cùng thành phố
+        }
       }
 
-      // 2. Grade Level Match (20%)
-      // Ưu tiên cấu trúc suitable_students, nếu không thì scan text
+      // 1. Subject Match (20 điểm)
+      // FIX LOGIC: Bắt buộc tutor phải dạy đúng môn. Nếu không khớp môn, loại bỏ hoàn toàn.
+      if (reqSubject) {
+        if (tSubjects.includes(reqSubject) || textToScan.includes(reqSubject)) {
+          score += 20;
+          componentScores.subject += 20;
+          reasonsObj.push({ priority: 1, text: `Dạy đúng môn ${tutorReq.subject}` });
+        } else {
+          return; // Loại bỏ khỏi top match
+        }
+      }
+
+      // 2. Grade Match (15 điểm)
+      // FIX LOGIC: Bắt buộc tutor phải dạy đúng khối lớp. Nếu không khớp, loại bỏ hoàn toàn.
       if (reqGrade) {
         let gradeMatched = false;
-        if (tSuitableStudents.length > 0) {
-          if (tSuitableStudents.some(s => s.includes(reqGrade))) {
-            gradeMatched = true;
-          }
-        } else if (textToScan.includes(reqGrade) || textToScan.includes(`lớp ${reqGrade}`) || textToScan.includes("cấp 3")) {
+        const gradeStr = reqGrade.replace(/lớp/g, '').trim();
+        const gradeNum = parseInt(gradeStr);
+        
+        let targetLevels = [reqGrade];
+        if (!isNaN(gradeNum)) {
+            targetLevels.push(gradeNum.toString());
+            targetLevels.push(`lớp ${gradeNum}`);
+            if (gradeNum >= 1 && gradeNum <= 5) targetLevels.push("cấp 1", "tiểu học");
+            if (gradeNum >= 6 && gradeNum <= 9) targetLevels.push("cấp 2", "trung học cơ sở", "thcs");
+            if (gradeNum >= 10 && gradeNum <= 12) targetLevels.push("cấp 3", "trung học phổ thông", "thpt", "đại học");
+        } else {
+            if (reqGrade.includes("đại học") || reqGrade.includes("sinh viên")) targetLevels.push("đại học", "sinh viên", "người đi làm");
+        }
+
+        if (tSuitableStudents.some(s => targetLevels.some(lvl => s.includes(lvl)))) {
+          gradeMatched = true;
+        } else if (targetLevels.some(lvl => textToScan.includes(lvl))) {
           gradeMatched = true;
         }
         
         if (gradeMatched) {
-          score += 20;
-          reasons.push(`Có kinh nghiệm dạy Lớp ${tutorReq.grade_level}`);
-        }
-      }
-
-      // 3. Topic Match (15%)
-      const tSpecializations = Array.isArray(tutor.specializations) ? tutor.specializations.map(s => String(s).toLowerCase()) : [];
-      if (reqTopics.length > 0) {
-        let matchedTopics = [];
-        reqTopics.forEach(topic => {
-          if (tSpecializations.length > 0 && tSpecializations.some(s => s.includes(topic.toLowerCase()))) {
-            matchedTopics.push(topic);
-          } else if (textToScan.includes(topic.toLowerCase()) || tSubjects.includes(topic.toLowerCase())) {
-            matchedTopics.push(topic);
-          }
-        });
-        if (matchedTopics.length > 0) {
           score += 15;
-          reasons.push(`Dạy chuyên đề: ${matchedTopics.join(", ")}`);
+          componentScores.grade += 15;
+          reasonsObj.push({ priority: 2, text: `Có kinh nghiệm giảng dạy học sinh ${tutorReq.grade_level}` });
+        } else {
+          return; // Loại bỏ khỏi top match nếu không dạy cấp lớp này!
         }
       }
 
-      // 4. Learning Goal Match (10%)
+      // 3. Goal Match (10 điểm)
+      let goalMatched = false;
       const tExamPrep = Array.isArray(tutor.exam_preparation) ? tutor.exam_preparation.map(s => String(s).toLowerCase()) : [];
       const tTeachingFocus = Array.isArray(tutor.teaching_focus) ? tutor.teaching_focus.map(s => String(s).toLowerCase()) : [];
+      
       if (reqGoals.length > 0) {
         let matchedGoals = [];
         reqGoals.forEach(goal => {
-          if (tExamPrep.length > 0 && tExamPrep.some(e => e.includes(goal.toLowerCase()))) {
+          const gLower = goal.toLowerCase();
+          if (tExamPrep.some(e => e.includes(gLower)) || tTeachingFocus.some(f => f.includes(gLower)) || textToScan.includes(gLower)) {
             matchedGoals.push(goal);
-          } else if (tTeachingFocus.length > 0 && tTeachingFocus.some(f => f.includes(goal.toLowerCase()))) {
-            matchedGoals.push(goal);
-          } else if (textToScan.includes(goal.toLowerCase())) {
-            matchedGoals.push(goal);
+            goalMatched = true;
           }
         });
         if (matchedGoals.length > 0) {
           score += 10;
-          reasons.push(`Phù hợp mục tiêu: ${matchedGoals.join(", ")}`);
+          componentScores.goal += 10;
+          reasonsObj.push({ priority: 3, text: `Phù hợp với mục tiêu: ${matchedGoals.join(", ")}` });
         }
+      } 
+      
+      if (!goalMatched && tutorReq.desired_target_score) {
+         if (textToScan.includes("mất gốc") || textToScan.includes("nâng điểm") || textToScan.includes("luyện thi") || textToScan.includes("mục tiêu")) {
+             score += 10;
+             componentScores.goal += 10;
+             let reasonText = `Phù hợp với mục tiêu nâng điểm lên ${tutorReq.desired_target_score}`;
+             if (tutorReq.current_score) {
+                 reasonText = `Phù hợp với mục tiêu nâng điểm từ ${tutorReq.current_score} lên ${tutorReq.desired_target_score}`;
+             }
+             reasonsObj.push({ priority: 3, text: reasonText });
+             goalMatched = true;
+         }
       }
 
-      // 5. Schedule Match (10%)
-      if (reqAvailableTimes.length > 0) {
-        let scheduleMatched = false;
-        // Ưu tiên cấu trúc availability
-        let tAvailability = tutor.availability || {};
-        if (Object.keys(tAvailability).length > 0) {
-          // Logic so khớp schedule đơn giản
-          scheduleMatched = true; // Giả sử có khớp nếu tutor có nhập lịch
-        } else {
-          // Mặc định cho một nửa điểm nếu tutor chưa nhập lịch để không bị loại quá gắt
-          scheduleMatched = true;
-          score += 5; 
-        }
-
-        if (scheduleMatched && score % 10 !== 5) {
-          score += 10;
-          reasons.push("Phù hợp lịch học");
-        } else if (scheduleMatched) {
-          reasons.push("Chưa cập nhật chi tiết lịch (Có thể sắp xếp)");
-        }
+      if (reqDifficulties.length > 0 && textToScan.includes("mất gốc")) {
+          reasonsObj.push({ priority: 3, text: `Có kinh nghiệm hỗ trợ học sinh mất căn bản / gặp khó khăn` });
+          if (!goalMatched) {
+            score += 10; // Đảm bảo tối đa 10 điểm cho Goal Match
+            componentScores.goal += 10;
+          }
       }
 
-      // 6. Budget Match (5%)
-      if (tutor.hourly_rate) {
+      // 4. Budget Match (10 điểm)
+      if (!isNaN(rate)) {
         let budgetMatched = false;
-        const rate = parseFloat(tutor.hourly_rate);
         const bMin = parseFloat(reqBudget.budgetMin);
         const bMax = parseFloat(reqBudget.budgetMax);
 
-        if (!isNaN(bMin) && !isNaN(bMax)) {
-          if (rate >= bMin && rate <= bMax) budgetMatched = true;
-        } else if (!isNaN(bMax) && rate <= bMax) {
+        if (!isNaN(bMin) && !isNaN(bMax) && rate >= bMin && rate <= bMax) {
           budgetMatched = true;
-        } else if (!isNaN(bMin) && rate >= bMin) {
+        } else if (!isNaN(bMax) && isNaN(bMin) && rate <= bMax) {
+          budgetMatched = true;
+        } else if (!isNaN(bMin) && isNaN(bMax) && rate >= bMin) {
           budgetMatched = true;
         }
 
         if (budgetMatched) {
-          score += 5;
-          reasons.push("Nằm trong ngân sách");
+          score += 10;
+          componentScores.budget += 10;
+          reasonsObj.push({ priority: 4, text: `Học phí ${rate.toLocaleString('vi-VN')}đ/buổi nằm trong ngân sách của bạn` });
         }
       }
 
-      // 7. Teaching Mode Match (5%)
-      if (tTeachingMethods.length > 0) {
-        if (tTeachingMethods.includes(reqLearningStyle) || tTeachingMethods.includes("both")) {
-          score += 5;
-          reasons.push(`Hỗ trợ dạy ${tutorReq.learning_style === 'online' ? 'Trực tuyến' : 'Trực tiếp'}`);
+      // 5. Schedule Match (15 điểm)
+      // CHỈ CỘNG ĐIỂM NẾU CÓ DỮ LIỆU. KHÔNG cộng partial point, không sinh reason rác.
+      if (reqAvailableTimes.length > 0 && tutor.availability) {
+        try {
+          const tAvailStr = JSON.stringify(tutor.availability).toLowerCase();
+          const isNewFormat = typeof reqAvailableTimes[0] === 'object' && reqAvailableTimes[0] !== null;
+
+          if (!isNewFormat) {
+            // Backward compatibility for old string array format
+            let matchedTimes = [];
+            reqAvailableTimes.forEach(time => {
+              if (tAvailStr.includes(String(time).toLowerCase())) {
+                matchedTimes.push(time);
+              }
+            });
+            if (matchedTimes.length > 0) {
+              const scheduleScore = Math.round((matchedTimes.length / reqAvailableTimes.length) * 15);
+              score += scheduleScore;
+              componentScores.schedule += scheduleScore;
+              
+              const uniqueDays = [...new Set(matchedTimes.map(t => {
+                 const tLow = String(t).toLowerCase();
+                 if(tLow.includes("thứ 2") || tLow.includes("monday")) return "Thứ 2";
+                 if(tLow.includes("thứ 3") || tLow.includes("tuesday")) return "Thứ 3";
+                 if(tLow.includes("thứ 4") || tLow.includes("wednesday")) return "Thứ 4";
+                 if(tLow.includes("thứ 5") || tLow.includes("thursday")) return "Thứ 5";
+                 if(tLow.includes("thứ 6") || tLow.includes("friday")) return "Thứ 6";
+                 if(tLow.includes("thứ 7") || tLow.includes("saturday")) return "Thứ 7";
+                 if(tLow.includes("chủ nhật") || tLow.includes("sunday")) return "Chủ nhật";
+                 return null;
+              }))].filter(Boolean);
+              
+              if (uniqueDays.length > 0) {
+                 reasonsObj.push({ priority: 5, text: `Có thể dạy vào các ngày ${uniqueDays.join(", ")}` });
+              }
+            }
+          } else {
+            // New logic: time intersection
+            let totalRequestedMinutes = 0;
+            let totalMatchedMinutes = 0;
+            let matchedReasons = [];
+
+            const parseTime = (timeStr) => {
+              if (!timeStr) return 0;
+              const [h, m] = timeStr.split(':').map(Number);
+              return (h || 0) * 60 + (m || 0);
+            };
+
+            const dayLabels = {
+              'monday': 'Thứ 2', 'tuesday': 'Thứ 3', 'wednesday': 'Thứ 4',
+              'thursday': 'Thứ 5', 'friday': 'Thứ 6', 'saturday': 'Thứ 7', 'sunday': 'Chủ nhật'
+            };
+
+            reqAvailableTimes.forEach(reqSlot => {
+              const reqStart = parseTime(reqSlot.start);
+              const reqEnd = parseTime(reqSlot.end);
+              if (reqEnd <= reqStart) return;
+
+              const reqDuration = reqEnd - reqStart;
+              totalRequestedMinutes += reqDuration;
+
+              const tutorDaySlots = tutor.availability[reqSlot.day]; // ["18:00-19:30"]
+              let slotMatchedMinutes = 0;
+
+              if (Array.isArray(tutorDaySlots)) {
+                tutorDaySlots.forEach(tSlot => {
+                  const [tStrStart, tStrEnd] = String(tSlot).split('-');
+                  const tStart = parseTime(tStrStart);
+                  const tEnd = parseTime(tStrEnd);
+
+                  const overlapStart = Math.max(reqStart, tStart);
+                  const overlapEnd = Math.min(reqEnd, tEnd);
+                  
+                  if (overlapEnd > overlapStart) {
+                    slotMatchedMinutes += (overlapEnd - overlapStart);
+                  }
+                });
+              }
+
+              if (slotMatchedMinutes > 0) {
+                totalMatchedMinutes += Math.min(slotMatchedMinutes, reqDuration);
+                matchedReasons.push(`${dayLabels[reqSlot.day] || reqSlot.day} (${reqSlot.start} - ${reqSlot.end})`);
+              }
+            });
+
+            if (totalRequestedMinutes > 0 && totalMatchedMinutes > 0) {
+              const scheduleScore = Math.round((totalMatchedMinutes / totalRequestedMinutes) * 15);
+              score += scheduleScore;
+              componentScores.schedule += scheduleScore;
+              if (matchedReasons.length > 0) {
+                reasonsObj.push({ priority: 5, text: `Có thể dạy vào: ${matchedReasons.join(', ')}` });
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Schedule Match Error", e);
         }
       }
 
-      // 8. Experience Match (3%)
-      const exp = parseInt(tutor.experience_years) || 0;
+      // 6. Teaching Format & Location Match (10 điểm + Bonus)
+      if (tTeachingMethods.length > 0 && reqLearningFormat) {
+        if (tTeachingMethods.includes(reqLearningFormat) || tTeachingMethods.includes("both")) {
+          score += 10;
+          componentScores.teachingFormat += 10;
+          const formatStr = reqLearningFormat === 'online' ? 'Trực tuyến' : 'Trực tiếp';
+          reasonsObj.push({ priority: 6, text: `Hỗ trợ học ${formatStr} đúng theo nhu cầu của bạn` });
+        }
+      }
+
+      if (isOfflineRequest && reqCity) {
+        if (reqDistrict && (tCity.includes(reqDistrict) || tLoc.includes(reqDistrict))) {
+          score += 5; // Reduced from 15 to make it a minor bonus
+          componentScores.location += 5;
+          reasonsObj.push({ priority: 4, text: `Ở gần bạn (cùng quận/huyện)` });
+        } else {
+          score += 1; // Minor bonus for same city
+          componentScores.location += 1;
+          reasonsObj.push({ priority: 4, text: `Dạy trực tiếp tại khu vực ${tutorReq.city}` });
+        }
+      }
+
+      // 7. Experience Match (10 điểm)
       if (exp > 0) {
-        const expScore = Math.min(exp, 3);
+        let expScore = 0;
+        if (exp >= 5) expScore = 10;
+        else if (exp >= 3) expScore = 8;
+        else if (exp >= 1) expScore = 5;
+        else expScore = 2;
+
         score += expScore;
-        reasons.push(`Có ${exp} năm kinh nghiệm`);
+        componentScores.experience += expScore;
+        if (exp >= 1) {
+          reasonsObj.push({ priority: 7, text: `Có ${exp} năm kinh nghiệm giảng dạy` });
+        }
       }
 
-      // 9. Rating Match (2%)
-      const rating = parseFloat(tutor.avg_rating) || 0;
-      if (rating > 0) {
-        const ratingScore = (rating / 5) * 2;
-        score += Math.round(ratingScore);
-        if (rating >= 4.0) reasons.push(`Được đánh giá cao (${rating} sao)`);
+      // 8. Rating Match (10 điểm)
+      // Tính cả avg_rating và review_count (độ tin cậy)
+      if (rating > 0 && reviewCount > 0) {
+        const reliability = Math.min(reviewCount, 10) / 10; // Đạt max tin cậy ở 10 reviews
+        const ratingScore = Math.round((rating / 5) * 10 * reliability);
+        score += ratingScore;
+        componentScores.rating += ratingScore;
+        
+        if (rating >= 4.5 && reviewCount >= 3) {
+          reasonsObj.push({ priority: 8, text: `Được học sinh đánh giá tích cực (${rating}/5 sao với ${reviewCount} lượt đánh giá)` });
+        } else if (rating >= 4.0 && reviewCount > 0) {
+          reasonsObj.push({ priority: 8, text: `Chất lượng giảng dạy tốt (${rating}/5 sao)` });
+        }
       }
+
+      // Đảm bảo score không vượt quá 100
+      score = Math.min(score, 100);
 
       // Phân loại Match Tier
       let matchTier = "";
-      if (score >= 70) matchTier = "Excellent Match";
-      else if (score >= 50) matchTier = "Good Match";
-      else if (score >= 30) matchTier = "Partial Match";
+      if (score >= 80) matchTier = "Excellent Match";
+      else if (score >= 60) matchTier = "Good Match";
+      else if (score >= 40) matchTier = "Partial Match";
       else matchTier = "Low Match";
 
+      // Lọc và sắp xếp Reasons
+      reasonsObj.sort((a, b) => a.priority - b.priority);
+      let finalReasons = reasonsObj.map(r => r.text);
+      
+      // Bổ sung thêm reasons nếu chưa đủ 4 (từ dữ liệu thực tế)
+      if (finalReasons.length < 4) {
+          const tSpecializations = Array.isArray(tutor.specializations) ? tutor.specializations : [];
+          if (tSpecializations.length > 0) {
+             finalReasons.push(`Có thế mạnh chuyên môn về: ${tSpecializations.slice(0,2).join(", ")}`);
+          }
+          const tCertificates = Array.isArray(tutor.certificates) ? tutor.certificates : [];
+          if (tCertificates.length > 0) {
+             finalReasons.push(`Sở hữu chứng chỉ chuyên môn liên quan`);
+          }
+      }
+      
+      // Giới hạn hiển thị (Tối đa 8 reasons)
+      if (finalReasons.length > 8) {
+        finalReasons = finalReasons.slice(0, 8);
+      }
+      
       if (score >= 30) {
         matchedTutors.push({
-          id: tutor.user_id, // Gửi user_id để link vào detail
+          id: tutor.user_id,
           name: tutor.name,
           avatarUrl: tutor.avatar_url,
           pricePerSession: parseFloat(tutor.hourly_rate) || null,
@@ -345,9 +554,14 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
           reviewCount: parseInt(tutor.review_count) || 0,
           teachingFormats: tTeachingMethods,
           location: tutor.city,
+          headline: tutor.headline,
+          bio: tutor.bio,
+          subjects: tutor.subjects ? tutor.subjects.split(',').map(s => s.trim()) : [],
+          suitableStudents: Array.isArray(tutor.suitable_students) ? tutor.suitable_students : [],
           matchScore: score,
           matchTier: matchTier,
-          reasons: reasons.length > 0 ? reasons : ["Gia sư phù hợp trong hệ thống"]
+          reasons: finalReasons,
+          componentScores: componentScores
         });
       }
     });
@@ -389,18 +603,35 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
 // ─── HẠNG MỤC 4: CHỌN GIA SƯ & QUAN TÂM ──────────────────────────────────
 
 // POST /api/tutor-requests/:requestId/select
-router.post("/api/tutor-requests/:requestId/select", async (req, res) => {
+router.post("/api/tutor-requests/:requestId/select", requireAuth, async (req, res) => {
   const { requestId } = req.params;
   const { tutorId } = req.body;
+  const studentId = req.user.userId;
+  const client = await pool.connect();
+  
   try {
+    await client.query("BEGIN");
+    
+    // Verify ownership and lock the request row to prevent race conditions
+    const reqRes = await client.query(`SELECT id, student_id FROM tutor_requests WHERE id = $1 FOR UPDATE`, [requestId]);
+    if (reqRes.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ success: false, message: "Request not found." });
+    }
+    if (reqRes.rows[0].student_id !== studentId) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ success: false, message: "Bạn không có quyền thao tác trên yêu cầu này." });
+    }
+
     // 1. Kiểm tra giới hạn 3 người
-    const countRes = await pool.query(`SELECT COUNT(*) FROM tutor_request_matches WHERE request_id = $1 AND is_selected = true`, [requestId]);
+    const countRes = await client.query(`SELECT COUNT(*) FROM tutor_request_matches WHERE request_id = $1 AND is_selected = true`, [requestId]);
     if (parseInt(countRes.rows[0].count) >= 3) {
+      await client.query("ROLLBACK");
       return res.status(400).json({ success: false, message: "Bạn chỉ có thể gửi yêu cầu tới tối đa 3 gia sư." });
     }
 
     // 2. Cập nhật record đã tồn tại
-    const updateRes = await pool.query(`
+    const updateRes = await client.query(`
       UPDATE tutor_request_matches 
       SET is_selected = true, status = 'pending', selected_at = NOW() 
       WHERE request_id = $1 AND tutor_id = $2
@@ -408,16 +639,21 @@ router.post("/api/tutor-requests/:requestId/select", async (req, res) => {
     `, [requestId, tutorId]);
 
     if (updateRes.rowCount === 0) {
+      await client.query("ROLLBACK");
       return res.status(404).json({ success: false, message: "Match record not found." });
     }
 
     // 3. Cập nhật trạng thái của request thành waiting_tutor_response
-    await pool.query(`UPDATE tutor_requests SET match_status = 'waiting_tutor_response' WHERE id = $1`, [requestId]);
+    await client.query(`UPDATE tutor_requests SET match_status = 'waiting_tutor_response' WHERE id = $1`, [requestId]);
 
+    await client.query("COMMIT");
     return res.json({ success: true, message: "Đã gửi yêu cầu thành công." });
   } catch (error) {
+    await client.query("ROLLBACK");
     console.error("[SelectTutor] POST error:", error.message);
     return res.status(500).json({ success: false, message: "Server error." });
+  } finally {
+    client.release();
   }
 });
 
@@ -498,15 +734,7 @@ router.post("/api/tutor-requests/matches/:matchId/reject", async (req, res) => {
 // ─── HẠNG MỤC 5: LỊCH SỬ TÌM GIA SƯ ───────────────────────────────────────
 
 // Middleware bắt buộc đăng nhập (dùng cho API cần xác thực)
-const requireAuth = (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) return res.status(401).json({ success: false, message: "Vui lòng đăng nhập." });
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(401).json({ success: false, message: "Token không hợp lệ." });
-    req.user = decoded;
-    next();
-  });
-};
+// (đã di chuyển lên trên cùng)
 
 // GET /api/my-tutor-requests
 // Lấy danh sách request của student hiện tại

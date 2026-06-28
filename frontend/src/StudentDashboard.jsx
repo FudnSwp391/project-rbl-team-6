@@ -13,6 +13,7 @@ import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
 import SchedulePage from './components/SchedulePage'
+import StudentProfilePage from './pages/StudentProfilePage'
 import { getStudentBookings, confirmLessonComplete, reportTutor } from './services/api'
 
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
@@ -154,6 +155,11 @@ export default function StudentDashboard() {
             {/* ── Assessments Section ── */}
             {activeSection === 'assessments' && (
               <QuizList token={token} />
+            )}
+
+            {/* ── Profile Section ── */}
+            {activeSection === 'profile' && (
+              <StudentProfilePage />
             )}
 
             {/* ── AI Practice Section ── */}

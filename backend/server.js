@@ -1386,6 +1386,8 @@ const learningPathRoutes = require("./routes/learningPathRoutes");
 const scheduleRoutes = require("./routes/scheduleRoutes");
 const tutorRequestRoutes = require("./routes/tutorRequestRoutes");
 const tutorInteractionRoutes = require("./routes/tutorInteractionRoutes");
+const studentProfileRoutes = require("./routes/studentProfileRoutes");
+const studentCourseRoutes = require("./routes/studentCourseRoutes");
 
 app.use("/api/classes/:classId/materials", materialRoutes);
 app.use("/api/classes", classRoutes);
@@ -1396,6 +1398,8 @@ app.use("/", learningPathRoutes);
 app.use("/api", scheduleRoutes);
 app.use("/", tutorRequestRoutes);
 app.use("/", tutorInteractionRoutes);
+app.use("/api/student/profile", studentProfileRoutes);
+app.use("/", studentCourseRoutes);
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
@@ -3088,17 +3092,61 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 
 
 // ── GET /api/courses ──────────────────────────────────────────────────────────
-// Lấy danh sách khóa học cho marketplace
+// Lấy danh sách khóa học cho marketplace (có filter)
 app.get("/api/courses", async (req, res) => {
+  const { search = "", subject = "", level = "", format = "", sort = "newest", min_rating = "", limit = "100" } = req.query;
+  const cond = ["c.status IN ('published', 'approved', 'active')"];
+  const vals = [];
+  let i = 1;
+
+  if (search.trim()) { 
+    cond.push(`(c.title ILIKE $${i} OR c.description ILIKE $${i} OR c.subject ILIKE $${i} OR u.full_name ILIKE $${i})`); 
+    vals.push(`%${search.trim()}%`); 
+    i++; 
+  }
+  
+  if (subject.trim() && subject.trim().toLowerCase() !== 'all') { 
+    cond.push(`c.subject ILIKE $${i}`); 
+    vals.push(`%${subject.trim()}%`); 
+    i++; 
+  }
+  
+  if (level.trim() && level.trim().toLowerCase() !== 'all') { 
+    cond.push(`c.level ILIKE $${i}`);   
+    vals.push(`%${level.trim()}%`); 
+    i++; 
+  }
+
+  if (format.trim() && format.trim().toLowerCase() !== 'all') { 
+    cond.push(`(c.learning_mode ILIKE $${i} OR c.format ILIKE $${i})`);   
+    vals.push(`%${format.trim()}%`); 
+    i++; 
+  }
+  
+  if (min_rating && !isNaN(min_rating)) { 
+    cond.push(`c.avg_rating >= $${i}`); 
+    vals.push(Number(min_rating)); 
+    i++; 
+  }
+  
+  const order = { 
+    price_asc: "c.price ASC", 
+    price_desc: "c.price DESC", 
+    rating_desc: "COALESCE(c.avg_rating, 0) DESC, c.created_at DESC", 
+    newest: "c.created_at DESC" 
+  }[sort] || "c.created_at DESC";
+
   try {
-    const result = await pool.query(
+    const r = await pool.query(
       `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture 
        FROM courses c
-       JOIN users u ON c.tutor_id = u.id
-       WHERE c.status = 'approved' OR c.status = 'published' OR c.status = 'active'
-       ORDER BY c.created_at DESC`
+       LEFT JOIN users u ON c.tutor_id = u.id
+       WHERE ${cond.join(" AND ")}
+       ORDER BY ${order}
+       LIMIT $${i}`,
+       [...vals, parseInt(limit)]
     );
-    return res.json(result.rows);
+    return res.json(r.rows);
   } catch (err) {
     console.error("GET /api/courses error:", err);
     return res.status(500).json({ message: "Server error." });
@@ -3584,28 +3632,7 @@ app.get("/api/tutors/:id", async (req, res) => {
   }
 });
 
-// ── GET /api/courses (TV3) — danh sách khóa học published + lọc ──────────────
-app.get("/api/courses", async (req, res) => {
-  const { search = "", subject = "", level = "", sort = "newest", min_rating = "" } = req.query;
-  const cond = ["c.status = 'published'"]; const vals = []; let i = 1;
-  if (search.trim())  { cond.push(`(c.title ILIKE $${i} OR c.description ILIKE $${i} OR c.subject ILIKE $${i})`); vals.push(`%${search.trim()}%`); i++; }
-  if (subject.trim()) { cond.push(`c.subject ILIKE $${i}`); vals.push(`%${subject.trim()}%`); i++; }
-  if (level.trim())   { cond.push(`c.level ILIKE $${i}`);   vals.push(`%${level.trim()}%`); i++; }
-  if (min_rating && !isNaN(min_rating)) { cond.push(`c.avg_rating >= $${i}`); vals.push(Number(min_rating)); i++; }
-  const order = { price_asc: "c.price ASC", price_desc: "c.price DESC", rating: "c.avg_rating DESC NULLS LAST", newest: "c.created_at DESC" }[sort] || "c.created_at DESC";
-  try {
-    const r = await pool.query(
-      `SELECT c.id, c.title, c.description, c.subject, c.level, c.thumbnail_url,
-              c.price, c.original_price, c.avg_rating, c.review_count, c.total_lessons, c.created_at
-       FROM courses c WHERE ${cond.join(" AND ")} ORDER BY ${order} LIMIT 60`,
-      vals
-    );
-    return res.json({ courses: r.rows, total: r.rowCount });
-  } catch (e) {
-    console.error("GET /api/courses:", e.message);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
+// (Deleted duplicated GET /api/courses TV3)
 
 // ── POST /api/ai-suggest (TV3) ────────────────────────────────────────────────
 // Body { prompt } → query gia sư approved → AI chọn gia sư phù hợp.
