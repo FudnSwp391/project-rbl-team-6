@@ -22,6 +22,7 @@ import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
 import FindTutorRequest from './pages/FindTutorRequest'
+import TutorMatchesPage from './pages/TutorMatchesPage'
 import CourseMarketplace from './pages/CourseMarketplace'
 import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
@@ -124,6 +125,7 @@ const getRouteFromHash = () => {
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
   if (normalized === '/tutor-request') return { name: 'tutor-request' }
+  if (normalized === '/tutor-matches') return { name: 'tutor-matches' }
   if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
@@ -795,6 +797,9 @@ function App() {
   }
   if (routeName === 'tutor-request') {
     return <FindTutorRequest user={user} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} />
+  }
+  if (routeName === 'tutor-matches') {
+    return <TutorMatchesPage user={user} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} />
   }
   if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
