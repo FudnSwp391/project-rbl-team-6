@@ -26,6 +26,7 @@ import TutorMatchesPage from './pages/TutorMatchesPage'
 import CourseMarketplace from './pages/CourseMarketplace'
 import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
+import CartPage from './pages/CartPage'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -112,6 +113,7 @@ const getRouteFromHash = () => {
   if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }
   if (normalized === '/tutor')     return { name: 'tutor' }
   if (normalized === '/tutor-profile') return { name: 'tutor-profile' }
+  if (normalized === '/cart')      return { name: 'cart' }
 
   const tutorDetailMatch = normalized.match(/^\/tutor-detail\/([^/]+)$/)
   const bookingMatch = normalized.match(/^\/booking\/([^/]+)$/)
@@ -807,6 +809,9 @@ function App() {
   // ── Route: Public Pages ──
   if (routeName === 'payment-result') {
     return <PaymentResult />
+  }
+  if (routeName === 'cart') {
+    return <CartPage onGoSignIn={() => navigateTo('signin')} user={user} />
   }
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
