@@ -1862,7 +1862,6 @@ function ComplaintsView({ token }) {
   const [adminNote, setAdminNote] = useState('')
   const [penaltyType, setPenaltyType] = useState('NONE')
   const [resolving, setResolving] = useState(false)
-  const [resolving, setResolving] = useState(false)
 
   const fetchDisputes = async () => {
     setLoading(true)
