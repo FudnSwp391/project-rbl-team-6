@@ -3192,6 +3192,64 @@ app.delete("/api/wishlist/:type/:id", verifyToken, async (req, res) => {
   } catch (e) { console.error("DELETE /api/wishlist:", e.message); return res.status(500).json({ message: "Server error." }); }
 });
 
+// ══ GET /api/student/my-courses ─ Trang MyCourses (khóa học + thống kê) ════
+app.get('/api/student/my-courses', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Courses with progress
+    const coursesRes = await pool.query(`
+      SELECT
+        ce.id          AS enrollment_id,
+        ce.status,
+        ce.created_at  AS purchased_at,
+        c.id           AS course_id,
+        c.title,
+        c.subject,
+        c.description,
+        c.price,
+        c.thumbnail_url,
+        c.tutor_id,
+        u.full_name    AS tutor_name,
+        u.picture      AS tutor_avatar,
+        COALESCE(
+          ROUND(
+            100.0 * COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true)
+            / NULLIF(COUNT(DISTINCT cl.id), 0)
+          )::int, 0
+        ) AS progress_percent,
+        COUNT(DISTINCT cl.id)::int   AS total_lessons,
+        COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true)::int AS completed_lessons,
+        EXISTS (
+          SELECT 1 FROM disputes d
+          WHERE d.course_id = c.id AND d.raised_by = $1 AND d.status = 'OPEN'
+        ) AS has_open_dispute
+      FROM course_enrollments ce
+      JOIN courses c ON c.id = ce.course_id
+      LEFT JOIN users u ON u.id = c.tutor_id
+      LEFT JOIN course_lessons cl ON cl.course_id = c.id
+      LEFT JOIN course_progress cp ON cp.enrollment_id = ce.id AND cp.lesson_id = cl.id
+      WHERE ce.student_id = $1
+      GROUP BY ce.id, c.id, u.full_name, u.picture
+      ORDER BY ce.created_at DESC
+    `, [userId]);
+
+    const courses = coursesRes.rows;
+
+    const stats = {
+      totalCourses: courses.length,
+      completedCourses: courses.filter(c => c.progress_percent >= 100).length,
+      inProgressCourses: courses.filter(c => c.progress_percent > 0 && c.progress_percent < 100).length,
+      weeklyHours: 0  // placeholder, can be calculated from bookings if needed
+    };
+
+    return res.json({ success: true, data: { courses, stats } });
+  } catch (e) {
+    console.error('GET /api/student/my-courses:', e.message);
+    return res.status(500).json({ success: false, message: 'Server error.' });
+  }
+});
+
 // ══ Lịch sử đơn hàng (khóa đã đăng ký/mua) ════════════════════════════════
 app.get("/api/student/orders", verifyToken, async (req, res) => {
   try {
