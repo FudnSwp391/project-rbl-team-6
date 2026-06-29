@@ -532,7 +532,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-sm truncate">{tutor.full_name || tutor.display_name || tutor.first_name || 'Gia sư'}</p>
-                <p className="text-xs text-white/70 truncate">Gia sư • {tutor.subjects?.split(',')[0]?.trim() || ''}</p>
+                <p className="text-xs text-white/70 truncate">Gia sư • {(Array.isArray(tutor.subjects) ? tutor.subjects[0] : tutor.subjects?.split(',')[0]?.trim()) || ''}</p>
               </div>
               <div className="flex items-center gap-1">
                 <button
