@@ -4855,17 +4855,19 @@ app.get("/api/admin/disputes", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT d.id, d.reason, d.status, d.admin_note, d.created_at, d.resolved_at,
-             d.booking_id,
+             d.booking_id, d.target_type, d.course_id, d.tutor_id AS d_tutor_id, d.severity, d.penalty_type, d.raised_by_parent, d.evidence_url,
              b.subject, to_char(b.lesson_date,'YYYY-MM-DD') AS lesson_date,
              b.lesson_fee, b.tutor_name,
+             c.title AS course_title,
              u_reporter.full_name AS reporter_name, u_reporter.email AS reporter_email,
              u_tutor.full_name AS tutor_full_name, u_tutor.email AS tutor_email,
              u_student.full_name AS student_name
       FROM disputes d
-      JOIN bookings b ON b.id = d.booking_id
+      LEFT JOIN bookings b ON b.id = d.booking_id
+      LEFT JOIN courses c ON c.id = d.course_id
       JOIN users u_reporter ON u_reporter.id = d.raised_by
-      LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
-      LEFT JOIN users u_student ON u_student.id = b.student_id
+      LEFT JOIN users u_tutor ON u_tutor.id = COALESCE(b.tutor_id, c.tutor_id, d.tutor_id)
+      LEFT JOIN users u_student ON u_student.id = COALESCE(b.student_id, d.raised_by)
       ORDER BY
         CASE d.status WHEN 'OPEN' THEN 0 ELSE 1 END,
         d.created_at DESC
@@ -5962,19 +5964,34 @@ app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
 //  ESCROW EXTENDED — Report, Manual Release, Wallet History
 // ══════════════════════════════════════════════════════════════════════════════
 
-// POST /api/bookings/:id/report — Học sinh báo cáo vi phạm gia sư
+// POST /api/bookings/:id/report — Học sinh / Phụ huynh báo cáo vi phạm gia sư
 app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const { reason } = req.body;
+    const { reason, severity = 'medium', evidenceUrl = null } = req.body;
     if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do báo cáo.' });
 
-    const bookingRes = await client.query(
-      `SELECT b.* FROM bookings b WHERE b.id=$1 AND b.student_id=$2`,
-      [req.params.id, req.user.userId]
-    );
-    if (!bookingRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy lịch học.' });
+    let bookingQuery;
+    let queryParams;
+    let isParent = false;
+
+    if (req.user.role === 'parent') {
+      bookingQuery = `
+        SELECT b.* FROM bookings b
+        JOIN parent_children pc ON b.student_id = pc.student_id
+        WHERE b.id = $1 AND pc.parent_id = $2
+      `;
+      queryParams = [req.params.id, req.user.userId];
+      isParent = true;
+    } else {
+      bookingQuery = `SELECT b.* FROM bookings b WHERE b.id = $1 AND b.student_id = $2`;
+      queryParams = [req.params.id, req.user.userId];
+    }
+
+    const bookingRes = await client.query(bookingQuery, queryParams);
+    if (!bookingRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy lịch học hoặc bạn không có quyền truy cập.' });
     const booking = bookingRes.rows[0];
+    
     if (!booking.escrow_tx_id) return res.status(400).json({ message: 'Lịch học này không có giao dịch escrow để khiếu nại.' });
 
     const existingDispute = await client.query(
@@ -5985,25 +6002,26 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     await client.query('BEGIN');
 
     const dispute = await client.query(`
-      INSERT INTO disputes (transaction_id, raised_by, reason, status, booking_id)
-      VALUES ($1,$2,$3,'OPEN',$4) RETURNING id
-    `, [booking.escrow_tx_id, req.user.userId, reason.trim(), booking.id]);
+      INSERT INTO disputes (transaction_id, raised_by, reason, status, booking_id, target_type, tutor_id, severity, raised_by_parent, evidence_url)
+      VALUES ($1, $2, $3, 'OPEN', $4, 'booking', $5, $6, $7, $8) RETURNING id
+    `, [booking.escrow_tx_id, req.user.userId, reason.trim(), booking.id, booking.tutor_id, severity, isParent, evidenceUrl]);
 
     // Pause auto-release
     await client.query(`UPDATE bookings SET auto_release_at=NULL WHERE id=$1`, [booking.id]);
 
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
+    const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
       await client.query(`
         INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
         VALUES ($1,'dispute_opened','Khiếu nại mới cần xử lý',$2,'gavel',$3,'dispute')
-      `, [admin.id, `Học sinh báo cáo vi phạm buổi học ID: ${booking.id}. Lý do: ${reason}`, dispute.rows[0].id]);
+      `, [admin.id, `${reporterName} báo cáo vi phạm buổi học ID: ${booking.id}. Lý do: ${reason}`, dispute.rows[0].id]);
     }
     if (booking.tutor_id) {
       await client.query(`
         INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
         VALUES ($1,'dispute_opened','Bạn đang bị khiếu nại',$2,'report',$3,'dispute')
-      `, [booking.tutor_id, `Học sinh gửi khiếu nại. Admin sẽ xem xét và phán quyết.`, dispute.rows[0].id]);
+      `, [booking.tutor_id, `${reporterName} gửi khiếu nại. Admin sẽ xem xét và phán quyết.`, dispute.rows[0].id]);
     }
 
     await client.query('COMMIT');
@@ -6017,22 +6035,166 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
   }
 });
 
+// POST /api/courses/:id/report — Học sinh / Phụ huynh báo cáo khóa học
+app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { reason, severity = 'medium', evidenceUrl = null } = req.body;
+    if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do báo cáo.' });
+
+    let enrollmentQuery;
+    let queryParams;
+    let isParent = false;
+
+    if (req.user.role === 'parent') {
+      enrollmentQuery = `
+        SELECT ce.*, c.price, c.tutor_id, c.title
+        FROM course_enrollments ce
+        JOIN courses c ON ce.course_id = c.id
+        JOIN parent_children pc ON ce.student_id = pc.student_id
+        WHERE ce.course_id = $1 AND pc.parent_id = $2
+      `;
+      queryParams = [req.params.id, req.user.userId];
+      isParent = true;
+    } else {
+      enrollmentQuery = `
+        SELECT ce.*, c.price, c.tutor_id, c.title
+        FROM course_enrollments ce
+        JOIN courses c ON ce.course_id = c.id
+        WHERE ce.course_id = $1 AND ce.student_id = $2
+      `;
+      queryParams = [req.params.id, req.user.userId];
+    }
+
+    const enrollmentRes = await client.query(enrollmentQuery, queryParams);
+    if (!enrollmentRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy thông tin đăng ký khóa học hoặc bạn không có quyền truy cập.' });
+    const enrollment = enrollmentRes.rows[0];
+
+    if (enrollment.status === 'refunded') return res.status(400).json({ message: 'Khóa học này đã được hoàn tiền.' });
+
+    const existingDispute = await client.query(
+      "SELECT id FROM disputes WHERE course_id=$1 AND raised_by=$2 AND status='OPEN'", [enrollment.course_id, req.user.userId]
+    );
+    if (existingDispute.rows.length) return res.status(409).json({ message: 'Bạn đã gửi khiếu nại cho khóa học này rồi.' });
+
+    // Check Auto-Refund conditions: <= 7 days AND <= 20% progress
+    const daysSincePurchase = (Date.now() - new Date(enrollment.purchased_at).getTime()) / (1000 * 3600 * 24);
+    
+    // Check progress
+    const lessonsRes = await client.query("SELECT COUNT(*) FROM course_lessons WHERE course_id=$1", [enrollment.course_id]);
+    const totalLessons = parseInt(lessonsRes.rows[0].count);
+    const progressRes = await client.query("SELECT COUNT(*) FROM course_progress WHERE enrollment_id=$1 AND is_completed=true", [enrollment.id]);
+    const completedLessons = parseInt(progressRes.rows[0].count);
+    
+    const progressPercent = totalLessons === 0 ? 0 : (completedLessons / totalLessons) * 100;
+
+    await client.query('BEGIN');
+
+    if (daysSincePurchase <= 7 && progressPercent <= 20) {
+      // Auto refund
+      const price = parseFloat(enrollment.price || 0);
+      
+      const adminShare = Math.round(price * 0.1);
+      const tutorShare = price - adminShare;
+
+      const sw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [enrollment.student_id]);
+      const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [enrollment.tutor_id]);
+      let adminWalletId = process.env.ADMIN_WALLET_ID;
+      if (!adminWalletId) {
+        const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
+        if (aw.rows.length) adminWalletId = aw.rows[0].id;
+      }
+
+      if (sw.rows.length && tw.rows.length && adminWalletId) {
+        await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [price, sw.rows[0].id]);
+        await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [tutorShare, tw.rows[0].id]);
+        await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [adminShare, adminWalletId]);
+
+        await client.query(`UPDATE course_enrollments SET status='refunded' WHERE id=$1`, [enrollment.id]);
+
+        await client.query(`
+          INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url, admin_note, resolved_at)
+          VALUES (NULL, $1, $2, 'RESOLVED_REFUND', $3, 'course', $4, $5, $6, $7, 'Hệ thống tự động hoàn tiền do chưa vượt quá 20% tiến độ và 7 ngày.', NOW())
+        `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl]);
+
+        await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'course_refund','Hoàn tiền khóa học thành công',$2,'undo',$3,'course')`,
+          [enrollment.student_id, `Bạn đã được hoàn ${price.toLocaleString('vi-VN')}đ cho khóa học "${enrollment.title}".`, enrollment.course_id]);
+
+        await client.query('COMMIT');
+        return res.status(200).json({ message: 'Yêu cầu khiếu nại đã được phê duyệt tự động. Tiền đã được hoàn vào ví của bạn.' });
+      }
+    }
+
+    // Manual resolve needed
+    const dispute = await client.query(`
+      INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url)
+      VALUES (NULL, $1, $2, 'OPEN', $3, 'course', $4, $5, $6, $7) RETURNING id
+    `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl]);
+
+    const admins = await client.query("SELECT id FROM users WHERE role='admin'");
+    const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
+    for (const admin of admins.rows) {
+      await client.query(`
+        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
+        VALUES ($1,'dispute_opened','Khiếu nại khóa học mới',$2,'gavel',$3,'dispute')
+      `, [admin.id, `${reporterName} khiếu nại khóa học ID: ${enrollment.course_id}. Lý do: ${reason}`, dispute.rows[0].id]);
+    }
+    if (enrollment.tutor_id) {
+      await client.query(`
+        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
+        VALUES ($1,'dispute_opened','Khóa học của bạn bị khiếu nại',$2,'report',$3,'dispute')
+      `, [enrollment.tutor_id, `${reporterName} khiếu nại khóa "${enrollment.title}". Admin sẽ xem xét.`, dispute.rows[0].id]);
+    }
+
+    await client.query('COMMIT');
+    return res.status(201).json({ message: 'Đã gửi báo cáo khóa học. Admin sẽ xem xét trong 24-48h.', disputeId: dispute.rows[0].id });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('Course report error:', e);
+    return res.status(500).json({ message: 'Server error.' });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/escrow/resolve-dispute-v2 — Admin xử lý khiếu nại
 app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
   const client = await pool.connect();
   try {
-    const { disputeId, decision, adminNote } = req.body;
-    const disputeRes = await client.query(
-      `SELECT d.*, b.escrow_tx_id, b.payer_wallet_id, b.tutor_id, b.student_id, b.lesson_fee, b.id AS booking_id
-       FROM disputes d JOIN bookings b ON b.id=d.booking_id WHERE d.id=$1`,
-      [disputeId]
-    );
-    if (!disputeRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
-    const dispute = disputeRes.rows[0];
-    const lessonFee = Number(dispute.lesson_fee || 0);
+    const { disputeId, decision, adminNote, penaltyType = 'NONE' } = req.body;
+    
+    const dRes = await client.query('SELECT * FROM disputes WHERE id=$1', [disputeId]);
+    if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const dispute = dRes.rows[0];
 
-    const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [dispute.tutor_id]);
+    let studentId, tutorId, amount = 0, payerWalletId, escrowTxId, bookingId, courseId;
+
+    if (dispute.target_type === 'booking') {
+      const bRes = await client.query('SELECT * FROM bookings WHERE id=$1', [dispute.booking_id]);
+      if (bRes.rows.length) {
+        const b = bRes.rows[0];
+        studentId = b.student_id; tutorId = b.tutor_id; amount = Number(b.lesson_fee || 0);
+        payerWalletId = b.payer_wallet_id; escrowTxId = b.escrow_tx_id; bookingId = b.id;
+      }
+    } else if (dispute.target_type === 'course') {
+      const ceRes = await client.query(`
+        SELECT ce.*, c.price, c.tutor_id AS c_tutor_id
+        FROM course_enrollments ce
+        JOIN courses c ON ce.course_id = c.id
+        WHERE ce.course_id = $1 AND (ce.student_id = $2 OR ce.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$2))
+        LIMIT 1
+      `, [dispute.course_id, dispute.raised_by]);
+      if (ceRes.rows.length) {
+        const ce = ceRes.rows[0];
+        studentId = ce.student_id; tutorId = ce.c_tutor_id; amount = Number(ce.price || 0);
+        courseId = ce.course_id;
+      }
+    }
+
+    if (!studentId || !tutorId) return res.status(404).json({ message: 'Dữ liệu liên quan không hợp lệ.' });
+
+    const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [tutorId]);
     const tutorWalletId = tw.rows.length ? tw.rows[0].id : null;
     let adminWalletId = process.env.ADMIN_WALLET_ID;
     if (!adminWalletId) {
@@ -6042,28 +6204,65 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
 
     await client.query('BEGIN');
 
-    if (decision === 'REFUND_TO_STUDENT') {
-      // Kịch bản B: gia sư vi phạm → hoàn 100% + phạt reputation -10
-      await client.query('SELECT refund_escrow($1,$2,$3)', [dispute.escrow_tx_id, dispute.payer_wallet_id, lessonFee]);
-      await client.query("UPDATE disputes SET status='RESOLVED_REFUND', admin_note=$1, resolved_at=NOW() WHERE id=$2", [adminNote, disputeId]);
-      await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [dispute.booking_id]);
-      await client.query(`UPDATE tutor_profiles SET reputation_score=GREATEST(0,reputation_score-10) WHERE user_id=$1`, [dispute.tutor_id]);
+    // Handle penalty
+    let repDeduct = 0;
+    if (penaltyType === 'DEDUCT_REP') repDeduct = 10;
+    else if (penaltyType === 'SUSPEND_3_DAYS') repDeduct = 20;
+    else if (penaltyType === 'BAN') repDeduct = 50;
 
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Đã hoàn tiền',$2,'check_circle',$3,'dispute')`,
-        [dispute.student_id, `Admin phán quyết: Hoàn ${lessonFee.toLocaleString('vi-VN')}đ vào ví bạn.`, disputeId]);
-      if (dispute.tutor_id) {
-        await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Phán quyết chống lại bạn',$2,'gavel',$3,'dispute')`,
-          [dispute.tutor_id, `Admin hoàn tiền cho học sinh. Điểm uy tín bị trừ 10.`, disputeId]);
+    if (repDeduct > 0) {
+      const tp = await client.query(`UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`, [repDeduct, tutorId]);
+      // Auto-ban check
+      if (tp.rows.length && tp.rows[0].reputation_score < 30) {
+        await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+        await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'system','Tài khoản bị khóa','Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.','block',NULL,NULL)`, [tutorId]);
       }
+    }
+
+    if (penaltyType === 'BAN') {
+      await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+    }
+
+    if (decision === 'REFUND_TO_STUDENT') {
+      if (dispute.target_type === 'booking') {
+        if (escrowTxId && payerWalletId) {
+          await client.query('SELECT refund_escrow($1,$2,$3)', [escrowTxId, payerWalletId, amount]);
+        }
+        await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [bookingId]);
+      } else if (dispute.target_type === 'course') {
+        const sw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [studentId]);
+        if (sw.rows.length && tutorWalletId && adminWalletId) {
+          const adminShare = Math.round(amount * 0.1);
+          const tutorShare = amount - adminShare;
+          await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [amount, sw.rows[0].id]);
+          await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [tutorShare, tutorWalletId]);
+          await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [adminShare, adminWalletId]);
+        }
+        await client.query(`UPDATE course_enrollments SET status='refunded' WHERE course_id=$1 AND student_id=$2`, [courseId, studentId]);
+      }
+
+      await client.query("UPDATE disputes SET status='RESOLVED_REFUND', penalty_type=$1, admin_note=$2, resolved_at=NOW() WHERE id=$3", [penaltyType, adminNote, disputeId]);
+      
+      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Đã hoàn tiền',$2,'check_circle',$3,'dispute')`,
+        [studentId, `Admin phán quyết: Hoàn ${amount.toLocaleString('vi-VN')}đ vào ví bạn.`, disputeId]);
+      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Phán quyết chống lại bạn',$2,'gavel',$3,'dispute')`,
+        [tutorId, `Admin hoàn tiền cho học sinh. ${repDeduct > 0 ? 'Điểm uy tín bị trừ ' + repDeduct + '.' : ''}`, disputeId]);
+
     } else if (decision === 'RELEASE_TO_TUTOR') {
-      // Học sinh khiếu nại không có cơ sở
-      if (!tutorWalletId || !adminWalletId) { await client.query('ROLLBACK'); return res.status(500).json({ message: 'Thiếu ví.' }); }
-      await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [dispute.escrow_tx_id, dispute.payer_wallet_id, tutorWalletId, adminWalletId, lessonFee, 0.1]);
-      await client.query("UPDATE disputes SET status='RESOLVED_RELEASE', admin_note=$1, resolved_at=NOW() WHERE id=$2", [adminNote, disputeId]);
-      await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [dispute.booking_id]);
+      if (dispute.target_type === 'booking') {
+        if (!tutorWalletId || !adminWalletId) { await client.query('ROLLBACK'); return res.status(500).json({ message: 'Thiếu ví.' }); }
+        if (escrowTxId) {
+          await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [escrowTxId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
+        }
+        await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [bookingId]);
+      } else if (dispute.target_type === 'course') {
+        // Already paid immediately, do nothing to wallets
+      }
+
+      await client.query("UPDATE disputes SET status='RESOLVED_RELEASE', penalty_type=$1, admin_note=$2, resolved_at=NOW() WHERE id=$3", [penaltyType, adminNote, disputeId]);
 
       await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại không được chấp nhận',$2,'gavel',$3,'dispute')`,
-        [dispute.student_id, `Admin xem xét và giải ngân cho gia sư vì khiếu nại không có cơ sở.`, disputeId]);
+        [studentId, `Admin xem xét và phán quyết gia sư không vi phạm.`, disputeId]);
     }
 
     await client.query('COMMIT');
@@ -6194,6 +6393,18 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     await pool.query(`ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS completed_lessons_count INT NOT NULL DEFAULT 0`);
     // disputes: thêm booking_id để dễ query
     await pool.query(`ALTER TABLE disputes ADD COLUMN IF NOT EXISTS booking_id UUID REFERENCES bookings(id)`);
+    
+    // disputes advanced (khiếu nại nâng cao cho khóa học và gia sư)
+    await pool.query(`
+      ALTER TABLE disputes 
+      ADD COLUMN IF NOT EXISTS target_type TEXT DEFAULT 'booking',
+      ADD COLUMN IF NOT EXISTS course_id UUID REFERENCES courses(id),
+      ADD COLUMN IF NOT EXISTS tutor_id UUID REFERENCES users(id),
+      ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'medium',
+      ADD COLUMN IF NOT EXISTS penalty_type TEXT,
+      ADD COLUMN IF NOT EXISTS raised_by_parent BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS evidence_url TEXT
+    `);
     console.log('✅ DB migration: escrow & reputation columns ready');
   } catch (err) {
     console.error('⚠️  DB migration (escrow cols) warning:', err.message);
