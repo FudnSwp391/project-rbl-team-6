@@ -335,21 +335,21 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                 Tìm Kiếm Gia Sư
               </button>
             </div>
-          </div>
-          {/* AI Matching flow CTA - Premium Style */}
-          <div className="mt-6 flex items-center justify-center">
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:bg-white/20 hover:shadow-[0_0_25px_rgba(124,92,255,0.5)] transition-all duration-300 shadow-[0_0_15px_rgba(124,92,255,0.2)] cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
-              <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
-                <span className="material-symbols-outlined text-[#a4c9ff] text-[20px] animate-pulse">auto_awesome</span>
-                <span>Muốn được gợi ý gia sư phù hợp nhất?</span>
+            {/* AI Matching flow CTA - Premium Style */}
+            <div className="mt-5 flex items-center justify-center relative z-20 w-full max-w-[800px] mx-auto">
+              <div className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:bg-white/20 hover:shadow-[0_0_25px_rgba(124,92,255,0.5)] transition-all duration-300 shadow-[0_0_15px_rgba(124,92,255,0.2)] cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
+                <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
+                  <span className="material-symbols-outlined text-[#a4c9ff] text-[20px] animate-pulse">auto_awesome</span>
+                  <span>Muốn được gợi ý gia sư phù hợp nhất?</span>
+                </div>
+                <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
+                <button
+                  className="text-white font-bold text-sm flex items-center gap-1 group transition-colors"
+                >
+                  Tạo yêu cầu AI
+                  <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#a4c9ff]">arrow_forward</span>
+                </button>
               </div>
-              <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
-              <button
-                className="text-white font-bold text-sm flex items-center gap-1 group transition-colors"
-              >
-                Tạo yêu cầu AI
-                <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#a4c9ff]">arrow_forward</span>
-              </button>
             </div>
           </div>
         </section>

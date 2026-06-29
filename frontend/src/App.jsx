@@ -422,6 +422,22 @@ function HomePage({ onGoSignIn }) {
                 Tìm Kiếm
               </button>
             </div>
+            {/* AI Matching flow CTA - Premium Style for Home Hero */}
+            <div className="mt-4 flex items-center justify-center relative z-10 w-full max-w-[800px] mx-auto pb-6">
+              <div className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:bg-white/20 hover:shadow-[0_0_25px_rgba(255,255,255,0.3)] transition-all duration-300 shadow-[0_0_15px_rgba(0,0,0,0.1)] cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
+                <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
+                  <span className="material-symbols-outlined text-[#ffd166] text-[20px] animate-pulse">auto_awesome</span>
+                  <span>Muốn được gợi ý gia sư phù hợp nhất?</span>
+                </div>
+                <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
+                <button
+                  className="text-white font-bold text-sm flex items-center gap-1 group transition-colors"
+                >
+                  Tạo yêu cầu AI
+                  <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#ffd166]">arrow_forward</span>
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
