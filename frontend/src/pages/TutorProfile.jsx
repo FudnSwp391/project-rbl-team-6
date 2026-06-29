@@ -531,7 +531,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 }
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm truncate">{tutor.full_name}</p>
+                <p className="font-semibold text-sm truncate">{tutor.full_name || tutor.display_name || tutor.first_name || 'Gia sư'}</p>
                 <p className="text-xs text-white/70 truncate">Gia sư • {tutor.subjects?.split(',')[0]?.trim() || ''}</p>
               </div>
               <div className="flex items-center gap-1">
@@ -560,7 +560,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               ) : chatMessages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center gap-3 px-4">
                   <span className="material-symbols-outlined text-[48px] text-[#c4c5d5]">waving_hand</span>
-                  <p className="text-sm text-[#444653] font-medium">Bắt đầu cuộc trò chuyện với {tutor.full_name}</p>
+                  <p className="text-sm text-[#444653] font-medium">Bắt đầu cuộc trò chuyện với {tutor.full_name || tutor.display_name || tutor.first_name || 'Gia sư'}</p>
                   <p className="text-xs text-[#757684]">Hỏi về khóa học, lịch học, phương pháp giảng dạy...</p>
                   {/* Quick reply suggestions */}
                   <div className="flex flex-col gap-2 w-full mt-2">
@@ -613,7 +613,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 value={chatDraft}
                 onChange={e => setChatDraft(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMsg(e) } }}
-                placeholder={`Nhắn tin cho ${tutor.full_name?.split(' ').pop() || 'gia sư'}...`}
+                placeholder={`Nhắn tin cho ${(tutor.full_name || tutor.display_name || tutor.first_name || '').split(' ').filter(Boolean).pop() || 'gia sư'}...`}
                 rows={1}
                 className="flex-1 resize-none rounded-xl border border-[#c4c5d5] bg-[#f8f9fb] px-3 py-2 text-sm text-[#191c1e] placeholder:text-[#757684] focus:border-[#00288e] focus:ring-1 focus:ring-[#00288e]/20 focus:outline-none transition-all"
                 style={{ maxHeight: 80 }}
@@ -637,7 +637,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
       {!showChat && user && (
         <button
           onClick={openChatWidget}
-          title={`Nhắn tin với ${tutor.full_name}`}
+          title={`Nhắn tin với ${tutor.full_name || tutor.display_name || tutor.first_name || 'Gia sư'}`}
           className="fixed bottom-24 right-6 z-40 w-14 h-14 bg-[#00288e] text-white rounded-full shadow-lg flex items-center justify-center hover:bg-[#1e40af] hover:scale-105 transition-all group"
         >
           <span className="material-symbols-outlined text-[26px]" style={{ fontVariationSettings: "'FILL' 1" }}>chat</span>
