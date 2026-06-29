@@ -318,10 +318,10 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             {/* Trust stats */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { value: tutor.completed_lessons_count, label: 'Buổi học', color: 'text-[#00288e]' },
-                { value: tutor.rating.toFixed(1), label: 'Đánh giá', color: 'text-[#FFB800]' },
-                { value: tutor.total_students, label: 'Học sinh',  color: 'text-indigo-800' },
-                { value: tutor.review_count, label: 'Lượt đánh giá', color: 'text-green-600' },
+                { value: tutor.completed_lessons_count ?? 0, label: 'Buổi học', color: 'text-[#00288e]' },
+                { value: (parseFloat(tutor.rating) || 0).toFixed(1), label: 'Đánh giá', color: 'text-[#FFB800]' },
+                { value: tutor.total_students ?? 0, label: 'Học sinh',  color: 'text-indigo-800' },
+                { value: tutor.review_count ?? 0, label: 'Lượt đánh giá', color: 'text-green-600' },
               ].map(stat => (
                 <div key={stat.label} className="bg-white rounded-xl p-3 tutor-profile-card flex flex-col items-center text-center">
                   <span className={`text-2xl font-bold ${stat.color}`}>{stat.value}</span>
@@ -386,10 +386,10 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             {/* Đánh giá */}
             <SectionCard icon="star" title={`Đánh giá từ học sinh (${tutor.review_count})`}>
               <div className="flex items-center gap-4 mb-5 p-4 bg-[#f8f9fb] rounded-xl">
-                <span className="text-5xl font-bold text-[#00288e]">{tutor.rating.toFixed(1)}</span>
+                <span className="text-5xl font-bold text-[#00288e]">{(parseFloat(tutor.rating) || 0).toFixed(1)}</span>
                 <div>
-                  <StarRating value={tutor.rating} size={20} />
-                  <p className="text-sm text-[#444653] mt-1">{tutor.review_count} đánh giá</p>
+                  <StarRating value={parseFloat(tutor.rating) || 0} size={20} />
+                  <p className="text-sm text-[#444653] mt-1">{tutor.review_count ?? 0} đánh giá</p>
                 </div>
               </div>
               
@@ -402,7 +402,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                           <img src={r.reviewer_avatar} alt={r.reviewer_name} className="w-10 h-10 rounded-full object-cover shrink-0" />
                         ) : (
                           <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 bg-[#dde1ff] text-[#00288e]">
-                            {r.reviewer_name.charAt(0).toUpperCase()}
+                            {(r.reviewer_name || 'H').charAt(0).toUpperCase()}
                           </div>
                         )}
                         <div className="flex-1 min-w-0">
@@ -439,7 +439,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 <div className="space-y-3 mb-6">
                   <div className="flex items-center gap-2 text-[#444653] text-sm">
                     <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>star</span>
-                    <span className="font-semibold text-[#191c1e]">{tutor.rating.toFixed(1)}</span>
+                    <span className="font-semibold text-[#191c1e]">{(parseFloat(tutor.rating) || 0).toFixed(1)}</span>
                     <span>({tutor.review_count} đánh giá)</span>
                   </div>
                   {tutor.experience_years > 0 && (
