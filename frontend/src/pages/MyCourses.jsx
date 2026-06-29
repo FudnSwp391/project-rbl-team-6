@@ -109,8 +109,8 @@ export default function MyCourses() {
 
   const filteredCourses = courses.filter(course => {
     if (filter === 'all') return true;
-    if (filter === 'active') return course.progress_percentage < 100;
-    if (filter === 'completed') return course.progress_percentage >= 100;
+    if (filter === 'active') return (course.progress_percent || 0) < 100;
+    if (filter === 'completed') return (course.progress_percent || 0) >= 100;
     return true;
   });
 
@@ -206,19 +206,19 @@ export default function MyCourses() {
                       <h3 className="text-headline-md font-bold text-on-surface mb-xs line-clamp-2">{course.title}</h3>
                       <div className="flex items-center gap-xs mb-md">
                         <span className="material-symbols-outlined text-secondary text-[20px]">person</span>
-                        <span className="text-label-sm text-secondary">Giảng viên: {course.instructor_name || 'Đang cập nhật'}</span>
+                        <span className="text-label-sm text-secondary">Giảng viên: {course.tutor_name || 'Đang cập nhật'}</span>
                       </div>
                       <div className="mt-auto">
                         <div className="flex justify-between items-center mb-base">
-                          <span className={`text-label-sm font-bold ${course.progress_percentage >= 100 ? 'text-secondary' : 'text-primary'}`}>
-                            Tiến độ: {course.progress_percentage}%
+                          <span className={`text-label-sm font-bold ${(course.progress_percent || 0) >= 100 ? 'text-secondary' : 'text-primary'}`}>
+                            Tiến độ: {course.progress_percent || 0}%
                           </span>
-                          <span className="text-label-sm text-secondary">{course.completed_lessons}/{course.total_lessons} Bài học</span>
+                          <span className="text-label-sm text-secondary">{course.completed_lessons || 0}/{course.total_lessons || 0} Bài học</span>
                         </div>
                         <div className="w-full bg-surface-container h-1.5 rounded-full mb-md overflow-hidden">
-                          <div className={`${course.progress_percentage >= 100 ? 'bg-outline-variant' : 'bg-primary'} h-full rounded-full`} style={{ width: course.progress_percentage + '%' }}></div>
+                          <div className={`${(course.progress_percent || 0) >= 100 ? 'bg-outline-variant' : 'bg-primary'} h-full rounded-full`} style={{ width: (course.progress_percent || 0) + '%' }}></div>
                         </div>
-                        {course.progress_percentage >= 100 ? (
+                        {(course.progress_percent || 0) >= 100 ? (
                           <button className="w-full py-md bg-secondary-container text-primary font-label-md rounded-lg hover:bg-surface-container-high transition-colors flex items-center justify-center gap-xs">
                             <span className="material-symbols-outlined text-[18px]">workspace_premium</span>
                             Xem chứng chỉ
