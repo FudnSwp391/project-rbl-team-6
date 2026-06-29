@@ -1722,10 +1722,6 @@ function TransactionsView({ token }) {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('Tất cả');
 
-  useEffect(() => {
-    fetchTransactions();
-  }, [token]);
-
   const fetchTransactions = async () => {
     try {
       const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/admin/transactions`, {
@@ -1741,6 +1737,10 @@ function TransactionsView({ token }) {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchTransactions();
+  }, [token]);
 
   const statusColor = s => ({
     'SUCCESS':  'bg-green-100 text-green-700',
@@ -2053,16 +2053,17 @@ const MOCK_REVIEWS = [
   { id: 5, student: 'Nguyễn Văn An',   tutor: 'Bùi Phương Thảo', rating: 1, comment: 'Hành vi hoàn toàn không phù hợp. Đã gửi báo cáo.',     date: '2024-06-05', flag: true  },
 ]
 
+const Stars = ({ n }) => (
+  <div className="flex gap-0.5">
+    {[1,2,3,4,5].map(i => (
+      <span key={i} className={`material-symbols-outlined text-[16px] ${i <= n ? 'text-amber-400' : 'text-gray-200'}`}
+        style={{ fontVariationSettings: i <= n ? "'FILL' 1" : "'FILL' 0" }}>star</span>
+    ))}
+  </div>
+)
+
 function ReviewsView() {
   const avg = (MOCK_REVIEWS.reduce((a, r) => a + r.rating, 0) / MOCK_REVIEWS.length).toFixed(1)
-  const Stars = ({ n }) => (
-    <div className="flex gap-0.5">
-      {[1,2,3,4,5].map(i => (
-        <span key={i} className={`material-symbols-outlined text-[16px] ${i <= n ? 'text-amber-400' : 'text-gray-200'}`}
-          style={{ fontVariationSettings: i <= n ? "'FILL' 1" : "'FILL' 0" }}>star</span>
-      ))}
-    </div>
-  )
   const dist = [5,4,3,2,1].map(s => ({ star: s, count: MOCK_REVIEWS.filter(r => r.rating === s).length }))
 
   return (

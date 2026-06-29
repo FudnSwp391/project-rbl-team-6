@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../AuthContext'
+import Toast from '../components/Toast'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function CartPage({ onGoSignIn, user }) {
   const { logout } = useAuth();
@@ -11,6 +13,10 @@ export default function CartPage({ onGoSignIn, user }) {
   const [appliedCoupon, setAppliedCoupon] = useState(null); // { code, discount, message }
   const [promoErr, setPromoErr] = useState('');
   const [promoLoading, setPromoLoading] = useState(false);
+  const [demoRemoved, setDemoRemoved] = useState(0);
+  const [walletBalance, setWalletBalance] = useState(null);
+  const [toast, setToast] = useState(null);
+  const showToast = (type, msg, title) => setToast({ type, msg, title });
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -21,10 +27,18 @@ export default function CartPage({ onGoSignIn, user }) {
     const loadCart = () => {
       try {
         const stored = localStorage.getItem('edux_cart');
-        if (stored) {
-          setCartItems(JSON.parse(stored));
+        const parsed = stored ? JSON.parse(stored) : [];
+        const arr = Array.isArray(parsed) ? parsed : []; // an toàn nếu localStorage hỏng
+        // Loại bỏ khóa demo cũ (id không phải UUID) — không mua được
+        const clean = arr.filter(it => UUID_RE.test(String(it.id)));
+        if (clean.length !== arr.length) {
+          localStorage.setItem('edux_cart', JSON.stringify(clean));
+          setDemoRemoved(arr.length - clean.length);
         }
-      } catch (e) {}
+        setCartItems(clean);
+      } catch (e) {
+        setCartItems([]);
+      }
     };
     loadCart();
     window.addEventListener('cartUpdated', loadCart);
@@ -33,6 +47,16 @@ export default function CartPage({ onGoSignIn, user }) {
 
   // Giỏ hàng thay đổi → bỏ mã đã áp (cần áp lại theo tổng mới)
   useEffect(() => { setAppliedCoupon(null); setPromoErr(''); }, [cartItems]);
+
+  // Lấy số dư ví điện tử của học sinh
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!user || !token) { setWalletBalance(null); return; }
+    fetch(`${API_BASE}/api/payment/wallet`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => setWalletBalance(d?.wallet ? Number(d.wallet.balance) : 0))
+      .catch(() => setWalletBalance(null));
+  }, [user]);
 
   const removeItem = (id) => {
     const newCart = cartItems.filter(item => item.id !== id);
@@ -58,6 +82,7 @@ export default function CartPage({ onGoSignIn, user }) {
   const fmt = (n) => new Intl.NumberFormat('vi-VN').format(Math.round(Number(n) || 0));
   const discount = appliedCoupon?.discount || 0;
   const finalTotal = Math.max(0, totalPrice - discount);
+  const enough = walletBalance != null && Number(walletBalance) >= finalTotal;
 
   const applyPromo = async () => {
     const code = promoCode.trim();
@@ -91,65 +116,66 @@ export default function CartPage({ onGoSignIn, user }) {
       return;
     }
     if (cartItems.length === 0) return;
-    
     setLoadingPayment(true);
     try {
       const token = localStorage.getItem('token');
-      // Thanh toán bằng VÍ: trừ số dư + đăng ký các khóa trong giỏ
       const res = await fetch(`${API_BASE}/api/cart/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ items: cartItems.map(i => i.id), couponCode: appliedCoupon?.code || null }),
       });
-
       if (res.status === 401 || res.status === 403) {
-        alert('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại để tiếp tục thanh toán.');
-        logout();
-        window.location.hash = '/signin';
+        showToast('error', 'Phiên đăng nhập đã hết hạn, đang chuyển sang đăng nhập...', 'Hết phiên');
+        setTimeout(() => { logout(); window.location.hash = '/signin'; }, 1500);
         return;
       }
-
       const data = await res.json();
-
       if (res.ok && data.success) {
         localStorage.setItem('edux_cart', '[]');
         window.dispatchEvent(new Event('cartUpdated'));
-        window.dispatchEvent(new Event('walletUpdated'));
-        alert(`Thanh toán thành công! Đã trừ ${fmt(data.total)} đ từ ví. Bạn đã sở hữu ${data.enrolled} khóa học.`);
-        window.location.hash = '/my-courses';
+        showToast('success', `Đã trừ ${fmt(data.total)} đ từ ví. Bạn đã sở hữu ${data.enrolled} khóa học.`, 'Thanh toán thành công!');
+        setTimeout(() => { window.location.hash = '/my-courses'; }, 1600);
         return;
       }
-
       if (data.code === 'INSUFFICIENT_FUNDS') {
-        const go = window.confirm(`Số dư ví không đủ (cần ${fmt(data.needed)} đ, ví đang có ${fmt(data.balance)} đ).\nNạp thêm tiền qua VNPAY?`);
-        if (go) return topUp(data.needed - data.balance);
+        setWalletBalance(Number(data.balance) || 0);
+        showToast('error', 'Số dư ví không đủ — hãy nạp thêm qua VNPAY (mã QR).', 'Không đủ số dư');
         setLoadingPayment(false);
         return;
       }
-
-      alert(data.message || 'Thanh toán thất bại.');
+      showToast('error', data.message || 'Thanh toán thất bại.');
       setLoadingPayment(false);
     } catch (e) {
-      alert('Không thể kết nối máy chủ thanh toán.');
+      showToast('error', 'Không thể kết nối máy chủ.');
       setLoadingPayment(false);
     }
   };
 
-  // Nạp tiền vào ví qua VNPAY (khi số dư không đủ)
-  const topUp = async (amount) => {
+  // Ví KHÔNG đủ → thanh toán đơn bằng mã QR (VNPAY) → trả xong đăng ký khóa (ví không đổi)
+  const topUpQR = async () => {
+    if (!user) { if (onGoSignIn) onGoSignIn(); else window.location.hash = '/signin'; return; }
+    if (finalTotal <= 0) return;
+    setLoadingPayment(true);
     try {
       const token = localStorage.getItem('token');
+      // Mã QR sẽ thanh toán CHÍNH đơn này → lưu đơn để đăng ký khóa sau khi trả thành công
+      localStorage.setItem('edux_pending_order', JSON.stringify({ items: cartItems.map(i => i.id), couponCode: appliedCoupon?.code || null }));
       const returnUrl = `${window.location.origin}/#/payment/result`;
       const res = await fetch(`${API_BASE}/api/payment/create-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ amount: Math.max(10000, Math.ceil(Number(amount) || 0)), returnUrl }),
+        body: JSON.stringify({ amount: finalTotal, returnUrl }),
       });
+      if (res.status === 401 || res.status === 403) {
+        showToast('error', 'Phiên đăng nhập đã hết hạn, đang chuyển sang đăng nhập...', 'Hết phiên');
+        setTimeout(() => { logout(); window.location.hash = '/signin'; }, 1500);
+        return;
+      }
       const data = await res.json();
       if (data.success && data.url) window.location.href = data.url;
-      else { alert(data.message || 'Lỗi tạo giao dịch nạp tiền.'); setLoadingPayment(false); }
-    } catch {
-      alert('Không thể kết nối cổng nạp tiền.');
+      else { showToast('error', data.message || 'Lỗi tạo thanh toán VNPAY.'); setLoadingPayment(false); }
+    } catch (e) {
+      showToast('error', 'Không thể kết nối cổng VNPAY.');
       setLoadingPayment(false);
     }
   };
@@ -235,6 +261,8 @@ export default function CartPage({ onGoSignIn, user }) {
         }
       `}</style>
 
+      <Toast toast={toast} onClose={() => setToast(null)} />
+
       {/* Header */}
       <header className="sticky top-0 z-50 bg-[#f8f9fb]/90 backdrop-blur-md border-b border-[#e5e7eb] shadow-sm">
         <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-[72px]">
@@ -277,6 +305,18 @@ export default function CartPage({ onGoSignIn, user }) {
       {/* Main Content */}
       <main className="flex-1 max-w-[1280px] w-full mx-auto px-6 py-10">
         <h1 className="text-2xl font-bold text-[#191c1e] mb-6 border-b border-[#e1e2e4] pb-4">Giỏ hàng</h1>
+
+        {demoRemoved > 0 && (
+          <div className="mb-5 flex items-center justify-between gap-3 bg-[#fff7ed] border border-[#fed7aa] text-[#9a3412] rounded-xl px-4 py-3 text-sm">
+            <span className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[18px]">info</span>
+              Đã bỏ {demoRemoved} khóa <b>demo</b> không mua được khỏi giỏ.
+            </span>
+            <button onClick={() => setDemoRemoved(0)} className="text-[#9a3412] hover:text-[#7c2d12]">
+              <span className="material-symbols-outlined text-[18px]">close</span>
+            </button>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
           {/* Left Column - Cart Items */}
@@ -383,32 +423,41 @@ export default function CartPage({ onGoSignIn, user }) {
                 )}
               </div>
 
-              <div className="border-t border-[#e1e2e4] pt-6 mb-6">
-                <div className="text-sm font-semibold text-[#191c1e] mb-2">Dùng điểm tích lũy: <span className="text-[#00288e]">0</span></div>
+              {/* Số dư ví điện tử */}
+              <div className="border-t border-[#e1e2e4] pt-6 mb-5">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-[#191c1e]">Tổng điểm: <span className="text-[#00288e]">0 đ</span></span>
-                    <span className="text-xs text-[#757684]">(1 điểm = 1000 đ)</span>
-                  </div>
-                  <label className="toggle-switch">
-                    <input type="checkbox" />
-                    <span className="slider"></span>
-                  </label>
+                  <span className="text-sm font-semibold text-[#191c1e] flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[#00288e] text-[20px]">account_balance_wallet</span>
+                    Số dư ví điện tử
+                  </span>
+                  <span className="font-bold text-[#00288e]">{walletBalance == null ? '—' : `${fmt(walletBalance)} đ`}</span>
                 </div>
+                {user && walletBalance != null && walletBalance < finalTotal && (
+                  <p className="text-xs text-[#ea580c] mt-1.5 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">qr_code_2</span>
+                    Số dư ví không đủ — thanh toán bằng <b>mã QR</b> bên dưới
+                  </p>
+                )}
               </div>
 
-              <button 
-                onClick={handleCheckout}
-                disabled={loadingPayment || cartItems.length === 0}
-                className="w-full bg-[#00288e] text-white py-3 rounded-lg font-bold text-sm hover:bg-[#1e40af] transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {loadingPayment ? (
-                  <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
-                ) : (
-                  <span className="material-symbols-outlined text-[18px]">payments</span>
-                )}
-                {loadingPayment ? 'Đang xử lý...' : `Thanh toán ${fmt(finalTotal)} đ (trừ ví)`}
-              </button>
+              {!user ? (
+                <button onClick={() => (onGoSignIn ? onGoSignIn() : (window.location.hash = '/signin'))}
+                  className="w-full bg-[#00288e] text-white py-3 rounded-lg font-bold text-sm hover:bg-[#1e40af] transition-colors shadow-md">
+                  Đăng nhập để thanh toán
+                </button>
+              ) : enough ? (
+                <button onClick={handleCheckout} disabled={loadingPayment || cartItems.length === 0}
+                  className="w-full bg-[#00288e] text-white py-3 rounded-lg font-bold text-sm hover:bg-[#1e40af] transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">account_balance_wallet</span>
+                  {loadingPayment ? 'Đang xử lý...' : `Thanh toán bằng ví — ${fmt(finalTotal)} đ`}
+                </button>
+              ) : (
+                <button onClick={topUpQR} disabled={loadingPayment || cartItems.length === 0}
+                  className="w-full bg-gradient-to-r from-[#0ea5e9] to-[#1e40af] text-white py-3 rounded-lg font-bold text-sm hover:-translate-y-0.5 transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">qr_code_2</span>
+                  {loadingPayment ? 'Đang mở mã QR...' : `Thanh toán bằng mã QR — ${fmt(finalTotal)} đ`}
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -1,80 +1,8 @@
 import { useState, useEffect } from 'react'
-import EntityReviews from '../components/EntityReviews'
 import BookingModal from '../components/BookingModal'
 import { useAuth } from '../AuthContext'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
-
-// ─── Mock extended profiles ───────────────────────────────────────────────────
-const BASE_PROFILE = {
-  full_name: 'Nguyễn Thị Hương',
-  title: 'Gia sư Toán - Luyện thi THPT Quốc gia',
-  picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCXSWk4apMr3IzYvtncJ0aXLJKYQHTWlrtSF2YL2ibUD-XC_mNTDoY7Z3m6oxnKVRA1HNZp_rDtYYIQpuAuQr4EcMcFNaoq5B8ApEsaoOChwewphyG4iSlU3dN8o7SWM2M3rii5R3sUEnVMGLeaL4yN_PD7KZqLGGvki4YDThYhOoMYkLyvxDdSE8URnYNkAuJbWmtakbS84ZdjH3LnvD0AFkv4cSMp3mRxYij_yHfqg55WITF2Mxqc_7hJdFxmmIJ-jlFYMkduVPA',
-  city: 'Đà Nẵng',
-  experience_years: 8,
-  hourly_rate: 180000,
-  avg_r: 4.8,
-  review_count: 128,
-  subjects: 'Toán học, Vật lý, Luyện thi THPT, Học sinh mất gốc',
-  completedLessons: 245,
-  onTimeRate: '98%',
-  responseRate: '96%',
-  studentsCount: 150,
-  teachingFormatShort: 'Online / Offline',
-  bio: 'Với hơn 8 năm kinh nghiệm giảng dạy Toán học cấp THPT và luyện thi Đại học, tôi luôn tâm niệm rằng mỗi học sinh đều có một cách tiếp thu riêng. Phương pháp của tôi tập trung vào việc khơi gợi sự hứng thú, xây dựng nền tảng vững chắc và rèn luyện tư duy logic thay vì học vẹt.',
-  teachingMethods: [
-    'Kiểm tra năng lực đầu vào để xác định điểm mạnh và điểm yếu của học sinh',
-    'Xây dựng lộ trình học riêng phù hợp với mục tiêu của từng học sinh',
-    'Giảng bài từ cơ bản đến nâng cao, đảm bảo học sinh nắm vững từng bước',
-    'Theo dõi và đánh giá tiến bộ định kỳ, điều chỉnh phương pháp khi cần',
-  ],
-  suitableFor: [
-    'Học sinh mất gốc môn Toán',
-    'Học sinh cần cải thiện điểm kiểm tra thường xuyên',
-    'Học sinh ôn thi THPT Quốc gia',
-    'Học sinh muốn học nâng cao, tham gia Olympic Toán',
-    'Học sinh cần người kèm sát tiến độ học tập',
-  ],
-  degrees: [
-    { title: 'Cử nhân Sư phạm Toán — Đại học Sư phạm Đà Nẵng', status: 'verified' },
-    { title: 'Chứng chỉ nghiệp vụ sư phạm', status: 'verified' },
-    { title: 'Chứng chỉ luyện thi THPT Quốc gia', status: 'pending' },
-    { title: 'Xác minh danh tính', status: 'verified' },
-  ],
-  teachingFormats: [
-    { icon: 'videocam', label: 'Online qua Google Meet / Zoom' },
-    { icon: 'home', label: 'Dạy trực tiếp tại nhà học sinh' },
-    { icon: 'apartment', label: 'Dạy trực tiếp tại nhà gia sư' },
-    { icon: 'store', label: 'Dạy tại địa điểm công cộng' },
-  ],
-  availableSchedule: [
-    { day: 'T2', slots: ['18:00–20:00', '20:00–22:00'] },
-    { day: 'T3', slots: ['19:00–21:00'] },
-    { day: 'T4', slots: ['18:00–20:00'] },
-    { day: 'T5', slots: ['20:00–22:00'] },
-    { day: 'T6', slots: ['18:00–20:00'] },
-    { day: 'T7', slots: ['08:00–10:00', '14:00–16:00'] },
-    { day: 'CN', slots: ['09:00–11:00'] },
-  ],
-  studentReviews: [
-    { id: 1, name: 'Minh Anh', subject: 'Toán lớp 12', lessonCount: 12, rating: 5.0, comment: 'Cô dạy rất dễ hiểu, có lộ trình rõ ràng. Sau vài buổi em đã tự tin hơn khi làm bài toán vận dụng.', initials: 'MA', bg: '#dde1ff', color: '#00288e' },
-    { id: 2, name: 'Quốc Bảo', subject: 'Toán lớp 9',  lessonCount: 8,  rating: 5.0, comment: 'Gia sư kiên nhẫn, đúng giờ và luôn chữa bài rất kỹ. Phù hợp với học sinh mất gốc.', initials: 'QB', bg: '#e2e2e2', color: '#444653' },
-    { id: 3, name: 'Hà My',    subject: 'Luyện thi THPT', lessonCount: 15, rating: 4.8, comment: 'Cách dạy dễ hiểu, có nhiều mẹo làm bài nhanh và bám sát đề thi.', initials: 'HM', bg: '#d4e3ff', color: '#003564' },
-  ],
-  verifiedBadges: [
-    { label: 'Đã xác minh', className: 'bg-green-100 text-green-800', icon: 'verified' },
-    { label: 'Bằng cấp đã kiểm tra', className: 'bg-blue-100 text-blue-800', icon: 'school' },
-    { label: 'EduX duyệt', className: 'bg-purple-100 text-purple-800', icon: 'workspace_premium' },
-  ],
-  policies: {
-    trial: 'Hỗ trợ buổi tư vấn ngắn 15–20 phút miễn phí để thầy/cô và học sinh hiểu nhau trước khi bắt đầu.',
-    cancellation: 'Hủy trước 24h: hoàn tiền 100%. Hủy trong 24h: hoàn 50%. Không báo trước: không hoàn tiền.',
-  },
-}
-
-function getMockProfile(id) {
-  return { ...BASE_PROFILE, id }
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmtPrice(val) {
@@ -122,13 +50,13 @@ function LoadingScreen() {
   )
 }
 
-function NotFoundScreen() {
+function NotFoundScreen({ errorMsg }) {
   return (
     <div className="bg-[#f8f9fb] min-h-screen flex items-center justify-center px-6">
       <div className="text-center">
         <span className="material-symbols-outlined text-6xl text-[#c4c5d5]">person_search</span>
         <h1 className="text-2xl font-bold text-[#191c1e] mt-4">Không tìm thấy gia sư</h1>
-        <p className="text-[#444653] mt-2">Hồ sơ này không tồn tại hoặc đã bị xóa.</p>
+        <p className="text-[#444653] mt-2">{errorMsg || 'Hồ sơ này không tồn tại hoặc đã bị xóa.'}</p>
         <a href="#/find-tutors"
           className="inline-flex items-center gap-2 mt-6 bg-[#00288e] text-white px-6 py-3 rounded-xl font-semibold hover:bg-[#1e40af] transition-colors">
           <span className="material-symbols-outlined text-[18px]">arrow_back</span>
@@ -143,9 +71,10 @@ function NotFoundScreen() {
 export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) {
   const { token } = useAuth()
   const [tutor, setTutor] = useState(null)
+
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
-  const [showBooking, setShowBooking] = useState(false)
+  const [errorMsg, setErrorMsg] = useState(null)
 
   // ── Inline chat widget state ──
   const [showChat, setShowChat] = useState(false)
@@ -159,85 +88,26 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
     window.scrollTo(0, 0)
     setLoading(true)
     setNotFound(false)
-
-    // ── Step 1: Read basic data saved from FindTutors listing ──────────────────
-    let saved = null
-    try {
-      const raw = sessionStorage.getItem('viewingTutor')
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        // Only use if IDs match
-        if (String(parsed.id) === String(tutorId)) saved = parsed
-      }
-    } catch {}
-
-    const buildTutor = (apiData) => {
-      const base = saved || {}
-      const data = apiData || {}
-      const teachingMethodsFromDB = Array.isArray(data.teaching_methods) && data.teaching_methods.length > 0
-        ? data.teaching_methods
-        : null
-      const suitableForFromDB = Array.isArray(data.suitable_students) && data.suitable_students.length > 0
-        ? data.suitable_students
-        : null
-      const dbAvailability = data.availability || base.availability
-      let parsedSchedule = null
-      if (dbAvailability && typeof dbAvailability === 'object' && Object.keys(dbAvailability).length > 0) {
-        const dayMap = { Monday: 'T2', Tuesday: 'T3', Wednesday: 'T4', Thursday: 'T5', Friday: 'T6', Saturday: 'T7', Sunday: 'CN' }
-        parsedSchedule = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
-          .filter(day => dbAvailability[day] && dbAvailability[day].length > 0)
-          .map(day => ({
-            day: dayMap[day] || day,
-            slots: dbAvailability[day]
-          }))
-      }
-
-      return {
-        ...BASE_PROFILE,              // extended mock fields (schedule, reviews, etc.)
-        ...base,                      // real basic fields from FindTutors listing
-        ...data,                      // real extended fields from API (overwrites if exist)
-        // Resolve avatar: prefer profile_photo from API > listing picture > mock
-        picture: data.profile_photo_url || data.picture || base.profile_photo_url || base.picture || BASE_PROFILE.picture,
-        // Resolve title: headline from API > bio snippet > base bio snippet > mock title
-        title: data.headline || base.headline
-          || (data.bio ? data.bio.slice(0, 80) : null)
-          || (base.bio ? base.bio.slice(0, 80) : null)
-          || BASE_PROFILE.title,
-        // Use structured DB data if available, otherwise fall back to mock
-        teachingMethods: teachingMethodsFromDB || BASE_PROFILE.teachingMethods,
-        suitableFor: suitableForFromDB || BASE_PROFILE.suitableFor,
-        availableSchedule: parsedSchedule && parsedSchedule.length > 0 ? parsedSchedule : BASE_PROFILE.availableSchedule,
-      }
-    }
-
-    // ── Step 2: Show immediately with saved data (no spinner wait) ─────────────
-    if (saved) {
-      setTutor(buildTutor(null))
-      setLoading(false)
-    }
-
-    // ── Step 3: Fetch full profile from API (enhance what's shown) ─────────────
-    // Always try to fetch from API. If it's a mock card, the API will return 404 and we'll fallback to saved data.
-    if (!saved) {
-      // Show loading if we don't have saved data to render immediately
-      setLoading(true)
-    }
+    setErrorMsg(null)
 
     fetch(`${API_BASE}/api/tutors/${tutorId}`)
       .then(async r => {
         if (r.status === 404) {
-          if (!saved) { setNotFound(true); setLoading(false) }
-          return
+          setNotFound(true); 
+          setLoading(false);
+          return;
         }
-        const data = r.ok ? await r.json() : null
-        setTutor(buildTutor(data))
-        if (!saved) setLoading(false)
+        if (!r.ok) {
+          throw new Error(`HTTP ${r.status}`)
+        }
+        const data = await r.json()
+        setTutor(data)
+        setLoading(false)
       })
-      .catch(() => {
-        if (!saved) {
-          setTutor(buildTutor(null))
-          setLoading(false)
-        }
+      .catch((err) => {
+        setNotFound(true)
+        setErrorMsg('Đã có lỗi xảy ra khi tải hồ sơ.')
+        setLoading(false)
       })
   }, [tutorId])
 
@@ -319,17 +189,13 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
   }
 
   if (loading) return <LoadingScreen />
-  if (notFound) return <NotFoundScreen />
+  if (notFound) return <NotFoundScreen errorMsg={errorMsg} />
   if (!tutor) return <NotFoundScreen />
-
-  const subjectList = tutor.subjects
-    ? tutor.subjects.split(',').map(s => s.trim()).filter(Boolean)
-    : []
 
   const priceDisplay = fmtPrice(tutor.hourly_rate)
 
   return (
-    <div className="aqua-bg text-[#191c1e] min-h-screen font-sans">
+    <div className="bg-[#f8f9fb] text-[#191c1e] min-h-screen font-sans">
       <style>{`
         .tutor-profile-card {
           box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05);
@@ -347,7 +213,6 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
           </nav>
           <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
@@ -396,8 +261,8 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               {/* Avatar */}
               <div className="relative shrink-0">
                 <div className="w-28 h-28 rounded-full overflow-hidden border-4 border-white shadow-md bg-[#dde1ff]">
-                  {tutor.profile_photo_url || tutor.picture ? (
-                    <img src={tutor.profile_photo_url || tutor.picture} alt={tutor.full_name}
+                  {tutor.avatar ? (
+                    <img src={tutor.avatar} alt={tutor.full_name}
                       className="w-full h-full object-cover"
                       onError={e => { e.target.style.display = 'none' }} />
                   ) : (
@@ -416,37 +281,30 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
                   <div>
                     <h1 className="text-2xl font-bold text-[#191c1e]">{tutor.full_name}</h1>
-                    <p className="text-[#444653] text-base mt-0.5">{tutor.title || tutor.bio?.slice(0, 60)}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2 justify-center md:justify-end shrink-0">
-                    {(tutor.verifiedBadges || BASE_PROFILE.verifiedBadges).map((b, i) => (
-                      <span key={i} className={`${b.className} text-xs px-3 py-1 rounded-full flex items-center gap-1 font-medium`}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{b.icon}</span>
-                        {b.label}
-                      </span>
-                    ))}
+                    <p className="text-[#444653] text-base mt-0.5">{tutor.bio ? tutor.bio.slice(0, 60) + '...' : 'Gia sư tại EduX'}</p>
                   </div>
                 </div>
 
                 {/* Subject chips */}
                 <div className="flex flex-wrap gap-2 justify-center md:justify-start">
-                  {subjectList.map(s => (
+                  {tutor.subjects && tutor.subjects.length > 0 ? tutor.subjects.map(s => (
                     <span key={s} className="bg-[#d4e3ff] text-[#00288e] text-xs px-3 py-1 rounded-lg font-medium">{s}</span>
-                  ))}
+                  )) : (
+                    <span className="text-[#757684] text-sm">Chưa cập nhật môn học</span>
+                  )}
                 </div>
 
                 {/* Meta row */}
                 <div className="flex flex-wrap gap-4 justify-center md:justify-start text-sm text-[#444653]">
-                  {tutor.city && (
-                    <span className="flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[16px] text-[#00288e]">location_on</span>
-                      {tutor.city}
-                    </span>
-                  )}
-                  {tutor.experience_years > 0 && (
+                  {tutor.experience_years > 0 ? (
                     <span className="flex items-center gap-1">
                       <span className="material-symbols-outlined text-[16px] text-[#00288e]">work_history</span>
                       {tutor.experience_years} năm kinh nghiệm
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[16px] text-[#00288e]">work_history</span>
+                      Chưa cập nhật kinh nghiệm
                     </span>
                   )}
                   <span className="flex items-center gap-1 font-semibold text-[#00288e]">
@@ -457,14 +315,13 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               </div>
             </section>
 
-            {/* Trust stats — số liệu THẬT của gia sư đang xem */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            {/* Trust stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { value: tutor.experience_years || 0,          label: 'Năm kinh nghiệm', color: 'text-[#00288e]' },
-                { value: subjectList.length,                   label: 'Môn dạy',         color: 'text-green-600' },
-                { value: Number(tutor.avg_r || 0).toFixed(1),  label: 'Đánh giá',        color: 'text-[#FFB800]' },
-                { value: tutor.review_count || 0,              label: 'Lượt đánh giá',   color: 'text-blue-600' },
-                { value: tutor.total_students || 0,            label: 'Học sinh',        color: 'text-indigo-800' },
+                { value: tutor.completed_lessons_count ?? 0, label: 'Buổi học', color: 'text-[#00288e]' },
+                { value: (parseFloat(tutor.rating) || 0).toFixed(1), label: 'Đánh giá', color: 'text-[#FFB800]' },
+                { value: tutor.total_students ?? 0, label: 'Học sinh',  color: 'text-indigo-800' },
+                { value: tutor.review_count ?? 0, label: 'Lượt đánh giá', color: 'text-green-600' },
               ].map(stat => (
                 <div key={stat.label} className="bg-white rounded-xl p-3 tutor-profile-card flex flex-col items-center text-center">
                   <span className={`text-2xl font-bold ${stat.color}`}>{stat.value}</span>
@@ -475,105 +332,95 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
 
             {/* Giới thiệu */}
             <SectionCard icon="person" title="Giới thiệu">
-              <p className="text-[#444653] leading-relaxed">{tutor.bio}</p>
+              {tutor.bio ? (
+                <p className="text-[#444653] leading-relaxed whitespace-pre-wrap">{tutor.bio}</p>
+              ) : (
+                <p className="text-[#757684] italic">Gia sư chưa cập nhật giới thiệu bản thân.</p>
+              )}
             </SectionCard>
 
             {/* Phương pháp */}
-            <SectionCard icon="lightbulb" title="Phương pháp giảng dạy">
-              <ol className="space-y-3">
-                {(tutor.teachingMethods || BASE_PROFILE.teachingMethods).map((m, i) => (
-                  <li key={i} className="flex gap-3">
-                    <span className="w-6 h-6 rounded-full bg-[#dde1ff] text-[#00288e] text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
-                    <span className="text-[#444653]">{m}</span>
-                  </li>
-                ))}
-              </ol>
-            </SectionCard>
-
-            {/* Phù hợp với */}
-            <SectionCard icon="group" title="Phù hợp với học sinh">
-              <ul className="space-y-2">
-                {(tutor.suitableFor || BASE_PROFILE.suitableFor).map((s, i) => (
-                  <li key={i} className="flex items-start gap-2 text-[#444653]">
-                    <span className="material-symbols-outlined text-[#10B981] shrink-0 mt-0.5" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-                    {s}
-                  </li>
-                ))}
-              </ul>
-            </SectionCard>
-
-            {/* Bằng cấp & xác minh */}
-            <SectionCard icon="verified_user" title="Bằng cấp & xác minh">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {(tutor.degrees || BASE_PROFILE.degrees).map((d, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 bg-[#f8f9fb] rounded-lg border border-[#e1e2e4]">
-                    <span className="text-sm font-medium text-[#191c1e]">{d.title}</span>
-                    {d.status === 'verified'
-                      ? <span className="material-symbols-outlined text-green-600 shrink-0 ml-2" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>verified</span>
-                      : <span className="material-symbols-outlined text-blue-500 shrink-0 ml-2" style={{ fontSize: 18 }}>fact_check</span>
-                    }
-                  </div>
-                ))}
-              </div>
-            </SectionCard>
-
-            {/* Hình thức giảng dạy */}
-            <SectionCard icon="devices" title="Hình thức giảng dạy">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {(tutor.teachingFormats || BASE_PROFILE.teachingFormats).map((f, i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 bg-[#f8f9fb] rounded-lg border border-[#e1e2e4]">
-                    <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 20 }}>{f.icon}</span>
-                    <span className="text-sm text-[#444653]">{f.label}</span>
-                  </div>
-                ))}
-              </div>
+            <SectionCard icon="lightbulb" title="Hình thức giảng dạy">
+              {tutor.teaching_methods && tutor.teaching_methods.length > 0 ? (
+                <ul className="space-y-3">
+                  {tutor.teaching_methods.map((m, i) => (
+                    <li key={i} className="flex gap-3 items-center">
+                      <span className="w-6 h-6 rounded-full bg-[#dde1ff] text-[#00288e] flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined" style={{fontSize: 16}}>check</span>
+                      </span>
+                      <span className="text-[#444653] capitalize">{m === 'online' ? 'Dạy trực tuyến (Online)' : m === 'offline' ? 'Dạy trực tiếp (Offline)' : m}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[#757684] italic">Chưa cập nhật hình thức giảng dạy.</p>
+              )}
             </SectionCard>
 
             {/* Lịch dạy */}
             <SectionCard icon="event_available" title="Lịch dạy khả dụng">
-              <div className="space-y-3">
-                {(tutor.availableSchedule || BASE_PROFILE.availableSchedule).map((row, i) => (
-                  <div key={i} className="flex items-start gap-3">
-                    <div className="w-8 text-sm font-semibold text-[#444653] shrink-0 pt-1">{row.day}</div>
-                    <div className="flex flex-wrap gap-2">
-                      {row.slots.map(slot => (
-                        <span key={slot} className="bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-1 rounded-full font-medium">
-                          {slot}
-                        </span>
-                      ))}
+              {tutor.availability && Object.keys(tutor.availability).length > 0 ? (
+                <div className="space-y-3">
+                  {Object.entries(tutor.availability).map(([day, slots]) => (
+                    <div key={day} className="flex items-start gap-3">
+                      <div className="w-12 text-sm font-semibold text-[#444653] shrink-0 pt-1 capitalize">{day}</div>
+                      <div className="flex flex-wrap gap-2">
+                        {Array.isArray(slots) ? slots.map(slot => (
+                          <span key={slot} className="bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-1 rounded-full font-medium">
+                            {slot}
+                          </span>
+                        )) : (
+                           <span className="bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-1 rounded-full font-medium">
+                            {slots}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[#757684] italic">Gia sư chưa cập nhật lịch rảnh</p>
+              )}
             </SectionCard>
 
-            {/* Đánh giá THẬT từ học sinh (lấy từ DB theo gia sư đang xem) */}
-            <EntityReviews targetType="tutor" targetId={tutorId} title="Đánh giá từ học sinh" />
-
-            {/* Chính sách */}
-            <SectionCard icon="policy" title="Chính sách học thử & hủy lịch">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]">
-                  <h4 className="font-semibold text-[#00288e] mb-1 text-sm">Buổi học thử</h4>
-                  <p className="text-xs text-[#444653] leading-relaxed">{(tutor.policies || BASE_PROFILE.policies).trial}</p>
-                </div>
-                <div className="p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]">
-                  <h4 className="font-semibold text-[#00288e] mb-1 text-sm">Chính sách hủy lịch</h4>
-                  <p className="text-xs text-[#444653] leading-relaxed">{(tutor.policies || BASE_PROFILE.policies).cancellation}</p>
+            {/* Đánh giá */}
+            <SectionCard icon="star" title={`Đánh giá từ học sinh (${tutor.review_count})`}>
+              <div className="flex items-center gap-4 mb-5 p-4 bg-[#f8f9fb] rounded-xl">
+                <span className="text-5xl font-bold text-[#00288e]">{(parseFloat(tutor.rating) || 0).toFixed(1)}</span>
+                <div>
+                  <StarRating value={parseFloat(tutor.rating) || 0} size={20} />
+                  <p className="text-sm text-[#444653] mt-1">{tutor.review_count ?? 0} đánh giá</p>
                 </div>
               </div>
+              
+              {tutor.reviews && tutor.reviews.length > 0 ? (
+                <div className="space-y-4">
+                  {tutor.reviews.map(r => (
+                    <div key={r.id} className="p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]">
+                      <div className="flex items-start gap-3">
+                        {r.reviewer_avatar ? (
+                          <img src={r.reviewer_avatar} alt={r.reviewer_name} className="w-10 h-10 rounded-full object-cover shrink-0" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 bg-[#dde1ff] text-[#00288e]">
+                            {(r.reviewer_name || 'H').charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between flex-wrap gap-1">
+                            <span className="font-semibold text-[#191c1e] text-sm">{r.reviewer_name}</span>
+                            <StarRating value={r.rating} size={13} />
+                          </div>
+                          <p className="text-xs text-[#757684] mt-0.5">{new Date(r.created_at).toLocaleDateString('vi-VN')}</p>
+                          <p className="text-sm text-[#444653] mt-2 leading-relaxed">"{r.comment}"</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[#757684] italic">Chưa có đánh giá</p>
+              )}
             </SectionCard>
-
-            {/* Report */}
-            <div className="flex justify-center py-4">
-              <button
-                onClick={() => alert('Tính năng báo cáo sẽ được phát triển sau.')}
-                className="text-red-500 text-sm hover:underline flex items-center gap-1"
-              >
-                <span className="material-symbols-outlined text-[16px]">flag</span>
-                Báo cáo hồ sơ này
-              </button>
-            </div>
           </div>
 
           {/* ════ RIGHT COLUMN (sticky booking card) ════ */}
@@ -592,8 +439,8 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 <div className="space-y-3 mb-6">
                   <div className="flex items-center gap-2 text-[#444653] text-sm">
                     <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>star</span>
-                    <span className="font-semibold text-[#191c1e]">{Number(tutor.avg_r || 0).toFixed(1)}</span>
-                    <span>({tutor.review_count || 0} đánh giá)</span>
+                    <span className="font-semibold text-[#191c1e]">{(parseFloat(tutor.rating) || 0).toFixed(1)}</span>
+                    <span>({tutor.review_count} đánh giá)</span>
                   </div>
                   {tutor.experience_years > 0 && (
                     <div className="flex items-center gap-2 text-[#444653] text-sm">
@@ -601,23 +448,26 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                       {tutor.experience_years} năm kinh nghiệm
                     </div>
                   )}
-                  {tutor.city && (
-                    <div className="flex items-center gap-2 text-[#444653] text-sm">
-                      <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 18 }}>location_on</span>
-                      {tutor.city} (Online/Offline)
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2 text-[#444653] text-sm">
-                    <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 18 }}>devices</span>
-                    {tutor.teachingFormatShort || 'Online / Offline'}
-                  </div>
                 </div>
 
                 {/* Action buttons */}
                 <div className="space-y-3">
                   <button
-                    onClick={() => window.location.hash = '/booking/' + tutorId}
+                    onClick={() => {
+                      sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
+                      window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
+                    }}
                     className="w-full bg-[#00288e] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#1e40af] transition-colors shadow-md flex items-center justify-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">calendar_month</span>
+                    Đặt Lịch Học Thử
+                  </button>
+                  <button
+                    onClick={() => {
+                      sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
+                      window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
+                    }}
+                    className="w-full bg-[#10B981] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#059669] transition-colors shadow-md flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-[18px]">calendar_month</span>
                     Đặt Lịch Học
@@ -654,7 +504,10 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             Nhắn Tin
           </button>
           <button
-            onClick={() => window.location.hash = '/booking/' + tutorId}
+            onClick={() => {
+              sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
+              window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
+            }}
             className="px-5 py-2.5 bg-[#00288e] text-white rounded-xl text-sm font-semibold hover:bg-[#1e40af] transition-colors"
           >
             Đặt Lịch
@@ -662,7 +515,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
         </div>
       </main>
 
-      {showBooking && <BookingModal tutor={tutor} onClose={() => setShowBooking(false)} />}
+
 
       {/* ── Inline Chat Widget ── */}
       {showChat && (
@@ -678,8 +531,8 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 }
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm truncate">{tutor.full_name}</p>
-                <p className="text-xs text-white/70 truncate">Gia sư • {tutor.subjects?.split(',')[0]?.trim() || ''}</p>
+                <p className="font-semibold text-sm truncate">{tutor.full_name || tutor.display_name || tutor.first_name || 'Gia sư'}</p>
+                <p className="text-xs text-white/70 truncate">Gia sư • {(Array.isArray(tutor.subjects) ? tutor.subjects[0] : tutor.subjects?.split(',')[0]?.trim()) || ''}</p>
               </div>
               <div className="flex items-center gap-1">
                 <button
@@ -707,7 +560,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               ) : chatMessages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center gap-3 px-4">
                   <span className="material-symbols-outlined text-[48px] text-[#c4c5d5]">waving_hand</span>
-                  <p className="text-sm text-[#444653] font-medium">Bắt đầu cuộc trò chuyện với {tutor.full_name}</p>
+                  <p className="text-sm text-[#444653] font-medium">Bắt đầu cuộc trò chuyện với {tutor.full_name || tutor.display_name || tutor.first_name || 'Gia sư'}</p>
                   <p className="text-xs text-[#757684]">Hỏi về khóa học, lịch học, phương pháp giảng dạy...</p>
                   {/* Quick reply suggestions */}
                   <div className="flex flex-col gap-2 w-full mt-2">
@@ -760,7 +613,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 value={chatDraft}
                 onChange={e => setChatDraft(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMsg(e) } }}
-                placeholder={`Nhắn tin cho ${tutor.full_name?.split(' ').pop() || 'gia sư'}...`}
+                placeholder={`Nhắn tin cho ${(tutor.full_name || tutor.display_name || tutor.first_name || '').split(' ').filter(Boolean).pop() || 'gia sư'}...`}
                 rows={1}
                 className="flex-1 resize-none rounded-xl border border-[#c4c5d5] bg-[#f8f9fb] px-3 py-2 text-sm text-[#191c1e] placeholder:text-[#757684] focus:border-[#00288e] focus:ring-1 focus:ring-[#00288e]/20 focus:outline-none transition-all"
                 style={{ maxHeight: 80 }}
@@ -784,7 +637,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
       {!showChat && user && (
         <button
           onClick={openChatWidget}
-          title={`Nhắn tin với ${tutor.full_name}`}
+          title={`Nhắn tin với ${tutor.full_name || tutor.display_name || tutor.first_name || 'Gia sư'}`}
           className="fixed bottom-24 right-6 z-40 w-14 h-14 bg-[#00288e] text-white rounded-full shadow-lg flex items-center justify-center hover:bg-[#1e40af] hover:scale-105 transition-all group"
         >
           <span className="material-symbols-outlined text-[26px]" style={{ fontVariationSettings: "'FILL' 1" }}>chat</span>
@@ -793,6 +646,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
           </span>
         </button>
       )}
+
     </div>
   )
 }

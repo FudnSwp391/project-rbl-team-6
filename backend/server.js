@@ -44,7 +44,7 @@ function createToken(user) {
       role: user.role || "student",
     },
     jwtSecret,
-    { expiresIn: "7d" }
+    { expiresIn: "365d" }
   );
 }
 
@@ -504,7 +504,7 @@ app.post("/api/auth/check-email", async (req, res) => {
 // ─É─âng k├╜ bß║▒ng email + password
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { fullName, email, password, role } = req.body || {};
+    const { fullName, email, password, role, phone, city, avatarUrl } = req.body || {};
 
     // Validate
     if (!fullName || !email || !password) {
@@ -543,10 +543,10 @@ app.post("/api/auth/register", async (req, res) => {
 
     // Tß║ío user mß╗¢i
     const result = await pool.query(
-      `INSERT INTO users (full_name, email, password_hash, role)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (full_name, email, password_hash, role, phone, city, picture)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, full_name, email, role, picture, created_at`,
-      [fullName.trim(), email.toLowerCase().trim(), passwordHash, userRole]
+      [fullName.trim(), email.toLowerCase().trim(), passwordHash, userRole, phone || null, city || null, avatarUrl || null]
     );
 
     const newUser = result.rows[0];
@@ -1244,141 +1244,6 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
 });
 
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── ADMIN APIs (all protected by verifyToken + requireAdmin) ──────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// ─── GET /api/admin/tutors/stats ──────────────────────────────────────────────
-// Returns count of pending / approved / rejected tutor profiles
-app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE status = 'pending')  AS pending,
-        COUNT(*) FILTER (WHERE status = 'approved') AS approved,
-        COUNT(*) FILTER (WHERE status = 'rejected') AS rejected
-      FROM tutor_profiles
-    `);
-    const row = result.rows[0];
-    return res.json({
-      pending:  Number(row.pending),
-      approved: Number(row.approved),
-      rejected: Number(row.rejected),
-    });
-  } catch (error) {
-    console.error("Stats error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// ─── GET /api/admin/tutors/pending (duplicate route kept for compatibility) ───
-app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        tp.id, tp.user_id, u.full_name, u.email,
-        tp.bio, tp.subjects, tp.experience_years,
-        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
-        tp.created_at, tp.profile_photo_url, tp.hourly_rate,
-        tp.teaching_methods, tp.suitable_students,
-        COALESCE(
-          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
-           FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
-          '[]'::json
-        ) AS certificates
-      FROM tutor_profiles tp
-      JOIN users u ON u.id = tp.user_id
-      WHERE tp.status = 'pending'
-      ORDER BY tp.created_at ASC
-    `);
-    return res.json(result.rows);
-  } catch (error) {
-    console.error("Pending tutors error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// ─── PATCH /api/admin/tutors/:id/approve ─────────────────────────────────────
-// Approves a tutor application and optionally sends them an email
-app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await pool.query(
-      `UPDATE tutor_profiles
-       SET status = 'approved', reject_reason = NULL
-       WHERE id = $1
-       RETURNING *`,
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor profile not found." });
-    }
-
-    const profile = result.rows[0];
-
-    // Also update the user's role to 'tutor' (if not already)
-    await pool.query(
-      `UPDATE users SET role = 'tutor' WHERE id = $1 AND role != 'admin'`,
-      [profile.user_id]
-    );
-
-    // Fetch user email to send notification
-    const userResult = await pool.query(
-      "SELECT email FROM users WHERE id = $1",
-      [profile.user_id]
-    );
-    if (userResult.rows.length > 0) {
-      sendTutorReviewEmail(userResult.rows[0].email, "approved", null);
-    }
-
-    return res.json(profile);
-  } catch (error) {
-    console.error("Approve error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// ─── PATCH /api/admin/tutors/:id/reject ──────────────────────────────────────
-// Rejects a tutor application with a reason and optionally sends them an email
-app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  const { reason } = req.body || {};
-
-  if (!reason || !reason.trim()) {
-    return res.status(400).json({ message: "Reject reason is required." });
-  }
-
-  try {
-    const result = await pool.query(
-      `UPDATE tutor_profiles
-       SET status = 'rejected', reject_reason = $1
-       WHERE id = $2
-       RETURNING *`,
-      [reason.trim(), id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor profile not found." });
-    }
-
-    const profile = result.rows[0];
-
-    // Fetch user email to send notification
-    const userResult = await pool.query(
-      "SELECT email FROM users WHERE id = $1",
-      [profile.user_id]
-    );
-    if (userResult.rows.length > 0) {
-      sendTutorReviewEmail(userResult.rows[0].email, "rejected", reason);
-    }
-
-    return res.json(profile);
-  } catch (error) {
-    console.error("Reject error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
@@ -1389,6 +1254,11 @@ const assignmentRoutes = require("./routes/assignmentRoutes");
 const discussionRoutes = require("./routes/discussionRoutes");
 const lessonRoutes = require("./routes/lessonRoutes");
 const learningPathRoutes = require("./routes/learningPathRoutes");
+const scheduleRoutes = require("./routes/scheduleRoutes");
+const tutorRequestRoutes = require("./routes/tutorRequestRoutes");
+const tutorInteractionRoutes = require("./routes/tutorInteractionRoutes");
+const studentProfileRoutes = require("./routes/studentProfileRoutes");
+const studentCourseRoutes = require("./routes/studentCourseRoutes");
 
 app.use("/api/classes/:classId/materials", materialRoutes);
 app.use("/api/classes", classRoutes);
@@ -1396,6 +1266,11 @@ app.use("/", assignmentRoutes);
 app.use("/", discussionRoutes);
 app.use("/", lessonRoutes);
 app.use("/", learningPathRoutes);
+app.use("/api", scheduleRoutes);
+app.use("/", tutorRequestRoutes);
+app.use("/", tutorInteractionRoutes);
+app.use("/api/student/profile", studentProfileRoutes);
+app.use("/", studentCourseRoutes);
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
@@ -1832,17 +1707,6 @@ app.get('/api/exam-papers', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ message: 'Server error.' }); }
 });
 
-app.get('/api/exam-papers/attempts/:attemptId', verifyToken, async (req, res) => {
-  try {
-    const { attemptId } = req.params;
-    const attempt = await pool.query(`SELECT * FROM exam_paper_attempts WHERE id=$1 AND student_id=$2`, [attemptId, req.user.userId]);
-    if (!attempt.rows.length) return res.status(404).json({ message: 'Not found.' });
-    const a = attempt.rows[0];
-    const paper = await pool.query(`SELECT * FROM exam_papers WHERE id=$1`, [a.exam_paper_id]);
-    const questions = await pool.query(`SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1 ORDER BY question_order`, [a.exam_paper_id]);
-    return res.json({ attempt: a, paper: paper.rows[0], questions: questions.rows, shuffled_data: a.shuffled_data });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
-});
 
 app.get('/api/exam-papers/:paperId/start', verifyToken, async (req, res) => {
   try {
@@ -3000,27 +2864,6 @@ app.get('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =>
   }
 });
 
-// GET /api/reviews/featured
-app.get("/api/reviews/featured", async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit) || 12, 30);
-  try {
-    const result = await pool.query(
-      `SELECT r.id, r.rating, r.comment AS content, r.review_type, r.created_at,
-              u.full_name AS reviewer_name, u.role AS reviewer_role, u.picture AS reviewer_picture,
-              u.picture AS user_picture
-       FROM reviews r
-       LEFT JOIN users u ON u.id = r.user_id
-       WHERE r.rating = 5 AND r.is_visible = true
-       ORDER BY r.created_at DESC
-       LIMIT $1`,
-      [limit]
-    );
-    return res.json(result.rows);
-  } catch (err) {
-    console.error("GET /api/reviews/featured error:", err);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
 
 // POST /api/tutor/assessments
 app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) => {
@@ -3175,17 +3018,61 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 
 
 // ── GET /api/courses ──────────────────────────────────────────────────────────
-// Lấy danh sách khóa học cho marketplace
+// Lấy danh sách khóa học cho marketplace (có filter)
 app.get("/api/courses", async (req, res) => {
+  const { search = "", subject = "", level = "", format = "", sort = "newest", min_rating = "", limit = "100" } = req.query;
+  const cond = ["c.status IN ('published', 'approved', 'active')"];
+  const vals = [];
+  let i = 1;
+
+  if (search.trim()) { 
+    cond.push(`(c.title ILIKE $${i} OR c.description ILIKE $${i} OR c.subject ILIKE $${i} OR u.full_name ILIKE $${i})`); 
+    vals.push(`%${search.trim()}%`); 
+    i++; 
+  }
+  
+  if (subject.trim() && subject.trim().toLowerCase() !== 'all') { 
+    cond.push(`c.subject ILIKE $${i}`); 
+    vals.push(`%${subject.trim()}%`); 
+    i++; 
+  }
+  
+  if (level.trim() && level.trim().toLowerCase() !== 'all') { 
+    cond.push(`c.level ILIKE $${i}`);   
+    vals.push(`%${level.trim()}%`); 
+    i++; 
+  }
+
+  if (format.trim() && format.trim().toLowerCase() !== 'all') { 
+    cond.push(`(c.learning_mode ILIKE $${i} OR c.format ILIKE $${i})`);   
+    vals.push(`%${format.trim()}%`); 
+    i++; 
+  }
+  
+  if (min_rating && !isNaN(min_rating)) { 
+    cond.push(`c.avg_rating >= $${i}`); 
+    vals.push(Number(min_rating)); 
+    i++; 
+  }
+  
+  const order = { 
+    price_asc: "c.price ASC", 
+    price_desc: "c.price DESC", 
+    rating_desc: "COALESCE(c.avg_rating, 0) DESC, c.created_at DESC", 
+    newest: "c.created_at DESC" 
+  }[sort] || "c.created_at DESC";
+
   try {
-    const result = await pool.query(
+    const r = await pool.query(
       `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture 
        FROM courses c
-       JOIN users u ON c.tutor_id = u.id
-       WHERE c.status = 'approved' OR c.status = 'published' OR c.status = 'active'
-       ORDER BY c.created_at DESC`
+       LEFT JOIN users u ON c.tutor_id = u.id
+       WHERE ${cond.join(" AND ")}
+       ORDER BY ${order}
+       LIMIT $${i}`,
+       [...vals, parseInt(limit)]
     );
-    return res.json(result.rows);
+    return res.json(r.rows);
   } catch (err) {
     console.error("GET /api/courses error:", err);
     return res.status(500).json({ message: "Server error." });
@@ -3374,9 +3261,11 @@ app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
 // ══ Thanh toán giỏ hàng bằng VÍ (trừ số dư + đăng ký nhiều khóa) ══════════
 app.post("/api/cart/checkout", verifyToken, async (req, res) => {
   const studentId = req.user.userId;
-  const { items, couponCode } = req.body || {};
-  const ids = Array.isArray(items) ? [...new Set(items.filter(Boolean))] : [];
-  if (ids.length === 0) return res.status(400).json({ message: "Giỏ hàng trống." });
+  const { items, couponCode, source } = req.body || {};
+  const paidViaVnpay = source === "vnpay"; // VNPAY đã thu tiền → không trừ ví
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const ids = (Array.isArray(items) ? [...new Set(items.filter(Boolean))] : []).filter((id) => UUID_RE.test(String(id)));
+  if (ids.length === 0) return res.status(400).json({ message: "Giỏ hàng không có khóa học hợp lệ (khóa demo không thể mua — vui lòng xóa khỏi giỏ)." });
 
   const client = await pool.connect();
   try {
@@ -3386,12 +3275,9 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
       `SELECT id, title, price, tutor_id FROM courses WHERE id = ANY($1::uuid[])`, [ids]);
     if (coursesRes.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy khóa học." }); }
 
-    const activeRes = await client.query(
-      `SELECT course_id FROM course_enrollments WHERE student_id=$1 AND course_id = ANY($2::uuid[]) AND status='active'`,
-      [studentId, ids]);
-    const active = new Set(activeRes.rows.map(r => r.course_id));
-    const toBuy = coursesRes.rows.filter(c => c.tutor_id !== studentId && !active.has(c.id));
-    if (toBuy.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Các khóa này bạn đã đăng ký hoặc không hợp lệ." }); }
+    // Đang test → cho phép mua lại khóa đã đăng ký; chỉ loại khóa của chính mình
+    const toBuy = coursesRes.rows.filter(c => c.tutor_id !== studentId);
+    if (toBuy.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không có khóa hợp lệ (không thể mua khóa của chính bạn)." }); }
 
     const sumPrices = toBuy.reduce((s, c) => s + Number(c.price || 0), 0);
 
@@ -3414,17 +3300,20 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
     const finalTotal = Math.max(0, sumPrices - discount);
 
     if (finalTotal > 0) {
-      const sw = await client.query(`SELECT id, balance FROM wallets WHERE user_id=$1 FOR UPDATE`, [studentId]);
-      if (sw.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy ví của bạn." }); }
-      if (Number(sw.rows[0].balance) < finalTotal) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư ví không đủ. Vui lòng nạp thêm tiền.", needed: finalTotal, balance: Number(sw.rows[0].balance) });
+      // Trừ ví học sinh — CHỈ khi trả bằng ví (qua VNPAY thì cổng đã thu tiền)
+      if (!paidViaVnpay) {
+        const sw = await client.query(`SELECT id, balance FROM wallets WHERE user_id=$1 FOR UPDATE`, [studentId]);
+        if (sw.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy ví của bạn." }); }
+        if (Number(sw.rows[0].balance) < finalTotal) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư ví không đủ. Vui lòng nạp thêm tiền.", needed: finalTotal, balance: Number(sw.rows[0].balance) });
+        }
+        const swId = sw.rows[0].id;
+        await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id=$2`, [finalTotal, swId]);
+        await client.query(
+          `INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'PAYMENT','SUCCESS',$3)`,
+          [swId, -finalTotal, `Thanh toán giỏ hàng ${toBuy.length} khóa học${discount > 0 ? ` (giảm ${discount})` : ""}`]);
       }
-      const swId = sw.rows[0].id;
-      await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id=$2`, [finalTotal, swId]);
-      await client.query(
-        `INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'PAYMENT','SUCCESS',$3)`,
-        [swId, -finalTotal, `Thanh toán giỏ hàng ${toBuy.length} khóa học${discount > 0 ? ` (giảm ${discount})` : ""}`]);
 
       // Chia doanh thu theo tỉ lệ sau giảm: gia sư 90%, admin 10%
       const ratio = sumPrices > 0 ? finalTotal / sumPrices : 1;
@@ -3438,7 +3327,7 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
         const tw = await client.query(`SELECT id FROM wallets WHERE user_id=$1 FOR UPDATE`, [c.tutor_id]);
         if (tw.rowCount > 0) {
           await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id=$2`, [tutorShare, tw.rows[0].id]);
-          await client.query(`INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'EARNING','SUCCESS',$3)`,
+          await client.query(`INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1,$2,'DEPOSIT','SUCCESS',$3)`,
             [tw.rows[0].id, tutorShare, `Doanh thu bán khóa học: ${c.title}`]);
         }
         if (adminWalletId) await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id=$2`, [adminShare, adminWalletId]);
@@ -3581,7 +3470,7 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       // Gia sư nhận doanh thu
       await client.query(`
         INSERT INTO transactions (wallet_id, amount, type, status, description)
-        VALUES ($1, $2, 'EARNING', 'SUCCESS', $3)
+        VALUES ($1, $2, 'DEPOSIT', 'SUCCESS', $3)
       `, [tutorWalletId, tutorShare, `Doanh thu bán khóa học: ${course.title} (Đã trừ ${commissionRate*100}% phí)`]);
     }
 
@@ -3716,6 +3605,129 @@ app.get("/api/tutors", async (req, res) => {
   }
 });
 
+// ── POST /api/tutors/matches ──────────────────────────────────────────────────
+// Trả danh sách gia sư được tính matchScore theo nhu cầu học tập từ flow
+// #/tutor-request. Không cần auth.
+app.post("/api/tutors/matches", async (req, res) => {
+  const {
+    subject        = "",
+    educationLevel = "",
+    grade          = "",
+    learningFormat = "",
+    city           = "",
+    budgetMin,
+    budgetMax,
+  } = req.body || {};
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         u.id,
+         COALESCE(
+           NULLIF(TRIM(COALESCE(tp.display_name, '')), ''),
+           NULLIF(TRIM(COALESCE(tp.first_name,'') || ' ' || COALESCE(tp.last_name,'')), ''),
+           u.full_name
+         ) AS name,
+         COALESCE(tp.profile_photo_url, u.picture) AS avatar_url,
+         0   AS rating,
+         0   AS review_count,
+         tp.bio,
+         tp.subjects,
+         tp.experience_years,
+         tp.hourly_rate,
+         tp.city,
+         tp.teaching_methods
+       FROM tutor_profiles tp
+       JOIN users u ON tp.user_id = u.id
+       WHERE tp.status = 'approved'
+       ORDER BY tp.created_at DESC
+       LIMIT 50`
+    );
+
+    const minBudget = budgetMin !== undefined && budgetMin !== null && budgetMin !== "" ? parseInt(budgetMin) : null;
+    const maxBudget = budgetMax !== undefined && budgetMax !== null && budgetMax !== "" ? parseInt(budgetMax) : null;
+
+    const tutors = result.rows.map(t => {
+      let score = 0;
+
+      // Đúng môn học (+35)
+      if (subject && t.subjects) {
+        if (t.subjects.toLowerCase().includes(subject.toLowerCase())) score += 35;
+      }
+
+      // Hình thức học phù hợp (+15)
+      if (learningFormat && t.teaching_methods) {
+        const methods = (Array.isArray(t.teaching_methods) ? t.teaching_methods : [])
+          .join(" ").toLowerCase();
+        const onlineKw  = ["online", "tuyến"];
+        const offlineKw = ["offline", "tiếp"];
+        if (learningFormat === "online"  && onlineKw.some(k => methods.includes(k)))  score += 15;
+        if (learningFormat === "offline" && offlineKw.some(k => methods.includes(k))) score += 15;
+        if (learningFormat === "both")                                                 score += 15;
+      }
+
+      // Học phí trong ngân sách (+15)
+      if (t.hourly_rate !== null && t.hourly_rate !== undefined) {
+        const rate = parseFloat(t.hourly_rate);
+        const okMin = minBudget === null || rate >= minBudget;
+        const okMax = maxBudget === null || rate <= maxBudget;
+        if (okMin && okMax) score += 15;
+      }
+
+      // Cùng khu vực (+10)
+      if (city && t.city) {
+        const tc = t.city.toLowerCase();
+        const rc = city.toLowerCase();
+        if (tc.includes(rc) || rc.includes(tc)) score += 10;
+      }
+
+      // Kinh nghiệm bonus (max +15, 3 điểm/năm)
+      const exp = parseInt(t.experience_years) || 0;
+      score += Math.min(exp * 3, 15);
+
+      // Có đánh giá bonus (+5)
+      if (parseFloat(t.rating) > 0) score += 5;
+
+      score = Math.min(score, 100);
+
+      return {
+        id:             t.id,
+        name:           t.name || "Gia sư EduX",
+        avatarUrl:      t.avatar_url || null,
+        rating:         parseFloat(t.rating) || 0,
+        reviewCount:    t.review_count || 0,
+        bio:            t.bio || null,
+        subjects:       t.subjects || null,
+        experienceYears: t.experience_years || null,
+        pricePerSession: t.hourly_rate ? Math.round(parseFloat(t.hourly_rate)) : null,
+        location:       t.city || null,
+        teachingFormats: Array.isArray(t.teaching_methods) ? t.teaching_methods : [],
+        matchScore:     score,
+      };
+    });
+
+    // Sắp xếp theo matchScore giảm dần
+    tutors.sort((a, b) => b.matchScore - a.matchScore);
+
+    // Fallback khi DB chưa có tutor được duyệt
+    if (tutors.length === 0) {
+      const fallback = [
+        { id: "fallback-1", name: "Lê Minh Anh",       avatarUrl: null, rating: 4.8, reviewCount: 12, bio: "Gia sư Toán – Lý 7 năm kinh nghiệm, phương pháp trực quan.", subjects: "Toán, Vật Lý", experienceYears: 7,  pricePerSession: 250000, location: "Hà Nội",    teachingFormats: ["Trực tuyến", "Trực tiếp"], matchScore: 90, _isFallback: true },
+        { id: "fallback-2", name: "Nguyễn Trần Hưng",  avatarUrl: null, rating: 4.6, reviewCount: 8,  bio: "Chuyên luyện thi THPT Quốc Gia môn Toán và Hóa học.", subjects: "Toán, Hóa", experienceYears: 5,  pricePerSession: 200000, location: "TP. HCM",   teachingFormats: ["Trực tuyến"],               matchScore: 82, _isFallback: true },
+        { id: "fallback-3", name: "Trần Thùy Dương",   avatarUrl: null, rating: 4.9, reviewCount: 20, bio: "Gia sư Tiếng Anh IELTS, cựu sinh viên ĐH Ngoại Thương.", subjects: "Tiếng Anh", experienceYears: 6,  pricePerSession: 300000, location: "Hà Nội",    teachingFormats: ["Trực tuyến", "Trực tiếp"], matchScore: 78, _isFallback: true },
+        { id: "fallback-4", name: "Phạm Văn Phúc",     avatarUrl: null, rating: 4.5, reviewCount: 6,  bio: "Gia sư Toán Tiểu học và THCS, kiên nhẫn với học sinh.",  subjects: "Toán",       experienceYears: 3,  pricePerSession: 150000, location: "Đà Nẵng",   teachingFormats: ["Trực tiếp"],                matchScore: 70, _isFallback: true },
+      ];
+      console.log("[fallback] Không có tutor đã duyệt trong DB – trả về dữ liệu mẫu.");
+      return res.json({ tutors: fallback, total: fallback.length, _isFallback: true });
+    }
+
+    return res.json({ tutors, total: tutors.length });
+  } catch (err) {
+    console.error("POST /api/tutors/matches error:", err.message);
+    return res.status(500).json({ message: "Server error.", detail: err.message });
+  }
+});
+
 // ── GET /api/tutors/:id ───────────────────────────────────────────────────────
 // Trả về hồ sơ chi tiết của một gia sư theo user ID (public, không cần auth)
 app.get("/api/tutors/:id", async (req, res) => {
@@ -3729,13 +3741,13 @@ app.get("/api/tutors/:id", async (req, res) => {
          tp.education, tp.language, tp.teaching_style, tp.qualifications,
          tp.first_name, tp.last_name, tp.display_name, tp.phone,
          tp.headline, tp.teaching_methods, tp.suitable_students, tp.availability,
-         COALESCE(tp.total_students, 0) AS total_students,
+         COALESCE(tp.total_students, 0) AS total_students, tp.completed_lessons_count,
          COALESCE(
-           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = u.id),
+           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = tp.id),
            0
          ) AS avg_r,
          COALESCE(
-           (SELECT COUNT(*) FROM reviews r WHERE r.tutor_id = u.id),
+           (SELECT COUNT(*) FROM reviews r WHERE r.tutor_id = tp.id),
            0
          ) AS review_count
        FROM tutor_profiles tp
@@ -3747,114 +3759,65 @@ app.get("/api/tutors/:id", async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Tutor not found." });
     }
-    return res.json(result.rows[0]);
+
+    const tutorInfo = result.rows[0];
+
+    // Fetch reviews for this tutor
+    const reviewsRes = await pool.query(
+      `SELECT r.id, r.rating, r.comment, r.created_at, u.full_name as reviewer_name, u.picture as reviewer_avatar
+       FROM reviews r
+       JOIN users u ON r.user_id = u.id
+       WHERE r.tutor_id = (SELECT id FROM tutor_profiles WHERE user_id = $1)
+       ORDER BY r.created_at DESC`,
+      [id]
+    );
+
+    // Map to required JSON structure
+    // Xu ly subjects: co the la string (comma-sep) hoac array (jsonb)
+    const rawSubjects = tutorInfo.subjects;
+    let subjectsArr = [];
+    if (Array.isArray(rawSubjects)) {
+      subjectsArr = rawSubjects.filter(Boolean);
+    } else if (typeof rawSubjects === 'string' && rawSubjects.trim()) {
+      subjectsArr = rawSubjects.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    const responseData = {
+      id: tutorInfo.id,
+      user_id: tutorInfo.id,
+      full_name: tutorInfo.display_name || tutorInfo.first_name || tutorInfo.full_name || 'Gia sư EduX',
+      avatar: tutorInfo.profile_photo_url || tutorInfo.picture || null,
+      picture: tutorInfo.profile_photo_url || tutorInfo.picture || null,
+      profile_photo_url: tutorInfo.profile_photo_url || null,
+      subjects: subjectsArr,
+      bio: tutorInfo.bio || '',
+      experience_years: parseInt(tutorInfo.experience_years) || 0,
+      hourly_rate: tutorInfo.hourly_rate || null,
+      teaching_methods: Array.isArray(tutorInfo.teaching_methods) ? tutorInfo.teaching_methods : [],
+      availability: (tutorInfo.availability && typeof tutorInfo.availability === 'object' && !Array.isArray(tutorInfo.availability)) ? tutorInfo.availability : {},
+      rating: parseFloat(tutorInfo.avg_r) || 0,
+      review_count: parseInt(tutorInfo.review_count) || 0,
+      reviews: reviewsRes.rows.map(r => ({
+        id: r.id,
+        reviewer_name: r.reviewer_name || 'Học viên ẩn danh',
+        reviewer_avatar: r.reviewer_avatar || null,
+        rating: parseFloat(r.rating) || 0,
+        comment: r.comment || '',
+        created_at: r.created_at
+      })),
+      total_students: parseInt(tutorInfo.total_students) || 0,
+      completed_lessons_count: parseInt(tutorInfo.completed_lessons_count) || 0
+    };
+
+    return res.json(responseData);
   } catch (err) {
     console.error("GET /api/tutors/:id error:", err.message);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-// ── GET /api/courses (TV3) — danh sách khóa học published + lọc ──────────────
-app.get("/api/courses", async (req, res) => {
-  const { search = "", subject = "", level = "", sort = "newest", min_rating = "" } = req.query;
-  const cond = ["c.status = 'published'"]; const vals = []; let i = 1;
-  if (search.trim())  { cond.push(`(c.title ILIKE $${i} OR c.description ILIKE $${i} OR c.subject ILIKE $${i})`); vals.push(`%${search.trim()}%`); i++; }
-  if (subject.trim()) { cond.push(`c.subject ILIKE $${i}`); vals.push(`%${subject.trim()}%`); i++; }
-  if (level.trim())   { cond.push(`c.level ILIKE $${i}`);   vals.push(`%${level.trim()}%`); i++; }
-  if (min_rating && !isNaN(min_rating)) { cond.push(`c.avg_rating >= $${i}`); vals.push(Number(min_rating)); i++; }
-  const order = { price_asc: "c.price ASC", price_desc: "c.price DESC", rating: "c.avg_rating DESC NULLS LAST", newest: "c.created_at DESC" }[sort] || "c.created_at DESC";
-  try {
-    const r = await pool.query(
-      `SELECT c.id, c.title, c.description, c.subject, c.level, c.thumbnail_url,
-              c.price, c.original_price, c.avg_rating, c.review_count, c.total_lessons, c.created_at
-       FROM courses c WHERE ${cond.join(" AND ")} ORDER BY ${order} LIMIT 60`,
-      vals
-    );
-    return res.json({ courses: r.rows, total: r.rowCount });
-  } catch (e) {
-    console.error("GET /api/courses:", e.message);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
+// (Deleted duplicated GET /api/courses TV3)
 
-// ── POST /api/ai-suggest (TV3) ────────────────────────────────────────────────
-// Body { prompt } → query gia sư approved → AI chọn gia sư phù hợp.
-// Trả { success, aiUsed, reply, tutors:[...] }. AI lỗi → fallback lọc thủ công.
-app.post("/api/ai-suggest", async (req, res) => {
-  const prompt = (req.body?.prompt ?? req.body?.userMessage ?? "").toString().trim();
-  if (!prompt) return res.status(400).json({ success: false, message: "Thiếu prompt." });
-  try {
-    const tutorsRes = await pool.query(
-      `SELECT u.id, u.full_name, u.picture,
-              tp.bio, tp.subjects, tp.experience_years, tp.hourly_rate,
-              tp.profile_photo_url, tp.city, tp.country, tp.teaching_methods,
-              COALESCE(tp.avg_rating, 0)  AS avg_r,
-              COALESCE(tp.review_count, 0) AS review_count
-       FROM tutor_profiles tp
-       JOIN users u ON u.id = tp.user_id
-       WHERE tp.status = 'approved'
-       ORDER BY tp.avg_rating DESC NULLS LAST, tp.experience_years DESC NULLS LAST`
-    );
-    const all = tutorsRes.rows;
-    if (all.length === 0) {
-      return res.json({ success: true, aiUsed: false, reply: "Hiện chưa có gia sư nào được duyệt. Vui lòng quay lại sau.", tutors: [] });
-    }
-
-    const byId = new Map(all.map(t => [String(t.id), t]));
-    const ai = await suggestTutors(prompt, all);
-    if (ai) {
-      const chosen = ai.tutorIds.map(id => byId.get(String(id))).filter(Boolean).slice(0, 3);
-      return res.json({ success: true, aiUsed: true, reply: ai.reply, tutors: chosen });
-    }
-
-    // Fallback (khi chưa cấu hình AI key): xử lý theo từ khóa NHƯNG tự nhiên như chatbot
-    const t = prompt.toLowerCase().trim();
-    const greetRe  = /^(hi|hello|hey+|chào|xin chào|alo+|hế ?lô|helo|yo)\b|bạn là ai|bạn tên|khoẻ không|khỏe không|cảm ơn|cám ơn|thanks|thank you/i;
-    const searchRe = /(gia sư|giáo viên|tìm|dạy|học|môn|lớp|cấp|toán|lý|vật lý|hoá|hóa|văn|ngữ văn|anh|tiếng|ielts|toeic|sinh|sử|địa|tin|lập trình|python|java|online|offline|ôn thi|luyện thi|gia sư)/i;
-
-    // 1) Chào hỏi / trò chuyện → trả lời thân thiện, KHÔNG đổ danh sách gia sư
-    if (greetRe.test(t) && !searchRe.test(t)) {
-      return res.json({
-        success: true, aiUsed: false,
-        reply: "Xin chào! 👋 Mình là trợ lý EduX. Bạn cần tìm gia sư môn gì, cấp lớp nào, học online hay offline? Mô tả giúp mình nhé!",
-        tutors: [],
-      });
-    }
-    // 2) Không rõ nhu cầu tìm gia sư → hỏi lại, KHÔNG đổ danh sách
-    if (!searchRe.test(t)) {
-      return res.json({
-        success: true, aiUsed: false,
-        reply: 'Bạn mô tả nhu cầu học giúp mình nhé — ví dụ: "Gia sư Toán lớp 10 dạy online" — mình sẽ gợi ý gia sư phù hợp.',
-        tutors: [],
-      });
-    }
-
-    // 3) Có nhu cầu tìm gia sư → lọc theo từ khóa
-    const method = t.includes("online") ? "online" : t.includes("offline") ? "offline" : null;
-    const matchSubject = (x) => (x.subjects || "").toLowerCase().split(/[,;]/)
-      .some(s => s.trim() && t.includes(s.trim().toLowerCase()));
-    const okMethod = (x) => !method || (Array.isArray(x.teaching_methods) && x.teaching_methods.includes(method));
-    const pool2 = all.filter(okMethod);
-    const subjHits = pool2.filter(matchSubject);
-    const result = (subjHits.length ? subjHits : pool2).slice(0, 3);
-
-    if (result.length === 0) {
-      return res.json({
-        success: true, aiUsed: false,
-        reply: "Mình chưa tìm thấy gia sư khớp tiêu chí. Bạn thử nới điều kiện (giá, hình thức, môn học) xem nhé.",
-        tutors: [],
-      });
-    }
-    return res.json({
-      success: true, aiUsed: false,
-      reply: "Dưới đây là một số gia sư phù hợp với nhu cầu của bạn:",
-      tutors: result,
-    });
-  } catch (e) {
-    console.error("POST /api/ai-suggest error:", e.message);
-    return res.status(500).json({ success: false, message: "Server error." });
-  }
-});
 
 // ════════════════════════════════════════════════════════════════════════════
 // ── Reviews theo gia sư / khóa học (TV3) — dùng bảng `reviews` (review_type) ──
@@ -3984,46 +3947,7 @@ app.delete("/api/entity-reviews/:id", verifyToken, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 // ── Đặt lịch học với gia sư (TV3) ────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════════
-// POST /api/bookings — học sinh tạo yêu cầu đặt lịch (status mặc định 'Pending')
-app.post("/api/bookings", verifyToken, async (req, res) => {
-  const { tutor_id, tutor_name, subject, lesson_date, time_slot, note } = req.body || {};
-  if (!tutor_id || !lesson_date || !time_slot) {
-    return res.status(400).json({ message: "Cần chọn gia sư, ngày học và khung giờ." });
-  }
-  try {
-    const t = await pool.query(`SELECT 1 FROM tutor_profiles WHERE user_id = $1 AND status = 'approved'`, [tutor_id]);
-    if (t.rowCount === 0) return res.status(400).json({ message: "Gia sư không hợp lệ hoặc chưa được duyệt." });
 
-    const r = await pool.query(
-      `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, booking_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', 'regular')
-       RETURNING id, lesson_date, time_slot, status`,
-      [req.user.userId, tutor_id, tutor_name || null, subject || null, lesson_date, time_slot, note || null]
-    );
-    return res.status(201).json(r.rows[0]);
-  } catch (e) {
-    console.error("POST /api/bookings:", e.message);
-    return res.status(500).json({ message: "Server error.", detail: e.message });
-  }
-});
-
-// GET /api/bookings — danh sách lịch học của học sinh đang đăng nhập
-app.get("/api/bookings", verifyToken, async (req, res) => {
-  try {
-    const r = await pool.query(
-      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, b.lesson_date, b.time_slot,
-              b.note, b.status, b.created_at, u.full_name AS tutor_full_name
-       FROM bookings b LEFT JOIN users u ON u.id = b.tutor_id
-       WHERE b.student_id = $1
-       ORDER BY b.lesson_date DESC NULLS LAST, b.created_at DESC`,
-      [req.user.userId]
-    );
-    return res.json(r.rows);
-  } catch (e) {
-    console.error("GET /api/bookings:", e.message);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
 
 // ── GET /api/reviews/featured ─────────────────────────────────────────────────
 // Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)
@@ -4122,7 +4046,19 @@ async function startServer() {
     `);
     console.log("✅ DB migration: users.is_banned ready");
   } catch (err) {
-    console.error("⚠️  DB migration warning:", err.message);
+    console.error("❌  DB migration warning:", err.message);
+  }
+
+  // Auto-migrate: add phone and city columns to users
+  try {
+    await pool.query(`
+      ALTER TABLE users 
+        ADD COLUMN IF NOT EXISTS phone TEXT,
+        ADD COLUMN IF NOT EXISTS city TEXT
+    `);
+    console.log("✔️ DB migration: users.phone and users.city ready");
+  } catch (err) {
+    console.error("❌  DB migration warning:", err.message);
   }
 
   // Auto-migrate: create login_logs table
@@ -5519,7 +5455,73 @@ app.post("/api/ai-suggest", askAiHandler);
 app.post("/api/ask-ai", askAiHandler);
 
 // ─── Start server ─────────────────────────────────────────────────────────────
-app.listen(port, () => {
+
+  // ==========================================
+  // MICRO-FEEDBACK ROUTES
+  // ==========================================
+
+  // [POST] /api/feedbacks - Gia sư submit đánh giá
+  app.post('/api/feedbacks', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const tutorId = req.user.id;
+      const { lesson_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note } = req.body;
+
+      // Validate data
+      if (!student_id || !focus_rating || !understanding_level || !homework_status) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      // Insert feedback
+      const query = `
+        INSERT INTO lesson_feedbacks 
+        (lesson_id, tutor_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *
+      `;
+      const values = [
+        lesson_id || null, 
+        tutorId, 
+        student_id, 
+        subject_name, 
+        focus_rating, 
+        understanding_level, 
+        homework_status, 
+        tutor_note
+      ];
+      
+      const result = await pool.query(query, values);
+      const data = result.rows[0];
+
+      res.status(201).json({ message: "Feedback submitted successfully", data });
+    } catch (err) {
+      console.error('Error submitting feedback:', err.message);
+      res.status(500).json({ error: "Server error while submitting feedback", details: err.message });
+    }
+  });
+
+  // [GET] /api/feedbacks/student/:studentId - Phụ huynh/Học sinh lấy danh sách đánh giá
+  app.get('/api/feedbacks/student/:studentId', verifyToken, async (req, res) => {
+    try {
+      const { studentId } = req.params;
+      
+      // Sử dụng pg pool thay vì supabase client
+      const query = `
+        SELECT * FROM lesson_feedbacks
+        WHERE student_id = $1
+        ORDER BY created_at DESC
+      `;
+      const result = await pool.query(query, [studentId]);
+      const data = result.rows;
+
+      res.status(200).json({ data });
+    } catch (err) {
+      console.error('Error fetching feedbacks:', err.message);
+      res.status(500).json({ error: "Server error while fetching feedbacks", details: err.message });
+    }
+  });
+
+
+  app.listen(port, () => {
   console.log(`🚀 Server is running on http://localhost:${port}`);
 });
 

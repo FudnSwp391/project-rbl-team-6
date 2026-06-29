@@ -7,9 +7,10 @@
  *
  * Nếu DB lỗi hoặc chưa tạo bảng → trả mock data fallback.
  */
-const express = require("express");
 const pool = require("../db");
+const { requireAuth, requireClassMember } = require("../middleware/auth");
 
+const express = require("express");
 const router = express.Router();
 
 // ── UUID v4 regex ────────────────────────────────────────────────────────────
@@ -20,29 +21,7 @@ function isValidUUID(str) {
   return UUID_REGEX.test(str);
 }
 
-// ── Mock data fallback ──────────────────────────────────────────────────────
-const MOCK_ASSIGNMENTS = [
-  {
-    id: "a0000001-0000-0000-0000-000000000001",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Assignment 1 - UI Wireframe",
-    description: "Create a low-fidelity wireframe for a mobile app.",
-    due_date: "2026-06-30",
-    created_by: "00000000-0000-0000-0000-000000000001",
-    created_at: "2026-06-15T08:00:00.000Z",
-    updated_at: "2026-06-15T08:00:00.000Z",
-  },
-  {
-    id: "a0000002-0000-0000-0000-000000000002",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Assignment 2 - Prototyping",
-    description: "Build an interactive prototype using Figma.",
-    due_date: "2026-07-15",
-    created_by: "00000000-0000-0000-0000-000000000001",
-    created_at: "2026-06-20T10:00:00.000Z",
-    updated_at: "2026-06-20T10:00:00.000Z",
-  },
-];
+
 
 // ── Helper: check class exists ──────────────────────────────────────────────
 async function classExists(classId) {
@@ -61,7 +40,7 @@ async function classExists(classId) {
 // GET /api/classes/:classId/assignments
 // Lấy danh sách bài tập của một class
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/classes/:classId/assignments", async (req, res) => {
+router.get("/api/classes/:classId/assignments", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
 
   if (!isValidUUID(classId)) {
@@ -88,12 +67,9 @@ router.get("/api/classes/:classId/assignments", async (req, res) => {
     return res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error("[Assignments] GET list error:", error.message);
-    // Trả mock data fallback
-    const mockForClass = MOCK_ASSIGNMENTS.filter((a) => a.class_id === classId);
-    return res.json({
-      success: true,
-      data: mockForClass.length > 0 ? mockForClass : MOCK_ASSIGNMENTS,
-    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error. Please try again." });
   }
 });
 
@@ -101,8 +77,9 @@ router.get("/api/classes/:classId/assignments", async (req, res) => {
 // GET /api/assignments/:assignmentId
 // Lấy chi tiết một bài tập
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/assignments/:assignmentId", async (req, res) => {
+router.get("/api/assignments/:assignmentId", requireAuth, async (req, res) => {
   const { assignmentId } = req.params;
+  const userId = req.user.userId;
 
   if (!isValidUUID(assignmentId)) {
     return res
@@ -116,28 +93,29 @@ router.get("/api/assignments/:assignmentId", async (req, res) => {
       [assignmentId]
     );
 
-    if (result.rows.length > 0) {
-      return res.json({ success: true, data: result.rows[0] });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Assignment not found" });
+    }
+    
+    const assignment = result.rows[0];
+    
+    // Check membership
+    const memRes = await pool.query(
+      `SELECT 1 FROM class_members WHERE class_id = $1 AND student_id = $2
+       UNION
+       SELECT 1 FROM classes WHERE id = $1 AND tutor_id = $2`,
+      [assignment.class_id, userId]
+    );
+    if (memRes.rows.length === 0) {
+      return res.status(403).json({ success: false, message: "403 Forbidden: Bạn không có quyền truy cập lớp học này." });
     }
 
-    // Không tìm thấy trong DB → tìm trong mock data
-    const mock = MOCK_ASSIGNMENTS.find((a) => a.id === assignmentId);
-    if (mock) {
-      return res.json({ success: true, data: mock });
-    }
-
-    return res
-      .status(404)
-      .json({ success: false, message: "Assignment not found" });
+    return res.json({ success: true, data: assignment });
   } catch (error) {
     console.error("[Assignments] GET detail error:", error.message);
-    const mock = MOCK_ASSIGNMENTS.find((a) => a.id === assignmentId);
-    if (mock) {
-      return res.json({ success: true, data: mock });
-    }
     return res
-      .status(404)
-      .json({ success: false, message: "Assignment not found" });
+      .status(500)
+      .json({ success: false, message: "Server error. Please try again." });
   }
 });
 
@@ -145,7 +123,7 @@ router.get("/api/assignments/:assignmentId", async (req, res) => {
 // POST /api/classes/:classId/assignments
 // Tạo bài tập mới
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/api/classes/:classId/assignments", async (req, res) => {
+router.post("/api/classes/:classId/assignments", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
   const { title, description, due_date, created_by } = req.body || {};
 

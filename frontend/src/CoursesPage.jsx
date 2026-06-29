@@ -96,6 +96,7 @@ function CourseCard({ course, onAdd, onFav, user }) {
 
 export default function CoursesPage({ user }) {
   const [apiCourses, setApiCourses] = useState([]);
+  const [isMock, setIsMock]   = useState(false);
   const [search, setSearch]   = useState('');
   const [cat, setCat]         = useState('');
   const [level, setLevel]     = useState('');
@@ -105,10 +106,13 @@ export default function CoursesPage({ user }) {
 
   useEffect(() => {
     fetch(`${API_BASE}/api/courses`)
-      .then(r => r.ok ? r.json() : null)
+      .then(async r => {
+        if (!r.ok) throw new Error('API failed');
+        return r.json();
+      })
       .then(d => {
-        // API có thể trả về mảng trực tiếp hoặc { courses: [...] }
         const raw = Array.isArray(d) ? d : (d && Array.isArray(d.courses) ? d.courses : []);
+        if (raw.length === 0) throw new Error('No courses found');
         const rows = raw.map(c => ({
             id: c.id, title: c.title, description: c.description || '',
             category: c.subject, level: c.level || '',
@@ -116,16 +120,26 @@ export default function CoursesPage({ user }) {
             rating: Number(c.avg_rating) || 0, reviews: c.review_count || 0, lessons: c.total_lessons || 0,
           }));
         setApiCourses(rows);
+        setIsMock(false);
       })
-      .catch(() => {});
+      .catch(() => {
+        // Fallback mock data when API fails or DB is empty
+        setIsMock(true);
+        setApiCourses([
+          { id: 1, title: 'Toán Cao Cấp 1', description: 'Đại số tuyến tính & Hình học giải tích', category: 'Toán Học', level: 'Khóa đại học', price: 500000, original_price: 600000, rating: 4.8, reviews: 120, lessons: 30 },
+          { id: 2, title: 'Lập Trình C++ Cơ Bản', description: 'Nhập môn lập trình với C++', category: 'Kỹ Thuật Phần Mềm', level: 'Khóa đại học', price: 400000, original_price: 550000, rating: 4.5, reviews: 85, lessons: 25 },
+          { id: 3, title: 'Thiết Kế Vi Mạch VLSI', description: 'Nguyên lý và ứng dụng', category: 'Vi Mạch', level: 'Khóa đại học', price: 800000, original_price: 900000, rating: 4.9, reviews: 45, lessons: 40 },
+          { id: 4, title: 'Tiếng Anh Giao Tiếp', description: 'Tiếng Anh giao tiếp cơ bản', category: 'Ngoại Ngữ', level: 'Khóa học sinh', price: 0, original_price: 0, rating: 4.2, reviews: 210, lessons: 20 },
+        ]);
+      });
   }, []);
 
   const all = apiCourses;
 
   const filtered = useMemo(() => {
     let list = all.filter(c =>
-      (!cat || c.category === cat) &&
-      (!level || c.level === level) &&
+      (!cat || (c.category || '').toLowerCase() === cat.toLowerCase()) &&
+      (!level || (c.level || '').toLowerCase() === level.toLowerCase()) &&
       (!minRating || (c.rating || 0) >= minRating) &&
       (!search.trim() || `${c.title} ${c.description} ${c.category}`.toLowerCase().includes(search.trim().toLowerCase()))
     );
@@ -139,7 +153,10 @@ export default function CoursesPage({ user }) {
     let cart = [];
     try {
       const stored = localStorage.getItem('edux_cart');
-      if (stored) cart = JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) cart = parsed;
+      }
     } catch (e) {}
     
     const exists = cart.find(item => item.id === c.id);
@@ -204,6 +221,15 @@ export default function CoursesPage({ user }) {
       </header>
 
       <main className="max-w-[1280px] mx-auto px-6 py-8">
+        {isMock && (
+          <div className="mb-6 flex items-start gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-900 shadow-[0_10px_26px_-12px_rgba(180,120,0,0.3)]">
+            <span className="material-symbols-outlined text-amber-500 mt-0.5">warning</span>
+            <div className="text-sm leading-relaxed">
+              <b>Đang hiển thị dữ liệu mẫu</b> — không kết nối được máy chủ (backend chưa chạy hoặc DB lỗi).
+              Đây <u>không phải</u> khóa học thật. Hãy khởi động lại backend rồi tải lại trang (F5).
+            </div>
+          </div>
+        )}
         <h1 className="text-[28px] font-extrabold mb-6 text-[#191c1e]"><span className="text-[#00288e]">{filtered.length}</span> kết quả · tất cả khóa học</h1>
 
         <div className="flex flex-col lg:flex-row gap-8">

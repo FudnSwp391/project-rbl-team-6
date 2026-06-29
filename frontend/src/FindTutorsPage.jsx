@@ -217,9 +217,31 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
     setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setPage(1);
   };
 
-  const displayTutors = isMock
-    ? MOCK_TUTORS
-    : tutors.filter(t => !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice);
+  const displayTutors = (isMock ? MOCK_TUTORS : tutors).filter(t => {
+    // 1. Max price
+    const matchPrice = !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice;
+    
+    // 2. Search text
+    const matchSearch = !search.trim() || 
+      `${t.full_name} ${t.subjects || ''} ${t.bio || ''}`.toLowerCase().includes(search.toLowerCase().trim());
+      
+    // 3. Subjects
+    const matchSubjects = selectedSubjects.length === 0 || 
+      selectedSubjects.some(sub => (t.subjects || '').toLowerCase().includes(sub.toLowerCase()));
+      
+    // 4. Method
+    const matchMethod = !method || 
+      (t.teaching_methods && Array.isArray(t.teaching_methods) ? t.teaching_methods.some(m => m.toLowerCase() === method.toLowerCase()) : false) || 
+      (t.method && t.method.toLowerCase() === method.toLowerCase());
+      
+    // 5. Level
+    const matchLevel = !level || 
+      (t.suitable_students && Array.isArray(t.suitable_students) && t.suitable_students.some(l => l.toLowerCase() === level.toLowerCase())) ||
+      (t.level && typeof t.level === 'string' && t.level.toLowerCase().includes(level.toLowerCase())) || 
+      (!t.suitable_students && !t.level);
+
+    return matchPrice && matchSearch && matchSubjects && matchMethod && matchLevel;
+  });
 
   return (
     <div className="aqua-bg min-h-screen text-[#191c1e] font-sans">
@@ -276,6 +298,15 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       </header>
 
       <main className="pt-24 pb-16 max-w-[1280px] mx-auto px-6">
+        {isMock && (
+          <div className="mb-6 flex items-start gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-900 shadow-[0_10px_26px_-12px_rgba(180,120,0,0.3)]">
+            <span className="material-symbols-outlined text-amber-500 mt-0.5">warning</span>
+            <div className="text-sm leading-relaxed">
+              <b>Đang hiển thị gia sư mẫu</b> — không kết nối được máy chủ (backend chưa chạy hoặc DB lỗi).
+              Đây <u>không phải</u> gia sư thật. Hãy khởi động lại backend rồi tải lại trang (F5).
+            </div>
+          </div>
+        )}
         {/* Search — banner tối + họa tiết ánh sáng động */}
         <section className="relative mb-10 overflow-hidden rounded-2xl border border-[#1e2a4a]"
           style={{ background: 'radial-gradient(60% 90% at 15% 8%, rgba(76,110,245,.35), transparent 60%), radial-gradient(50% 80% at 85% 18%, rgba(124,92,255,.30), transparent 60%), linear-gradient(135deg,#0b1840,#122163 60%,#0c1538)' }}>
@@ -303,6 +334,22 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
               >
                 Tìm Kiếm Gia Sư
               </button>
+            </div>
+            {/* AI Matching flow CTA - Premium Style */}
+            <div className="mt-5 flex items-center justify-center relative z-20 w-full max-w-[800px] mx-auto">
+              <div className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:bg-white/20 hover:shadow-[0_0_25px_rgba(124,92,255,0.5)] transition-all duration-300 shadow-[0_0_15px_rgba(124,92,255,0.2)] cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
+                <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
+                  <span className="material-symbols-outlined text-[#a4c9ff] text-[20px] animate-pulse">auto_awesome</span>
+                  <span>Muốn được gợi ý gia sư phù hợp nhất?</span>
+                </div>
+                <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
+                <button
+                  className="text-white font-bold text-sm flex items-center gap-1 group transition-colors"
+                >
+                  Tạo yêu cầu AI
+                  <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#a4c9ff]">arrow_forward</span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
