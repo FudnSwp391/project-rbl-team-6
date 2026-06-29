@@ -21,6 +21,7 @@ import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
+import FindTutorRequest from './pages/FindTutorRequest'
 import CourseMarketplace from './pages/CourseMarketplace'
 import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
@@ -790,6 +791,9 @@ function App() {
   }
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'tutor-request') {
+    return <FindTutorRequest user={user} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} />
   }
   if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
