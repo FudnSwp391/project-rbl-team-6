@@ -364,15 +364,19 @@ export default function TutorMatchesPage() {
     try {
       const requestId = data?.tutorRequestId;
       if (!requestId) {
-        throw new Error("Không tìm thấy thông tin yêu cầu tìm gia sư.");
+        // Không có requestId → không có session → redirect về form
+        setError('NO_SESSION');
+        setLoading(false);
+        return;
       }
 
       const res = await fetch(`${API_BASE}/api/tutor-matches/${requestId}`, {
         method:  'GET',
         headers: { 'Content-Type': 'application/json' },
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const json = await res.json();
+      if (!json.success) throw new Error(json.message || 'API trả về lỗi.');
       setTutors(json.data.tutors || []);
     } catch (err) {
       setError('Không thể kết nối đến máy chủ. Vui lòng kiểm tra backend và thử lại.');
@@ -601,8 +605,28 @@ export default function TutorMatchesPage() {
             </div>
           )}
 
-          {/* Error State */}
-          {!loading && error && (
+          {/* Error State - No Session */}
+          {!loading && error === 'NO_SESSION' && (
+            <div className="bg-surface-container-lowest rounded-2xl p-10 flex flex-col items-center justify-center text-center gap-4 border border-surface-variant shadow-sm">
+              <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-2">
+                <span className="material-symbols-outlined text-4xl text-primary">assignment</span>
+              </div>
+              <h2 className="text-xl font-bold text-on-surface">Bạn chưa tạo yêu cầu tìm gia sư</h2>
+              <p className="text-on-surface-variant max-w-md">
+                Để xem danh sách gia sư phù hợp, bạn cần hoàn thành form yêu cầu trước. Hệ thống AI sẽ phân tích và gợi ý gia sư tốt nhất cho bạn!
+              </p>
+              <button
+                onClick={() => { window.location.hash = '/tutor-request'; }}
+                className="mt-2 bg-primary text-on-primary px-8 py-3 rounded-xl font-bold hover:bg-[#0042a3] transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[20px]">auto_awesome</span>
+                Tạo yêu cầu tìm gia sư
+              </button>
+            </div>
+          )}
+
+          {/* Error State - Server Error */}
+          {!loading && error && error !== 'NO_SESSION' && (
             <div className="bg-error-container text-on-error-container rounded-2xl p-8 flex flex-col items-center justify-center text-center gap-4 border border-error/20">
               <span className="material-symbols-outlined text-5xl text-error">wifi_off</span>
               <h2 className="text-xl font-bold">Không thể tải danh sách gia sư</h2>

@@ -563,7 +563,7 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
         finalReasons = finalReasons.slice(0, 8);
       }
       
-      if (score >= 30) {
+      if (score >= 5) {
         matchedTutors.push({
           id: tutor.user_id,
           name: tutor.name,
@@ -591,18 +591,33 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
     // Lưu lại số lượng tutor match được và upsert vào tutor_request_matches
     await pool.query(`UPDATE tutor_requests SET matched_tutor_count = $1 WHERE id = $2`, [matchedTutors.length, requestId]);
 
-    for (let tutor of matchedTutors) {
-      const upsertQuery = `
-        INSERT INTO tutor_request_matches (request_id, tutor_id, match_score, match_tier)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (request_id, tutor_id) 
-        DO UPDATE SET match_score = EXCLUDED.match_score, match_tier = EXCLUDED.match_tier
-        RETURNING is_interested, is_selected, status
-      `;
-      const upRes = await pool.query(upsertQuery, [requestId, tutor.id, tutor.matchScore, tutor.matchTier]);
-      tutor.is_interested = upRes.rows[0].is_interested;
-      tutor.is_selected = upRes.rows[0].is_selected;
-      tutor.status = upRes.rows[0].status;
+    // Cố gắng lưu matches, nhưng không để lỗi DB làm hỏng response
+    try {
+      for (let tutor of matchedTutors) {
+        try {
+          const upsertQuery = `
+            INSERT INTO tutor_request_matches (request_id, tutor_id, match_score, match_tier)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (request_id, tutor_id) 
+            DO UPDATE SET match_score = EXCLUDED.match_score, match_tier = EXCLUDED.match_tier
+            RETURNING is_interested, is_selected, status
+          `;
+          const upRes = await pool.query(upsertQuery, [requestId, tutor.id, tutor.matchScore, tutor.matchTier]);
+          if (upRes.rows.length > 0) {
+            tutor.is_interested = upRes.rows[0].is_interested;
+            tutor.is_selected = upRes.rows[0].is_selected;
+            tutor.status = upRes.rows[0].status;
+          }
+        } catch (upsertErr) {
+          // Không crash vì upsert fail, chỉ log warning
+          console.warn('[TutorMatches] upsert match record failed (non-fatal):', upsertErr.message);
+          tutor.is_interested = false;
+          tutor.is_selected = false;
+          tutor.status = 'pending';
+        }
+      }
+    } catch (loopErr) {
+      console.warn('[TutorMatches] loop error (non-fatal):', loopErr.message);
     }
 
     return res.json({

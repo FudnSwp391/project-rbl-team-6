@@ -214,19 +214,19 @@ export default function FindTutorRequest({ user, onGoSignIn, onGoSignUp }) {
       if (resData.success) {
         // Lưu lại requestId để các bước sau (matching) có thể cập nhật
         const finalData = { ...formData, tutorRequestId: resData.data.id, status: resData.data.match_status };
+        // Ghi sessionStorage trước, ĐẢM BẢO ghi xong mới navigate
         sessionStorage.setItem('tutorRequestData', JSON.stringify(finalData));
-        sessionStorage.removeItem(STORAGE_KEY); // Clear draft progress after successful submission
-        console.log("API RESPONSE =", resData);
-        console.log("FINAL DATA =", finalData);
-        console.log("SESSION AFTER SAVE =", sessionStorage.getItem("tutorRequestData"));
+        sessionStorage.removeItem(STORAGE_KEY);
+        console.log('✅ Saved tutorRequestData:', sessionStorage.getItem('tutorRequestData'));
         
-        setCurrentStep("matching");
+        setCurrentStep('matching');
+        // Delay 2.5s để MatchingLoading animation chạy, sau đó navigate
         setTimeout(() => {
           window.location.hash = '/tutor-matches';
         }, 2500);
       } else {
-        alert("Không thể tạo yêu cầu tìm gia sư. " + (resData.message || "Vui lòng kiểm tra backend."));
-        console.error("Lỗi lưu request:", resData.message);
+        alert('Không thể tạo yêu cầu tìm gia sư. ' + (resData.message || 'Vui lòng kiểm tra backend.'));
+        console.error('Lỗi lưu request:', resData.message);
       }
     } catch (e) {
       console.error("Lỗi kết nối:", e);
