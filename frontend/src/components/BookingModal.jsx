@@ -6,7 +6,7 @@ const TIME_SLOTS = ['08:00–10:00', '10:00–12:00', '14:00–16:00', '16:00–
 
 export default function BookingModal({ tutor, onClose }) {
   const { user, token } = useAuth();
-  const subjects = (tutor?.subjects || '').split(',').map(s => s.trim()).filter(Boolean);
+  const subjects = Array.isArray(tutor?.subjects) ? tutor.subjects : (tutor?.subjects || '').split(',').map(s => s.trim()).filter(Boolean);
   const today = new Date().toISOString().slice(0, 10);
 
   const [subject, setSubject] = useState(subjects[0] || '');

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import EntityReviews from '../components/EntityReviews'
 import BookingModal from '../components/BookingModal'
 import { useAuth } from '../AuthContext'
 
@@ -72,6 +71,7 @@ function NotFoundScreen({ errorMsg }) {
 export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) {
   const { token } = useAuth()
   const [tutor, setTutor] = useState(null)
+
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [errorMsg, setErrorMsg] = useState(null)
@@ -453,14 +453,20 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 {/* Action buttons */}
                 <div className="space-y-3">
                   <button
-                    onClick={() => alert('Tính năng đặt lịch sẽ được phát triển sau.')}
+                    onClick={() => {
+                      sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
+                      window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
+                    }}
                     className="w-full bg-[#00288e] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#1e40af] transition-colors shadow-md flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-[18px]">calendar_month</span>
                     Đặt Lịch Học Thử
                   </button>
                   <button
-                    onClick={() => alert('Tính năng đặt lịch sẽ được phát triển sau.')}
+                    onClick={() => {
+                      sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
+                      window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
+                    }}
                     className="w-full bg-[#10B981] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#059669] transition-colors shadow-md flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-[18px]">calendar_month</span>
@@ -498,7 +504,10 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             Nhắn Tin
           </button>
           <button
-            onClick={() => alert('Tính năng đặt lịch sẽ được phát triển sau.')}
+            onClick={() => {
+              sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
+              window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
+            }}
             className="px-5 py-2.5 bg-[#00288e] text-white rounded-xl text-sm font-semibold hover:bg-[#1e40af] transition-colors"
           >
             Đặt Lịch
@@ -507,7 +516,6 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
       </main>
 
 
-      {showBooking && <BookingModal tutor={tutor} onClose={() => setShowBooking(false)} />}
 
       {/* ── Inline Chat Widget ── */}
       {showChat && (

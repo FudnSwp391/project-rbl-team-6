@@ -4230,46 +4230,7 @@ app.delete("/api/entity-reviews/:id", verifyToken, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 // ── Đặt lịch học với gia sư (TV3) ────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════════
-// POST /api/bookings — học sinh tạo yêu cầu đặt lịch (status mặc định 'Pending')
-app.post("/api/bookings", verifyToken, async (req, res) => {
-  const { tutor_id, tutor_name, subject, lesson_date, time_slot, note } = req.body || {};
-  if (!tutor_id || !lesson_date || !time_slot) {
-    return res.status(400).json({ message: "Cần chọn gia sư, ngày học và khung giờ." });
-  }
-  try {
-    const t = await pool.query(`SELECT 1 FROM tutor_profiles WHERE user_id = $1 AND status = 'approved'`, [tutor_id]);
-    if (t.rowCount === 0) return res.status(400).json({ message: "Gia sư không hợp lệ hoặc chưa được duyệt." });
 
-    const r = await pool.query(
-      `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, booking_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', 'regular')
-       RETURNING id, lesson_date, time_slot, status`,
-      [req.user.userId, tutor_id, tutor_name || null, subject || null, lesson_date, time_slot, note || null]
-    );
-    return res.status(201).json(r.rows[0]);
-  } catch (e) {
-    console.error("POST /api/bookings:", e.message);
-    return res.status(500).json({ message: "Server error.", detail: e.message });
-  }
-});
-
-// GET /api/bookings — danh sách lịch học của học sinh đang đăng nhập
-app.get("/api/bookings", verifyToken, async (req, res) => {
-  try {
-    const r = await pool.query(
-      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, b.lesson_date, b.time_slot,
-              b.note, b.status, b.created_at, u.full_name AS tutor_full_name
-       FROM bookings b LEFT JOIN users u ON u.id = b.tutor_id
-       WHERE b.student_id = $1
-       ORDER BY b.lesson_date DESC NULLS LAST, b.created_at DESC`,
-      [req.user.userId]
-    );
-    return res.json(r.rows);
-  } catch (e) {
-    console.error("GET /api/bookings:", e.message);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
 
 // ── GET /api/reviews/featured ─────────────────────────────────────────────────
 // Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)

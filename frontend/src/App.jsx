@@ -6,7 +6,6 @@ import { useEffect, useState, useRef } from 'react'
 import './App.css'
 import SignIn from './SignIn'
 import SignUp from './SignUp'
-import CompleteStudentProfile from './pages/CompleteStudentProfile'
 import AdminDashboard from './AdminDashboard'
 import StudentDashboard from './StudentDashboard'
 import TutorDashboard from './TutorDashboard'
@@ -18,11 +17,6 @@ import QuizTaking from './QuizTaking'
 import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
-import FindTutorRequest from './pages/FindTutorRequest'
-import TutorMatchesPage from './pages/TutorMatchesPage'
-import MyTutorRequests from './pages/MyTutorRequests'
-import MyTutorsPage from './pages/MyTutorsPage'
-import TutorInteractionPage from './pages/TutorInteractionPage'
 import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
@@ -30,10 +24,6 @@ import TutorProfile from './pages/TutorProfile'
 import CourseMarketplace from './pages/CourseMarketplace'
 import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
-import CartPage from './pages/CartPage'
-import OrdersPage from './pages/OrdersPage'
-import WishlistPage from './pages/WishlistPage'
-import CertificatePage from './pages/CertificatePage'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -116,7 +106,6 @@ const getRouteFromHash = () => {
   normalized = normalized.split('?')[0]
   if (normalized === '/signin')    return { name: 'signin' }
   if (normalized === '/signup')    return { name: 'signup' }
-  if (normalized === '/complete-student-profile') return { name: 'complete-student-profile' }
   if (normalized === '/admin')     return { name: 'admin' }
   if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }
   if (normalized === '/tutor')     return { name: 'tutor' }
@@ -130,22 +119,9 @@ const getRouteFromHash = () => {
   if (tutorDetailMatch) return { name: 'tutor-detail', id: tutorDetailMatch[1] }
   if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
-  if (normalized === '/tutor-request') return { name: 'tutor-request' }
-  if (normalized === '/tutor-matches') return { name: 'tutor-matches' }
-  if (normalized === '/my-tutor-requests') return { name: 'my-tutor-requests' }
-  if (normalized === '/my-tutors') return { name: 'my-tutors' }
-  
-  const tutorInteractionMatch = normalized.match(/^\/tutor-interaction\/([^/]+)$/)
-  if (tutorInteractionMatch) return { name: 'tutor-interaction', id: tutorInteractionMatch[1] }
-
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
-  if (normalized === '/cart') return { name: 'cart' }
-  if (normalized === '/orders') return { name: 'orders' }
-  if (normalized === '/wishlist') return { name: 'wishlist' }
-  const certMatch = normalized.match(/^\/certificate\/([^/]+)$/)
-  if (certMatch) return { name: 'certificate', id: certMatch[1] }
   if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
@@ -167,6 +143,12 @@ const getRouteFromHash = () => {
 
   const examResultMatch = normalized.match(/^\/exam-result\/([^/]+)$/)
   if (examResultMatch) return { name: 'exam-result', id: examResultMatch[1] }
+
+  const tutorExamMatch = normalized.match(/^\/tutor-exam\/([^/]+)$/)
+  if (tutorExamMatch) return { name: 'tutor-exam', id: tutorExamMatch[1] }
+
+  const tutorResultMatch = normalized.match(/^\/tutor-exam-result\/([^/]+)$/)
+  if (tutorResultMatch) return { name: 'tutor-exam-result', id: tutorResultMatch[1] }
 
   return { name: 'home' }
 }
@@ -319,84 +301,59 @@ function HomePage({ onGoSignIn }) {
             )}
           </nav>
 
-          {/* Shopping Cart & User Actions */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a 
-                href="#/cart" 
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  color: 'var(--on-surface-variant, #444653)', 
-                  textDecoration: 'none',
-                  transition: 'color 0.2s'
-                }}
-                onMouseOver={(e) => e.currentTarget.style.color = 'var(--primary, #00288e)'}
-                onMouseOut={(e) => e.currentTarget.style.color = 'var(--on-surface-variant, #444653)'}
-                title="Giỏ hàng"
+          {/* Show user info + logout OR login button */}
+          {user ? (
+            <div className="header-user" style={{ position: 'relative' }} ref={dropdownRef}>
+              <div 
+                style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
-              </a>
-            )}
-
-            {user ? (
-              <div className="header-user" style={{ position: 'relative' }} ref={dropdownRef}>
-                <div 
-                  style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}
-                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                >
-                  {user.picture ? (
-                    <img
-                      src={user.picture}
-                      alt={user.name}
-                      className="header-avatar"
-                    />
-                  ) : (
-                    <span className="material-symbols-outlined">account_circle</span>
-                  )}
-                  <span className="header-username">{user.name || user.email}</span>
-                  <span style={{ fontSize: '0.8em' }}>▼</span>
-                </div>
-                
-                {isDropdownOpen && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '100%',
-                    right: 0,
-                    marginTop: '8px',
-                    backgroundColor: 'var(--surface, #fff)',
-                    border: '1px solid var(--outline-variant, #ccc)',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-                    minWidth: '150px',
-                    zIndex: 1000,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    overflow: 'hidden'
-                  }}>
-                    <a 
-                      href={user?.role === 'admin' ? '#/admin' : user?.role === 'tutor' ? '#/tutor' : user?.role === 'parent' ? '#/parent' : '#/dashboard'} 
-                      style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}
-                    >
-                      Dashboard
-                    </a>
-                    <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
-                    <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
-                    <button 
-                      onClick={logout} 
-                      style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
-                    >
-                      Logout
-                    </button>
-                  </div>
+                {user.picture ? (
+                  <img
+                    src={user.picture}
+                    alt={user.name}
+                    className="header-avatar"
+                  />
+                ) : (
+                  <span className="material-symbols-outlined">account_circle</span>
                 )}
+                <span className="header-username">{user.name || user.email}</span>
+                <span style={{ fontSize: '0.8em' }}>▼</span>
               </div>
-            ) : (
-              <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
-                Đăng Nhập
-              </button>
-            )}
-          </div>
+              
+              {isDropdownOpen && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: '8px',
+                  backgroundColor: 'var(--surface, #fff)',
+                  border: '1px solid var(--outline-variant, #ccc)',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                  minWidth: '150px',
+                  zIndex: 1000,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden'
+                }}>
+                  <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Dashboard</a>
+                  <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
+                  <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
+                  <button 
+                    onClick={logout} 
+                    style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
+                  >
+                    Logout
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
+              Đăng Nhập
+            </button>
+          )}
         </div>
       </header>
 
@@ -431,20 +388,6 @@ function HomePage({ onGoSignIn }) {
             <div><div className="hero-stat-num">4.9★</div><div className="hero-stat-label">Đánh giá</div></div>
           </div>
 
-          {/* Thẻ khóa học nổi — đậm chất sàn bán khóa học */}
-          <div className="hero-course-card" aria-hidden="true">
-            <div className="hcc-thumb">
-              <span className="material-symbols-outlined" style={{ fontSize: 46 }}>code</span>
-              <span className="hcc-badge">★ Bán chạy</span>
-            </div>
-            <div className="hcc-body">
-              <div className="hcc-cat">Lập trình</div>
-              <div className="hcc-title">Python cơ bản đến nâng cao</div>
-              <div className="hcc-meta"><span className="hcc-stars">★★★★★</span><b>4.9</b><span className="hcc-dot">·</span>1.240 học viên</div>
-              <div className="hcc-foot"><span className="hcc-price">499.000đ</span><span className="hcc-old">800.000đ</span></div>
-            </div>
-          </div>
-
           <div className="container hero-content">
             <div className="hero-badge"><span className="hero-badge-dot" />Cộng đồng học tập hàng đầu Việt Nam</div>
             <h1>Tìm <span className="hero-highlight">gia sư &amp; khóa học</span> hoàn hảo cho hành trình học tập của bạn</h1>
@@ -471,42 +414,9 @@ function HomePage({ onGoSignIn }) {
                   placeholder="Học trực tuyến hay tại địa điểm cụ thể?"
                 />
               </label>
-              <button type="button" className="btn btn-primary search-button" onClick={() => window.location.hash = '/find-tutors'}>
+              <button type="button" className="btn btn-primary search-button">
                 Tìm Kiếm
               </button>
-            </div>
-            
-            <div style={{ marginTop: '20px', textAlign: 'center' }}>
-              <p style={{ marginBottom: '10px', color: '#00288e', fontWeight: 600 }}>Hoặc để chúng tôi gợi ý cho bạn:</p>
-              <button 
-                type="button" 
-                onClick={() => window.location.hash = '/tutor-request'}
-                style={{ 
-                  padding: '12px 24px', 
-                  backgroundColor: '#ffffff', 
-                  color: '#00288e', 
-                  borderRadius: '8px', 
-                  fontWeight: 'bold',
-                  border: 'none',
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
-                }}
-              >
-                Đăng ký tìm gia sư phù hợp
-              </button>
-            </div>
-
-            <div className="hero-trust" style={{ marginTop: '30px' }}>
-              <div className="hero-avatars">
-                <span style={{ background: 'linear-gradient(135deg,#4c6ef5,#7c5cff)' }}>K</span>
-                <span style={{ background: 'linear-gradient(135deg,#f6d98c,#e0a82e)' }}>M</span>
-                <span style={{ background: 'linear-gradient(135deg,#10b981,#065f46)' }}>T</span>
-                <span style={{ background: 'linear-gradient(135deg,#f43f5e,#831843)' }}>L</span>
-                <span className="hero-avatars-more">+9K</span>
-              </div>
-              <div className="hero-trust-text">
-                <b>10.000+</b> học viên đang học · <span className="hero-trust-stars">★★★★★</span> <b>4.9/5</b>
-              </div>
             </div>
           </div>
         </section>
@@ -721,7 +631,6 @@ function App() {
   const navigateTo = (nextRoute) => {
     if (nextRoute === 'signin')    { window.location.hash = '/signin';    return }
     if (nextRoute === 'signup')    { window.location.hash = '/signup';    return }
-    if (nextRoute === 'complete-student-profile') { window.location.hash = '/complete-student-profile'; return }
     if (nextRoute === 'admin')     { window.location.hash = '/admin';     return }
     if (nextRoute === 'dashboard') { window.location.hash = '/dashboard'; return }
     if (nextRoute === 'mycourses') { window.location.hash = '/my-courses'; return }
@@ -743,11 +652,6 @@ function App() {
   // ── Route: Sign Up ──
   if (routeName === 'signup') {
     return <SignUp onSwitchToSignIn={() => navigateTo('signin')} onGoHome={() => navigateTo('home')} />
-  }
-
-  // ── Route: Complete Student Profile ──
-  if (routeName === 'complete-student-profile') {
-    return <CompleteStudentProfile onGoHome={() => navigateTo('home')} />
   }
 
   // ── Route: Admin Dashboard ──
@@ -784,7 +688,7 @@ function App() {
     return <QuizTaking quizId={route.id} token={token} isPractice={false} />
   }
 
-  // ── Route: Practice Quiz Taking ──
+    // ── Route: Practice Quiz Taking ──
   if (routeName === 'practice-quiz') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     return <QuizTaking
@@ -816,10 +720,26 @@ function App() {
     />
   }
 
+  // ── Route: Tutor Exam Taking ──
+  if (routeName === 'tutor-exam') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizTaking
+      isTutorExam={true}
+      tutorExamId={route.id}
+      token={token}
+    />
+  }
+
   // ── Route: Exam Paper Result ──
   if (routeName === 'exam-result') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     return <QuizResult isExamPaper={true} attemptId={route.id} token={token} />
+  }
+
+  // ── Route: Tutor Exam Result ──
+  if (routeName === 'tutor-exam-result') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizResult isTutorExam={true} tutorExamId={route.id} token={token} />
   }
 
   // ── Route: Tutor Profile (protected) ──
@@ -871,24 +791,6 @@ function App() {
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
-  if (routeName === 'tutor-request') {
-    return <FindTutorRequest onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
-  }
-  if (routeName === 'tutor-matches') {
-    return <TutorMatchesPage />
-  }
-  if (routeName === 'my-tutor-requests') {
-    return <MyTutorRequests />
-  }
-  if (routeName === 'my-tutors') {
-    return <MyTutorsPage />
-  }
-  if (routeName === 'tutor-interaction') {
-    return <TutorInteractionPage />
-  }
-  if (routeName === 'courses') {
-    return <CoursesPage user={user} />
-  }
   if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
@@ -899,20 +801,6 @@ function App() {
   // ── Route: Course Marketplace ──
   if (routeName === 'courses') {
     return <CourseMarketplace />;
-  }
-
-  // ── Route: Cart ──
-  if (routeName === 'cart') {
-    return <CartPage onGoSignIn={() => navigateTo('signin')} user={user} />
-  }
-  if (routeName === 'orders') {
-    return <OrdersPage user={user} onGoSignIn={() => navigateTo('signin')} />
-  }
-  if (routeName === 'wishlist') {
-    return <WishlistPage user={user} onGoSignIn={() => navigateTo('signin')} />
-  }
-  if (routeName === 'certificate') {
-    return <CertificatePage courseId={route.id} user={user} onGoSignIn={() => navigateTo('signin')} />
   }
 
   if (routeName === 'booking') {

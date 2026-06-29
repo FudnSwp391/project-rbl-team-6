@@ -47,8 +47,12 @@ async function run() {
     // Make sure we have a fake class to reference
     try {
         await pool.query(`
-          INSERT INTO classes (id, title, status)
-          VALUES ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 'Dummy Class for Schedule', 'published')
+          INSERT INTO users (id, email, password_hash, role, full_name)
+          VALUES ('f1b2c3d4-e5f6-7890-abcd-ef1234567890', 'dummy_tutor_schedule@test.com', 'dummy_hash', 'tutor', 'Dummy Tutor')
+          ON CONFLICT (id) DO NOTHING;
+
+          INSERT INTO classes (id, tutor_id, title, status)
+          VALUES ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 'f1b2c3d4-e5f6-7890-abcd-ef1234567890', 'Dummy Class for Schedule', 'active')
           ON CONFLICT (id) DO NOTHING;
         `);
     } catch (e) {

@@ -74,10 +74,6 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    fetchResults()
-  }, [attemptId, sessionId])
-
   async function fetchResults() {
     try {
       setLoading(true)
@@ -215,6 +211,10 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    fetchResults()
+  }, [attemptId, sessionId])
 
   if (loading) {
     return (
