@@ -115,3 +115,9 @@ export async function uploadCourseThumbnail(file, userId = 'anonymous') {
   if (err) throw new Error(err)
   return uploadViaBackend(file, `course-thumbnails/${userId}`)
 }
+
+export async function uploadEvidenceFile(file, userId = 'anonymous') {
+  const err = validateProofFile(file)
+  if (err) throw new Error(err)
+  return uploadViaBackend(file, `dispute-evidence/${userId}`)
+}
