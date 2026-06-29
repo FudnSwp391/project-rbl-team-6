@@ -3773,24 +3773,36 @@ app.get("/api/tutors/:id", async (req, res) => {
     );
 
     // Map to required JSON structure
+    // Xu ly subjects: co the la string (comma-sep) hoac array (jsonb)
+    const rawSubjects = tutorInfo.subjects;
+    let subjectsArr = [];
+    if (Array.isArray(rawSubjects)) {
+      subjectsArr = rawSubjects.filter(Boolean);
+    } else if (typeof rawSubjects === 'string' && rawSubjects.trim()) {
+      subjectsArr = rawSubjects.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
     const responseData = {
       id: tutorInfo.id,
-      full_name: tutorInfo.display_name || tutorInfo.first_name || tutorInfo.full_name || "Gia sư EduX",
+      user_id: tutorInfo.id,
+      full_name: tutorInfo.display_name || tutorInfo.first_name || tutorInfo.full_name || 'Gia sư EduX',
       avatar: tutorInfo.profile_photo_url || tutorInfo.picture || null,
-      subjects: tutorInfo.subjects ? tutorInfo.subjects.split(',').map(s => s.trim()) : [],
-      bio: tutorInfo.bio || "",
-      experience_years: tutorInfo.experience_years || 0,
+      picture: tutorInfo.profile_photo_url || tutorInfo.picture || null,
+      profile_photo_url: tutorInfo.profile_photo_url || null,
+      subjects: subjectsArr,
+      bio: tutorInfo.bio || '',
+      experience_years: parseInt(tutorInfo.experience_years) || 0,
       hourly_rate: tutorInfo.hourly_rate || null,
       teaching_methods: Array.isArray(tutorInfo.teaching_methods) ? tutorInfo.teaching_methods : [],
-      availability: tutorInfo.availability && Object.keys(tutorInfo.availability).length > 0 ? tutorInfo.availability : [],
+      availability: (tutorInfo.availability && typeof tutorInfo.availability === 'object' && !Array.isArray(tutorInfo.availability)) ? tutorInfo.availability : {},
       rating: parseFloat(tutorInfo.avg_r) || 0,
       review_count: parseInt(tutorInfo.review_count) || 0,
       reviews: reviewsRes.rows.map(r => ({
         id: r.id,
-        reviewer_name: r.reviewer_name || "Học viên ẩn danh",
+        reviewer_name: r.reviewer_name || 'Học viên ẩn danh',
         reviewer_avatar: r.reviewer_avatar || null,
-        rating: r.rating,
-        comment: r.comment || "",
+        rating: parseFloat(r.rating) || 0,
+        comment: r.comment || '',
         created_at: r.created_at
       })),
       total_students: parseInt(tutorInfo.total_students) || 0,
