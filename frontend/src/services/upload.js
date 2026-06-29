@@ -25,7 +25,8 @@ async function uploadViaBackend(file, folder) {
     },
     body: JSON.stringify({
       filename: file.name,
-      bucket: 'tutor-documents'
+      bucket: 'tutor-documents',
+      folder
     })
   })
 
@@ -34,7 +35,7 @@ async function uploadViaBackend(file, folder) {
     throw new Error(errorData.message || 'Không thể xin quyền upload.')
   }
 
-  const { signedUrl, publicUrl } = await resUrl.json()
+  const { signedUrl, publicUrl, viewUrl, storageUrl } = await resUrl.json()
 
   // Upload thẳng từ trình duyệt lên Supabase
   const uploadRes = await fetch(signedUrl, {
@@ -50,7 +51,11 @@ async function uploadViaBackend(file, folder) {
   }
 
   // Trả về full URL để lưu vào Database
-  return publicUrl
+  return {
+    url: viewUrl || publicUrl || storageUrl,
+    storageUrl: storageUrl || publicUrl,
+    previewUrl: viewUrl || publicUrl,
+  }
 }
 
 export function validateProofFile(file) {
@@ -89,29 +94,52 @@ export function validateVideoFile(file) {
 export async function uploadProofFile(file, folder = 'proofs') {
   const err = validateProofFile(file)
   if (err) throw new Error(err)
-  return uploadViaBackend(file, folder)
+  const uploaded = await uploadViaBackend(file, folder)
+  return uploaded.previewUrl || uploaded.url
 }
 
 export async function uploadAvatarFile(file, userId = 'anonymous') {
   const err = validateAvatarFile(file)
   if (err) throw new Error(err)
-  return uploadViaBackend(file, `avatars/${userId}`)
+  const uploaded = await uploadViaBackend(file, `avatars/${userId}`)
+  return uploaded.previewUrl || uploaded.url
 }
 
 export async function uploadDemoVideo(file, userId = 'anonymous') {
   const err = validateVideoFile(file)
   if (err) throw new Error(err)
-  return uploadViaBackend(file, `demo-videos/${userId}`)
+  const uploaded = await uploadViaBackend(file, `demo-videos/${userId}`)
+  return uploaded.storageUrl || uploaded.url
 }
 
 export async function uploadCourseVideo(file, userId = 'anonymous') {
   const err = validateVideoFile(file)
   if (err) throw new Error(err)
-  return uploadViaBackend(file, `course-videos/${userId}`)
+  const uploaded = await uploadViaBackend(file, `course-videos/${userId}`)
+  return uploaded.storageUrl || uploaded.url
 }
 
 export async function uploadCourseThumbnail(file, userId = 'anonymous') {
   const err = validateAvatarFile(file)
   if (err) throw new Error(err)
   return uploadViaBackend(file, `course-thumbnails/${userId}`)
+}
+
+export async function getSignedStorageUrl(storageUrl) {
+  if (!storageUrl || !String(storageUrl).startsWith('storage://')) return storageUrl
+  const token = localStorage.getItem('token')
+  const res = await fetch(`${API_BASE_URL}/api/storage/signed-url?path=${encodeURIComponent(storageUrl)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  })
+  if (!res.ok) return storageUrl
+  const data = await res.json()
+  return data.signedUrl || storageUrl
+}
+
+export async function uploadHomeworkFile(file, tutorId = 'anonymous') {
+  // Use uploadViaBackend with a specific folder
+  const uploaded = await uploadViaBackend(file, `homeworks/${tutorId}`);
+  return uploaded.storageUrl || uploaded.url;
 }

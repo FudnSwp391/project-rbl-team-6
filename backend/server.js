@@ -656,7 +656,11 @@ app.post("/api/auth/login", async (req, res) => {
 
     // T├¼m user theo email
     const result = await pool.query(
-      "SELECT id, full_name, email, password_hash, role, picture FROM users WHERE email = $1",
+      `SELECT u.id, u.full_name, u.email, u.password_hash, u.role, u.picture,
+              tp.status AS tutor_status
+       FROM users u
+       LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+       WHERE u.email = $1`,
       [email.toLowerCase().trim()]
     );
 
@@ -694,10 +698,12 @@ app.post("/api/auth/login", async (req, res) => {
         email: user.email,
         role: user.role,
         picture: user.picture,
+        tutor_status: user.role === 'tutor' ? (user.tutor_status || null) : undefined,
       },
       suspiciousLogin: suspicious,
       loginIP: ip,
     });
+
   } catch (error) {
     console.error("Login error:", error);
     return res.status(500).json({ message: "Server error. Please try again." });
@@ -908,19 +914,24 @@ app.post(
         education, language, hourly_rate,
         teaching_style, qualifications,
         teaching_methods, suitable_students, cert_metadata,
-        profile_photo_url, cccd_url
+        certificate_urls,
+        profile_photo_url, cccd_url, cccd_front_url, cccd_back_url
       } = req.body;
       const userId = req.user.userId;
 
       let parsedTeachingMethods = [];
       let parsedSuitableStudents = [];
       let parsedCertMetadata = [];
+      let parsedCertUrls = [];
       try { parsedTeachingMethods = JSON.parse(teaching_methods || '[]'); } catch {}
       try { parsedSuitableStudents = JSON.parse(suitable_students || '[]'); } catch {}
       try { parsedCertMetadata = JSON.parse(cert_metadata || '[]'); } catch {}
+      try { parsedCertUrls = JSON.parse(certificate_urls || '[]'); } catch {}
 
-            let photoPath = profile_photo_url || null;
-      let cccdPath  = cccd_url || null;
+      let photoPath    = profile_photo_url || null;
+      // cccd_front_url ưu tiên hơn cccd_url (legacy 1-ảnh)
+      let cccdPath     = cccd_front_url || cccd_url || null;
+      let cccdBackPath = cccd_back_url  || null;
 
       const existing = await pool.query(
         "SELECT id FROM tutor_profiles WHERE user_id = $1",
@@ -947,8 +958,9 @@ app.post(
           status = $17, reject_reason = NULL`;
 
         let idx = 19; // $18 = userId
-        if (photoPath) { query += `, profile_photo_url = $${idx}`; values.push(photoPath); idx++; }
-        if (cccdPath)  { query += `, cccd_url = $${idx}`;          values.push(cccdPath);  idx++; }
+        if (photoPath)   { query += `, profile_photo_url = $${idx}`; values.push(photoPath);   idx++; }
+        if (cccdPath)    { query += `, cccd_url = $${idx}`;          values.push(cccdPath);    idx++; }
+        if (cccdBackPath){ query += `, cccd_back_url = $${idx}`;     values.push(cccdBackPath); idx++; }
 
         query += ` WHERE user_id = $18 RETURNING *`;
         result = await pool.query(query, values);
@@ -960,7 +972,7 @@ app.post(
             birthday, gender, country, city, phone,
             education, language, hourly_rate,
             teaching_style, qualifications,
-            profile_photo_url, cccd_url,
+            profile_photo_url, cccd_url, cccd_back_url,
             status
           ) VALUES (
             $1, $2, $3, $4,
@@ -968,7 +980,7 @@ app.post(
             $8, $9, $10, $11, $12,
             $13, $14, $15,
             $16, $17,
-            $18, $19,
+            $18, $19, $20,
             'pending'
           ) RETURNING *`,
           [
@@ -977,9 +989,19 @@ app.post(
             birthday || null, gender, country, city, phone,
             education, language, parseFloat(hourly_rate) || null,
             teaching_style, qualifications,
-            photoPath, cccdPath,
+            photoPath, cccdPath, cccdBackPath,
           ]
         );
+      }
+
+      // Update user role to tutor if they are student or parent
+      try {
+        await pool.query(
+          "UPDATE users SET role = 'tutor' WHERE id = $1 AND role != 'admin'",
+          [userId]
+        );
+      } catch (roleErr) {
+        console.warn("[Profile] role update skipped:", roleErr.message);
       }
 
       // Optional: save structured fields (separate query, non-fatal if columns not ready)
@@ -999,26 +1021,39 @@ app.post(
         console.warn("[Profile] structured fields save skipped:", structErr.message);
       }
 
-      // Insert new certificates into tutor_certificates table (with metadata)
-      if (certFiles.length > 0) {
+      // Insert certificates — dùng certificate_urls (URLs đã upload sẵn từ frontend)
+      if (parsedCertUrls.length > 0) {
         const profileId = result.rows[0].id;
-        await pool.query("DELETE FROM tutor_certificates WHERE tutor_profile_id = $1", [profileId]);
-        for (let i = 0; i < certFiles.length; i++) {
-          const f = certFiles[i];
+        try {
+          await pool.query("DELETE FROM tutor_certificates WHERE tutor_profile_id = $1", [profileId]);
+        } catch (delErr) {
+          console.warn("[Profile] delete old certs skipped:", delErr.message);
+        }
+        for (let i = 0; i < parsedCertUrls.length; i++) {
+          const certUrl = parsedCertUrls[i];
           const meta = parsedCertMetadata[i] || {};
-          const ext = f.originalname.split('.').pop();
-          const certPath = await uploadFileToStorage(f, `certificates/${userId}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
           try {
             await pool.query(
               "INSERT INTO tutor_certificates (tutor_profile_id, name, url, cert_type, issuer, issue_year) VALUES ($1, $2, $3, $4, $5, $6)",
-              [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
+              [
+                profileId,
+                meta.name || `Chứng chỉ ${i + 1}`,
+                certUrl,
+                meta.cert_type || 'Chứng chỉ',
+                meta.issuer || null,
+                meta.year ? parseInt(meta.year) : null
+              ]
             );
           } catch (certExtErr) {
-            // Fall back to basic insert if extended cert columns don't exist yet
-            await pool.query(
-              "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
-              [profileId, meta.name || f.originalname, certPath]
-            );
+            // Fallback: insert tối giản nếu các cột mở rộng chưa tồn tại
+            try {
+              await pool.query(
+                "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
+                [profileId, meta.name || `Chứng chỉ ${i + 1}`, certUrl]
+              );
+            } catch (fallbackErr) {
+              console.warn("[Profile] cert insert fallback also failed:", fallbackErr.message);
+            }
           }
         }
       }
@@ -1066,8 +1101,15 @@ app.get("/api/admin/document-url", verifyToken, requireAdmin, async (req, res) =
     const { path } = req.query;
     if (!path) return res.status(400).json({ message: "Path is required." });
     
+    // Extract filename if path is a full public URL
+    let cleanPath = path;
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      const parts = path.split('/');
+      cleanPath = parts[parts.length - 1];
+    }
+    
     // Convert path to signed URL via Supabase Storage REST API
-    const signedUrl = await createSignedUrl(path);
+    const signedUrl = await createSignedUrl(cleanPath);
     if (!signedUrl) return res.status(500).json({ message: "Failed to generate URL. Check Supabase config." });
     
     return res.json({ signedUrl });
@@ -1085,9 +1127,12 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
       SELECT
         tp.id, tp.user_id, u.full_name, u.email,
         tp.bio, tp.subjects, tp.experience_years,
-        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
+        tp.certificate_url, tp.cccd_url, tp.cccd_back_url, tp.status, tp.reject_reason,
         tp.created_at, tp.profile_photo_url, tp.hourly_rate,
         tp.teaching_methods, tp.suitable_students,
+        tp.first_name, tp.last_name, tp.display_name,
+        tp.birthday, tp.gender, tp.country, tp.city, tp.phone,
+        tp.education, tp.language, tp.teaching_style, tp.qualifications,
         COALESCE(
           (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
            FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
@@ -1272,9 +1317,12 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
       SELECT
         tp.id, tp.user_id, u.full_name, u.email,
         tp.bio, tp.subjects, tp.experience_years,
-        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
+        tp.certificate_url, tp.cccd_url, tp.cccd_back_url, tp.status, tp.reject_reason,
         tp.created_at, tp.profile_photo_url, tp.hourly_rate,
         tp.teaching_methods, tp.suitable_students,
+        tp.first_name, tp.last_name, tp.display_name,
+        tp.birthday, tp.gender, tp.country, tp.city, tp.phone,
+        tp.education, tp.language, tp.teaching_style, tp.qualifications,
         COALESCE(
           (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
            FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),

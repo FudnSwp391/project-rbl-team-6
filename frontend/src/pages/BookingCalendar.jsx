@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../AuthContext';
 import { getTutorDetail, getTutorAvailability, createBooking } from '../services/api';
 import BookingConfirmationModal from '../components/BookingConfirmationModal';
@@ -270,45 +270,59 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   };
 
   const handleConfirmBooking = async () => {
-    setIsSubmitting(true); setSubmitError(null);
+    // ── Frontend validation ───────────────────────────────────────────────
+    if (!tutor) {
+      setSubmitError('Không tìm thấy thông tin gia sư. Vui lòng thử lại.');
+      return;
+    }
     const sessions = getSelectedBookingItems().filter(session => {
       const bookedForDay = bookedSlots[session.date] || [];
       return !bookedForDay.some(booked => booked.timeSlot === session.timeSlot);
     });
-
     if (sessions.length === 0) {
       setSubmitError('All selected slots have already been booked. Please choose another slot.');
-      setIsSubmitting(false);
       return;
     }
 
-    const bookingData = {
-      tutorId:     tutor.user_id || tutor.id,
-      date:        sessions[0].date,
-      timeSlot:    sessions[0].timeSlot,
-      sessions,
-      subject,
-      notes,
-      childName:   user.role === 'parent' ? selectedChild : null,
-      studentId:   user.id || 'student_user',
-      studentName: user.name || user.email?.split('@')[0] || 'Student',
+    const tutorIdToSend = tutor.user_id || tutor.tutor_id || tutor.id;
+    if (!tutorIdToSend) {
+      setSubmitError('Không xác định được ID gia sư. Vui lòng tải lại trang.');
+      return;
+    }
+
+    // ── Build payload (matches backend: tutor_id, lesson_date, time_slot) ─
+    const bookingPayload = {
+      tutorId:   String(tutorIdToSend),
+      tutorName: tutor.name || tutor.full_name || null,
+      sessions:  sessions.map(s => ({ date: s.date, timeSlot: s.timeSlot })),
+      subject:   subject || (tutor.subjects?.[0] ?? null),
+      notes:     notes || null,
     };
+
+    console.log('[BookingCalendar] handleConfirmBooking payload:', JSON.stringify(bookingPayload, null, 2));
+
+    setIsSubmitting(true);
+    setSubmitError(null);
     try {
-      const result = await createBooking(bookingData);
+      const result = await createBooking(bookingPayload);
+      console.log('[BookingCalendar] Booking success result:', result);
       const createdBookings = result.bookings || [result];
       setBookedSlots(prev => {
         const next = { ...prev };
         for (const booking of createdBookings) {
-          const dateKey = String(booking.date || '').slice(0, 10) || bookingData.date;
-          next[dateKey] = [
-            ...(next[dateKey] || []),
-            { timeSlot: booking.timeSlot, status: booking.status || 'Pending' },
-          ];
+          const dateKey = String(booking.lesson_date || booking.date || '').slice(0, 10);
+          if (dateKey) {
+            next[dateKey] = [
+              ...(next[dateKey] || []),
+              { timeSlot: booking.time_slot || booking.timeSlot, status: booking.status || 'Pending' },
+            ];
+          }
         }
         return next;
       });
       setBookingSuccessData(result);
     } catch (err) {
+      console.error('[BookingCalendar] Booking error:', err);
       setSubmitError(err.message || 'Failed to submit booking.');
     } finally {
       setIsSubmitting(false);
@@ -317,6 +331,10 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
 
   const handleGoToDashboard = () => {
     setIsConfirmModalOpen(false);
+    setSelectedBookings({});
+    setSelectedTimeSlot('');
+    setBookingSuccessData(null);
+    // Students go to booking history; tutors/parents go to their dashboards
     if (user?.role === 'parent')      window.location.hash = '/parent';
     else if (user?.role === 'tutor')  window.location.hash = '/tutor';
     else                              window.location.hash = '/dashboard';

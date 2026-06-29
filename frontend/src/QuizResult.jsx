@@ -68,7 +68,7 @@ function AnswerIndicator({ letter, text, status }) {
   )
 }
 
-export default function QuizResult({ attemptId, token, isPractice = false, sessionId = null, isExamPaper = false }) {
+export default function QuizResult({ attemptId, token, isPractice = false, sessionId = null, isExamPaper = false, isTutorExam = false, tutorExamId = null }) {
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -76,13 +76,61 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
 
   useEffect(() => {
     fetchResults()
-  }, [attemptId, sessionId])
+  }, [attemptId, sessionId, tutorExamId])
 
   async function fetchResults() {
     try {
       setLoading(true)
 
-      if (isPractice) {
+      if (isTutorExam) {
+        // Fetch tutor exam result
+        const res = await fetch(`${apiBaseUrl}/api/student/assessments/exams/${tutorExamId}/result`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) throw new Error('Failed to load tutor exam results')
+        const json = await res.json()
+        
+        const questions = (json.questions || []).map(q => {
+          const ansRecord = (json.answers || []).find(a => a.question_id === q.id)
+          return {
+            id: q.id,
+            text: q.question_text,
+            question_type: q.question_type || 'MCQ',
+            options: {
+              A: q.options[0]?.text || '',
+              B: q.options[1]?.text || '',
+              C: q.options[2]?.text || '',
+              D: q.options[3]?.text || ''
+            },
+            correctAnswer: q.correct_answer,
+            explanation: q.grading_note,
+            studentAnswer: ansRecord ? ansRecord.student_answer : null,
+          }
+        })
+        
+        // Count total correct based on answers
+        const total_correct = (json.answers || []).filter(a => a.is_correct).length
+
+        // Total score vs total points
+        const score = json.submission?.score || 0
+        const total = json.exam?.total_score || 100
+        const percentage = total > 0 ? (score / total) * 100 : 0
+
+        setData({
+          title: json.exam?.title,
+          subject: json.exam?.course || 'Assessment',
+          score: percentage,
+          tutor_score: percentage,
+          total_correct: total_correct,
+          total_questions: json.exam?.total_questions || questions.length,
+          started_at: json.submission?.started_at,
+          submitted_at: json.submission?.submitted_at,
+          questions,
+          isPractice: false,
+          isExamPaper: false,
+          isTutorExam: true
+        })
+      } else if (isPractice) {
         // Fetch practice result from dedicated endpoint
         const res = await fetch(`${apiBaseUrl}/api/practice/${sessionId}/result`, {
           headers: { Authorization: `Bearer ${token}` },

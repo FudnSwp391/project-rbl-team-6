@@ -152,13 +152,67 @@ export async function getBookings() {
 
 /**
  * Create a new booking request.
- * Booking must be saved by the backend/Supabase so tutors can see it.
+ * Transforms camelCase frontend fields to snake_case fields expected by backend.
+ * Supports multiple sessions by sending one request per session.
+ *
+ * Backend expects: { tutor_id, lesson_date, time_slot, tutor_name, subject, note }
+ * Frontend sends:  { tutorId, sessions: [{date, timeSlot}], subject, notes, ... }
  */
 export async function createBooking(bookingData) {
-  return request('/api/bookings', {
-    method: 'POST',
-    body: JSON.stringify(bookingData)
-  });
+  const {
+    tutorId,
+    tutor_id,
+    sessions,
+    date,
+    timeSlot,
+    time_slot,
+    subject,
+    notes,
+    note,
+    tutorName,
+    tutor_name,
+    studentId,
+    childName,
+  } = bookingData || {};
+
+  // Resolve tutorId — accept both camelCase and snake_case
+  const resolvedTutorId = tutorId || tutor_id;
+  const resolvedTutorName = tutorName || tutor_name || null;
+  const resolvedNote = notes || note || null;
+
+  // Build sessions list: either from the sessions array, or a single date+timeSlot
+  const sessionList = Array.isArray(sessions) && sessions.length > 0
+    ? sessions
+    : (date && (timeSlot || time_slot))
+      ? [{ date, timeSlot: timeSlot || time_slot }]
+      : [];
+
+  if (!resolvedTutorId || sessionList.length === 0) {
+    throw new Error('Cần chọn gia sư, ngày học và khung giờ.');
+  }
+
+  // Send one POST per session (backend handles single bookings)
+  const results = [];
+  for (const session of sessionList) {
+    const payload = {
+      tutor_id:    String(resolvedTutorId),
+      lesson_date: session.date,
+      time_slot:   session.timeSlot || session.time_slot,
+      tutor_name:  resolvedTutorName,
+      subject:     subject || null,
+      note:        resolvedNote,
+    };
+    console.log('[createBooking] Sending payload to /api/bookings:', payload);
+    const result = await request('/api/bookings', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    results.push(result);
+  }
+
+  // Return a unified response compatible with the caller
+  if (results.length === 1) return results[0];
+  return { bookings: results, count: results.length };
 }
 
 export async function createTrialBooking(bookingData) {
@@ -521,4 +575,114 @@ export async function updateCourseProgress(courseId, lessonId, payload = {}) {
     body: JSON.stringify(payload),
   })
 }
+// ── Tutor Assessments APIs ───────────────────────────────────────────────────
+
+export async function getTutorExams() {
+  return request('/api/tutor/assessments/exams');
+}
+
+export async function createTutorExam(examData) {
+  return request('/api/tutor/assessments/exams', {
+    method: 'POST',
+    body: JSON.stringify(examData),
+  });
+}
+
+export async function getTutorExamDetail(examId) {
+  return request(`/api/tutor/assessments/exams/${examId}`);
+}
+
+export async function updateTutorExam(examId, examData) {
+  return request(`/api/tutor/assessments/exams/${examId}`, {
+    method: 'PUT',
+    body: JSON.stringify(examData),
+  });
+}
+
+export async function updateTutorExamStatus(examId, status) {
+  return request(`/api/tutor/assessments/exams/${examId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function duplicateTutorExam(examId) {
+  return request(`/api/tutor/assessments/exams/${examId}/duplicate`, {
+    method: 'POST',
+  });
+}
+
+export async function deleteTutorExam(examId) {
+  return request(`/api/tutor/assessments/exams/${examId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function getTutorHomework() {
+  return request('/api/tutor/assessments/homework');
+}
+
+export async function createTutorHomework(hwData) {
+  return request('/api/tutor/assessments/homework', {
+    method: 'POST',
+    body: JSON.stringify(hwData),
+  });
+}
+
+export async function getTutorHomeworkDetail(hwId) {
+  return request(`/api/tutor/assessments/homework/${hwId}`);
+}
+
+export async function updateTutorHomework(hwId, hwData) {
+  return request(`/api/tutor/assessments/homework/${hwId}`, {
+    method: 'PUT',
+    body: JSON.stringify(hwData),
+  });
+}
+
+export async function updateTutorHomeworkStatus(hwId, status) {
+  return request(`/api/tutor/assessments/homework/${hwId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function deleteTutorHomework(hwId) {
+  return request(`/api/tutor/assessments/homework/${hwId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function getHomeworkSubmissions(hwId) {
+  return request(`/api/tutor/assessments/homework/${hwId}/submissions`);
+}
+
 export const apiRequest = request;
+
+// ── Student Assessments APIs ───────────────────────────────────────────────────
+
+export async function getStudentExams() {
+  return request('/api/student/assessments/exams');
+}
+
+export async function getStudentExamDetail(examId) {
+  return request(`/api/student/assessments/exams/${examId}`);
+}
+
+export async function submitStudentExam(examId, answers) {
+  return request(`/api/student/assessments/exams/${examId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({ answers }),
+  });
+}
+
+export async function getStudentHomework() {
+  return request('/api/student/assessments/homework');
+}
+
+export async function submitStudentHomework(hwId, fileUrl) {
+  return request(`/api/student/assessments/homework/${hwId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({ file_url: fileUrl }),
+  });
+}

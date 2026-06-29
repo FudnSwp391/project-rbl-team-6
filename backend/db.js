@@ -1,11 +1,14 @@
 const { Pool } = require("pg");
 const dotenv = require("dotenv");
+const dns = require("dns");
 
 dotenv.config();
+dns.setDefaultResultOrder("ipv4first");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: false
+  ssl: { rejectUnauthorized: false },
+  connectionTimeoutMillis: 15000,
 });
 
 // Test kết nối khi khởi động
