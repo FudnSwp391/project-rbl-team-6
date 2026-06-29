@@ -46,10 +46,13 @@ export default function MyCourses() {
       if (reportEvidence) {
         evidenceUrl = await uploadEvidenceFile(reportEvidence, user?.id || 'anonymous');
       }
-      const res = await apiRequest(`/api/courses/${selectedCourseToReport.course_id}/report`, 'POST', {
-        reason: reportReason,
-        severity: reportSeverity,
-        evidenceUrl
+      const res = await apiRequest(`/api/courses/${selectedCourseToReport.course_id}/report`, {
+        method: 'POST',
+        body: JSON.stringify({
+          reason: reportReason,
+          severity: reportSeverity,
+          evidenceUrl
+        })
       });
       if (res.success || res.message) {
         alert(res.message || 'Gửi khiếu nại thành công!');
