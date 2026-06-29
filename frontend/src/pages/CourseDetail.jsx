@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import { apiRequest } from '../services/api';
+import CourseGoldShowcase from '../components/CourseGoldShowcase';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const CAT_STYLE = {
   'Kỹ Thuật Phần Mềm': { gradient: 'linear-gradient(135deg,#0ea5e9,#1e3a8a)', icon: 'code' },
@@ -287,6 +290,9 @@ export default function CourseDetail({ courseId }) {
                 )}
               </div>
             </div>
+
+            {/* ── Phần vàng: Video demo · Bảng vàng thành tích · Phản hồi ── */}
+            <CourseGoldShowcase course={c} courseId={c.id} onEnroll={handleEnroll} enrolled={enrolled} />
           </div>
 
           {/* Right sidebar: Price & actions */}

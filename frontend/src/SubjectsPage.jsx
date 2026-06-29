@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
+  const [searchTerm, setSearchTerm] = useState('');
+
   return (
     <div className="aqua-bg min-h-screen text-[#191c1e] font-sans flex flex-col">
       <style>{`
@@ -27,7 +29,12 @@ export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
           </div>
 
           {/* Auth Buttons */}
-          <div className="flex items-center gap-4 z-10">
+          <div className="flex items-center gap-6 z-10">
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
              {user ? (
                <button
                  onClick={() => {
@@ -58,7 +65,13 @@ export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
             <div className="flex flex-col sm:flex-row justify-center gap-3">
               <div className="relative w-full max-w-md">
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#5d5f5f]">search</span>
-                <input className="w-full pl-12 pr-6 py-3 rounded-lg border-none focus:ring-2 focus:ring-[#001453] bg-[#f8f9fb] text-[#191c1e] text-base" placeholder="Tìm kiếm môn học (vd: Giải Tích, Tiếng Trung)" type="text"/>
+                <input 
+                  className="w-full pl-12 pr-6 py-3 rounded-lg border-none focus:ring-2 focus:ring-[#001453] bg-[#f8f9fb] text-[#191c1e] text-base" 
+                  placeholder="Tìm kiếm môn học (vd: Giải Tích, Tiếng Trung)" 
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
               </div>
             </div>
           </div>
@@ -147,7 +160,9 @@ export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
                 { name: 'Văn Học Thế Giới', cat: 'Nhân Văn', color: 'bg-[#004883]', tcount: '215 Gia Sư' },
                 { name: 'Cấu Trúc Dữ Liệu', cat: 'Khoa Học Máy Tính', color: 'bg-[#003564]', tcount: '405 Gia Sư' },
                 { name: 'Kinh Tế Vĩ Mô', cat: 'Kinh Doanh', color: 'bg-[#191c1e]', tcount: '190 Gia Sư' }
-              ].map(sub => (
+              ]
+              .filter(sub => !searchTerm.trim() || `${sub.name} ${sub.cat}`.toLowerCase().includes(searchTerm.toLowerCase().trim()))
+              .map(sub => (
                 <div key={sub.name} className="flex items-center justify-between p-6 bg-[#f8f9fb] rounded-lg hover:bg-[#e7e8ea] transition-colors cursor-pointer border border-transparent hover:border-[#c4c5d5]">
                   <div className="flex items-center gap-6">
                     <div className={`w-2 h-2 rounded-full ${sub.color}`}></div>

@@ -42,7 +42,7 @@ function fmtPrice(val) {
   return `$${n}`;
 }
 
-function TutorCard({ tutor, isMock }) {
+function TutorCard({ tutor, isMock, onFav }) {
   const avatar = tutor.profile_photo_url || tutor.picture;
   const rating = Number(tutor.avg_r || 0).toFixed(1);
   const subjects = tutor.subjects
@@ -73,6 +73,12 @@ function TutorCard({ tutor, isMock }) {
             <span className="material-symbols-outlined text-[13px]">location_on</span>
             {tutor.city}
           </div>
+        )}
+        {onFav && !isMock && (
+          <button onClick={(e) => { e.stopPropagation(); onFav(tutor); }} title="Yêu thích"
+            className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white/90 backdrop-blur text-[#e11d48] flex items-center justify-center shadow hover:scale-110 transition-transform">
+            <span className="material-symbols-outlined text-[20px]">favorite</span>
+          </button>
         )}
       </div>
 
@@ -140,6 +146,20 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   const [sort, setSort]               = useState('rating');
   const [method, setMethod]           = useState('');
   const [level, setLevel]             = useState('');
+  const [favMsg, setFavMsg]           = useState('');
+
+  const addFav = (t) => {
+    const token = localStorage.getItem('token');
+    if (!token) { setFavMsg('Đăng nhập để lưu yêu thích.'); setTimeout(() => setFavMsg(''), 2500); return; }
+    fetch(`${API_BASE}/api/wishlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ item_type: 'tutor', item_id: t.id }),
+    })
+      .then(() => setFavMsg(`Đã thêm ${t.full_name} vào Yêu thích ❤`))
+      .catch(() => setFavMsg('Lỗi, thử lại.'))
+      .finally(() => setTimeout(() => setFavMsg(''), 2500));
+  };
 
   const fetchTutors = useCallback(async (pg = 1) => {
     setLoading(true);
@@ -197,9 +217,31 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
     setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setPage(1);
   };
 
-  const displayTutors = isMock
-    ? MOCK_TUTORS
-    : tutors.filter(t => !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice);
+  const displayTutors = (isMock ? MOCK_TUTORS : tutors).filter(t => {
+    // 1. Max price
+    const matchPrice = !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice;
+    
+    // 2. Search text
+    const matchSearch = !search.trim() || 
+      `${t.full_name} ${t.subjects || ''} ${t.bio || ''}`.toLowerCase().includes(search.toLowerCase().trim());
+      
+    // 3. Subjects
+    const matchSubjects = selectedSubjects.length === 0 || 
+      selectedSubjects.some(sub => (t.subjects || '').toLowerCase().includes(sub.toLowerCase()));
+      
+    // 4. Method
+    const matchMethod = !method || 
+      (t.teaching_methods && Array.isArray(t.teaching_methods) ? t.teaching_methods.some(m => m.toLowerCase() === method.toLowerCase()) : false) || 
+      (t.method && t.method.toLowerCase() === method.toLowerCase());
+      
+    // 5. Level
+    const matchLevel = !level || 
+      (t.suitable_students && Array.isArray(t.suitable_students) && t.suitable_students.some(l => l.toLowerCase() === level.toLowerCase())) ||
+      (t.level && typeof t.level === 'string' && t.level.toLowerCase().includes(level.toLowerCase())) || 
+      (!t.suitable_students && !t.level);
+
+    return matchPrice && matchSearch && matchSubjects && matchMethod && matchLevel;
+  });
 
   return (
     <div className="aqua-bg min-h-screen text-[#191c1e] font-sans">
@@ -226,7 +268,12 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
           </nav>
-          <div className="flex items-center gap-4 z-10">
+          <div className="flex items-center gap-6 z-10">
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
             {user ? (
               <button
                 onClick={() => {
@@ -251,6 +298,15 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       </header>
 
       <main className="pt-24 pb-16 max-w-[1280px] mx-auto px-6">
+        {isMock && (
+          <div className="mb-6 flex items-start gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-900 shadow-[0_10px_26px_-12px_rgba(180,120,0,0.3)]">
+            <span className="material-symbols-outlined text-amber-500 mt-0.5">warning</span>
+            <div className="text-sm leading-relaxed">
+              <b>Đang hiển thị gia sư mẫu</b> — không kết nối được máy chủ (backend chưa chạy hoặc DB lỗi).
+              Đây <u>không phải</u> gia sư thật. Hãy khởi động lại backend rồi tải lại trang (F5).
+            </div>
+          </div>
+        )}
         {/* Search — banner tối + họa tiết ánh sáng động */}
         <section className="relative mb-10 overflow-hidden rounded-2xl border border-[#1e2a4a]"
           style={{ background: 'radial-gradient(60% 90% at 15% 8%, rgba(76,110,245,.35), transparent 60%), radial-gradient(50% 80% at 85% 18%, rgba(124,92,255,.30), transparent 60%), linear-gradient(135deg,#0b1840,#122163 60%,#0c1538)' }}>
@@ -424,8 +480,13 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {displayTutors.map(tutor => (
-                  <TutorCard key={tutor.id} tutor={tutor} isMock={isMock} />
+                  <TutorCard key={tutor.id} tutor={tutor} isMock={isMock} onFav={addFav} />
                 ))}
+              </div>
+            )}
+            {favMsg && (
+              <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] bg-[#1e40af] text-white px-5 py-3 rounded-xl shadow-2xl text-sm font-semibold flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>favorite</span>{favMsg}
               </div>
             )}
 

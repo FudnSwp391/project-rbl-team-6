@@ -1,4 +1,7 @@
 import { useState, useEffect } from 'react'
+import EntityReviews from '../components/EntityReviews'
+import BookingModal from '../components/BookingModal'
+import { useAuth } from '../AuthContext'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -67,10 +70,19 @@ function NotFoundScreen({ errorMsg }) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) {
+  const { token } = useAuth()
   const [tutor, setTutor] = useState(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [errorMsg, setErrorMsg] = useState(null)
+
+  // ── Inline chat widget state ──
+  const [showChat, setShowChat] = useState(false)
+  const [chatMessages, setChatMessages] = useState([])
+  const [chatDraft, setChatDraft] = useState('')
+  const [chatSending, setChatSending] = useState(false)
+  const [chatLoading, setChatLoading] = useState(false)
+  const [chatError, setChatError] = useState('')
 
   useEffect(() => {
     window.scrollTo(0, 0)
@@ -99,6 +111,83 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
       })
   }, [tutorId])
 
+  // ── Mở chat widget với gia sư ──
+  const openChatWidget = async () => {
+    if (!user) { onGoSignIn(); return }
+    setChatError('')
+    setShowChat(true)
+    setChatLoading(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/${tutorId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setChatMessages(data.messages || [])
+      } else {
+        // Chưa có lịch sử chat → widget vẫn mở nhưng trống
+        setChatMessages([])
+      }
+    } catch {
+      setChatMessages([])
+    }
+    setChatLoading(false)
+  }
+
+  // ── Gửi tin nhắn từ widget ──
+  const sendChatMsg = async (e) => {
+    e.preventDefault()
+    if (!chatDraft.trim() || chatSending) return
+    setChatSending(true)
+    setChatError('')
+    const content = chatDraft.trim()
+    setChatDraft('')
+    try {
+      // Thử gửi thông thường trước
+      let res = await fetch(`${API_BASE}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ receiver_id: tutorId, content })
+      })
+      if (res.status === 403) {
+        // Chưa có permission → dùng /api/chat/start để khởi tạo cuộc trò chuyện
+        res = await fetch(`${API_BASE}/api/chat/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ tutor_id: tutorId, content })
+        })
+      }
+      if (res.ok) {
+        const data = await res.json()
+        const newMsg = data.message || { sender_id: user?.id, content, msg_type: 'text', created_at: new Date().toISOString() }
+        setChatMessages(prev => [...prev, { ...newMsg, sender_name: user?.name || user?.email }])
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setChatError(err.message || 'Không gửi được tin nhắn')
+        setChatDraft(content) // khôi phục lại draft nếu lỗi
+      }
+    } catch {
+      setChatError('Lỗi kết nối. Vui lòng thử lại.')
+      setChatDraft(content)
+    }
+    setChatSending(false)
+  }
+
+  // ── Đi đến dashboard messages (chỉ hỗ trợ student role có section messages) ──
+  const goToDashboardMessages = () => {
+    if (!user) { onGoSignIn(); return }
+    // Lưu tutor vào sessionStorage để MessagesSection có thể auto-open chat
+    sessionStorage.setItem('openChatWith', JSON.stringify({
+      id: tutorId,
+      full_name: tutor?.full_name || 'Gia sư',
+      picture: tutor?.picture || tutor?.profile_photo_url || null,
+      role: 'tutor'
+    }))
+    // Route đúng theo role: cả student và parent đều có section messages
+    if (user.role === 'parent') window.location.hash = '/parent'
+    else window.location.hash = '/dashboard/messages'
+  }
+
   if (loading) return <LoadingScreen />
   if (notFound) return <NotFoundScreen errorMsg={errorMsg} />
   if (!tutor) return <NotFoundScreen />
@@ -125,7 +214,12 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
           </nav>
-          <div className="flex items-center gap-4 z-10">
+          <div className="flex items-center gap-6 z-10">
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
             {user ? (
               <button onClick={() => {
                 if (user.role === 'admin') window.location.hash = '/admin'
@@ -373,11 +467,8 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                     Đặt Lịch Học
                   </button>
                   <button
-                    onClick={() => {
-                      if (!user) return onGoSignIn();
-                      alert('Để nhắn tin, bạn cần tham gia khóa học của gia sư này.');
-                    }}
-                    className="w-full bg-white border border-[#c4c5d5] text-[#00288e] py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#f8f9fb] transition-colors flex items-center justify-center gap-2"
+                    onClick={openChatWidget}
+                    className="w-full bg-white border border-[#c4c5d5] text-[#00288e] py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#eef3ff] hover:border-[#00288e] transition-colors flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-[18px]">chat</span>
                     Nhắn Tin Với Gia Sư
@@ -401,11 +492,8 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             <span className="text-xs text-[#444653]">/giờ</span>
           </div>
           <button
-            onClick={() => {
-              if (!user) return onGoSignIn();
-              alert('Để nhắn tin, bạn cần tham gia khóa học của gia sư này.');
-            }}
-            className="px-4 py-2.5 border border-[#00288e] text-[#00288e] rounded-xl text-sm font-semibold"
+            onClick={openChatWidget}
+            className="px-4 py-2.5 border border-[#00288e] text-[#00288e] rounded-xl text-sm font-semibold hover:bg-[#eef3ff] transition-colors"
           >
             Nhắn Tin
           </button>
@@ -417,6 +505,140 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
           </button>
         </div>
       </main>
+
+
+      {showBooking && <BookingModal tutor={tutor} onClose={() => setShowBooking(false)} />}
+
+      {/* ── Inline Chat Widget ── */}
+      {showChat && (
+        <div className="fixed bottom-24 right-6 z-50 flex flex-col" style={{ width: 360, maxWidth: 'calc(100vw - 24px)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-[#e1e2e4] flex flex-col overflow-hidden"
+               style={{ height: 480, maxHeight: 'calc(100vh - 120px)' }}>
+            {/* Chat Header */}
+            <div className="flex items-center gap-3 px-4 py-3 bg-[#00288e] text-white">
+              <div className="w-9 h-9 rounded-full overflow-hidden bg-white/20 flex items-center justify-center shrink-0">
+                {tutor.profile_photo_url || tutor.picture
+                  ? <img src={tutor.profile_photo_url || tutor.picture} alt={tutor.full_name} className="w-full h-full object-cover" />
+                  : <span className="material-symbols-outlined text-white text-[20px]">person</span>
+                }
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm truncate">{tutor.full_name}</p>
+                <p className="text-xs text-white/70 truncate">Gia sư • {tutor.subjects?.split(',')[0]?.trim() || ''}</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={goToDashboardMessages}
+                  title="Mở trong Tin nhắn"
+                  className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[18px]">open_in_full</span>
+                </button>
+                <button
+                  onClick={() => setShowChat(false)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[20px]">close</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Messages area */}
+            <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2 bg-[#f8f9fb]">
+              {chatLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <span className="material-symbols-outlined text-[#00288e] text-3xl animate-spin">progress_activity</span>
+                </div>
+              ) : chatMessages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center gap-3 px-4">
+                  <span className="material-symbols-outlined text-[48px] text-[#c4c5d5]">waving_hand</span>
+                  <p className="text-sm text-[#444653] font-medium">Bắt đầu cuộc trò chuyện với {tutor.full_name}</p>
+                  <p className="text-xs text-[#757684]">Hỏi về khóa học, lịch học, phương pháp giảng dạy...</p>
+                  {/* Quick reply suggestions */}
+                  <div className="flex flex-col gap-2 w-full mt-2">
+                    {[
+                      `Xin chào! Tôi muốn tìm hiểu về lịch dạy của bạn.`,
+                      `Bạn có thể dạy online không?`,
+                      `Học phí và lịch học như thế nào?`
+                    ].map((suggestion, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setChatDraft(suggestion)}
+                        className="text-xs text-left px-3 py-2 bg-white border border-[#e1e2e4] rounded-lg hover:border-[#00288e] hover:bg-[#eef3ff] transition-colors text-[#444653]"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                chatMessages.map((msg, idx) => {
+                  const isMe = msg.sender_id === user?.id
+                  return (
+                    <div key={msg.id || idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
+                        isMe
+                          ? 'bg-[#00288e] text-white rounded-br-sm'
+                          : 'bg-white text-[#191c1e] shadow-sm border border-[#e1e2e4] rounded-bl-sm'
+                      }`}>
+                        <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                        <p className={`text-[10px] mt-1 ${isMe ? 'text-white/60 text-right' : 'text-[#757684]'}`}>
+                          {new Date(msg.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            {/* Error message */}
+            {chatError && (
+              <div className="px-4 py-2 bg-red-50 border-t border-red-200">
+                <p className="text-xs text-red-600">{chatError}</p>
+              </div>
+            )}
+
+            {/* Input */}
+            <form onSubmit={sendChatMsg} className="flex items-end gap-2 px-3 py-3 border-t border-[#e1e2e4] bg-white">
+              <textarea
+                value={chatDraft}
+                onChange={e => setChatDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMsg(e) } }}
+                placeholder={`Nhắn tin cho ${tutor.full_name?.split(' ').pop() || 'gia sư'}...`}
+                rows={1}
+                className="flex-1 resize-none rounded-xl border border-[#c4c5d5] bg-[#f8f9fb] px-3 py-2 text-sm text-[#191c1e] placeholder:text-[#757684] focus:border-[#00288e] focus:ring-1 focus:ring-[#00288e]/20 focus:outline-none transition-all"
+                style={{ maxHeight: 80 }}
+              />
+              <button
+                type="submit"
+                disabled={!chatDraft.trim() || chatSending}
+                className="w-10 h-10 shrink-0 bg-[#00288e] text-white rounded-full flex items-center justify-center hover:bg-[#1e40af] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {chatSending
+                  ? <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
+                  : <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>send</span>
+                }
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Chat Trigger button (khi chưa mở chat) */}
+      {!showChat && user && (
+        <button
+          onClick={openChatWidget}
+          title={`Nhắn tin với ${tutor.full_name}`}
+          className="fixed bottom-24 right-6 z-40 w-14 h-14 bg-[#00288e] text-white rounded-full shadow-lg flex items-center justify-center hover:bg-[#1e40af] hover:scale-105 transition-all group"
+        >
+          <span className="material-symbols-outlined text-[26px]" style={{ fontVariationSettings: "'FILL' 1" }}>chat</span>
+          <span className="absolute -top-10 right-0 bg-[#191c1e] text-white text-xs px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+            Nhắn tin với gia sư
+          </span>
+        </button>
+      )}
+
     </div>
   )
 }

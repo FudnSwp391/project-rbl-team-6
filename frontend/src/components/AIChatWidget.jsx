@@ -87,7 +87,7 @@ export default function AIChatWidget() {
           aria-label="Mở trợ lý AI"
           className="fixed bottom-6 right-6 z-[60] w-14 h-14 rounded-full bg-[#00288e] text-white shadow-lg hover:bg-[#1e40af] hover:scale-105 transition-all flex items-center justify-center"
         >
-          <span className="material-symbols-outlined text-[26px]" style={{ fontVariationSettings: "'FILL' 1" }}>chat</span>
+          <span className="material-symbols-outlined text-[26px]" style={{ fontVariationSettings: "'FILL' 1" }}>smart_toy</span>
         </button>
       )}
 
@@ -139,7 +139,7 @@ export default function AIChatWidget() {
                           <div className="flex-grow min-w-0">
                             <div className="text-sm font-semibold text-[#191c1e] truncate">{t.full_name}</div>
                             <div className="text-xs text-[#757684] truncate">
-                              {(t.subjects || '').split(',')[0] || 'Gia sư'} · {fmtPrice(t.hourly_rate)}/giờ
+                              {t.matched_subject || (t.subjects || '').split(',')[0] || 'Gia sư'} · {fmtPrice(t.hourly_rate)}/giờ
                             </div>
                           </div>
                           <span className="material-symbols-outlined text-[18px] text-[#00288e] shrink-0">chevron_right</span>

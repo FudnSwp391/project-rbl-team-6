@@ -30,6 +30,10 @@ import TutorProfile from './pages/TutorProfile'
 import CourseMarketplace from './pages/CourseMarketplace'
 import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
+import CartPage from './pages/CartPage'
+import OrdersPage from './pages/OrdersPage'
+import WishlistPage from './pages/WishlistPage'
+import CertificatePage from './pages/CertificatePage'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -137,6 +141,11 @@ const getRouteFromHash = () => {
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
+  if (normalized === '/cart') return { name: 'cart' }
+  if (normalized === '/orders') return { name: 'orders' }
+  if (normalized === '/wishlist') return { name: 'wishlist' }
+  const certMatch = normalized.match(/^\/certificate\/([^/]+)$/)
+  if (certMatch) return { name: 'certificate', id: certMatch[1] }
   if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
@@ -310,64 +319,84 @@ function HomePage({ onGoSignIn }) {
             )}
           </nav>
 
-          {/* Show user info + logout OR login button */}
-          {user ? (
-            <div className="header-user" style={{ position: 'relative' }} ref={dropdownRef}>
-              <div 
-                style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}
-                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+          {/* Shopping Cart & User Actions */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a 
+                href="#/cart" 
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  color: 'var(--on-surface-variant, #444653)', 
+                  textDecoration: 'none',
+                  transition: 'color 0.2s'
+                }}
+                onMouseOver={(e) => e.currentTarget.style.color = 'var(--primary, #00288e)'}
+                onMouseOut={(e) => e.currentTarget.style.color = 'var(--on-surface-variant, #444653)'}
+                title="Giỏ hàng"
               >
-                {user.picture ? (
-                  <img
-                    src={user.picture}
-                    alt={user.name}
-                    className="header-avatar"
-                  />
-                ) : (
-                  <span className="material-symbols-outlined">account_circle</span>
-                )}
-                <span className="header-username">{user.name || user.email}</span>
-                <span style={{ fontSize: '0.8em' }}>▼</span>
-              </div>
-              
-              {isDropdownOpen && (
-                <div style={{
-                  position: 'absolute',
-                  top: '100%',
-                  right: 0,
-                  marginTop: '8px',
-                  backgroundColor: 'var(--surface, #fff)',
-                  border: '1px solid var(--outline-variant, #ccc)',
-                  borderRadius: '8px',
-                  boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-                  minWidth: '150px',
-                  zIndex: 1000,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  overflow: 'hidden'
-                }}>
-                  <a 
-                    href={user?.role === 'admin' ? '#/admin' : user?.role === 'tutor' ? '#/tutor' : user?.role === 'parent' ? '#/parent' : '#/dashboard'} 
-                    style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}
-                  >
-                    Dashboard
-                  </a>
-                  <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
-                  <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
-                  <button 
-                    onClick={logout} 
-                    style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
-                  >
-                    Logout
-                  </button>
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
+
+            {user ? (
+              <div className="header-user" style={{ position: 'relative' }} ref={dropdownRef}>
+                <div 
+                  style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}
+                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                >
+                  {user.picture ? (
+                    <img
+                      src={user.picture}
+                      alt={user.name}
+                      className="header-avatar"
+                    />
+                  ) : (
+                    <span className="material-symbols-outlined">account_circle</span>
+                  )}
+                  <span className="header-username">{user.name || user.email}</span>
+                  <span style={{ fontSize: '0.8em' }}>▼</span>
                 </div>
-              )}
-            </div>
-          ) : (
-            <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
-              Đăng Nhập
-            </button>
-          )}
+                
+                {isDropdownOpen && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: '8px',
+                    backgroundColor: 'var(--surface, #fff)',
+                    border: '1px solid var(--outline-variant, #ccc)',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                    minWidth: '150px',
+                    zIndex: 1000,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden'
+                  }}>
+                    <a 
+                      href={user?.role === 'admin' ? '#/admin' : user?.role === 'tutor' ? '#/tutor' : user?.role === 'parent' ? '#/parent' : '#/dashboard'} 
+                      style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}
+                    >
+                      Dashboard
+                    </a>
+                    <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
+                    <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
+                    <button 
+                      onClick={logout} 
+                      style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
+                    >
+                      Logout
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
+                Đăng Nhập
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -402,6 +431,20 @@ function HomePage({ onGoSignIn }) {
             <div><div className="hero-stat-num">4.9★</div><div className="hero-stat-label">Đánh giá</div></div>
           </div>
 
+          {/* Thẻ khóa học nổi — đậm chất sàn bán khóa học */}
+          <div className="hero-course-card" aria-hidden="true">
+            <div className="hcc-thumb">
+              <span className="material-symbols-outlined" style={{ fontSize: 46 }}>code</span>
+              <span className="hcc-badge">★ Bán chạy</span>
+            </div>
+            <div className="hcc-body">
+              <div className="hcc-cat">Lập trình</div>
+              <div className="hcc-title">Python cơ bản đến nâng cao</div>
+              <div className="hcc-meta"><span className="hcc-stars">★★★★★</span><b>4.9</b><span className="hcc-dot">·</span>1.240 học viên</div>
+              <div className="hcc-foot"><span className="hcc-price">499.000đ</span><span className="hcc-old">800.000đ</span></div>
+            </div>
+          </div>
+
           <div className="container hero-content">
             <div className="hero-badge"><span className="hero-badge-dot" />Cộng đồng học tập hàng đầu Việt Nam</div>
             <h1>Tìm <span className="hero-highlight">gia sư &amp; khóa học</span> hoàn hảo cho hành trình học tập của bạn</h1>
@@ -432,6 +475,7 @@ function HomePage({ onGoSignIn }) {
                 Tìm Kiếm
               </button>
             </div>
+            
             <div style={{ marginTop: '20px', textAlign: 'center' }}>
               <p style={{ marginBottom: '10px', color: '#00288e', fontWeight: 600 }}>Hoặc để chúng tôi gợi ý cho bạn:</p>
               <button 
@@ -450,6 +494,19 @@ function HomePage({ onGoSignIn }) {
               >
                 Đăng ký tìm gia sư phù hợp
               </button>
+            </div>
+
+            <div className="hero-trust" style={{ marginTop: '30px' }}>
+              <div className="hero-avatars">
+                <span style={{ background: 'linear-gradient(135deg,#4c6ef5,#7c5cff)' }}>K</span>
+                <span style={{ background: 'linear-gradient(135deg,#f6d98c,#e0a82e)' }}>M</span>
+                <span style={{ background: 'linear-gradient(135deg,#10b981,#065f46)' }}>T</span>
+                <span style={{ background: 'linear-gradient(135deg,#f43f5e,#831843)' }}>L</span>
+                <span className="hero-avatars-more">+9K</span>
+              </div>
+              <div className="hero-trust-text">
+                <b>10.000+</b> học viên đang học · <span className="hero-trust-stars">★★★★★</span> <b>4.9/5</b>
+              </div>
             </div>
           </div>
         </section>
@@ -842,6 +899,20 @@ function App() {
   // ── Route: Course Marketplace ──
   if (routeName === 'courses') {
     return <CourseMarketplace />;
+  }
+
+  // ── Route: Cart ──
+  if (routeName === 'cart') {
+    return <CartPage onGoSignIn={() => navigateTo('signin')} user={user} />
+  }
+  if (routeName === 'orders') {
+    return <OrdersPage user={user} onGoSignIn={() => navigateTo('signin')} />
+  }
+  if (routeName === 'wishlist') {
+    return <WishlistPage user={user} onGoSignIn={() => navigateTo('signin')} />
+  }
+  if (routeName === 'certificate') {
+    return <CertificatePage courseId={route.id} user={user} onGoSignIn={() => navigateTo('signin')} />
   }
 
   if (routeName === 'booking') {
