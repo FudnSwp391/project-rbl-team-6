@@ -246,10 +246,22 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
       const rating = parseFloat(tutor.avg_rating) || 0;
       const reviewCount = parseInt(tutor.review_count) || 0;
 
-      // 0. Hard Filter for Offline Request
       if (isOfflineRequest && reqCity) {
         if (!tCity.includes(reqCity) && !tLoc.includes(reqCity)) {
           return; // Bắt buộc phải có tutor ở cùng thành phố
+        }
+      }
+
+      // 0.5 Hard Filter for Teaching Format
+      if (reqLearningFormat && reqLearningFormat !== 'both') {
+        const hasOnline = tTeachingMethods.includes('online') || tTeachingMethods.includes('trực tuyến') || tTeachingMethods.includes('cả hai');
+        const hasOffline = tTeachingMethods.includes('offline') || tTeachingMethods.includes('trực tiếp') || tTeachingMethods.includes('cả hai');
+        
+        if (reqLearningFormat === 'online' && !hasOnline) {
+          return; // Require online tutor
+        }
+        if (reqLearningFormat === 'offline' && !hasOffline) {
+          return; // Require offline tutor
         }
       }
 
@@ -462,10 +474,18 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
 
       // 6. Teaching Format & Location Match (10 điểm + Bonus)
       if (tTeachingMethods.length > 0 && reqLearningFormat) {
-        if (tTeachingMethods.includes(reqLearningFormat) || tTeachingMethods.includes("both")) {
+        const hasOnline = tTeachingMethods.includes('online') || tTeachingMethods.includes('trực tuyến') || tTeachingMethods.includes('cả hai');
+        const hasOffline = tTeachingMethods.includes('offline') || tTeachingMethods.includes('trực tiếp') || tTeachingMethods.includes('cả hai');
+
+        let isMatch = false;
+        if (reqLearningFormat === 'online' && hasOnline) isMatch = true;
+        else if (reqLearningFormat === 'offline' && hasOffline) isMatch = true;
+        else if (reqLearningFormat === 'both' && (hasOnline || hasOffline)) isMatch = true;
+
+        if (isMatch) {
           score += 10;
           componentScores.teachingFormat += 10;
-          const formatStr = reqLearningFormat === 'online' ? 'Trực tuyến' : 'Trực tiếp';
+          const formatStr = reqLearningFormat === 'online' ? 'Trực tuyến' : (reqLearningFormat === 'offline' ? 'Trực tiếp' : 'Trực tuyến/Trực tiếp');
           reasonsObj.push({ priority: 6, text: `Hỗ trợ học ${formatStr} đúng theo nhu cầu của bạn` });
         }
       }

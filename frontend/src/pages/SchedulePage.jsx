@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
+import { useAuth } from '../AuthContext';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const SchedulePage = () => {
+  const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -18,14 +22,18 @@ const SchedulePage = () => {
   const fetchSchedule = async () => {
     try {
       setLoading(true);
-      const studentId = '00000000-0000-0000-0000-000000000001'; // Fallback test ID
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      const studentId = user.id;
       const queryParams = new URLSearchParams();
       if (searchQuery) queryParams.append('search', searchQuery);
       if (statusFilter !== 'All Status') queryParams.append('status', statusFilter);
       if (subjectFilter !== 'All Subjects') queryParams.append('subject', subjectFilter);
       if (tutorFilter !== 'All Tutors') queryParams.append('tutor', tutorFilter);
 
-      const res = await fetch(`http://localhost:5000/api/students/${studentId}/schedule?${queryParams.toString()}`);
+      const res = await fetch(`${API_BASE}/api/students/${studentId}/schedule?${queryParams.toString()}`);
       if (!res.ok) throw new Error('Failed to fetch schedule data');
       const json = await res.json();
       if (json.success) {
@@ -63,7 +71,7 @@ const SchedulePage = () => {
 
   const markCompleted = async (sessionId) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/schedule/sessions/${sessionId}/status`, {
+      const res = await fetch(`${API_BASE}/api/schedule/sessions/${sessionId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

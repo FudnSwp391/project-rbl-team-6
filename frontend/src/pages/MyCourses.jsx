@@ -135,7 +135,7 @@ export default function MyCourses() {
                 <span className="material-symbols-outlined text-[64px] text-outline-variant mb-md">school</span>
                 <h3 className="text-headline-sm font-bold text-on-surface mb-xs">Không tìm thấy khóa học nào</h3>
                 <p className="text-body-md text-secondary mb-md">Bạn chưa đăng ký khóa học nào hoặc không có khóa học khớp với bộ lọc.</p>
-                <button className="px-xl py-sm bg-primary text-white font-label-md rounded-full hover:bg-primary-container transition-colors" onClick={() => window.location.hash = '/'}>
+                <button className="px-xl py-sm bg-primary text-white font-label-md rounded-full hover:bg-primary-container transition-colors" onClick={() => window.location.hash = '/courses'}>
                   Khám phá khóa học
                 </button>
               </div>
