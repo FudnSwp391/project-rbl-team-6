@@ -19,6 +19,7 @@ function getSearchFromHash() {
 
 export default function CourseMarketplace() {
   const { user } = useAuth();
+  const [featuredCourses, setFeaturedCourses] = useState([]);
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -28,6 +29,7 @@ export default function CourseMarketplace() {
   
   // Search & Filters state
   const [search, setSearch] = useState(() => getSearchFromHash());
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedFormat, setSelectedFormat] = useState('all');
   const [sortOption, setSortOption] = useState('newest');
@@ -46,7 +48,8 @@ export default function CourseMarketplace() {
 
   useEffect(() => {
     const handleHashChange = () => {
-      setSearch(getSearchFromHash());
+      const newSearch = getSearchFromHash();
+      setSearch(newSearch);
       setIsStandalone(window.location.hash.startsWith('#/courses'));
     };
     window.addEventListener('hashchange', handleHashChange);
@@ -54,9 +57,35 @@ export default function CourseMarketplace() {
   }, []);
 
   useEffect(() => {
-    const fetchCourses = async () => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    const fetchFeatured = async () => {
       try {
-        const response = await apiRequest('/api/courses');
+        const response = await apiRequest('/api/courses?sort=rating_desc&limit=3');
+        setFeaturedCourses(Array.isArray(response) ? response : response?.data || []);
+      } catch (err) {
+        console.error('Failed to load featured courses:', err);
+      }
+    };
+    fetchFeatured();
+  }, []);
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      setLoading(true);
+      try {
+        const queryParams = new URLSearchParams();
+        if (debouncedSearch) queryParams.append('search', debouncedSearch);
+        if (selectedSubject && selectedSubject !== 'all') queryParams.append('subject', selectedSubject);
+        if (selectedFormat && selectedFormat !== 'all') queryParams.append('format', selectedFormat);
+        if (sortOption) queryParams.append('sort', sortOption);
+        
+        const response = await apiRequest(`/api/courses?${queryParams.toString()}`);
         setCourses(Array.isArray(response) ? response : response?.data || []);
       } catch (err) {
         setError(err.message || 'Không thể tải danh sách khóa học.');
@@ -65,37 +94,9 @@ export default function CourseMarketplace() {
       }
     };
     fetchCourses();
-  }, []);
+  }, [debouncedSearch, selectedSubject, selectedFormat, sortOption]);
 
-  let filteredCourses = courses.filter(c => {
-    const matchSearch = !search || 
-      (c.title || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.subject || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.tutor_name || c.tutorName || '').toLowerCase().includes(search.toLowerCase());
-    
-    const matchFormat = selectedFormat === 'all' || 
-      (c.learning_mode || c.format || '').toLowerCase().includes(selectedFormat.toLowerCase());
-
-    const matchSubject = selectedSubject === 'all' || 
-      (c.subject || '').toLowerCase().includes(selectedSubject.toLowerCase());
-
-    return matchSearch && matchFormat && matchSubject;
-  });
-
-  // Sorting
-  filteredCourses.sort((a, b) => {
-    if (sortOption === 'price_asc') return (a.price || 0) - (b.price || 0);
-    if (sortOption === 'price_desc') return (b.price || 0) - (a.price || 0);
-    if (sortOption === 'rating_desc') return (b.rating || b.averageRating || 0) - (a.rating || a.averageRating || 0);
-    // newest (mocking by id descending)
-    return b.id - a.id;
-  });
-
-  // Featured courses: top 3 by rating
-  const featuredCourses = [...courses]
-    .sort((a, b) => (b.rating || b.averageRating || 0) - (a.rating || a.averageRating || 0))
-    .slice(0, 3);
-  const coursesToDisplay = isStandalone || showAllCourses ? filteredCourses : filteredCourses.slice(0, 3);
+  const coursesToDisplay = isStandalone || showAllCourses ? courses : courses.slice(0, 3);
   const hasActiveFilters = Boolean(search) || selectedSubject !== 'all' || selectedFormat !== 'all';
 
   const clearFilters = () => {

@@ -336,6 +336,18 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
               </button>
             </div>
           </div>
+          {/* Matching flow CTA */}
+          <div className="mt-3 flex items-center justify-center gap-2 text-sm text-[#444653]">
+            <span className="material-symbols-outlined text-[18px] text-[#00288e]">auto_awesome</span>
+            <span>Muốn được gợi ý gia sư phù hợp nhất?</span>
+            <button
+              onClick={() => window.location.hash = '/tutor-request'}
+              className="text-[#00288e] font-semibold hover:underline flex items-center gap-1"
+            >
+              Tạo yêu cầu tìm gia sư
+              <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+            </button>
+          </div>
         </section>
 
         <div className="flex flex-col lg:flex-row gap-10">

@@ -6,6 +6,7 @@ import { useEffect, useState, useRef } from 'react'
 import './App.css'
 import SignIn from './SignIn'
 import SignUp from './SignUp'
+import CompleteStudentProfile from './pages/CompleteStudentProfile'
 import AdminDashboard from './AdminDashboard'
 import StudentDashboard from './StudentDashboard'
 import TutorDashboard from './TutorDashboard'
@@ -17,6 +18,11 @@ import QuizTaking from './QuizTaking'
 import QuizResult from './QuizResult'
 import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
+import FindTutorRequest from './pages/FindTutorRequest'
+import TutorMatchesPage from './pages/TutorMatchesPage'
+import MyTutorRequests from './pages/MyTutorRequests'
+import MyTutorsPage from './pages/MyTutorsPage'
+import TutorInteractionPage from './pages/TutorInteractionPage'
 import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
@@ -110,6 +116,7 @@ const getRouteFromHash = () => {
   normalized = normalized.split('?')[0]
   if (normalized === '/signin')    return { name: 'signin' }
   if (normalized === '/signup')    return { name: 'signup' }
+  if (normalized === '/complete-student-profile') return { name: 'complete-student-profile' }
   if (normalized === '/admin')     return { name: 'admin' }
   if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }
   if (normalized === '/tutor')     return { name: 'tutor' }
@@ -123,6 +130,14 @@ const getRouteFromHash = () => {
   if (tutorDetailMatch) return { name: 'tutor-detail', id: tutorDetailMatch[1] }
   if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
+  if (normalized === '/tutor-request') return { name: 'tutor-request' }
+  if (normalized === '/tutor-matches') return { name: 'tutor-matches' }
+  if (normalized === '/my-tutor-requests') return { name: 'my-tutor-requests' }
+  if (normalized === '/my-tutors') return { name: 'my-tutors' }
+  
+  const tutorInteractionMatch = normalized.match(/^\/tutor-interaction\/([^/]+)$/)
+  if (tutorInteractionMatch) return { name: 'tutor-interaction', id: tutorInteractionMatch[1] }
+
   if (normalized === '/subjects')  return { name: 'subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
@@ -359,7 +374,12 @@ function HomePage({ onGoSignIn }) {
                     flexDirection: 'column',
                     overflow: 'hidden'
                   }}>
-                    <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Dashboard</a>
+                    <a 
+                      href={user?.role === 'admin' ? '#/admin' : user?.role === 'tutor' ? '#/tutor' : user?.role === 'parent' ? '#/parent' : '#/dashboard'} 
+                      style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}
+                    >
+                      Dashboard
+                    </a>
                     <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
                     <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
                     <button 
@@ -451,11 +471,32 @@ function HomePage({ onGoSignIn }) {
                   placeholder="Học trực tuyến hay tại địa điểm cụ thể?"
                 />
               </label>
-              <button type="button" className="btn btn-primary search-button" onClick={() => window.location.hash = '#/find-tutors'}>
+              <button type="button" className="btn btn-primary search-button" onClick={() => window.location.hash = '/find-tutors'}>
                 Tìm Kiếm
               </button>
             </div>
-            <div className="hero-trust">
+            
+            <div style={{ marginTop: '20px', textAlign: 'center' }}>
+              <p style={{ marginBottom: '10px', color: '#00288e', fontWeight: 600 }}>Hoặc để chúng tôi gợi ý cho bạn:</p>
+              <button 
+                type="button" 
+                onClick={() => window.location.hash = '/tutor-request'}
+                style={{ 
+                  padding: '12px 24px', 
+                  backgroundColor: '#ffffff', 
+                  color: '#00288e', 
+                  borderRadius: '8px', 
+                  fontWeight: 'bold',
+                  border: 'none',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                }}
+              >
+                Đăng ký tìm gia sư phù hợp
+              </button>
+            </div>
+
+            <div className="hero-trust" style={{ marginTop: '30px' }}>
               <div className="hero-avatars">
                 <span style={{ background: 'linear-gradient(135deg,#4c6ef5,#7c5cff)' }}>K</span>
                 <span style={{ background: 'linear-gradient(135deg,#f6d98c,#e0a82e)' }}>M</span>
@@ -680,6 +721,7 @@ function App() {
   const navigateTo = (nextRoute) => {
     if (nextRoute === 'signin')    { window.location.hash = '/signin';    return }
     if (nextRoute === 'signup')    { window.location.hash = '/signup';    return }
+    if (nextRoute === 'complete-student-profile') { window.location.hash = '/complete-student-profile'; return }
     if (nextRoute === 'admin')     { window.location.hash = '/admin';     return }
     if (nextRoute === 'dashboard') { window.location.hash = '/dashboard'; return }
     if (nextRoute === 'mycourses') { window.location.hash = '/my-courses'; return }
@@ -701,6 +743,11 @@ function App() {
   // ── Route: Sign Up ──
   if (routeName === 'signup') {
     return <SignUp onSwitchToSignIn={() => navigateTo('signin')} onGoHome={() => navigateTo('home')} />
+  }
+
+  // ── Route: Complete Student Profile ──
+  if (routeName === 'complete-student-profile') {
+    return <CompleteStudentProfile onGoHome={() => navigateTo('home')} />
   }
 
   // ── Route: Admin Dashboard ──
@@ -823,6 +870,21 @@ function App() {
   }
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'tutor-request') {
+    return <FindTutorRequest onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'tutor-matches') {
+    return <TutorMatchesPage />
+  }
+  if (routeName === 'my-tutor-requests') {
+    return <MyTutorRequests />
+  }
+  if (routeName === 'my-tutors') {
+    return <MyTutorsPage />
+  }
+  if (routeName === 'tutor-interaction') {
+    return <TutorInteractionPage />
   }
   if (routeName === 'courses') {
     return <CoursesPage user={user} />

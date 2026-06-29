@@ -6,6 +6,7 @@
  */
 const express = require("express");
 const pool = require("../db");
+const { requireAuth, requireClassMember } = require("../middleware/auth");
 const { generatePlan } = require("../services/learningPathService");
 
 const router = express.Router();
@@ -35,8 +36,9 @@ async function classExists(classId) {
 // GET /api/classes/:classId/learning-path/:studentId
 // Lấy learning path hiện tại của học sinh trong class
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/classes/:classId/learning-path/:studentId", async (req, res) => {
-  const { classId, studentId } = req.params;
+router.get("/api/classes/:classId/learning-path/:studentId", requireAuth, requireClassMember, async (req, res) => {
+  const { classId } = req.params;
+  const studentId = req.user.userId; // Override
 
   if (!isValidUUID(classId)) {
     return res
@@ -98,9 +100,16 @@ router.get("/api/classes/:classId/learning-path/:studentId", async (req, res) =>
 // POST /api/classes/:classId/learning-path/generate
 // Tạo learning path mới cho học sinh
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/api/classes/:classId/learning-path/generate", async (req, res) => {
+
+router.post("/api/classes/:classId/learning-path/generate", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
-  const { student_id, current_level, target_level, goal, duration_weeks } = req.body || {};
+  const {
+    current_level,
+    target_level,
+    goal,
+    duration_weeks,
+  } = req.body || {};
+  const student_id = req.user.userId; // Override
 
   if (!isValidUUID(classId)) {
     return res

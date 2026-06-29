@@ -13,7 +13,9 @@ import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
 import SchedulePage from './components/SchedulePage'
+import StudentProfilePage from './pages/StudentProfilePage'
 import { getStudentBookings, confirmLessonComplete, reportTutor } from './services/api'
+
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
 const MY_TUTORS = [
   {
@@ -73,7 +75,7 @@ export default function StudentDashboard() {
   const initials = displayName.charAt(0).toUpperCase()
 
   return (
-    <div className="bg-background text-on-background font-body-md text-body-md antialiased flex h-screen overflow-hidden">
+    <div className={`bg-background text-on-background font-body-md text-body-md antialiased ${activeSection === 'schedule' ? 'block min-h-screen' : 'flex h-screen overflow-hidden'}`}>
 
       <StudentSidebar
         sidebarOpen={sidebarOpen}
@@ -83,7 +85,7 @@ export default function StudentDashboard() {
       />
 
       {/* ── Main content wrapper ── */}
-      <div className="flex-1 flex flex-col lg:ml-64 h-full overflow-hidden">
+      <div className={`lg:ml-64 ${activeSection === 'schedule' ? 'block min-h-screen' : 'flex-1 flex flex-col h-full overflow-hidden'}`}>
 
         {/* ── Top Bar ── */}
         <header className="w-full h-16 bg-surface/90 backdrop-blur-sm shadow-sm flex items-center z-30 shrink-0 sticky top-0 border-b border-surface-dim/30">
@@ -147,12 +149,17 @@ export default function StudentDashboard() {
         </header>
 
         {/* ── Main canvas ── */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-md lg:p-lg">
-          <div className="max-w-container-max mx-auto flex flex-col gap-xl pb-xl">
+        <main className={`overflow-x-hidden p-md lg:p-lg ${activeSection === 'schedule' ? 'block' : 'flex-1 overflow-y-auto'}`}>
+          <div className={`max-w-container-max mx-auto flex flex-col gap-xl ${activeSection === 'schedule' ? 'pb-8' : 'pb-xl'}`}>
 
             {/* ── Assessments Section ── */}
             {activeSection === 'assessments' && (
               <QuizList token={token} />
+            )}
+
+            {/* ── Profile Section ── */}
+            {activeSection === 'profile' && (
+              <StudentProfilePage />
             )}
 
             {/* ── AI Practice Section ── */}
@@ -259,7 +266,7 @@ export default function StudentDashboard() {
               <div className="flex justify-between items-center mb-md">
                 <h3 className="font-headline-md text-headline-md text-on-surface">Gia Sư Của Tôi</h3>
                 <a
-                  href="#"
+                  href="#/find-tutors"
                   className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
                 >
                   Xem Tất Cả
@@ -274,16 +281,19 @@ export default function StudentDashboard() {
 
                 {/* Find New Tutor CTA */}
                 <a
-                  href="#/"
-                  className="bg-surface-container-lowest/70 backdrop-blur-md border-2 border-dashed border-outline-variant/50 rounded-xl p-md flex flex-col items-center justify-center text-center bg-transparent hover:bg-surface-container-lowest/50 hover:border-primary/50 transition-all duration-300 cursor-pointer group"
+                  href="#/tutor-request"
+                  className="bg-white border-2 border-dashed border-[#c4c5d5] rounded-xl p-6 flex flex-col items-center justify-center text-center hover:border-primary hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer group min-h-[250px]"
                 >
-                  <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-sm group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors duration-300">
-                    <span className="material-symbols-outlined text-[28px]">person_add</span>
+                  <div className="w-16 h-16 rounded-full bg-[#f3f4f6] flex items-center justify-center text-primary mb-4 group-hover:bg-primary group-hover:text-white transition-colors duration-300">
+                    <span className="material-symbols-outlined text-[28px]">person_search</span>
                   </div>
-                  <h4 className="font-label-md text-label-md text-on-surface mb-xs">Tìm Gia Sư</h4>
-                  <p className="font-label-sm text-label-sm text-on-surface-variant">
-                    Khám phá các gia sư hiện có
+                  <h4 className="text-[16px] font-bold text-[#191c1e] mb-2">Tạo yêu cầu tìm gia sư</h4>
+                  <p className="text-[14px] text-[#5d5f5f] mb-6 leading-relaxed px-2">
+                    EduX sẽ gợi ý gia sư phù hợp với nhu cầu học tập của bạn.
                   </p>
+                  <button className="bg-primary/10 text-primary font-semibold text-[14px] px-6 py-2.5 rounded-full group-hover:bg-primary group-hover:text-white transition-all shadow-sm">
+                    Bắt đầu
+                  </button>
                 </a>
               </div>
             </div>

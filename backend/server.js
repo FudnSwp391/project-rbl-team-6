@@ -504,7 +504,7 @@ app.post("/api/auth/check-email", async (req, res) => {
 // ─É─âng k├╜ bß║▒ng email + password
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { fullName, email, password, role } = req.body || {};
+    const { fullName, email, password, role, phone, city, avatarUrl } = req.body || {};
 
     // Validate
     if (!fullName || !email || !password) {
@@ -543,10 +543,10 @@ app.post("/api/auth/register", async (req, res) => {
 
     // Tß║ío user mß╗¢i
     const result = await pool.query(
-      `INSERT INTO users (full_name, email, password_hash, role)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (full_name, email, password_hash, role, phone, city, picture)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, full_name, email, role, picture, created_at`,
-      [fullName.trim(), email.toLowerCase().trim(), passwordHash, userRole]
+      [fullName.trim(), email.toLowerCase().trim(), passwordHash, userRole, phone || null, city || null, avatarUrl || null]
     );
 
     const newUser = result.rows[0];
@@ -1389,6 +1389,11 @@ const assignmentRoutes = require("./routes/assignmentRoutes");
 const discussionRoutes = require("./routes/discussionRoutes");
 const lessonRoutes = require("./routes/lessonRoutes");
 const learningPathRoutes = require("./routes/learningPathRoutes");
+const scheduleRoutes = require("./routes/scheduleRoutes");
+const tutorRequestRoutes = require("./routes/tutorRequestRoutes");
+const tutorInteractionRoutes = require("./routes/tutorInteractionRoutes");
+const studentProfileRoutes = require("./routes/studentProfileRoutes");
+const studentCourseRoutes = require("./routes/studentCourseRoutes");
 
 app.use("/api/classes/:classId/materials", materialRoutes);
 app.use("/api/classes", classRoutes);
@@ -1396,6 +1401,11 @@ app.use("/", assignmentRoutes);
 app.use("/", discussionRoutes);
 app.use("/", lessonRoutes);
 app.use("/", learningPathRoutes);
+app.use("/api", scheduleRoutes);
+app.use("/", tutorRequestRoutes);
+app.use("/", tutorInteractionRoutes);
+app.use("/api/student/profile", studentProfileRoutes);
+app.use("/", studentCourseRoutes);
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
@@ -3175,17 +3185,61 @@ app.get('/api/tutor/grading-queue/:type/:attemptId', verifyToken, requireTutor, 
 
 
 // ── GET /api/courses ──────────────────────────────────────────────────────────
-// Lấy danh sách khóa học cho marketplace
+// Lấy danh sách khóa học cho marketplace (có filter)
 app.get("/api/courses", async (req, res) => {
+  const { search = "", subject = "", level = "", format = "", sort = "newest", min_rating = "", limit = "100" } = req.query;
+  const cond = ["c.status IN ('published', 'approved', 'active')"];
+  const vals = [];
+  let i = 1;
+
+  if (search.trim()) { 
+    cond.push(`(c.title ILIKE $${i} OR c.description ILIKE $${i} OR c.subject ILIKE $${i} OR u.full_name ILIKE $${i})`); 
+    vals.push(`%${search.trim()}%`); 
+    i++; 
+  }
+  
+  if (subject.trim() && subject.trim().toLowerCase() !== 'all') { 
+    cond.push(`c.subject ILIKE $${i}`); 
+    vals.push(`%${subject.trim()}%`); 
+    i++; 
+  }
+  
+  if (level.trim() && level.trim().toLowerCase() !== 'all') { 
+    cond.push(`c.level ILIKE $${i}`);   
+    vals.push(`%${level.trim()}%`); 
+    i++; 
+  }
+
+  if (format.trim() && format.trim().toLowerCase() !== 'all') { 
+    cond.push(`(c.learning_mode ILIKE $${i} OR c.format ILIKE $${i})`);   
+    vals.push(`%${format.trim()}%`); 
+    i++; 
+  }
+  
+  if (min_rating && !isNaN(min_rating)) { 
+    cond.push(`c.avg_rating >= $${i}`); 
+    vals.push(Number(min_rating)); 
+    i++; 
+  }
+  
+  const order = { 
+    price_asc: "c.price ASC", 
+    price_desc: "c.price DESC", 
+    rating_desc: "COALESCE(c.avg_rating, 0) DESC, c.created_at DESC", 
+    newest: "c.created_at DESC" 
+  }[sort] || "c.created_at DESC";
+
   try {
-    const result = await pool.query(
+    const r = await pool.query(
       `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture 
        FROM courses c
-       JOIN users u ON c.tutor_id = u.id
-       WHERE c.status = 'approved' OR c.status = 'published' OR c.status = 'active'
-       ORDER BY c.created_at DESC`
+       LEFT JOIN users u ON c.tutor_id = u.id
+       WHERE ${cond.join(" AND ")}
+       ORDER BY ${order}
+       LIMIT $${i}`,
+       [...vals, parseInt(limit)]
     );
-    return res.json(result.rows);
+    return res.json(r.rows);
   } catch (err) {
     console.error("GET /api/courses error:", err);
     return res.status(500).json({ message: "Server error." });
@@ -3718,6 +3772,129 @@ app.get("/api/tutors", async (req, res) => {
   }
 });
 
+// ── POST /api/tutors/matches ──────────────────────────────────────────────────
+// Trả danh sách gia sư được tính matchScore theo nhu cầu học tập từ flow
+// #/tutor-request. Không cần auth.
+app.post("/api/tutors/matches", async (req, res) => {
+  const {
+    subject        = "",
+    educationLevel = "",
+    grade          = "",
+    learningFormat = "",
+    city           = "",
+    budgetMin,
+    budgetMax,
+  } = req.body || {};
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         u.id,
+         COALESCE(
+           NULLIF(TRIM(COALESCE(tp.display_name, '')), ''),
+           NULLIF(TRIM(COALESCE(tp.first_name,'') || ' ' || COALESCE(tp.last_name,'')), ''),
+           u.full_name
+         ) AS name,
+         COALESCE(tp.profile_photo_url, u.picture) AS avatar_url,
+         0   AS rating,
+         0   AS review_count,
+         tp.bio,
+         tp.subjects,
+         tp.experience_years,
+         tp.hourly_rate,
+         tp.city,
+         tp.teaching_methods
+       FROM tutor_profiles tp
+       JOIN users u ON tp.user_id = u.id
+       WHERE tp.status = 'approved'
+       ORDER BY tp.created_at DESC
+       LIMIT 50`
+    );
+
+    const minBudget = budgetMin !== undefined && budgetMin !== null && budgetMin !== "" ? parseInt(budgetMin) : null;
+    const maxBudget = budgetMax !== undefined && budgetMax !== null && budgetMax !== "" ? parseInt(budgetMax) : null;
+
+    const tutors = result.rows.map(t => {
+      let score = 0;
+
+      // Đúng môn học (+35)
+      if (subject && t.subjects) {
+        if (t.subjects.toLowerCase().includes(subject.toLowerCase())) score += 35;
+      }
+
+      // Hình thức học phù hợp (+15)
+      if (learningFormat && t.teaching_methods) {
+        const methods = (Array.isArray(t.teaching_methods) ? t.teaching_methods : [])
+          .join(" ").toLowerCase();
+        const onlineKw  = ["online", "tuyến"];
+        const offlineKw = ["offline", "tiếp"];
+        if (learningFormat === "online"  && onlineKw.some(k => methods.includes(k)))  score += 15;
+        if (learningFormat === "offline" && offlineKw.some(k => methods.includes(k))) score += 15;
+        if (learningFormat === "both")                                                 score += 15;
+      }
+
+      // Học phí trong ngân sách (+15)
+      if (t.hourly_rate !== null && t.hourly_rate !== undefined) {
+        const rate = parseFloat(t.hourly_rate);
+        const okMin = minBudget === null || rate >= minBudget;
+        const okMax = maxBudget === null || rate <= maxBudget;
+        if (okMin && okMax) score += 15;
+      }
+
+      // Cùng khu vực (+10)
+      if (city && t.city) {
+        const tc = t.city.toLowerCase();
+        const rc = city.toLowerCase();
+        if (tc.includes(rc) || rc.includes(tc)) score += 10;
+      }
+
+      // Kinh nghiệm bonus (max +15, 3 điểm/năm)
+      const exp = parseInt(t.experience_years) || 0;
+      score += Math.min(exp * 3, 15);
+
+      // Có đánh giá bonus (+5)
+      if (parseFloat(t.rating) > 0) score += 5;
+
+      score = Math.min(score, 100);
+
+      return {
+        id:             t.id,
+        name:           t.name || "Gia sư EduX",
+        avatarUrl:      t.avatar_url || null,
+        rating:         parseFloat(t.rating) || 0,
+        reviewCount:    t.review_count || 0,
+        bio:            t.bio || null,
+        subjects:       t.subjects || null,
+        experienceYears: t.experience_years || null,
+        pricePerSession: t.hourly_rate ? Math.round(parseFloat(t.hourly_rate)) : null,
+        location:       t.city || null,
+        teachingFormats: Array.isArray(t.teaching_methods) ? t.teaching_methods : [],
+        matchScore:     score,
+      };
+    });
+
+    // Sắp xếp theo matchScore giảm dần
+    tutors.sort((a, b) => b.matchScore - a.matchScore);
+
+    // Fallback khi DB chưa có tutor được duyệt
+    if (tutors.length === 0) {
+      const fallback = [
+        { id: "fallback-1", name: "Lê Minh Anh",       avatarUrl: null, rating: 4.8, reviewCount: 12, bio: "Gia sư Toán – Lý 7 năm kinh nghiệm, phương pháp trực quan.", subjects: "Toán, Vật Lý", experienceYears: 7,  pricePerSession: 250000, location: "Hà Nội",    teachingFormats: ["Trực tuyến", "Trực tiếp"], matchScore: 90, _isFallback: true },
+        { id: "fallback-2", name: "Nguyễn Trần Hưng",  avatarUrl: null, rating: 4.6, reviewCount: 8,  bio: "Chuyên luyện thi THPT Quốc Gia môn Toán và Hóa học.", subjects: "Toán, Hóa", experienceYears: 5,  pricePerSession: 200000, location: "TP. HCM",   teachingFormats: ["Trực tuyến"],               matchScore: 82, _isFallback: true },
+        { id: "fallback-3", name: "Trần Thùy Dương",   avatarUrl: null, rating: 4.9, reviewCount: 20, bio: "Gia sư Tiếng Anh IELTS, cựu sinh viên ĐH Ngoại Thương.", subjects: "Tiếng Anh", experienceYears: 6,  pricePerSession: 300000, location: "Hà Nội",    teachingFormats: ["Trực tuyến", "Trực tiếp"], matchScore: 78, _isFallback: true },
+        { id: "fallback-4", name: "Phạm Văn Phúc",     avatarUrl: null, rating: 4.5, reviewCount: 6,  bio: "Gia sư Toán Tiểu học và THCS, kiên nhẫn với học sinh.",  subjects: "Toán",       experienceYears: 3,  pricePerSession: 150000, location: "Đà Nẵng",   teachingFormats: ["Trực tiếp"],                matchScore: 70, _isFallback: true },
+      ];
+      console.log("[fallback] Không có tutor đã duyệt trong DB – trả về dữ liệu mẫu.");
+      return res.json({ tutors: fallback, total: fallback.length, _isFallback: true });
+    }
+
+    return res.json({ tutors, total: tutors.length });
+  } catch (err) {
+    console.error("POST /api/tutors/matches error:", err.message);
+    return res.status(500).json({ message: "Server error.", detail: err.message });
+  }
+});
+
 // ── GET /api/tutors/:id ───────────────────────────────────────────────────────
 // Trả về hồ sơ chi tiết của một gia sư theo user ID (public, không cần auth)
 app.get("/api/tutors/:id", async (req, res) => {
@@ -3731,13 +3908,13 @@ app.get("/api/tutors/:id", async (req, res) => {
          tp.education, tp.language, tp.teaching_style, tp.qualifications,
          tp.first_name, tp.last_name, tp.display_name, tp.phone,
          tp.headline, tp.teaching_methods, tp.suitable_students, tp.availability,
-         COALESCE(tp.total_students, 0) AS total_students,
+         COALESCE(tp.total_students, 0) AS total_students, tp.completed_lessons_count,
          COALESCE(
-           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = u.id),
+           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = tp.id),
            0
          ) AS avg_r,
          COALESCE(
-           (SELECT COUNT(*) FROM reviews r WHERE r.tutor_id = u.id),
+           (SELECT COUNT(*) FROM reviews r WHERE r.tutor_id = tp.id),
            0
          ) AS review_count
        FROM tutor_profiles tp
@@ -3749,35 +3926,52 @@ app.get("/api/tutors/:id", async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Tutor not found." });
     }
-    return res.json(result.rows[0]);
+
+    const tutorInfo = result.rows[0];
+
+    // Fetch reviews for this tutor
+    const reviewsRes = await pool.query(
+      `SELECT r.id, r.rating, r.comment, r.created_at, u.full_name as reviewer_name, u.picture as reviewer_avatar
+       FROM reviews r
+       JOIN users u ON r.user_id = u.id
+       WHERE r.tutor_id = (SELECT id FROM tutor_profiles WHERE user_id = $1)
+       ORDER BY r.created_at DESC`,
+      [id]
+    );
+
+    // Map to required JSON structure
+    const responseData = {
+      id: tutorInfo.id,
+      full_name: tutorInfo.display_name || tutorInfo.first_name || tutorInfo.full_name || "Gia sư EduX",
+      avatar: tutorInfo.profile_photo_url || tutorInfo.picture || null,
+      subjects: tutorInfo.subjects ? tutorInfo.subjects.split(',').map(s => s.trim()) : [],
+      bio: tutorInfo.bio || "",
+      experience_years: tutorInfo.experience_years || 0,
+      hourly_rate: tutorInfo.hourly_rate || null,
+      teaching_methods: Array.isArray(tutorInfo.teaching_methods) ? tutorInfo.teaching_methods : [],
+      availability: tutorInfo.availability && Object.keys(tutorInfo.availability).length > 0 ? tutorInfo.availability : [],
+      rating: parseFloat(tutorInfo.avg_r) || 0,
+      review_count: parseInt(tutorInfo.review_count) || 0,
+      reviews: reviewsRes.rows.map(r => ({
+        id: r.id,
+        reviewer_name: r.reviewer_name || "Học viên ẩn danh",
+        reviewer_avatar: r.reviewer_avatar || null,
+        rating: r.rating,
+        comment: r.comment || "",
+        created_at: r.created_at
+      })),
+      total_students: parseInt(tutorInfo.total_students) || 0,
+      completed_lessons_count: parseInt(tutorInfo.completed_lessons_count) || 0
+    };
+
+    return res.json(responseData);
   } catch (err) {
     console.error("GET /api/tutors/:id error:", err.message);
     return res.status(500).json({ message: "Server error." });
   }
 });
 
-// ── GET /api/courses (TV3) — danh sách khóa học published + lọc ──────────────
-app.get("/api/courses", async (req, res) => {
-  const { search = "", subject = "", level = "", sort = "newest", min_rating = "" } = req.query;
-  const cond = ["c.status = 'published'"]; const vals = []; let i = 1;
-  if (search.trim())  { cond.push(`(c.title ILIKE $${i} OR c.description ILIKE $${i} OR c.subject ILIKE $${i})`); vals.push(`%${search.trim()}%`); i++; }
-  if (subject.trim()) { cond.push(`c.subject ILIKE $${i}`); vals.push(`%${subject.trim()}%`); i++; }
-  if (level.trim())   { cond.push(`c.level ILIKE $${i}`);   vals.push(`%${level.trim()}%`); i++; }
-  if (min_rating && !isNaN(min_rating)) { cond.push(`c.avg_rating >= $${i}`); vals.push(Number(min_rating)); i++; }
-  const order = { price_asc: "c.price ASC", price_desc: "c.price DESC", rating: "c.avg_rating DESC NULLS LAST", newest: "c.created_at DESC" }[sort] || "c.created_at DESC";
-  try {
-    const r = await pool.query(
-      `SELECT c.id, c.title, c.description, c.subject, c.level, c.thumbnail_url,
-              c.price, c.original_price, c.avg_rating, c.review_count, c.total_lessons, c.created_at
-       FROM courses c WHERE ${cond.join(" AND ")} ORDER BY ${order} LIMIT 60`,
-      vals
-    );
-    return res.json({ courses: r.rows, total: r.rowCount });
-  } catch (e) {
-    console.error("GET /api/courses:", e.message);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
+// (Deleted duplicated GET /api/courses TV3)
 
 // ── POST /api/ai-suggest (TV3) ────────────────────────────────────────────────
 // Body { prompt } → query gia sư approved → AI chọn gia sư phù hợp.
@@ -4174,7 +4368,19 @@ async function startServer() {
     `);
     console.log("✅ DB migration: users.is_banned ready");
   } catch (err) {
-    console.error("⚠️  DB migration warning:", err.message);
+    console.error("❌  DB migration warning:", err.message);
+  }
+
+  // Auto-migrate: add phone and city columns to users
+  try {
+    await pool.query(`
+      ALTER TABLE users 
+        ADD COLUMN IF NOT EXISTS phone TEXT,
+        ADD COLUMN IF NOT EXISTS city TEXT
+    `);
+    console.log("✔️ DB migration: users.phone and users.city ready");
+  } catch (err) {
+    console.error("❌  DB migration warning:", err.message);
   }
 
   // Auto-migrate: create login_logs table
