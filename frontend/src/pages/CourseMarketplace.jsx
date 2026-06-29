@@ -416,7 +416,7 @@ export default function CourseMarketplace() {
                   </div>
                 </div>
 
-                {filteredCourses.length === 0 ? (
+                {coursesToDisplay.length === 0 ? (
                   <div className="text-center py-20 bg-white rounded-2xl border border-gray-100 shadow-sm max-w-2xl mx-auto">
                     <span className="material-symbols-outlined text-[56px] text-gray-300 mb-4">search_off</span>
                     <h3 className="text-xl font-bold text-primary mb-2">Chưa tìm thấy kết quả</h3>
