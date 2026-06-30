@@ -14,10 +14,6 @@ export default function StudentProfilePage() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
 
-  useEffect(() => {
-    fetchProfile()
-  }, [])
-
   const fetchProfile = async () => {
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/student/profile`, {
@@ -39,6 +35,12 @@ export default function StudentProfilePage() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    fetchProfile()
+  }, [])
+
+
 
   const handleChange = (e) => {
     const { name, value } = e.target

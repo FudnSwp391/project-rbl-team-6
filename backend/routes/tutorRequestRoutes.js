@@ -281,7 +281,7 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
       // FIX LOGIC: Bắt buộc tutor phải dạy đúng khối lớp. Nếu không khớp, loại bỏ hoàn toàn.
       if (reqGrade) {
         let gradeMatched = false;
-        const gradeStr = reqGrade.replace(/lớp/g, '').trim();
+        const gradeStr = reqGrade.replace(/lớp\s*/g, '').trim();
         const gradeNum = parseInt(gradeStr);
         
         let targetLevels = [reqGrade];
@@ -292,6 +292,9 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
             if (gradeNum >= 6 && gradeNum <= 9) targetLevels.push("cấp 2", "trung học cơ sở", "thcs");
             if (gradeNum >= 10 && gradeNum <= 12) targetLevels.push("cấp 3", "trung học phổ thông", "thpt", "đại học");
         } else {
+            if (reqGrade.includes("cấp 1") || reqGrade.includes("tiểu học")) targetLevels.push("cấp 1", "tiểu học");
+            if (reqGrade.includes("cấp 2") || reqGrade.includes("thcs") || reqGrade.includes("trung học cơ sở")) targetLevels.push("cấp 2", "thcs", "trung học cơ sở");
+            if (reqGrade.includes("cấp 3") || reqGrade.includes("thpt") || reqGrade.includes("trung học phổ thông")) targetLevels.push("cấp 3", "thpt", "trung học phổ thông");
             if (reqGrade.includes("đại học") || reqGrade.includes("sinh viên")) targetLevels.push("đại học", "sinh viên", "người đi làm");
         }
 
@@ -439,7 +442,9 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
 
               if (Array.isArray(tutorDaySlots)) {
                 tutorDaySlots.forEach(tSlot => {
-                  const [tStrStart, tStrEnd] = String(tSlot).split('-');
+                  if (!tSlot || typeof tSlot !== 'string') return;
+                  const [tStrStart, tStrEnd] = tSlot.split('-');
+                  if (!tStrStart || !tStrEnd) return;
                   const tStart = parseTime(tStrStart);
                   const tEnd = parseTime(tStrEnd);
 
@@ -468,7 +473,7 @@ router.get("/api/tutor-matches/:requestId", async (req, res) => {
             }
           }
         } catch (e) {
-          console.error("Schedule Match Error", e);
+          console.error(`Schedule Match Error for Tutor ${tutor.user_id}:`, e.message);
         }
       }
 

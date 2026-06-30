@@ -1,24 +1,24 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
-const SUBJECT_OPTIONS = ['Toán Học', 'Vật Lý', 'Hóa Học', 'Tiếng Anh', 'Lập Trình', 'Văn Học', 'Lịch Sử', 'Địa Lý'];
+const SUBJECT_OPTIONS = ['ToÃ¡n Há»c', 'Váº­t LÃ½', 'HÃ³a Há»c', 'Tiáº¿ng Anh', 'Láº­p TrÃ¬nh', 'VÄƒn Há»c', 'Lá»‹ch Sá»­', 'Äá»‹a LÃ½'];
 
 const SORT_OPTIONS = [
-  { value: 'rating',     label: 'Đánh Giá Cao Nhất' },
-  { value: 'price_asc',  label: 'Giá: Thấp đến Cao' },
-  { value: 'price_desc', label: 'Giá: Cao đến Thấp' },
-  { value: 'experience', label: 'Kinh Nghiệm Nhiều Nhất' },
-  { value: 'newest',     label: 'Mới Nhất' },
+  { value: 'rating',     label: 'ÄÃ¡nh GiÃ¡ Cao Nháº¥t' },
+  { value: 'price_asc',  label: 'GiÃ¡: Tháº¥p Ä‘áº¿n Cao' },
+  { value: 'price_desc', label: 'GiÃ¡: Cao Ä‘áº¿n Tháº¥p' },
+  { value: 'experience', label: 'Kinh Nghiá»‡m Nhiá»u Nháº¥t' },
+  { value: 'newest',     label: 'Má»›i Nháº¥t' },
 ];
 
 const MOCK_TUTORS = [
-  { id: '1', full_name: 'Dr. Sarah Jenkins', bio: 'PhD in Applied Mathematics', avg_r: 4.9, subjects: 'Giải Tích, Đại Số Tuyến Tính', hourly_rate: 65, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCp3x_VIeJloqdZlAnstQ2GLxMA8-0glYNJ5zVnQtCcqUeJ3Hr0IenHpDRQo6JOKIw9PxQWmbwOorbIlUnalTc9FPezJ6IteM_wutLhomHTTUI6y4R9WqFGg0QAEkbQiwhYXHlXEVo4cygGYqCx93DF-_MWEUrqkta7ULRML04On0HfHH9726fK1_RiSxz_FxmsiuPvVAqiUlM5pgP5lDV14GHsYHLSYqegxs0_Bf_-megtR0xOkv_grLDs2YfkE9why2KHe5Ppwyw', featured: true },
-  { id: '2', full_name: 'Mark Thompson',     bio: 'Master of Physics, MIT',          avg_r: 4.8, subjects: 'Vật Lý Lượng Tử, Toán SAT',    hourly_rate: 55, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDlmuVB8nJzFkbr1ZMsSy2gAXdaz55PyMoNSbgEAImuRLsq_wj71B0YKaHHopezS7no3S9X9blul0hS31uWXvQB5FEap2F4of7hmsRCJ51kdRji_yW7R-7epoSuvVMFRyQ0IKN0mHfqXSSgBlBNo8emjeQKtfrNgcW4pKQ-wN7YLD16duYGrmpRhjUMJfUb59WDI51cCv05b8huLdXShrLoorXEBULcXQoTTa6ZETTOFR4ooOlDoZdEFk0laUiFgbHY1XqwTZeromE' },
-  { id: '3', full_name: 'Elena Rodriguez',   bio: 'Statistics & Data Analysis Expert', avg_r: 5.0, subjects: 'Thống Kê, R / Python',          hourly_rate: 70, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDipdd276WduXsIdzZiWZfbwSjRHk1wTofzKVHb1ZaLuhpzlI9EiLdg9Ds4HyV5KLtI2kvUMuq6BPxzyk2KWKUmitqmJKtcCb6je7vNvuAPj8gesUrdiGkxOLkTqXaGfzzt8smXBcxLzrK-1b-ag3BN1IB8MJTf_QYwMJOBg-19Y3CUiWMvFyXw73WCv7Yej6AKsq-XWrYTsQMBApJTjqg4KA_O09dg7Mrt1a_XCBYvh3o-CT5bMBVvUx0eO7cWUMGmvb3LMUPCpu4' },
-  { id: '4', full_name: 'James Wilson',      bio: 'Geometry & Trigonometry Specialist', avg_r: 4.7, subjects: 'Hình Học, Luyện Thi ACT',     hourly_rate: 45, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCpbDFeHbsgtNeW0T8xNSWqhFr7vURnd8NN2e_RC9mCaVAvFqo30P4T02p_HGi82zSzDCbFfFYFIHA0oXUymo8KvGq38ft21pTvybG1L-0rU-twW0EOsBH1zd7LPFm_NIOoWwkYJ_fwDJyQ8dph_KqOAaxRo_xmG8Q2BdRGxw2O1O9WS3JwB5i3HLQbITu3KJ_Q56qFe2t-t0WuUaJ416VX6drpCnQfxpNmPPxa1J0puBymfQvF1gU3udhNfajRBS9HfJ1bqTYVg2Y' },
-  { id: '5', full_name: 'Prof. Linda Chen',  bio: 'Differential Equations Expert',     avg_r: 4.9, subjects: 'Toán Kỹ Thuật, Giải Tích III', hourly_rate: 85, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuC0lXMe0deCxovSOqvaoVVqg9Fgz-ih3S4R1bJdTs_T7D1V0SfDoDF8s1g9Cf2AsC2jHI4cw21GkNvDxulQCuwlr9583sKZDxqnVvKGah3tZjEhvvBREJCVmcESAiOJvGR982gN_ICZW3cQ4XShXYe4RZh1X7r_SVNWlS-FBT1hQDp32_gr2jbyNQ5rGh8ifmpQYqYAF-BvcvRBrqW-15YPKUZ2-0P_0gH9GUnJphznJMnkEjxfZ3QVxBF2Ss1fTUDkPwE8-DKp-nk' },
-  { id: '6', full_name: 'David Miller',      bio: 'Discrete Mathematics Specialist',   avg_r: 4.6, subjects: 'Toán Rời Rạc, Thuật Toán',    hourly_rate: 50, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAt4KMMNAeK6f5SW12Wkwp8L4aFj9BFU6Qmb00RzMD4wFS9Awozy1-7jg4RomgonmoqerDsB0cv3v8QVLrLU1-yXRYS9gEFwIXJRYXzPdrLXN-LJGPdyjSh-G_7--t4Z8wV8-vhq_8Rk2d7UWJA1EJ6dAdv_KCEX4s-g4q1vdMiWS2LqWMv2RBnzbiUx7AcQYFKjAOtOntMm38MhpEB7og0njCRwjKBm8XiitgZwmpuoxiBWeJhEeRIdUA03FeJ1t-op9bWiJ4mDrk' },
+  { id: '1', full_name: 'Dr. Sarah Jenkins', bio: 'PhD in Applied Mathematics', avg_r: 4.9, subjects: 'Giáº£i TÃ­ch, Äáº¡i Sá»‘ Tuyáº¿n TÃ­nh', hourly_rate: 65, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCp3x_VIeJloqdZlAnstQ2GLxMA8-0glYNJ5zVnQtCcqUeJ3Hr0IenHpDRQo6JOKIw9PxQWmbwOorbIlUnalTc9FPezJ6IteM_wutLhomHTTUI6y4R9WqFGg0QAEkbQiwhYXHlXEVo4cygGYqCx93DF-_MWEUrqkta7ULRML04On0HfHH9726fK1_RiSxz_FxmsiuPvVAqiUlM5pgP5lDV14GHsYHLSYqegxs0_Bf_-megtR0xOkv_grLDs2YfkE9why2KHe5Ppwyw', featured: true },
+  { id: '2', full_name: 'Mark Thompson',     bio: 'Master of Physics, MIT',          avg_r: 4.8, subjects: 'Váº­t LÃ½ LÆ°á»£ng Tá»­, ToÃ¡n SAT',    hourly_rate: 55, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDlmuVB8nJzFkbr1ZMsSy2gAXdaz55PyMoNSbgEAImuRLsq_wj71B0YKaHHopezS7no3S9X9blul0hS31uWXvQB5FEap2F4of7hmsRCJ51kdRji_yW7R-7epoSuvVMFRyQ0IKN0mHfqXSSgBlBNo8emjeQKtfrNgcW4pKQ-wN7YLD16duYGrmpRhjUMJfUb59WDI51cCv05b8huLdXShrLoorXEBULcXQoTTa6ZETTOFR4ooOlDoZdEFk0laUiFgbHY1XqwTZeromE' },
+  { id: '3', full_name: 'Elena Rodriguez',   bio: 'Statistics & Data Analysis Expert', avg_r: 5.0, subjects: 'Thá»‘ng KÃª, R / Python',          hourly_rate: 70, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDipdd276WduXsIdzZiWZfbwSjRHk1wTofzKVHb1ZaLuhpzlI9EiLdg9Ds4HyV5KLtI2kvUMuq6BPxzyk2KWKUmitqmJKtcCb6je7vNvuAPj8gesUrdiGkxOLkTqXaGfzzt8smXBcxLzrK-1b-ag3BN1IB8MJTf_QYwMJOBg-19Y3CUiWMvFyXw73WCv7Yej6AKsq-XWrYTsQMBApJTjqg4KA_O09dg7Mrt1a_XCBYvh3o-CT5bMBVvUx0eO7cWUMGmvb3LMUPCpu4' },
+  { id: '4', full_name: 'James Wilson',      bio: 'Geometry & Trigonometry Specialist', avg_r: 4.7, subjects: 'HÃ¬nh Há»c, Luyá»‡n Thi ACT',     hourly_rate: 45, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCpbDFeHbsgtNeW0T8xNSWqhFr7vURnd8NN2e_RC9mCaVAvFqo30P4T02p_HGi82zSzDCbFfFYFIHA0oXUymo8KvGq38ft21pTvybG1L-0rU-twW0EOsBH1zd7LPFm_NIOoWwkYJ_fwDJyQ8dph_KqOAaxRo_xmG8Q2BdRGxw2O1O9WS3JwB5i3HLQbITu3KJ_Q56qFe2t-t0WuUaJ416VX6drpCnQfxpNmPPxa1J0puBymfQvF1gU3udhNfajRBS9HfJ1bqTYVg2Y' },
+  { id: '5', full_name: 'Prof. Linda Chen',  bio: 'Differential Equations Expert',     avg_r: 4.9, subjects: 'ToÃ¡n Ká»¹ Thuáº­t, Giáº£i TÃ­ch III', hourly_rate: 85, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuC0lXMe0deCxovSOqvaoVVqg9Fgz-ih3S4R1bJdTs_T7D1V0SfDoDF8s1g9Cf2AsC2jHI4cw21GkNvDxulQCuwlr9583sKZDxqnVvKGah3tZjEhvvBREJCVmcESAiOJvGR982gN_ICZW3cQ4XShXYe4RZh1X7r_SVNWlS-FBT1hQDp32_gr2jbyNQ5rGh8ifmpQYqYAF-BvcvRBrqW-15YPKUZ2-0P_0gH9GUnJphznJMnkEjxfZ3QVxBF2Ss1fTUDkPwE8-DKp-nk' },
+  { id: '6', full_name: 'David Miller',      bio: 'Discrete Mathematics Specialist',   avg_r: 4.6, subjects: 'ToÃ¡n Rá»i Ráº¡c, Thuáº­t ToÃ¡n',    hourly_rate: 50, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAt4KMMNAeK6f5SW12Wkwp8L4aFj9BFU6Qmb00RzMD4wFS9Awozy1-7jg4RomgonmoqerDsB0cv3v8QVLrLU1-yXRYS9gEFwIXJRYXzPdrLXN-LJGPdyjSh-G_7--t4Z8wV8-vhq_8Rk2d7UWJA1EJ6dAdv_KCEX4s-g4q1vdMiWS2LqWMv2RBnzbiUx7AcQYFKjAOtOntMm38MhpEB7og0njCRwjKBm8XiitgZwmpuoxiBWeJhEeRIdUA03FeJ1t-op9bWiJ4mDrk' },
 ];
 
 function StarRating({ value }) {
@@ -36,9 +36,9 @@ function StarRating({ value }) {
 }
 
 function fmtPrice(val) {
-  if (!val) return 'Thỏa thuận';
+  if (!val) return 'Thá»a thuáº­n';
   const n = Number(val);
-  if (n >= 1000) return new Intl.NumberFormat('vi-VN').format(n) + 'đ';
+  if (n >= 1000) return new Intl.NumberFormat('vi-VN').format(n) + 'Ä‘';
   return `$${n}`;
 }
 
@@ -65,7 +65,7 @@ function TutorCard({ tutor, isMock, onFav }) {
         </div>
         {tutor.featured && (
           <div className="absolute top-4 left-4 bg-[#1e40af] text-white px-3 py-1 rounded-full text-xs font-medium">
-            Nổi Bật
+            Ná»•i Báº­t
           </div>
         )}
         {!isMock && tutor.city && (
@@ -75,7 +75,7 @@ function TutorCard({ tutor, isMock, onFav }) {
           </div>
         )}
         {onFav && !isMock && (
-          <button onClick={(e) => { e.stopPropagation(); onFav(tutor); }} title="Yêu thích"
+          <button onClick={(e) => { e.stopPropagation(); onFav(tutor); }} title="YÃªu thÃ­ch"
             className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white/90 backdrop-blur text-[#e11d48] flex items-center justify-center shadow hover:scale-110 transition-transform">
             <span className="material-symbols-outlined text-[20px]">favorite</span>
           </button>
@@ -101,7 +101,7 @@ function TutorCard({ tutor, isMock, onFav }) {
         {!isMock && tutor.experience_years > 0 && (
           <p className="text-xs text-[#757684] mb-3 flex items-center gap-1">
             <span className="material-symbols-outlined text-[14px]">work</span>
-            {tutor.experience_years} năm kinh nghiệm
+            {tutor.experience_years} nÄƒm kinh nghiá»‡m
           </p>
         )}
 
@@ -114,7 +114,7 @@ function TutorCard({ tutor, isMock, onFav }) {
         <div className="mt-auto flex items-center justify-between">
           <span className="text-lg font-semibold text-[#00288e]">
             {fmtPrice(tutor.hourly_rate)}
-            <span className="text-xs font-normal text-[#5d5f5f]">/giờ</span>
+            <span className="text-xs font-normal text-[#5d5f5f]">/giá»</span>
           </span>
           <button
             onClick={() => {
@@ -123,7 +123,7 @@ function TutorCard({ tutor, isMock, onFav }) {
             }}
             className="btn-shine px-5 py-2 border border-[#00288e] text-[#00288e] hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 rounded-lg text-sm font-semibold transition-all"
           >
-            Xem Hồ Sơ
+            Xem Há»“ SÆ¡
           </button>
         </div>
       </div>
@@ -150,14 +150,14 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
 
   const addFav = (t) => {
     const token = localStorage.getItem('token');
-    if (!token) { setFavMsg('Đăng nhập để lưu yêu thích.'); setTimeout(() => setFavMsg(''), 2500); return; }
+    if (!token) { setFavMsg('ÄÄƒng nháº­p Ä‘á»ƒ lÆ°u yÃªu thÃ­ch.'); setTimeout(() => setFavMsg(''), 2500); return; }
     fetch(`${API_BASE}/api/wishlist`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ item_type: 'tutor', item_id: t.id }),
     })
-      .then(() => setFavMsg(`Đã thêm ${t.full_name} vào Yêu thích ❤`))
-      .catch(() => setFavMsg('Lỗi, thử lại.'))
+      .then(() => setFavMsg(`ÄÃ£ thÃªm ${t.full_name} vÃ o YÃªu thÃ­ch â¤`))
+      .catch(() => setFavMsg('Lá»—i, thá»­ láº¡i.'))
       .finally(() => setTimeout(() => setFavMsg(''), 2500));
   };
 
@@ -183,7 +183,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         setTotalPages(data.totalPages || 1);
         setIsMock(false);
       } else {
-        // DB không có gia sư approved → dùng mock
+        // DB khÃ´ng cÃ³ gia sÆ° approved â†’ dÃ¹ng mock
         setTutors(MOCK_TUTORS);
         setTotal(MOCK_TUTORS.length);
         setTotalPages(1);
@@ -263,14 +263,14 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             EduX
           </a>
           <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
-            <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
+            <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">TÃ¬m Gia SÆ°</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trá»Ÿ ThÃ nh Gia SÆ°</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">MÃ´n Há»c</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">KhÃ³a Há»c</a>
           </nav>
           <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giá» hÃ ng">
                 <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
               </a>
             )}
@@ -283,13 +283,13 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                 }}
                 className="hidden sm:block text-sm font-semibold text-[#00288e] hover:opacity-80"
               >
-                Bảng Điều Khiển
+                Báº£ng Äiá»u Khiá»ƒn
               </button>
             ) : (
               <>
-                <button onClick={onGoSignIn} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Đăng Nhập</button>
+                <button onClick={onGoSignIn} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">ÄÄƒng Nháº­p</button>
                 <button onClick={onGoSignUp} className="btn-shine bg-gradient-to-r from-[#00288e] via-[#2747c4] to-[#3a6fe0] text-white px-6 py-2.5 rounded-lg font-semibold text-sm hover:-translate-y-0.5 hover:shadow-[0_14px_30px_-8px_rgba(55,85,195,0.55)] transition-all active:scale-95 shadow-sm">
-                  Tham Gia Miễn Phí
+                  Tham Gia Miá»…n PhÃ­
                 </button>
               </>
             )}
@@ -302,27 +302,27 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
           <div className="mb-6 flex items-start gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-900 shadow-[0_10px_26px_-12px_rgba(180,120,0,0.3)]">
             <span className="material-symbols-outlined text-amber-500 mt-0.5">warning</span>
             <div className="text-sm leading-relaxed">
-              <b>Đang hiển thị gia sư mẫu</b> — không kết nối được máy chủ (backend chưa chạy hoặc DB lỗi).
-              Đây <u>không phải</u> gia sư thật. Hãy khởi động lại backend rồi tải lại trang (F5).
+              <b>Äang hiá»ƒn thá»‹ gia sÆ° máº«u</b> â€” khÃ´ng káº¿t ná»‘i Ä‘Æ°á»£c mÃ¡y chá»§ (backend chÆ°a cháº¡y hoáº·c DB lá»—i).
+              ÄÃ¢y <u>khÃ´ng pháº£i</u> gia sÆ° tháº­t. HÃ£y khá»Ÿi Ä‘á»™ng láº¡i backend rá»“i táº£i láº¡i trang (F5).
             </div>
           </div>
         )}
-        {/* Search — banner tối + họa tiết ánh sáng động */}
+        {/* Search â€” banner tá»‘i + há»a tiáº¿t Ã¡nh sÃ¡ng Ä‘á»™ng */}
         <section className="relative mb-10 overflow-hidden rounded-2xl border border-[#1e2a4a]"
           style={{ background: 'radial-gradient(60% 90% at 15% 8%, rgba(76,110,245,.35), transparent 60%), radial-gradient(50% 80% at 85% 18%, rgba(124,92,255,.30), transparent 60%), linear-gradient(135deg,#0b1840,#122163 60%,#0c1538)' }}>
           <span className="ftb-blob ftb-1" aria-hidden="true" />
           <span className="ftb-blob ftb-2" aria-hidden="true" />
           <div className="relative z-10 px-6 py-10 md:px-10 text-center">
             <h2 className="text-2xl md:text-3xl font-extrabold text-white">
-              Tìm <span style={{ background: 'linear-gradient(100deg,#f6d98c,#ffd76a 60%,#f6d98c)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>gia sư hoàn hảo</span> cho hành trình học tập
+              TÃ¬m <span style={{ background: 'linear-gradient(100deg,#f6d98c,#ffd76a 60%,#f6d98c)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>gia sÆ° hoÃ n háº£o</span> cho hÃ nh trÃ¬nh há»c táº­p
             </h2>
-            <p className="text-white/70 mt-2 text-sm md:text-base">Hàng trăm gia sư chuyên nghiệp sẵn sàng đồng hành cùng bạn.</p>
+            <p className="text-white/70 mt-2 text-sm md:text-base">HÃ ng trÄƒm gia sÆ° chuyÃªn nghiá»‡p sáºµn sÃ ng Ä‘á»“ng hÃ nh cÃ¹ng báº¡n.</p>
             <div className="mt-6 flex flex-col md:flex-row gap-3 max-w-[760px] mx-auto">
               <div className="relative flex-grow">
                 <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-white/50">search</span>
                 <input
                   className="w-full pl-12 pr-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/50 backdrop-blur focus:outline-none focus:border-[#6ea8ff] focus:ring-2 focus:ring-[#6ea8ff]/30 transition-all"
-                  placeholder="Bạn cần hỗ trợ môn học nào?"
+                  placeholder="Báº¡n cáº§n há»— trá»£ mÃ´n há»c nÃ o?"
                   value={searchInput}
                   onChange={e => setSearchInput(e.target.value)}
                   onKeyDown={handleKeyDown}
@@ -332,7 +332,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                 onClick={handleSearch}
                 className="btn-shine bg-gradient-to-r from-[#3b6fe0] to-[#7c5cff] text-white px-8 py-3 rounded-xl font-semibold text-sm hover:-translate-y-0.5 hover:shadow-[0_12px_30px_-8px_rgba(124,92,255,.7)] transition-all whitespace-nowrap"
               >
-                Tìm Kiếm Gia Sư
+                TÃ¬m Kiáº¿m Gia SÆ°
               </button>
             </div>
             {/* AI Matching flow CTA - Premium Style */}
@@ -340,13 +340,13 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
               <div className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:bg-white/20 hover:shadow-[0_0_25px_rgba(124,92,255,0.5)] transition-all duration-300 shadow-[0_0_15px_rgba(124,92,255,0.2)] cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
                 <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
                   <span className="material-symbols-outlined text-[#a4c9ff] text-[20px] animate-pulse">auto_awesome</span>
-                  <span>Muốn được gợi ý gia sư phù hợp nhất?</span>
+                  <span>Muá»‘n Ä‘Æ°á»£c gá»£i Ã½ gia sÆ° phÃ¹ há»£p nháº¥t?</span>
                 </div>
                 <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
                 <button
                   className="text-white font-bold text-sm flex items-center gap-1 group transition-colors"
                 >
-                  Tạo yêu cầu AI
+                  Táº¡o yÃªu cáº§u AI
                   <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#a4c9ff]">arrow_forward</span>
                 </button>
               </div>
@@ -358,10 +358,10 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
           {/* Sidebar */}
           <aside className="w-full lg:w-72 flex-shrink-0">
             <div className="bg-white rounded-xl shadow-sm p-6 sticky top-24 filter-sidebar max-h-[calc(100vh-120px)] overflow-y-auto">
-              <h2 className="text-xl font-semibold text-[#191c1e] mb-6">Bộ Lọc</h2>
+              <h2 className="text-xl font-semibold text-[#191c1e] mb-6">Bá»™ Lá»c</h2>
 
               <div className="mb-8">
-                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">Môn Học</label>
+                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">MÃ´n Há»c</label>
                 <div className="space-y-2">
                   {SUBJECT_OPTIONS.map(sub => (
                     <label key={sub} className="flex items-center gap-3 cursor-pointer group">
@@ -379,7 +379,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
 
               <div className="mb-8">
                 <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">
-                  Giá Tối Đa: <span className="text-[#00288e]">${maxPrice}</span>/giờ
+                  GiÃ¡ Tá»‘i Äa: <span className="text-[#00288e]">${maxPrice}</span>/giá»
                 </label>
                 <input
                   className="w-full h-2 bg-[#edeef0] rounded-lg appearance-none cursor-pointer accent-[#00288e]"
@@ -394,9 +394,9 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
               </div>
 
               <div className="mb-8">
-                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">Hình Thức Học</label>
+                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">HÃ¬nh Thá»©c Há»c</label>
                 <div className="space-y-2">
-                  {[{ v: '', l: 'Tất Cả' }, { v: 'online', l: 'Online' }, { v: 'offline', l: 'Offline' }].map(opt => (
+                  {[{ v: '', l: 'Táº¥t Cáº£' }, { v: 'online', l: 'Online' }, { v: 'offline', l: 'Offline' }].map(opt => (
                     <label key={opt.v} className="flex items-center gap-3 cursor-pointer group">
                       <input
                         type="radio"
@@ -412,22 +412,22 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
               </div>
 
               <div className="mb-8">
-                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">Cấp Độ</label>
+                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">Cáº¥p Äá»™</label>
                 <select
                   value={level}
                   onChange={e => { setLevel(e.target.value); setPage(1); }}
                   className="w-full px-3 py-2 rounded-lg border border-[#c4c5d5] text-sm text-[#444653] bg-white focus:outline-none focus:ring-2 focus:ring-[#00288e]/20 focus:border-[#00288e] transition-all"
                 >
-                  <option value="">Tất Cả Cấp Độ</option>
-                  <option value="Cấp 1">Cấp 1 (Tiểu học)</option>
-                  <option value="Cấp 2">Cấp 2 (THCS)</option>
-                  <option value="Cấp 3">Cấp 3 (THPT)</option>
-                  <option value="Đại học">Đại học</option>
+                  <option value="">Táº¥t Cáº£ Cáº¥p Äá»™</option>
+                  <option value="Cáº¥p 1">Cáº¥p 1 (Tiá»ƒu há»c)</option>
+                  <option value="Cáº¥p 2">Cáº¥p 2 (THCS)</option>
+                  <option value="Cáº¥p 3">Cáº¥p 3 (THPT)</option>
+                  <option value="Äáº¡i há»c">Äáº¡i há»c</option>
                 </select>
               </div>
 
               <div className="mb-8">
-                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">Sắp Xếp</label>
+                <label className="text-sm font-semibold text-[#5d5f5f] block mb-3">Sáº¯p Xáº¿p</label>
                 <div className="space-y-2">
                   {SORT_OPTIONS.map(opt => (
                     <label key={opt.value} className="flex items-center gap-3 cursor-pointer group">
@@ -445,7 +445,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
               </div>
 
               <button onClick={handleReset} className="w-full py-2 text-[#00288e] text-sm font-semibold hover:underline decoration-2 underline-offset-4">
-                Đặt Lại Bộ Lọc
+                Äáº·t Láº¡i Bá»™ Lá»c
               </button>
             </div>
           </aside>
@@ -454,8 +454,8 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
           <div className="flex-grow">
             <div className="flex justify-between items-center mb-6">
               <p className="text-base text-[#444653]">
-                Hiển thị <span className="font-bold text-[#191c1e]">{total}</span> gia sư
-                {isMock && <span className="ml-2 text-xs text-[#757684]">(dữ liệu mẫu)</span>}
+                Hiá»ƒn thá»‹ <span className="font-bold text-[#191c1e]">{total}</span> gia sÆ°
+                {isMock && <span className="ml-2 text-xs text-[#757684]">(dá»¯ liá»‡u máº«u)</span>}
               </p>
             </div>
 
@@ -475,10 +475,10 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             ) : displayTutors.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-24 text-center">
                 <span className="material-symbols-outlined text-[64px] text-[#c4c5d5] mb-4">search_off</span>
-                <h3 className="text-xl font-semibold text-[#191c1e] mb-2">Không tìm thấy gia sư</h3>
-                <p className="text-[#757684] mb-6">Thử thay đổi từ khóa hoặc bộ lọc</p>
+                <h3 className="text-xl font-semibold text-[#191c1e] mb-2">KhÃ´ng tÃ¬m tháº¥y gia sÆ°</h3>
+                <p className="text-[#757684] mb-6">Thá»­ thay Ä‘á»•i tá»« khÃ³a hoáº·c bá»™ lá»c</p>
                 <button onClick={handleReset} className="px-6 py-2.5 bg-[#00288e] text-white rounded-lg text-sm font-semibold hover:bg-[#1e40af] transition-all">
-                  Xóa Bộ Lọc
+                  XÃ³a Bá»™ Lá»c
                 </button>
               </div>
             ) : (
@@ -536,16 +536,17 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         <div className="max-w-[1280px] mx-auto px-6 py-10 flex flex-col md:flex-row justify-between items-center gap-6">
           <div className="flex flex-col items-center md:items-start gap-2">
             <span className="text-2xl font-bold text-[#00288e]">EduX</span>
-            <p className="text-xs font-medium text-[#444653]">© 2024 EduX. Đã đăng ký bản quyền.</p>
+            <p className="text-xs font-medium text-[#444653]">Â© 2024 EduX. ÄÃ£ Ä‘Äƒng kÃ½ báº£n quyá»n.</p>
           </div>
           <div className="flex flex-wrap justify-center gap-6">
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Chính Sách Bảo Mật</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Điều Khoản Dịch Vụ</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Trung Tâm Hỗ Trợ</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Liên Hệ</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>ChÃ­nh SÃ¡ch Báº£o Máº­t</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Äiá»u Khoáº£n Dá»‹ch Vá»¥</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Trung TÃ¢m Há»— Trá»£</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>LiÃªn Há»‡</a>
           </div>
         </div>
       </footer>
     </div>
   );
 }
+

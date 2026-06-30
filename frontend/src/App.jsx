@@ -345,7 +345,7 @@ function HomePage({ onGoSignIn }) {
                 }}>
                   <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Dashboard</a>
                   <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
-                  <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
+                  <a href="#" onClick={(e) => e.preventDefault()} style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
                   <button 
                     onClick={logout} 
                     style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
@@ -448,7 +448,7 @@ function HomePage({ onGoSignIn }) {
             <h2>Môn Học Phổ Biến</h2>
             <div className="subject-grid">
               {subjects.map((item) => (
-                <a href="#" className="subject-card" key={item.name}>
+                <a href="#" onClick={(e) => e.preventDefault()} className="subject-card" key={item.name}>
                   <span className="subject-icon material-symbols-outlined">
                     {item.icon}
                   </span>
@@ -605,7 +605,7 @@ function HomePage({ onGoSignIn }) {
       <footer className="site-footer">
         <div className="container footer-grid">
           <div>
-            <a href="#" className="brand">
+            <a href="#" onClick={(e) => e.preventDefault()} className="brand">
               <span className="material-symbols-outlined icon-fill">school</span>
               <span className="brand-name">EduX</span>
             </a>
@@ -796,9 +796,9 @@ function App() {
           <div className="w-full py-6 px-10 flex flex-col md:flex-row justify-between items-center max-w-[1280px] mx-auto gap-4">
             <span className="text-xs text-on-secondary-container">© 2024 EduX. Hỗ Trợ Học Thuật Chuyên Nghiệp.</span>
             <div className="flex gap-6">
-              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Hỗ Trợ</a>
-              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Chính Sách Bảo Mật</a>
-              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Liên Hệ</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#" onClick={(e) => e.preventDefault()}>Hỗ Trợ</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#" onClick={(e) => e.preventDefault()}>Chính Sách Bảo Mật</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#" onClick={(e) => e.preventDefault()}>Liên Hệ</a>
             </div>
           </div>
         </footer>

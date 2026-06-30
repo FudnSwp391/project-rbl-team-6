@@ -1,13 +1,13 @@
-import { useState } from 'react'
-import { useAuth } from './AuthContext'   // ← Global auth state
+﻿import { useState } from 'react'
+import { useAuth } from './AuthContext'   // â† Global auth state
 import { GoogleLogin } from '@react-oauth/google'
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
 const ROLE_OPTIONS = [
-  { value: 'student', label: 'Học Sinh', icon: 'school' },
-  { value: 'parent', label: 'Phụ Huynh', icon: 'family_home' },
-  { value: 'tutor', label: 'Gia Sư', icon: 'history_edu' },
+  { value: 'student', label: 'Há»c Sinh', icon: 'school' },
+  { value: 'parent', label: 'Phá»¥ Huynh', icon: 'family_home' },
+  { value: 'tutor', label: 'Gia SÆ°', icon: 'history_edu' },
 ]
 
 export default function SignUp({ onSwitchToSignIn, onGoHome }) {
@@ -31,7 +31,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
   const handleGoogleSuccess = async (credentialResponse) => {
     const { credential } = credentialResponse
     if (!credential) {
-      setGoogleError('Google không trả về thông tin xác thực hợp lệ.')
+      setGoogleError('Google khÃ´ng tráº£ vá» thÃ´ng tin xÃ¡c thá»±c há»£p lá»‡.')
       return
     }
     setGoogleError('')
@@ -43,10 +43,10 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         body: JSON.stringify({ credential, role }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data?.message || 'Đăng ký bằng Google thất bại.')
+      if (!response.ok) throw new Error(data?.message || 'ÄÄƒng kÃ½ báº±ng Google tháº¥t báº¡i.')
       loginAfterRegister(data.token, data.user)
     } catch (error) {
-      setGoogleError(error.message || 'Đăng ký bằng Google thất bại.')
+      setGoogleError(error.message || 'ÄÄƒng kÃ½ báº±ng Google tháº¥t báº¡i.')
     } finally {
       setIsGoogleSubmitting(false)
     }
@@ -63,25 +63,25 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
     const nextErrors = {}
 
     if (!formData.fullName.trim()) {
-      nextErrors.fullName = 'Họ và tên là bắt buộc.'
+      nextErrors.fullName = 'Há» vÃ  tÃªn lÃ  báº¯t buá»™c.'
     }
 
     if (!formData.email.trim()) {
-      nextErrors.email = 'Email là bắt buộc.'
+      nextErrors.email = 'Email lÃ  báº¯t buá»™c.'
     } else if (!EMAIL_REGEX.test(formData.email)) {
-      nextErrors.email = 'Vui lòng nhập địa chỉ email hợp lệ.'
+      nextErrors.email = 'Vui lÃ²ng nháº­p Ä‘á»‹a chá»‰ email há»£p lá»‡.'
     }
 
     if (!formData.password) {
-      nextErrors.password = 'Mật khẩu là bắt buộc.'
+      nextErrors.password = 'Máº­t kháº©u lÃ  báº¯t buá»™c.'
     } else if (formData.password.length < 8) {
-      nextErrors.password = 'Mật khẩu phải có ít nhất 8 ký tự.'
+      nextErrors.password = 'Máº­t kháº©u pháº£i cÃ³ Ã­t nháº¥t 8 kÃ½ tá»±.'
     }
 
     if (!formData.confirmPassword) {
-      nextErrors.confirmPassword = 'Vui lòng xác nhận mật khẩu của bạn.'
+      nextErrors.confirmPassword = 'Vui lÃ²ng xÃ¡c nháº­n máº­t kháº©u cá»§a báº¡n.'
     } else if (formData.password !== formData.confirmPassword) {
-      nextErrors.confirmPassword = 'Mật khẩu không khớp.'
+      nextErrors.confirmPassword = 'Máº­t kháº©u khÃ´ng khá»›p.'
     }
 
     return nextErrors
@@ -96,7 +96,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
 
     setIsSubmitting(true)
     try {
-      // ── Tutor: kiểm tra email trước, rồi mới lưu sessionStorage ────────────
+      // â”€â”€ Tutor: kiá»ƒm tra email trÆ°á»›c, rá»“i má»›i lÆ°u sessionStorage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (role === 'tutor') {
         const checkResp = await fetch(`${apiBaseUrl}/api/auth/check-email`, {
           method: 'POST',
@@ -106,7 +106,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         if (!checkResp.ok) {
           const checkData = await checkResp.json()
           if (checkData?.isGoogleAccount) setIsGoogleError(true)
-          throw new Error(checkData?.message || 'Email này đã được đăng ký.')
+          throw new Error(checkData?.message || 'Email nÃ y Ä‘Ã£ Ä‘Æ°á»£c Ä‘Äƒng kÃ½.')
         }
         sessionStorage.setItem('pendingTutorReg', JSON.stringify({
           fullName: formData.fullName.trim(),
@@ -118,7 +118,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         return
       }
 
-      // ── Student: kiểm tra email trước, lưu sessionStorage, chuyển sang Complete Profile ────────────
+      // â”€â”€ Student: kiá»ƒm tra email trÆ°á»›c, lÆ°u sessionStorage, chuyá»ƒn sang Complete Profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (role === 'student') {
         const checkResp = await fetch(`${apiBaseUrl}/api/auth/check-email`, {
           method: 'POST',
@@ -128,7 +128,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         if (!checkResp.ok) {
           const checkData = await checkResp.json()
           if (checkData?.isGoogleAccount) setIsGoogleError(true)
-          throw new Error(checkData?.message || 'Email này đã được đăng ký.')
+          throw new Error(checkData?.message || 'Email nÃ y Ä‘Ã£ Ä‘Æ°á»£c Ä‘Äƒng kÃ½.')
         }
         sessionStorage.setItem('pendingStudentReg', JSON.stringify({
           fullName: formData.fullName.trim(),
@@ -140,7 +140,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         return
       }
 
-      // ── Parent: đăng ký API ngay ────────────────
+      // â”€â”€ Parent: Ä‘Äƒng kÃ½ API ngay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const response = await fetch(`${apiBaseUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -157,14 +157,14 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         if (data?.isGoogleAccount) {
           setIsGoogleError(true)
         }
-        throw new Error(data?.message || 'Đăng ký thất bại.')
+        throw new Error(data?.message || 'ÄÄƒng kÃ½ tháº¥t báº¡i.')
       }
 
       loginAfterRegister(data.token, data.user)
     } catch (submitError) {
       setErrors((prev) => ({
         ...prev,
-        submit: submitError.message || 'Đã xảy ra lỗi. Vui lòng thử lại.',
+        submit: submitError.message || 'ÄÃ£ xáº£y ra lá»—i. Vui lÃ²ng thá»­ láº¡i.',
       }))
     } finally {
       setIsSubmitting(false)
@@ -177,16 +177,16 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         <div className="bg-white/70 dark:bg-[#2e3132]/70 backdrop-blur-md border border-white/30 shadow-2xl rounded-[2rem] p-10 w-full max-w-lg">
           <div className="text-center mb-lg">
             <h1 className="font-headline-lg text-headline-lg text-primary mb-sm">
-              Tạo Tài Khoản
+              Táº¡o TÃ i Khoáº£n
             </h1>
             <p className="font-body-md text-body-md text-on-surface-variant">
-              Tham gia EduX và bắt đầu hành trình của bạn.
+              Tham gia EduX vÃ  báº¯t Ä‘áº§u hÃ nh trÃ¬nh cá»§a báº¡n.
             </p>
           </div>
 
           <div className="mb-md">
             <label className="block font-label-md text-label-md text-on-surface mb-sm">
-              Tôi là...
+              TÃ´i lÃ ...
             </label>
             <div className="grid grid-cols-3 gap-sm">
               {ROLE_OPTIONS.map((option) => {
@@ -232,7 +232,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                 className="block font-label-md text-label-md text-on-surface mb-xs"
                 htmlFor="fullName"
               >
-                Họ và Tên
+                Há» vÃ  TÃªn
               </label>
               <input
                 className="input-field w-full bg-white border border-outline-variant rounded-lg px-md py-sm font-body-md text-body-md text-on-surface placeholder:text-outline h-12"
@@ -274,7 +274,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                 className="block font-label-md text-label-md text-on-surface mb-xs"
                 htmlFor="password"
               >
-                Mật Khẩu
+                Máº­t Kháº©u
               </label>
               <input
                 className="input-field w-full bg-white border border-outline-variant rounded-lg px-md py-sm font-body-md text-body-md text-on-surface placeholder:text-outline h-12"
@@ -295,7 +295,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                 className="block font-label-md text-label-md text-on-surface mb-xs"
                 htmlFor="confirmPassword"
               >
-                Xác Nhận Mật Khẩu
+                XÃ¡c Nháº­n Máº­t Kháº©u
               </label>
               <input
                 className="input-field w-full bg-white border border-outline-variant rounded-lg px-md py-sm font-body-md text-body-md text-on-surface placeholder:text-outline h-12"
@@ -322,10 +322,10 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                   <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
                 </svg>
                 <div className="flex-1">
-                  <p className="text-sm font-semibold text-amber-800">Email đã đăng ký qua Google</p>
+                  <p className="text-sm font-semibold text-amber-800">Email Ä‘Ã£ Ä‘Äƒng kÃ½ qua Google</p>
                   <p className="text-xs text-amber-700 mt-1">
-                    Email <strong>{formData.email}</strong> đã được liên kết với tài khoản Google.
-                    Vui lòng nhấn <strong>"Tiếp tục với Google"</strong> bên dưới để đăng nhập.
+                    Email <strong>{formData.email}</strong> Ä‘Ã£ Ä‘Æ°á»£c liÃªn káº¿t vá»›i tÃ i khoáº£n Google.
+                    Vui lÃ²ng nháº¥n <strong>"Tiáº¿p tá»¥c vá»›i Google"</strong> bÃªn dÆ°á»›i Ä‘á»ƒ Ä‘Äƒng nháº­p.
                   </p>
                 </div>
               </div>
@@ -363,10 +363,10 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                       d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
                     />
                   </svg>
-                  Đang tạo tài khoản...
+                  Äang táº¡o tÃ i khoáº£n...
                 </>
               ) : (
-                'Đăng Ký'
+                'ÄÄƒng KÃ½'
               )}
             </button>
           </form>
@@ -374,7 +374,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
           <div className="flex items-center my-md">
             <div className="flex-grow border-t border-outline-variant"></div>
             <span className="mx-sm font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">
-              Hoặc
+              Hoáº·c
             </span>
             <div className="flex-grow border-t border-outline-variant"></div>
           </div>
@@ -383,19 +383,19 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
             {googleClientId ? (
               <GoogleLogin
                 onSuccess={handleGoogleSuccess}
-                onError={() => setGoogleError('Cửa sổ đăng ký Google thất bại.')}
+                onError={() => setGoogleError('Cá»­a sá»• Ä‘Äƒng kÃ½ Google tháº¥t báº¡i.')}
                 shape="pill" text="signup_with" size="large" width="360" useOneTap={false}
               />
             ) : (
               <p className="font-label-sm text-label-sm text-error px-2 text-center">Missing VITE_GOOGLE_CLIENT_ID</p>
             )}
           </div>
-          {isGoogleSubmitting && <p className="mt-2 text-sm text-on-surface-variant text-center">Đang xử lý đăng ký Google...</p>}
+          {isGoogleSubmitting && <p className="mt-2 text-sm text-on-surface-variant text-center">Äang xá»­ lÃ½ Ä‘Äƒng kÃ½ Google...</p>}
           {googleError && <p className="mt-2 text-sm text-red-600 text-center">{googleError}</p>}
 
           <div className="mt-md text-center">
             <p className="font-body-md text-body-md text-on-surface-variant">
-              Đã có tài khoản?{' '}
+              ÄÃ£ cÃ³ tÃ i khoáº£n?{' '}
               <a
                 className="text-primary hover:underline font-medium"
                 href="#/signin"
@@ -406,7 +406,7 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
                   }
                 }}
               >
-                Đăng Nhập
+                ÄÄƒng Nháº­p
               </a>
             </p>
           </div>
@@ -429,45 +429,45 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
               EduX
             </a>
             <p className="text-on-secondary-container dark:text-surface-variant">
-              Bản quyền 2024 EduX. Trao quyền tri thức toàn cầu.
+              Báº£n quyá»n 2024 EduX. Trao quyá»n tri thá»©c toÃ n cáº§u.
             </p>
           </div>
           <div className="md:col-span-3 flex flex-wrap gap-md justify-start md:justify-end">
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
-              Tìm Gia Sư
+              TÃ¬m Gia SÆ°
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
-              Trở Thành Gia Sư
+              Trá»Ÿ ThÃ nh Gia SÆ°
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
-              Môn Học
+              MÃ´n Há»c
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
-              Về Chúng Tôi
+              Vá» ChÃºng TÃ´i
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
-              Hỗ Trợ
+              Há»— Trá»£
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
-              Chính Sách Bảo Mật
+              ChÃ­nh SÃ¡ch Báº£o Máº­t
             </a>
           </div>
         </div>
@@ -497,3 +497,4 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
     </>
   )
 }
+

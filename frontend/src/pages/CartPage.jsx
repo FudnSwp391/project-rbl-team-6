@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+﻿import React, { useState, useEffect } from 'react'
 import { useAuth } from '../AuthContext'
 import Toast from '../components/Toast'
 
@@ -28,8 +28,8 @@ export default function CartPage({ onGoSignIn, user }) {
       try {
         const stored = localStorage.getItem('edux_cart');
         const parsed = stored ? JSON.parse(stored) : [];
-        const arr = Array.isArray(parsed) ? parsed : []; // an toàn nếu localStorage hỏng
-        // Loại bỏ khóa demo cũ (id không phải UUID) — không mua được
+        const arr = Array.isArray(parsed) ? parsed : []; // an toÃ n náº¿u localStorage há»ng
+        // Loáº¡i bá» khÃ³a demo cÅ© (id khÃ´ng pháº£i UUID) â€” khÃ´ng mua Ä‘Æ°á»£c
         const clean = arr.filter(it => UUID_RE.test(String(it.id)));
         if (clean.length !== arr.length) {
           localStorage.setItem('edux_cart', JSON.stringify(clean));
@@ -45,10 +45,10 @@ export default function CartPage({ onGoSignIn, user }) {
     return () => window.removeEventListener('cartUpdated', loadCart);
   }, [user]);
 
-  // Giỏ hàng thay đổi → bỏ mã đã áp (cần áp lại theo tổng mới)
+  // Giá» hÃ ng thay Ä‘á»•i â†’ bá» mÃ£ Ä‘Ã£ Ã¡p (cáº§n Ã¡p láº¡i theo tá»•ng má»›i)
   useEffect(() => { setAppliedCoupon(null); setPromoErr(''); }, [cartItems]);
 
-  // Lấy số dư ví điện tử của học sinh
+  // Láº¥y sá»‘ dÆ° vÃ­ Ä‘iá»‡n tá»­ cá»§a há»c sinh
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!user || !token) { setWalletBalance(null); return; }
@@ -86,7 +86,7 @@ export default function CartPage({ onGoSignIn, user }) {
 
   const applyPromo = async () => {
     const code = promoCode.trim();
-    if (!code) { setPromoErr('Vui lòng nhập mã giảm giá.'); return; }
+    if (!code) { setPromoErr('Vui lÃ²ng nháº­p mÃ£ giáº£m giÃ¡.'); return; }
     setPromoLoading(true); setPromoErr('');
     try {
       const res = await fetch(`${API_BASE}/api/coupons/validate`, {
@@ -99,10 +99,10 @@ export default function CartPage({ onGoSignIn, user }) {
         setAppliedCoupon({ code: data.code, discount: data.discount, message: data.message });
       } else {
         setAppliedCoupon(null);
-        setPromoErr(data.message || 'Mã không hợp lệ.');
+        setPromoErr(data.message || 'MÃ£ khÃ´ng há»£p lá»‡.');
       }
     } catch {
-      setPromoErr('Không kiểm tra được mã, vui lòng thử lại.');
+      setPromoErr('KhÃ´ng kiá»ƒm tra Ä‘Æ°á»£c mÃ£, vui lÃ²ng thá»­ láº¡i.');
     } finally {
       setPromoLoading(false);
     }
@@ -125,7 +125,7 @@ export default function CartPage({ onGoSignIn, user }) {
         body: JSON.stringify({ items: cartItems.map(i => i.id), couponCode: appliedCoupon?.code || null }),
       });
       if (res.status === 401 || res.status === 403) {
-        showToast('error', 'Phiên đăng nhập đã hết hạn, đang chuyển sang đăng nhập...', 'Hết phiên');
+        showToast('error', 'PhiÃªn Ä‘Äƒng nháº­p Ä‘Ã£ háº¿t háº¡n, Ä‘ang chuyá»ƒn sang Ä‘Äƒng nháº­p...', 'Háº¿t phiÃªn');
         setTimeout(() => { logout(); window.location.hash = '/signin'; }, 1500);
         return;
       }
@@ -133,32 +133,32 @@ export default function CartPage({ onGoSignIn, user }) {
       if (res.ok && data.success) {
         localStorage.setItem('edux_cart', '[]');
         window.dispatchEvent(new Event('cartUpdated'));
-        showToast('success', `Đã trừ ${fmt(data.total)} đ từ ví. Bạn đã sở hữu ${data.enrolled} khóa học.`, 'Thanh toán thành công!');
+        showToast('success', `ÄÃ£ trá»« ${fmt(data.total)} Ä‘ tá»« vÃ­. Báº¡n Ä‘Ã£ sá»Ÿ há»¯u ${data.enrolled} khÃ³a há»c.`, 'Thanh toÃ¡n thÃ nh cÃ´ng!');
         setTimeout(() => { window.location.hash = '/my-courses'; }, 1600);
         return;
       }
       if (data.code === 'INSUFFICIENT_FUNDS') {
         setWalletBalance(Number(data.balance) || 0);
-        showToast('error', 'Số dư ví không đủ — hãy nạp thêm qua VNPAY (mã QR).', 'Không đủ số dư');
+        showToast('error', 'Sá»‘ dÆ° vÃ­ khÃ´ng Ä‘á»§ â€” hÃ£y náº¡p thÃªm qua VNPAY (mÃ£ QR).', 'KhÃ´ng Ä‘á»§ sá»‘ dÆ°');
         setLoadingPayment(false);
         return;
       }
-      showToast('error', data.message || 'Thanh toán thất bại.');
+      showToast('error', data.message || 'Thanh toÃ¡n tháº¥t báº¡i.');
       setLoadingPayment(false);
     } catch (e) {
-      showToast('error', 'Không thể kết nối máy chủ.');
+      showToast('error', 'KhÃ´ng thá»ƒ káº¿t ná»‘i mÃ¡y chá»§.');
       setLoadingPayment(false);
     }
   };
 
-  // Ví KHÔNG đủ → thanh toán đơn bằng mã QR (VNPAY) → trả xong đăng ký khóa (ví không đổi)
+  // VÃ­ KHÃ”NG Ä‘á»§ â†’ thanh toÃ¡n Ä‘Æ¡n báº±ng mÃ£ QR (VNPAY) â†’ tráº£ xong Ä‘Äƒng kÃ½ khÃ³a (vÃ­ khÃ´ng Ä‘á»•i)
   const topUpQR = async () => {
     if (!user) { if (onGoSignIn) onGoSignIn(); else window.location.hash = '/signin'; return; }
     if (finalTotal <= 0) return;
     setLoadingPayment(true);
     try {
       const token = localStorage.getItem('token');
-      // Mã QR sẽ thanh toán CHÍNH đơn này → lưu đơn để đăng ký khóa sau khi trả thành công
+      // MÃ£ QR sáº½ thanh toÃ¡n CHÃNH Ä‘Æ¡n nÃ y â†’ lÆ°u Ä‘Æ¡n Ä‘á»ƒ Ä‘Äƒng kÃ½ khÃ³a sau khi tráº£ thÃ nh cÃ´ng
       localStorage.setItem('edux_pending_order', JSON.stringify({ items: cartItems.map(i => i.id), couponCode: appliedCoupon?.code || null }));
       const returnUrl = `${window.location.origin}/#/payment/result`;
       const res = await fetch(`${API_BASE}/api/payment/create-url`, {
@@ -167,49 +167,49 @@ export default function CartPage({ onGoSignIn, user }) {
         body: JSON.stringify({ amount: finalTotal, returnUrl }),
       });
       if (res.status === 401 || res.status === 403) {
-        showToast('error', 'Phiên đăng nhập đã hết hạn, đang chuyển sang đăng nhập...', 'Hết phiên');
+        showToast('error', 'PhiÃªn Ä‘Äƒng nháº­p Ä‘Ã£ háº¿t háº¡n, Ä‘ang chuyá»ƒn sang Ä‘Äƒng nháº­p...', 'Háº¿t phiÃªn');
         setTimeout(() => { logout(); window.location.hash = '/signin'; }, 1500);
         return;
       }
       const data = await res.json();
       if (data.success && data.url) window.location.href = data.url;
-      else { showToast('error', data.message || 'Lỗi tạo thanh toán VNPAY.'); setLoadingPayment(false); }
+      else { showToast('error', data.message || 'Lá»—i táº¡o thanh toÃ¡n VNPAY.'); setLoadingPayment(false); }
     } catch (e) {
-      showToast('error', 'Không thể kết nối cổng VNPAY.');
+      showToast('error', 'KhÃ´ng thá»ƒ káº¿t ná»‘i cá»•ng VNPAY.');
       setLoadingPayment(false);
     }
   };
 
-  const formattedTotal = new Intl.NumberFormat('vi-VN').format(totalPrice) + ' đ';
+  const formattedTotal = new Intl.NumberFormat('vi-VN').format(totalPrice) + ' Ä‘';
 
   // Mock suggested courses based on the user's screenshot
   const suggestedCourses = [
     {
       id: 1,
       title: 'WEB DESIGN FOR EVERYONE!!!',
-      instructor: 'Khánh Nhật',
-      price: '500,000 đ',
+      instructor: 'KhÃ¡nh Nháº­t',
+      price: '500,000 Ä‘',
       thumbnail: 'https://images.unsplash.com/photo-1547658719-da2b51169166?q=80&w=600&auto=format&fit=crop',
     },
     {
       id: 2,
       title: 'SOFTWARE TESTING',
       instructor: 'FPT Edu',
-      price: '800,000 đ',
+      price: '800,000 Ä‘',
       thumbnail: 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?q=80&w=600&auto=format&fit=crop',
     },
     {
       id: 3,
       title: 'SOFTWARE REQUIREMENT',
       instructor: 'FPT Edu',
-      price: '750,000 đ',
+      price: '750,000 Ä‘',
       thumbnail: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=600&auto=format&fit=crop',
     },
     {
       id: 4,
       title: 'SWE202c INTRODUCING SOFTWARE ENGINEERING',
       instructor: 'FPT Edu',
-      price: '600,000 đ',
+      price: '600,000 Ä‘',
       thumbnail: 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?q=80&w=600&auto=format&fit=crop',
     }
   ]
@@ -272,15 +272,15 @@ export default function CartPage({ onGoSignIn, user }) {
           </a>
 
           <nav className="hidden md:flex items-center gap-8">
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/courses">Khóa Học</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/subjects">Môn Học</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/find-tutors">TÃ¬m Gia SÆ°</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/courses">KhÃ³a Há»c</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/become-tutor">Trá»Ÿ ThÃ nh Gia SÆ°</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/subjects">MÃ´n Há»c</a>
           </nav>
 
           <div className="flex items-center gap-6">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giá» hÃ ng">
                 <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
               </a>
             )}
@@ -295,7 +295,7 @@ export default function CartPage({ onGoSignIn, user }) {
               </a>
             ) : (
               <button onClick={onGoSignIn} className="bg-[#00288e] text-white px-5 py-2 rounded-lg font-semibold text-sm hover:bg-[#1e40af] transition-colors">
-                Đăng Nhập
+                ÄÄƒng Nháº­p
               </button>
             )}
           </div>
@@ -304,13 +304,13 @@ export default function CartPage({ onGoSignIn, user }) {
 
       {/* Main Content */}
       <main className="flex-1 max-w-[1280px] w-full mx-auto px-6 py-10">
-        <h1 className="text-2xl font-bold text-[#191c1e] mb-6 border-b border-[#e1e2e4] pb-4">Giỏ hàng</h1>
+        <h1 className="text-2xl font-bold text-[#191c1e] mb-6 border-b border-[#e1e2e4] pb-4">Giá» hÃ ng</h1>
 
         {demoRemoved > 0 && (
           <div className="mb-5 flex items-center justify-between gap-3 bg-[#fff7ed] border border-[#fed7aa] text-[#9a3412] rounded-xl px-4 py-3 text-sm">
             <span className="flex items-center gap-2">
               <span className="material-symbols-outlined text-[18px]">info</span>
-              Đã bỏ {demoRemoved} khóa <b>demo</b> không mua được khỏi giỏ.
+              ÄÃ£ bá» {demoRemoved} khÃ³a <b>demo</b> khÃ´ng mua Ä‘Æ°á»£c khá»i giá».
             </span>
             <button onClick={() => setDemoRemoved(0)} className="text-[#9a3412] hover:text-[#7c2d12]">
               <span className="material-symbols-outlined text-[18px]">close</span>
@@ -328,7 +328,7 @@ export default function CartPage({ onGoSignIn, user }) {
                 <span className="absolute -top-1 -right-2 text-white text-[24px] material-symbols-outlined" style={{ fontSize: '24px' }}>more_horiz</span>
               </div>
               <p className="text-[#757684] text-sm mb-4">No data</p>
-              <p className="text-lg font-semibold text-[#191c1e]">Giỏ hàng của bạn đang trống</p>
+              <p className="text-lg font-semibold text-[#191c1e]">Giá» hÃ ng cá»§a báº¡n Ä‘ang trá»‘ng</p>
             </div>
           ) : (
             <div className="bg-white rounded-xl card-shadow border border-[#e1e2e4] p-6 flex flex-col gap-6">
@@ -340,11 +340,11 @@ export default function CartPage({ onGoSignIn, user }) {
                   <div className="flex flex-col justify-between flex-grow">
                     <div>
                       <h3 className="text-lg font-bold text-[#191c1e] line-clamp-2">{item.title}</h3>
-                      <p className="text-sm text-[#757684] mt-1">Gia sư: {item.tutor_name || item.tutorName || 'EduX'}</p>
+                      <p className="text-sm text-[#757684] mt-1">Gia sÆ°: {item.tutor_name || item.tutorName || 'EduX'}</p>
                     </div>
                     <div className="flex items-center justify-between mt-2">
                       <div className="font-bold text-[#00288e] text-lg">
-                        {new Intl.NumberFormat('vi-VN').format(Number(item.price))} đ
+                        {new Intl.NumberFormat('vi-VN').format(Number(item.price))} Ä‘
                       </div>
                       <div className="flex items-center gap-3 bg-[#f8f9fb] rounded-lg border border-[#e1e2e4] p-1">
                         <button onClick={() => updateQuantity(item.id, -1)} className="w-7 h-7 flex items-center justify-center rounded bg-white border border-[#c4c5d5] hover:bg-[#e1e2e4] transition-colors">
@@ -357,7 +357,7 @@ export default function CartPage({ onGoSignIn, user }) {
                       </div>
                     </div>
                   </div>
-                  <button onClick={() => removeItem(item.id)} className="absolute top-0 right-0 text-[#757684] hover:text-[#ba1a1a] transition-colors p-1" title="Xóa">
+                  <button onClick={() => removeItem(item.id)} className="absolute top-0 right-0 text-[#757684] hover:text-[#ba1a1a] transition-colors p-1" title="XÃ³a">
                     <span className="material-symbols-outlined">delete</span>
                   </button>
                 </div>
@@ -368,37 +368,37 @@ export default function CartPage({ onGoSignIn, user }) {
           {/* Right Column - Order Summary */}
           <div className="space-y-6">
             <div className="bg-white rounded-xl card-shadow border border-[#e1e2e4] p-6">
-              {/* Tạm tính / Giảm giá / Tổng */}
+              {/* Táº¡m tÃ­nh / Giáº£m giÃ¡ / Tá»•ng */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm text-[#444653]">
-                  <span>Tạm tính</span>
-                  <span className="font-semibold text-[#191c1e]">{fmt(totalPrice)} đ</span>
+                  <span>Táº¡m tÃ­nh</span>
+                  <span className="font-semibold text-[#191c1e]">{fmt(totalPrice)} Ä‘</span>
                 </div>
                 {discount > 0 && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-[#16a34a] font-semibold flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[16px]">sell</span>Giảm giá ({appliedCoupon.code})
+                      <span className="material-symbols-outlined text-[16px]">sell</span>Giáº£m giÃ¡ ({appliedCoupon.code})
                     </span>
-                    <span className="text-[#16a34a] font-semibold">− {fmt(discount)} đ</span>
+                    <span className="text-[#16a34a] font-semibold">âˆ’ {fmt(discount)} Ä‘</span>
                   </div>
                 )}
               </div>
               <div className="text-xl font-bold text-[#191c1e] mt-3 pt-3 mb-6 border-t border-[#e1e2e4] flex items-center justify-between">
-                <span>Tổng:</span>
-                <span className="text-[#00288e]">{fmt(finalTotal)} đ</span>
+                <span>Tá»•ng:</span>
+                <span className="text-[#00288e]">{fmt(finalTotal)} Ä‘</span>
               </div>
 
-              {/* Mã khuyến mãi */}
+              {/* MÃ£ khuyáº¿n mÃ£i */}
               <div className="border-t border-[#e1e2e4] pt-6 mb-6">
-                <label className="block text-sm font-semibold text-[#191c1e] mb-2">Mã khuyến mãi</label>
+                <label className="block text-sm font-semibold text-[#191c1e] mb-2">MÃ£ khuyáº¿n mÃ£i</label>
                 {appliedCoupon ? (
                   <div className="flex items-center justify-between bg-[#ecfdf5] border border-[#a7f3d0] rounded-lg px-4 py-2.5">
                     <div className="flex items-center gap-2 text-sm">
                       <span className="material-symbols-outlined text-[#16a34a] text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
                       <span className="font-bold text-[#15803d]">{appliedCoupon.code}</span>
-                      <span className="text-[#16a34a]">− {fmt(discount)}đ</span>
+                      <span className="text-[#16a34a]">âˆ’ {fmt(discount)}Ä‘</span>
                     </div>
-                    <button onClick={removeCoupon} className="text-[#757684] hover:text-[#ba1a1a]" title="Bỏ mã">
+                    <button onClick={removeCoupon} className="text-[#757684] hover:text-[#ba1a1a]" title="Bá» mÃ£">
                       <span className="material-symbols-outlined text-[18px]">close</span>
                     </button>
                   </div>
@@ -409,33 +409,33 @@ export default function CartPage({ onGoSignIn, user }) {
                         type="text" value={promoCode}
                         onChange={e => { setPromoCode(e.target.value); setPromoErr(''); }}
                         onKeyDown={e => { if (e.key === 'Enter') applyPromo(); }}
-                        placeholder="Nhập mã (vd: EDUX10)"
+                        placeholder="Nháº­p mÃ£ (vd: EDUX10)"
                         className="flex-1 border border-[#c4c5d5] rounded-lg px-4 py-2 text-sm uppercase placeholder:normal-case focus:outline-none focus:border-[#00288e] focus:ring-1 focus:ring-[#00288e]"
                       />
                       <button onClick={applyPromo} disabled={promoLoading}
                         className="bg-white border border-[#00288e] text-[#00288e] font-semibold text-sm px-4 py-2 rounded-lg hover:bg-[#f8f9fb] transition-colors whitespace-nowrap disabled:opacity-50">
-                        {promoLoading ? '...' : 'Áp dụng'}
+                        {promoLoading ? '...' : 'Ãp dá»¥ng'}
                       </button>
                     </div>
                     {promoErr && <p className="text-xs text-[#ba1a1a] mt-1.5">{promoErr}</p>}
-                    <p className="text-xs text-[#757684] mt-1.5">Mã thử: <b>EDUX10</b> · <b>GIAM50K</b> · <b>WELCOME20</b> · <b>SALE100K</b></p>
+                    <p className="text-xs text-[#757684] mt-1.5">MÃ£ thá»­: <b>EDUX10</b> Â· <b>GIAM50K</b> Â· <b>WELCOME20</b> Â· <b>SALE100K</b></p>
                   </>
                 )}
               </div>
 
-              {/* Số dư ví điện tử */}
+              {/* Sá»‘ dÆ° vÃ­ Ä‘iá»‡n tá»­ */}
               <div className="border-t border-[#e1e2e4] pt-6 mb-5">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold text-[#191c1e] flex items-center gap-1.5">
                     <span className="material-symbols-outlined text-[#00288e] text-[20px]">account_balance_wallet</span>
-                    Số dư ví điện tử
+                    Sá»‘ dÆ° vÃ­ Ä‘iá»‡n tá»­
                   </span>
-                  <span className="font-bold text-[#00288e]">{walletBalance == null ? '—' : `${fmt(walletBalance)} đ`}</span>
+                  <span className="font-bold text-[#00288e]">{walletBalance == null ? 'â€”' : `${fmt(walletBalance)} Ä‘`}</span>
                 </div>
                 {user && walletBalance != null && walletBalance < finalTotal && (
                   <p className="text-xs text-[#ea580c] mt-1.5 flex items-center gap-1">
                     <span className="material-symbols-outlined text-[14px]">qr_code_2</span>
-                    Số dư ví không đủ — thanh toán bằng <b>mã QR</b> bên dưới
+                    Sá»‘ dÆ° vÃ­ khÃ´ng Ä‘á»§ â€” thanh toÃ¡n báº±ng <b>mÃ£ QR</b> bÃªn dÆ°á»›i
                   </p>
                 )}
               </div>
@@ -443,19 +443,19 @@ export default function CartPage({ onGoSignIn, user }) {
               {!user ? (
                 <button onClick={() => (onGoSignIn ? onGoSignIn() : (window.location.hash = '/signin'))}
                   className="w-full bg-[#00288e] text-white py-3 rounded-lg font-bold text-sm hover:bg-[#1e40af] transition-colors shadow-md">
-                  Đăng nhập để thanh toán
+                  ÄÄƒng nháº­p Ä‘á»ƒ thanh toÃ¡n
                 </button>
               ) : enough ? (
                 <button onClick={handleCheckout} disabled={loadingPayment || cartItems.length === 0}
                   className="w-full bg-[#00288e] text-white py-3 rounded-lg font-bold text-sm hover:bg-[#1e40af] transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
                   <span className="material-symbols-outlined text-[18px]">account_balance_wallet</span>
-                  {loadingPayment ? 'Đang xử lý...' : `Thanh toán bằng ví — ${fmt(finalTotal)} đ`}
+                  {loadingPayment ? 'Äang xá»­ lÃ½...' : `Thanh toÃ¡n báº±ng vÃ­ â€” ${fmt(finalTotal)} Ä‘`}
                 </button>
               ) : (
                 <button onClick={topUpQR} disabled={loadingPayment || cartItems.length === 0}
                   className="w-full bg-gradient-to-r from-[#0ea5e9] to-[#1e40af] text-white py-3 rounded-lg font-bold text-sm hover:-translate-y-0.5 transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
                   <span className="material-symbols-outlined text-[18px]">qr_code_2</span>
-                  {loadingPayment ? 'Đang mở mã QR...' : `Thanh toán bằng mã QR — ${fmt(finalTotal)} đ`}
+                  {loadingPayment ? 'Äang má»Ÿ mÃ£ QR...' : `Thanh toÃ¡n báº±ng mÃ£ QR â€” ${fmt(finalTotal)} Ä‘`}
                 </button>
               )}
             </div>
@@ -464,7 +464,7 @@ export default function CartPage({ onGoSignIn, user }) {
 
         {/* Suggested Courses */}
         <div className="mt-16">
-          <h2 className="text-2xl font-bold text-[#191c1e] mb-8 border-b border-[#e1e2e4] pb-4">Khóa học gợi ý</h2>
+          <h2 className="text-2xl font-bold text-[#191c1e] mb-8 border-b border-[#e1e2e4] pb-4">KhÃ³a há»c gá»£i Ã½</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {suggestedCourses.map(course => (
               <div key={course.id} className="bg-white rounded-xl card-shadow border border-[#e1e2e4] overflow-hidden group cursor-pointer hover:border-[#00288e]/30 transition-all hover:-translate-y-1">
@@ -476,7 +476,7 @@ export default function CartPage({ onGoSignIn, user }) {
                 </div>
                 <div className="p-4 flex flex-col h-[140px]">
                   <h3 className="font-bold text-[#191c1e] text-sm line-clamp-2 mb-2 group-hover:text-[#00288e] transition-colors">{course.title}</h3>
-                  <div className="text-xs text-[#757684] mt-auto">Giảng viên: <span className="font-medium text-[#444653]">{course.instructor}</span></div>
+                  <div className="text-xs text-[#757684] mt-auto">Giáº£ng viÃªn: <span className="font-medium text-[#444653]">{course.instructor}</span></div>
                   <div className="text-lg font-bold text-[#00288e] mt-2">{course.price}</div>
                 </div>
               </div>
@@ -490,13 +490,13 @@ export default function CartPage({ onGoSignIn, user }) {
         <div className="max-w-[1280px] mx-auto px-6">
           {/* Top Links Section */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-12 mb-16">
-            {/* Column 1: Về EduX */}
+            {/* Column 1: Vá» EduX */}
             <div>
-              <h3 className="font-bold text-white mb-4">Về EduX</h3>
+              <h3 className="font-bold text-white mb-4">Vá» EduX</h3>
               <div className="border-t border-white/20 pt-4 space-y-3 flex flex-col">
-                <a href="#" className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Giới thiệu</a>
-                <a href="#" className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Điều khoản</a>
-                <a href="#" className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Bảo mật</a>
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Giá»›i thiá»‡u</a>
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Äiá»u khoáº£n</a>
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Báº£o máº­t</a>
               </div>
             </div>
 
@@ -504,22 +504,22 @@ export default function CartPage({ onGoSignIn, user }) {
             <div>
               <h3 className="font-bold text-white mb-4">Blogs</h3>
               <div className="border-t border-white/20 pt-4 space-y-3 flex flex-col">
-                <a href="#" className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Sự kiện</a>
-                <a href="#" className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Vinh danh</a>
-                <a href="#" className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Thông báo</a>
-                <a href="#" className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Chia sẻ</a>
-                <a href="#" className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Tuyển sinh</a>
-                <a href="#" className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Hỏi đáp</a>
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Sá»± kiá»‡n</a>
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Vinh danh</a>
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-sm text-[#c4c5d5] hover:text-white transition-colors">ThÃ´ng bÃ¡o</a>
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Chia sáº»</a>
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Tuyá»ƒn sinh</a>
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-sm text-[#c4c5d5] hover:text-white transition-colors">Há»i Ä‘Ã¡p</a>
               </div>
             </div>
 
             {/* Column 3: Company Info */}
             <div>
-              <h3 className="font-bold text-white mb-4 uppercase">Công ty TNHH Giải pháp công nghệ giáo dục EduX</h3>
+              <h3 className="font-bold text-white mb-4 uppercase">CÃ´ng ty TNHH Giáº£i phÃ¡p cÃ´ng nghá»‡ giÃ¡o dá»¥c EduX</h3>
               <div className="border-t border-white/20 pt-4 space-y-3 text-sm text-[#c4c5d5] leading-relaxed">
-                <p>Mã số doanh nghiệp: 5901235207</p>
-                <p>Ngày thành lập: 26/08/2025</p>
-                <p>Giáo dục và Công nghệ - phát triển sản phẩm hỗ trợ học tập</p>
+                <p>MÃ£ sá»‘ doanh nghiá»‡p: 5901235207</p>
+                <p>NgÃ y thÃ nh láº­p: 26/08/2025</p>
+                <p>GiÃ¡o dá»¥c vÃ  CÃ´ng nghá»‡ - phÃ¡t triá»ƒn sáº£n pháº©m há»— trá»£ há»c táº­p</p>
               </div>
             </div>
           </div>
@@ -533,25 +533,25 @@ export default function CartPage({ onGoSignIn, user }) {
                 EduX
               </div>
               <div className="border-l border-white/30 pl-4">
-                <p className="text-sm font-semibold text-white">Khơi mở tiềm năng</p>
-                <p className="text-sm text-[#c4c5d5]">Dẫn đầu công nghệ</p>
+                <p className="text-sm font-semibold text-white">KhÆ¡i má»Ÿ tiá»m nÄƒng</p>
+                <p className="text-sm text-[#c4c5d5]">Dáº«n Ä‘áº§u cÃ´ng nghá»‡</p>
               </div>
             </div>
 
             {/* Social Icons & Copyright */}
             <div className="flex flex-col gap-4">
               <div className="flex gap-6">
-                <a href="#" className="text-white hover:opacity-80 transition-opacity">
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-white hover:opacity-80 transition-opacity">
                   <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.469h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.469h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
                 </a>
-                <a href="#" className="text-white hover:opacity-80 transition-opacity">
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-white hover:opacity-80 transition-opacity">
                   <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/></svg>
                 </a>
-                <a href="#" className="text-white hover:opacity-80 transition-opacity">
+                <a href="#" onClick={(e) => e.preventDefault()} className="text-white hover:opacity-80 transition-opacity">
                   <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.5 12 3.5 12 3.5s-7.505 0-9.377.55a3.016 3.016 0 0 0-2.122 2.136C0 8.07 0 12 0 12s0 3.93.501 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.55 9.377.55 9.377.55s7.505 0 9.377-.55a3.016 3.016 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
                 </a>
               </div>
-              <p className="text-sm text-[#c4c5d5]">© EduX - Nền tảng học tập uy tín tại Việt Nam</p>
+              <p className="text-sm text-[#c4c5d5]">Â© EduX - Ná»n táº£ng há»c táº­p uy tÃ­n táº¡i Viá»‡t Nam</p>
             </div>
           </div>
         </div>
@@ -559,3 +559,4 @@ export default function CartPage({ onGoSignIn, user }) {
     </div>
   )
 }
+
