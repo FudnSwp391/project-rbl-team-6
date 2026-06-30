@@ -7,7 +7,6 @@ const NAV_ITEMS = [
   { icon: 'chat', label: 'Tin nhắn', href: '#/dashboard/messages', id: 'messages' },
   { icon: 'assignment', label: 'Kiểm tra & Đề thi', href: '#/dashboard/assessments', id: 'assessments' },
   { icon: 'psychology', label: 'Luyện tập AI', href: '#/dashboard/practice', id: 'practice' },
-  { icon: 'person', label: 'Hồ sơ cá nhân', href: '#/dashboard/profile', id: 'profile' },
   { icon: 'family_restroom', label: 'Mã chia sẻ', href: '#/dashboard/parent-link', id: 'parent-link' },
 ]
 
@@ -80,13 +79,6 @@ export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRout
 
         {/* Bottom actions */}
         <div className="px-sm mt-auto flex flex-col gap-xs">
-          <a
-            href="#" onClick={(e) => e.preventDefault()}
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
-          >
-            <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Cài đặt</span>
-          </a>
           <a
             href="#" onClick={(e) => e.preventDefault()}
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
