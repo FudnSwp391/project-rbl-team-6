@@ -5,9 +5,8 @@ const NAV_ITEMS = [
   { icon: 'school', label: 'My Courses', href: '#/my-courses', id: 'my-courses' },
   { icon: 'calendar_today', label: 'Schedule', href: '#/dashboard/schedule', id: 'schedule' },
   { icon: 'chat', label: 'Messages', href: '#/dashboard/messages', id: 'messages' },
-  { icon: 'quiz', label: 'Assessments', href: '#/dashboard/assessments', id: 'assessments' },
+  { icon: 'assignment', label: 'Kiểm tra & Đề thi', href: '#/dashboard/assessments', id: 'assessments' },
   { icon: 'psychology', label: 'AI Practice', href: '#/dashboard/practice', id: 'practice' },
-  { icon: 'description', label: 'Đề thi', href: '#/dashboard/exam-papers', id: 'exam-papers' },
   { icon: 'person', label: 'Hồ sơ cá nhân', href: '#/dashboard/profile', id: 'profile' },
   { icon: 'family_restroom', label: 'Mã chia sẻ', href: '#/dashboard/parent-link', id: 'parent-link' },
 ]

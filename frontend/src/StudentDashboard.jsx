@@ -6,9 +6,8 @@
  */
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
-import QuizList from './QuizList'
+import AssessmentsWrapper from './components/AssessmentsWrapper'
 import PracticeMode from './PracticeMode'
-import ExamPapers from './ExamPapers'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
@@ -152,9 +151,9 @@ export default function StudentDashboard() {
         <main className={`overflow-x-hidden p-md lg:p-lg ${activeSection === 'schedule' ? 'block' : 'flex-1 overflow-y-auto'}`}>
           <div className={`max-w-container-max mx-auto flex flex-col gap-xl ${activeSection === 'schedule' ? 'pb-8' : 'pb-xl'}`}>
 
-            {/* ── Assessments Section ── */}
+            {/* ── Assessments Section (Gộp Bài tập & Đề thi) ── */}
             {activeSection === 'assessments' && (
-              <QuizList token={token} />
+              <AssessmentsWrapper token={token} />
             )}
 
             {/* ── Profile Section ── */}
@@ -167,10 +166,7 @@ export default function StudentDashboard() {
               <PracticeMode token={token} />
             )}
 
-            {/* ── Đề thi Section ── */}
-            {activeSection === 'exam-papers' && (
-              <ExamPapers token={token} />
-            )}
+
 
             {/* ── Parent Link Section ── */}
             {activeSection === 'parent-link' && (
