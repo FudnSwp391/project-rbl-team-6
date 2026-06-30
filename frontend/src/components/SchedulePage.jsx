@@ -19,6 +19,8 @@ const SchedulePage = () => {
   // Day detail modal
   const [selectedDay, setSelectedDay] = useState(null);
   const [timeFrame, setTimeFrame] = useState('This Week');
+  const [detailSession, setDetailSession] = useState(null);
+  const [sessionInfoMap, setSessionInfoMap] = useState({});
 
   const fetchSchedule = async () => {
     if (!token) return;
@@ -50,6 +52,26 @@ const SchedulePage = () => {
   useEffect(() => {
     fetchSchedule();
   }, [searchQuery, statusFilter, subjectFilter, tutorFilter, token]);
+
+  useEffect(() => {
+    if (!data) return;
+    const allSessions = [
+      ...(data.sessions || []),
+      ...(data.up_next || []),
+      ...(data.today || []),
+    ];
+    const map = {};
+    allSessions.forEach(s => {
+      const keys = [s.id, s.booking_id].filter(Boolean);
+      for (const key of keys) {
+        const saved = localStorage.getItem(`session_info_booking-${key}`);
+        if (saved) {
+          try { map[s.id] = JSON.parse(saved); break; } catch {}
+        }
+      }
+    });
+    setSessionInfoMap(map);
+  }, [data]);
 
   const handleSearch = () => {
     setSearchQuery(searchInput.trim());
@@ -359,7 +381,7 @@ const SchedulePage = () => {
                             const style = getSessionStyle(session.status);
 
                             return (
-                              <div key={session.id} className={`w-full ${style.bgColor} border ${style.borderColor} rounded-lg p-2.5 hover:shadow-md transition-shadow cursor-pointer shadow-sm`}>
+                              <div key={session.id} onClick={() => setDetailSession(session)} className={`w-full ${style.bgColor} border ${style.borderColor} rounded-lg p-2.5 hover:shadow-md transition-shadow cursor-pointer shadow-sm`}>
                                 <div className="flex justify-between items-start mb-1">
                                   <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 ${style.labelBg} ${style.labelColor}`}>
                                     {session.status === 'ongoing' && <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>}
@@ -458,12 +480,44 @@ const SchedulePage = () => {
                             </div>
                             <button 
                               type="button" 
-                              onClick={() => handleJoinClass(session.meeting_url)} 
+                              onClick={() => handleJoinClass(sessionInfoMap[session.id]?.meetLink || session.meeting_url)} 
                               className="w-full bg-primary text-on-primary px-4 py-2.5 rounded-lg text-label-md font-label-md hover:bg-primary/90 transition-colors shadow-sm flex items-center justify-center gap-2"
                             >
                               <span className="material-symbols-outlined text-[18px]">videocam</span>
                               Tham gia lớp học
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => setDetailSession(session)}
+                              className="w-full border border-outline-variant text-on-surface-variant px-4 py-2 rounded-lg text-label-md font-label-md hover:bg-surface-container transition-colors flex items-center justify-center gap-2"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">info</span>
+                              Xem chi tiết buổi học
+                            </button>
+                            {sessionInfoMap[session.id] && (
+                              <div className="mt-1 pt-2 border-t border-surface-variant/30 grid grid-cols-2 gap-2">
+                                <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold ${
+                                  sessionInfoMap[session.id].mode === 'online' ? 'bg-primary/10 text-primary' : 'bg-[#f0fdf4] text-[#16a34a]'
+                                }`}>
+                                  <span className="material-symbols-outlined text-[13px]">
+                                    {sessionInfoMap[session.id].mode === 'online' ? 'videocam' : 'location_on'}
+                                  </span>
+                                  {sessionInfoMap[session.id].mode === 'online' ? 'Online' : 'Offline'}
+                                </div>
+                                {sessionInfoMap[session.id].duration && (
+                                  <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-surface-container text-[11px] font-bold text-on-surface-variant">
+                                    <span className="material-symbols-outlined text-[13px]">timer</span>
+                                    {sessionInfoMap[session.id].duration} phút
+                                  </div>
+                                )}
+                                {sessionInfoMap[session.id].topic && (
+                                  <div className="col-span-2 flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-surface-container text-[11px] text-on-surface-variant">
+                                    <span className="material-symbols-outlined text-[13px] mt-0.5 flex-shrink-0">subject</span>
+                                    <span className="line-clamp-2">{sessionInfoMap[session.id].topic}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -474,6 +528,15 @@ const SchedulePage = () => {
             </div>
           </div>
         </>
+      )}
+
+      {/* ── Session Detail Modal ── */}
+      {detailSession && (
+        <SessionDetailModal
+          session={detailSession}
+          info={sessionInfoMap[detailSession.id] || null}
+          onClose={() => setDetailSession(null)}
+        />
       )}
 
       {/* ── Day Detail Modal ── */}
@@ -588,3 +651,313 @@ const SchedulePage = () => {
 };
 
 export default SchedulePage;
+
+// ─── Session Detail Modal ────────────────────────────────────────────────────
+function SessionDetailModal({ session, info, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const [copiedPwd, setCopiedPwd] = useState(false);
+  const [checkedMaterials, setCheckedMaterials] = useState({});
+  const [checkedHomework, setCheckedHomework] = useState({});
+  const [countdown, setCountdown] = useState('');
+
+  const startObj = new Date(session.start_time);
+  const endObj   = new Date(session.end_time);
+  const isOngoing  = startObj <= Date.now() && endObj > Date.now();
+  const isUpcoming = startObj > Date.now();
+
+  // Live countdown
+  useEffect(() => {
+    if (!isUpcoming) return;
+    const tick = () => {
+      const diff = startObj - Date.now();
+      if (diff <= 0) { setCountdown('Đang bắt đầu'); return; }
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setCountdown(h > 0 ? `${h}g ${m}ph` : m > 0 ? `${m} phút ${s}s` : `${s} giây`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [session.start_time]);
+
+  const copyText = (text, setCb) => {
+    navigator.clipboard.writeText(text).catch(() => {});
+    setCb(true);
+    setTimeout(() => setCb(false), 1500);
+  };
+
+  // Parse text into list items (split by newline, filter empty)
+  const toList = (str) => (str || '').split('\n').map(s => s.trim()).filter(Boolean);
+  const materialItems = toList(info?.materials);
+  const homeworkItems = toList(info?.homework);
+
+  const meetLink = info?.meetLink || session.meeting_url || '';
+  const mode     = info?.mode || (meetLink ? 'online' : null);
+
+  return (
+    <div
+      className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-[#f8f9fb] rounded-[1.5rem] shadow-[0_24px_64px_rgba(0,0,0,0.22)] w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden">
+
+        {/* ── Gradient Header ── */}
+        <div className={`px-6 py-5 flex-shrink-0 relative overflow-hidden ${
+          isOngoing
+            ? 'bg-gradient-to-br from-[#15803d] via-[#16a34a] to-[#22c55e]'
+            : 'bg-gradient-to-br from-[#00288e] via-[#0a35a8] to-[#1e40af]'
+        }`}>
+          <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-white/[0.06]" />
+          <div className="flex items-start justify-between relative z-10 gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                {isOngoing && (
+                  <span className="inline-flex items-center gap-1.5 bg-white/20 text-white text-[11px] font-bold px-2.5 py-1 rounded-full">
+                    <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
+                    Đang diễn ra
+                  </span>
+                )}
+                {isUpcoming && countdown && (
+                  <span className="inline-flex items-center gap-1 bg-white/20 text-white text-[11px] font-bold px-2.5 py-1 rounded-full">
+                    <span className="material-symbols-outlined text-[12px]">timer</span>
+                    {countdown}
+                  </span>
+                )}
+                <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/20 text-white`}>
+                  <span className="material-symbols-outlined text-[12px]">
+                    {mode === 'offline' ? 'location_on' : 'videocam'}
+                  </span>
+                  {mode === 'offline' ? 'Offline' : 'Online'}
+                </span>
+              </div>
+              <h2 className="text-white text-[18px] font-bold leading-snug">{session.title}</h2>
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                <span className="inline-flex items-center gap-1 bg-white/[0.15] text-white text-[12px] font-semibold px-2.5 py-1 rounded-full">
+                  <span className="material-symbols-outlined text-[13px]">schedule</span>
+                  {startObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {endObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+                {info?.duration && (
+                  <span className="inline-flex items-center gap-1 bg-white/[0.15] text-white text-[12px] font-semibold px-2.5 py-1 rounded-full">
+                    <span className="material-symbols-outlined text-[13px]">hourglass_top</span>
+                    {info.duration} phút
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-9 h-9 rounded-full bg-white/[0.12] hover:bg-white/[0.22] flex items-center justify-center text-white transition-colors flex-shrink-0"
+            >
+              <span className="material-symbols-outlined text-[19px]">close</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ── Scrollable Body ── */}
+        <div className="overflow-y-auto flex-1 p-5 space-y-4">
+
+          {/* Chưa có thông tin */}
+          {!info && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+              <span className="material-symbols-outlined text-amber-500 text-[22px] flex-shrink-0 mt-0.5">info</span>
+              <div>
+                <p className="font-bold text-[13px] text-amber-800 mb-0.5">Gia sư chưa cập nhật thông tin</p>
+                <p className="text-[12px] text-amber-700">Thông tin chi tiết buổi học sẽ được hiển thị khi gia sư điền đầy đủ.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Online — Phòng học */}
+          {mode === 'online' && meetLink && (
+            <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-on-primary">
+                  <span className="material-symbols-outlined text-[17px]">videocam</span>
+                </div>
+                <p className="font-bold text-[13px] text-on-surface">Phòng học Online</p>
+              </div>
+              <div className="flex items-center gap-2 bg-[#f8f9fb] rounded-xl border border-outline-variant/30 px-3 py-2">
+                <span className="text-[13px] text-primary truncate flex-1">{meetLink}</span>
+                <button
+                  onClick={() => copyText(meetLink, setCopied)}
+                  className={`flex-shrink-0 flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg transition-all ${
+                    copied ? 'bg-[#16a34a] text-white' : 'bg-primary/10 text-primary hover:bg-primary/20'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[13px]">{copied ? 'check' : 'content_copy'}</span>
+                  {copied ? 'Đã sao' : 'Copy'}
+                </button>
+              </div>
+              {info?.meetPassword && (
+                <div className="flex items-center gap-2 text-[12px] text-on-surface-variant bg-[#f8f9fb] rounded-xl border border-outline-variant/30 px-3 py-2">
+                  <span className="material-symbols-outlined text-[14px]">lock</span>
+                  <span>Mật khẩu: <strong className="text-on-surface select-all">{info.meetPassword}</strong></span>
+                  <button onClick={() => copyText(info.meetPassword, setCopiedPwd)} className="ml-auto text-primary hover:text-primary/80">
+                    <span className="material-symbols-outlined text-[14px]">{copiedPwd ? 'check' : 'content_copy'}</span>
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={() => window.open(meetLink, '_blank')}
+                className="w-full h-11 bg-primary text-on-primary rounded-xl font-bold text-[14px] flex items-center justify-center gap-2 hover:bg-[#1e40af] transition-colors shadow-sm"
+              >
+                <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                Tham gia lớp học
+              </button>
+            </div>
+          )}
+
+          {/* Offline — Địa điểm */}
+          {mode === 'offline' && info?.location && (
+            <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-[#16a34a] flex items-center justify-center text-white">
+                  <span className="material-symbols-outlined text-[17px]">location_on</span>
+                </div>
+                <p className="font-bold text-[13px] text-on-surface">Địa điểm học Offline</p>
+              </div>
+              <div className="flex items-start gap-2 bg-[#f8f9fb] rounded-xl border border-outline-variant/30 px-3 py-2.5">
+                <span className="material-symbols-outlined text-[15px] text-[#16a34a] mt-0.5 flex-shrink-0">place</span>
+                <p className="text-[13px] text-on-surface">{info.location}</p>
+              </div>
+              {info.locationNote && (
+                <div className="flex items-start gap-2 bg-[#f8f9fb] rounded-xl border border-outline-variant/30 px-3 py-2.5">
+                  <span className="material-symbols-outlined text-[14px] text-on-surface-variant mt-0.5 flex-shrink-0">directions</span>
+                  <p className="text-[12px] text-on-surface-variant">{info.locationNote}</p>
+                </div>
+              )}
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.location)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full h-11 bg-[#16a34a] text-white rounded-xl font-bold text-[14px] flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors shadow-sm"
+              >
+                <span className="material-symbols-outlined text-[18px]">map</span>
+                Xem trên Google Maps
+              </a>
+            </div>
+          )}
+
+          {/* Chủ đề buổi học */}
+          {info?.topic && (
+            <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="material-symbols-outlined text-[16px] text-primary">subject</span>
+                <p className="font-bold text-[12px] uppercase tracking-wide text-outline">Chủ đề buổi học</p>
+              </div>
+              <p className="text-[14px] text-on-surface leading-relaxed">{info.topic}</p>
+            </div>
+          )}
+
+          {/* Checklist: Tài liệu cần chuẩn bị */}
+          {materialItems.length > 0 && (
+            <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px] text-primary">menu_book</span>
+                  <p className="font-bold text-[12px] uppercase tracking-wide text-outline">Cần chuẩn bị</p>
+                </div>
+                <span className="text-[11px] font-bold text-primary">
+                  {Object.values(checkedMaterials).filter(Boolean).length}/{materialItems.length} xong
+                </span>
+              </div>
+              <div className="space-y-2">
+                {materialItems.map((item, i) => (
+                  <label key={i} className="flex items-center gap-3 cursor-pointer group py-1">
+                    <div
+                      onClick={() => setCheckedMaterials(prev => ({ ...prev, [i]: !prev[i] }))}
+                      className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                        checkedMaterials[i] ? 'bg-primary border-primary' : 'border-outline-variant group-hover:border-primary/60'
+                      }`}
+                    >
+                      {checkedMaterials[i] && <span className="material-symbols-outlined text-white text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>check</span>}
+                    </div>
+                    <span className={`text-[13px] transition-all ${checkedMaterials[i] ? 'line-through text-on-surface-variant' : 'text-on-surface'}`}>
+                      {item}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Bài tập / Ghi chú trước buổi học */}
+          {homeworkItems.length > 0 && (
+            <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px] text-amber-500">assignment</span>
+                  <p className="font-bold text-[12px] uppercase tracking-wide text-outline">Bài tập trước buổi học</p>
+                </div>
+                <span className="text-[11px] font-bold text-amber-600">
+                  {Object.values(checkedHomework).filter(Boolean).length}/{homeworkItems.length} xong
+                </span>
+              </div>
+              <div className="space-y-2">
+                {homeworkItems.map((item, i) => (
+                  <label key={i} className="flex items-center gap-3 cursor-pointer group py-1">
+                    <div
+                      onClick={() => setCheckedHomework(prev => ({ ...prev, [i]: !prev[i] }))}
+                      className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                        checkedHomework[i] ? 'bg-amber-500 border-amber-500' : 'border-outline-variant group-hover:border-amber-400'
+                      }`}
+                    >
+                      {checkedHomework[i] && <span className="material-symbols-outlined text-white text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>check</span>}
+                    </div>
+                    <span className={`text-[13px] transition-all ${checkedHomework[i] ? 'line-through text-on-surface-variant' : 'text-on-surface'}`}>
+                      {item}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Gia sư */}
+          <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-[16px]">
+                {(session.tutor_name || 'T').charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <p className="font-bold text-[14px] text-on-surface">{session.tutor_name}</p>
+                <p className="text-[12px] text-on-surface-variant">Gia sư</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Footer ── */}
+        <div className="flex items-center gap-3 px-5 py-4 border-t border-outline-variant/20 bg-white flex-shrink-0">
+          <button
+            onClick={onClose}
+            className="h-10 px-5 rounded-xl border border-outline-variant text-on-surface-variant text-[13px] font-semibold hover:bg-surface-container transition-colors"
+          >
+            Đóng
+          </button>
+          {meetLink && (
+            <button
+              onClick={() => window.open(meetLink, '_blank')}
+              className="flex-1 h-10 bg-primary text-on-primary rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[#1e40af] transition-colors shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[16px]">videocam</span>
+              Tham gia lớp học
+            </button>
+          )}
+          {mode === 'offline' && info?.location && (
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.location)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 h-10 bg-[#16a34a] text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[16px]">map</span>
+              Chỉ đường
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
