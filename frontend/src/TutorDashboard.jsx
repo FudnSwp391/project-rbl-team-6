@@ -22,21 +22,21 @@ import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
 
 const NAV_ITEMS = [
-  { icon: 'dashboard', label: 'Overview' },
-  { icon: 'calendar_today', label: 'My Schedule' },
-  { icon: 'group', label: 'Students' },
-  { icon: 'video_library', label: 'Courses' },
-  { icon: 'description', label: 'Assessments' },
-  { icon: 'fact_check', label: 'Review & Grade' },
-  { icon: 'payments', label: 'Earnings' },
-  { icon: 'chat', label: 'Messages' },
-  { icon: 'account_circle', label: 'My Profile' },
+  { icon: 'dashboard', label: 'Tổng quan' },
+  { icon: 'calendar_today', label: 'Lịch trình' },
+  { icon: 'group', label: 'Học viên' },
+  { icon: 'video_library', label: 'Khóa học' },
+  { icon: 'description', label: 'Bài kiểm tra' },
+  { icon: 'fact_check', label: 'Chấm điểm & Nhận xét' },
+  { icon: 'payments', label: 'Thu nhập' },
+  { icon: 'chat', label: 'Tin nhắn' },
+  { icon: 'account_circle', label: 'Hồ sơ' },
 ]
 
 export default function TutorDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState('Overview')
+  const [activeTab, setActiveTab] = useState('Tổng quan')
   const [requests, setRequests] = useState([])
   const [scheduleToday, setScheduleToday] = useState([])
   const [overviewStats, setOverviewStats] = useState({
@@ -209,7 +209,7 @@ export default function TutorDashboard() {
               <h1 className="font-headline-md text-[20px] leading-tight font-black text-primary">
                 EduX
               </h1>
-              <p className="font-label-sm text-label-sm text-on-surface-variant">Tutor Portal</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant">Cổng Gia Sư</p>
             </div>
           </a>
         </div>
@@ -218,7 +218,7 @@ export default function TutorDashboard() {
         <div className="flex flex-col gap-2 px-sm flex-1 mt-4">
           {NAV_ITEMS.map((item) => {
             const isActive = item.label === activeTab
-            const isMessages = item.label === 'Messages'
+            const isMessages = item.label === 'Tin nhắn'
             return (
               <a
                 key={item.label}
@@ -261,7 +261,7 @@ export default function TutorDashboard() {
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
           >
             <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Settings</span>
+            <span className="font-label-md text-label-md">Cài đặt</span>
           </a>
           <a
             href="#"
@@ -269,11 +269,11 @@ export default function TutorDashboard() {
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
           >
             <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Logout</span>
+            <span className="font-label-md text-label-md">Đăng xuất</span>
           </a>
           <button className="mt-2 w-full h-12 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
             <span className="material-symbols-outlined">support_agent</span>
-            Get Support
+            Nhận hỗ trợ
           </button>
         </div>
       </nav>
@@ -335,7 +335,7 @@ export default function TutorDashboard() {
           {/* Decorative background glow */}
           <div className="fixed top-0 right-0 w-1/2 h-1/2 bg-gradient-to-bl from-primary-fixed-dim/20 to-transparent pointer-events-none -z-10 blur-3xl rounded-full" />
 
-          {activeTab === 'Overview' && (
+          {activeTab === 'Tổng quan' && (
             <>
           {/* Ă¢â€â‚¬Ă¢â€â‚¬ Welcome Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <div className="space-y-1">
@@ -461,7 +461,7 @@ export default function TutorDashboard() {
                   )}
                 </div>
                 <button
-                  onClick={() => setActiveTab('My Schedule')}
+                  onClick={() => setActiveTab('Lịch trình')}
                   className="mt-6 w-full h-10 border border-outline-variant rounded-lg font-label-md text-on-surface-variant hover:bg-surface-container-high transition-colors"
                 >
                   Open Full Calendar
@@ -473,35 +473,35 @@ export default function TutorDashboard() {
             </>
           )}
 
-          {activeTab === 'My Profile' && (
+          {activeTab === 'Hồ sơ' && (
             <TutorProfileTab user={user} displayName={displayName} initials={initials} />
           )}
 
-          {activeTab === 'My Schedule' && (
+          {activeTab === 'Lịch trình' && (
             <MyScheduleTab />
           )}
 
-          {activeTab === 'Students' && (
+          {activeTab === 'Học viên' && (
             <TutorStudentsTab />
           )}
 
-          {activeTab === 'Courses' && (
+          {activeTab === 'Khóa học' && (
             <TutorCoursesTab user={user} />
           )}
 
-          {activeTab === 'Assessments' && (
+          {activeTab === 'Bài kiểm tra' && (
             <TutorAssessmentManager token={token} />
           )}
 
-          {activeTab === 'Review & Grade' && (
+          {activeTab === 'Chấm điểm & Nhận xét' && (
             <TutorGradingDashboard token={token} />
           )}
 
-          {activeTab === 'Earnings' && (
+          {activeTab === 'Thu nhập' && (
             <TutorEarningsTab />
           )}
 
-          {activeTab === 'Messages' && (
+          {activeTab === 'Tin nhắn' && (
             <MessagesSection token={token} user={user} />
           )}
 

@@ -358,13 +358,18 @@
   margin-right: 8px;
 }
 
-.search-field input {
+.search-field input,
+.search-field select {
   border: 0;
   outline: 0;
   width: 100%;
   color: var(--on-surface);
   background: transparent;
   font-size: 16px;
+}
+
+.search-field select {
+  cursor: pointer;
 }
 
 .search-field input::placeholder {

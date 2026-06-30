@@ -4,7 +4,6 @@ import { useAuth } from '../AuthContext';
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 const RATING_LABEL = ['', 'Rất tệ', 'Tệ', 'Bình thường', 'Tốt', 'Xuất sắc'];
 
-// ── Ngôi sao vàng ──────────────────────────────────────────────────────────
 function GoldStars({ value, onChange, readonly = false, size = 22 }) {
   const [hover, setHover] = useState(0);
   const active = hover || value;
@@ -17,7 +16,7 @@ function GoldStars({ value, onChange, readonly = false, size = 22 }) {
           onMouseLeave={() => !readonly && setHover(0)}
           className={readonly ? 'cursor-default leading-none' : 'cursor-pointer leading-none'}
           aria-label={`${s} sao`}>
-          <span className="material-symbols-outlined gold-star-glow" style={{ fontSize: size, color: active >= s ? '#f5b301' : '#d9c9a3', fontVariationSettings: active >= s ? "'FILL' 1" : "'FILL' 0" }}>star</span>
+          <span className="material-symbols-outlined gold-star-glow" style={{ fontSize: size, color: active >= s ? '#FFB800' : '#e1e2e4', fontVariationSettings: active >= s ? "'FILL' 1" : "'FILL' 0" }}>star</span>
         </button>
       ))}
     </span>
@@ -105,83 +104,83 @@ export default function CourseGoldShowcase({ course, courseId, onEnroll, enrolle
   return (
     <div className="cgs space-y-6">
       <style>{`
-        .cgs { --gold1:#f7d774; --gold2:#e0a82e; --gold3:#b8860b; --ink:#3a2c05; }
+        .cgs { --blue1:#bbdefb; --blue2:#1e3a8a; --blue3:#00288e; --ink:#191c1e; }
         @keyframes cgsSweep { 0%{transform:translateX(-130%)} 100%{transform:translateX(230%)} }
-        @keyframes cgsGlow { 0%,100%{box-shadow:0 10px 36px -10px rgba(224,168,46,.55)} 50%{box-shadow:0 16px 52px -8px rgba(224,168,46,.85)} }
+        @keyframes cgsGlow { 0%,100%{box-shadow:0 10px 36px -10px rgba(0,40,142,.15)} 50%{box-shadow:0 16px 52px -8px rgba(0,40,142,.3)} }
         @keyframes cgsFloat { 0%,100%{transform:translateY(0) rotate(-4deg)} 50%{transform:translateY(-7px) rotate(4deg)} }
         @keyframes cgsPop { 0%{transform:scale(.7);opacity:0} 100%{transform:scale(1);opacity:1} }
-        @keyframes cgsStarPulse { 0%,100%{filter:drop-shadow(0 0 0 rgba(245,179,1,0))} 50%{filter:drop-shadow(0 0 6px rgba(245,179,1,.7))} }
+        @keyframes cgsStarPulse { 0%,100%{filter:drop-shadow(0 0 0 rgba(255,184,0,0))} 50%{filter:drop-shadow(0 0 6px rgba(255,184,0,.7))} }
+        
         .cgs-board { position:relative; overflow:hidden; border-radius:1.5rem;
-          background:linear-gradient(135deg,#fff6da 0%,#ffe9a8 35%,#f3c34e 70%,#e0a82e 100%);
-          border:1px solid rgba(184,134,11,.45); animation:cgsGlow 4.5s ease-in-out infinite; }
+          background:linear-gradient(90deg,#e3f2fd 0%,#eaf4ff 70%,#fff8e1 100%);
+          border:1px solid #bbdefb; animation:cgsGlow 4.5s ease-in-out infinite; }
         .cgs-board::after { content:''; position:absolute; top:0; left:0; width:38%; height:100%;
           background:linear-gradient(100deg,transparent,rgba(255,255,255,.75),transparent);
           transform:translateX(-130%); animation:cgsSweep 5s ease-in-out infinite; pointer-events:none; }
         .cgs-trophy { animation:cgsFloat 4s ease-in-out infinite; transform-origin:center; }
-        .cgs-tile { background:rgba(255,255,255,.55); backdrop-filter:blur(4px); border:1px solid rgba(255,255,255,.7);
+        
+        .cgs-tile { background:rgba(255,255,255,.9); backdrop-filter:blur(4px); border:1px solid #ffffff;
           border-radius:1rem; animation:cgsPop .5s cubic-bezier(.2,.9,.3,1.4) both; }
-        .cgs-tile:hover { transform:translateY(-4px); transition:transform .25s; background:rgba(255,255,255,.8); }
+        .cgs-tile:hover { transform:translateY(-4px); transition:transform .25s; background:#ffffff; box-shadow:0 4px 12px rgba(0,0,0,0.05); }
         .gold-star-glow { animation:cgsStarPulse 3s ease-in-out infinite; }
-        .gold-btn { position:relative; overflow:hidden; color:#3a2c05; font-weight:800;
-          background:linear-gradient(135deg,#fde68a,#f5b301 55%,#d4900e);
-          box-shadow:0 8px 22px -6px rgba(224,168,46,.7), inset 0 1px 0 rgba(255,255,255,.6);
-          transition:transform .2s, box-shadow .2s; }
-        .gold-btn:hover { transform:translateY(-2px); box-shadow:0 14px 30px -8px rgba(224,168,46,.9); }
-        .gold-btn::before { content:''; position:absolute; top:0; left:0; width:40%; height:100%;
-          background:linear-gradient(100deg,transparent,rgba(255,255,255,.85),transparent);
-          transform:translateX(-150%); }
-        .gold-btn:hover::before { animation:cgsSweep 1.1s ease; }
-        .cgs-card { border:1px solid #f0e6c8; border-radius:1rem; background:#fffdf7; }
-        .cgs-frame { padding:3px; border-radius:1.25rem; background:linear-gradient(135deg,#fde68a,#e0a82e,#b8860b); animation:cgsGlow 5s ease-in-out infinite; }
+        
+        .blue-btn { position:relative; overflow:hidden; color:#ffffff; font-weight:700;
+          background:#1e40af; border:none;
+          box-shadow:0 4px 12px rgba(30,64,175,0.4);
+          transition:transform .2s, box-shadow .2s, background .2s; }
+        .blue-btn:hover { transform:translateY(-2px); box-shadow:0 6px 16px rgba(30,64,175,0.6); background:#1e3a8a; }
+        
+        .cgs-card { border:1px solid #e1e2e4; border-radius:1rem; background:#ffffff; box-shadow:0 4px 6px -1px rgba(0,0,0,0.05); }
+        .cgs-frame { padding:3px; border-radius:1.25rem; background:linear-gradient(135deg,#e1e2e4,#ffffff); box-shadow: 0 0 0 1px #e1e2e4 inset; }
       `}</style>
 
       {/* ══ 1. VIDEO DEMO ══════════════════════════════════════════════════ */}
-      <section>
-        <h2 className="flex items-center gap-2 text-lg font-extrabold text-[#191c1e] mb-3">
-          <span className="material-symbols-outlined" style={{ color: '#e0a82e', fontVariationSettings: "'FILL' 1" }}>smart_display</span>
+      <section className="cgs-card p-6">
+        <h2 className="flex items-center gap-2 text-xl font-bold text-[#00288e] mb-4">
+          <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>ondemand_video</span>
           Video demo bài giảng
-          <span className="text-[11px] font-bold text-[#b8860b] bg-[#fff3cf] border border-[#f0d98a] px-2 py-0.5 rounded-full">Học thử miễn phí</span>
+          <span className="text-xs font-normal text-emerald-700 bg-emerald-100 border border-emerald-200 px-3 py-1 rounded-full ml-2">Học thử miễn phí</span>
         </h2>
         <div className="cgs-frame">
-          <div className="rounded-[1.1rem] overflow-hidden bg-black relative aspect-video">
+          <div className="rounded-xl overflow-hidden bg-black relative aspect-video shadow-inner">
             {demo && demoEmbed ? (
               <iframe className="w-full h-full" src={demoEmbed} title="Video demo" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
             ) : demo && demo.video_url ? (
               <video className="w-full h-full" src={demo.video_url} controls poster={course.thumbnail_url || undefined} />
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center text-center px-6"
-                style={{ background: 'linear-gradient(135deg,#1a1407,#3a2c05)' }}>
-                <span className="material-symbols-outlined cgs-trophy" style={{ fontSize: 60, color: '#f5b301' }}>movie</span>
-                <p className="text-[#f7d774] font-bold mt-3">Gia sư chưa tải video demo cho khóa <span className="text-white">{course.subject}</span></p>
-                <p className="text-[#c9b78a] text-sm mt-1">Video demo sẽ tự hiển thị khi gia sư thêm bài giảng "Xem trước".</p>
+                style={{ background: 'linear-gradient(135deg,#2a2414,#120f08)' }}>
+                <span className="material-symbols-outlined cgs-trophy opacity-80" style={{ fontSize: 48, color: '#3a6fe0', fontVariationSettings: "'FILL' 1" }}>movie</span>
+                <p className="text-white/90 font-semibold text-sm mt-3 mb-1">Gia sư chưa tải video demo cho khóa <span className="text-white font-bold">{course.subject}</span></p>
+                <p className="text-white/60 text-xs">Video demo sẽ tự hiển thị khi gia sư thêm bài giảng "Xem trước".</p>
               </div>
             )}
           </div>
         </div>
-        {demo && <p className="mt-2 text-sm text-[#5d5f5f]"><span className="font-semibold text-[#191c1e]">Bài demo:</span> {demo.title}{demo.duration_label ? ` · ${demo.duration_label}` : ''}</p>}
+        {demo && <p className="mt-3 text-sm text-[#5d5f5f]"><span className="font-semibold text-[#191c1e]">Bài demo:</span> {demo.title}{demo.duration_label ? ` · ${demo.duration_label}` : ''}</p>}
       </section>
 
       {/* ══ 2. BẢNG VÀNG THÀNH TÍCH ════════════════════════════════════════ */}
       <section className="cgs-board p-6">
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-5">
-            <span className="material-symbols-outlined cgs-trophy" style={{ fontSize: 40, color: '#9a6a04', fontVariationSettings: "'FILL' 1" }}>workspace_premium</span>
+            <span className="material-symbols-outlined cgs-trophy" style={{ fontSize: 32, color: '#00288e', fontVariationSettings: "'FILL' 1" }}>workspace_premium</span>
             <div>
-              <h2 className="text-xl font-black tracking-tight" style={{ color: '#5c4406' }}>BẢNG VÀNG THÀNH TÍCH</h2>
-              <p className="text-[13px] font-semibold" style={{ color: '#8a6a04' }}>Thành tích khóa học · {course.title}</p>
+              <h2 className="text-lg md:text-xl font-bold tracking-wide uppercase" style={{ color: '#00288e' }}>BẢNG VÀNG THÀNH TÍCH</h2>
+              <p className="text-xs md:text-sm font-semibold" style={{ color: '#00288e', opacity: 0.7 }}>Thành tích khóa học - {course.title}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {STATS.map((s, i) => (
-              <div key={s.label} className="cgs-tile p-4 text-center" style={{ animationDelay: `${i * 90}ms` }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#c98a0a', fontVariationSettings: "'FILL' 1" }}>{s.icon}</span>
-                <div className="text-2xl font-black mt-1" style={{ color: '#4a3705' }}>{s.value}</div>
-                <div className="text-[11px] font-bold uppercase tracking-wide mt-0.5" style={{ color: '#8a6a04' }}>{s.label}</div>
+              <div key={s.label} className="cgs-tile p-4 text-center shadow-sm hover:shadow-md" style={{ animationDelay: `${i * 90}ms` }}>
+                <span className="material-symbols-outlined mb-2" style={{ fontSize: 24, color: '#00288e', fontVariationSettings: "'FILL' 1" }}>{s.icon}</span>
+                <div className="text-2xl font-black mt-1" style={{ color: '#00288e' }}>{s.value}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider mt-1" style={{ color: '#00288e', opacity: 0.7 }}>{s.label}</div>
               </div>
             ))}
           </div>
           {onEnroll && !enrolled && (
-            <button onClick={onEnroll} className="gold-btn mt-5 w-full md:w-auto px-8 py-3 rounded-xl text-[15px] flex items-center justify-center gap-2">
+            <button onClick={onEnroll} className="blue-btn mt-5 w-full md:w-auto px-8 py-3 text-[14px] flex items-center justify-center gap-2">
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>military_tech</span>
               Đăng ký học ngay
             </button>
@@ -191,25 +190,25 @@ export default function CourseGoldShowcase({ course, courseId, onEnroll, enrolle
 
       {/* ══ 3. PHẢN HỒI & ĐÁNH GIÁ ═════════════════════════════════════════ */}
       <section className="cgs-card p-6">
-        <h2 className="flex items-center gap-2 text-lg font-extrabold text-[#191c1e] mb-5">
-          <span className="material-symbols-outlined" style={{ color: '#e0a82e', fontVariationSettings: "'FILL' 1" }}>reviews</span>
+        <h2 className="flex items-center gap-2 text-xl font-bold text-[#00288e] mb-5">
+          <span className="material-symbols-outlined" style={{ color: '#00288e', fontVariationSettings: "'FILL' 1" }}>rate_review</span>
           Phản hồi học viên ({count})
         </h2>
 
         {count > 0 && (
-          <div className="flex flex-col sm:flex-row gap-6 items-center mb-6 pb-6 border-b border-[#f0e6c8]">
-            <div className="text-center shrink-0 px-6 py-4 rounded-2xl" style={{ background: 'linear-gradient(135deg,#fff6da,#ffe9a8)', border: '1px solid #f0d98a' }}>
-              <div className="text-5xl font-black" style={{ color: '#b8860b' }}>{avg.toFixed(1)}</div>
-              <GoldStars value={Math.round(avg)} readonly size={18} />
-              <div className="text-xs text-[#8a6a04] font-semibold mt-1">{count} đánh giá</div>
+          <div className="flex flex-col sm:flex-row gap-6 items-center mb-6 pb-6 border-b border-[#e1e2e4]">
+            <div className="text-center shrink-0 px-6 py-4 rounded-2xl bg-[#f8f9fb]">
+              <div className="text-5xl font-bold" style={{ color: '#00288e' }}>{avg.toFixed(1)}</div>
+              <div className="mt-1"><GoldStars value={Math.round(avg)} readonly size={20} /></div>
+              <div className="text-xs text-[#444653] mt-1">{count} đánh giá</div>
             </div>
             <div className="flex-grow w-full space-y-1.5">
               {[5, 4, 3, 2, 1].map(s => (
                 <div key={s} className="flex items-center gap-2">
                   <span className="text-xs text-[#757684] w-3">{s}</span>
-                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f5b301', fontVariationSettings: "'FILL' 1" }}>star</span>
-                  <div className="flex-grow h-2.5 bg-[#f3eeda] rounded-full overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${count ? (dist[s - 1] / count) * 100 : 0}%`, background: 'linear-gradient(90deg,#f5b301,#e0a82e)' }} />
+                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#FFB800', fontVariationSettings: "'FILL' 1" }}>star</span>
+                  <div className="flex-grow h-2.5 bg-[#f8f9fb] rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-[#00288e]" style={{ width: `${count ? (dist[s - 1] / count) * 100 : 0}%` }} />
                   </div>
                   <span className="text-xs text-[#757684] w-6 text-right">{dist[s - 1]}</span>
                 </div>
@@ -220,27 +219,27 @@ export default function CourseGoldShowcase({ course, courseId, onEnroll, enrolle
 
         {/* Viết / sửa đánh giá */}
         {editingId ? (
-          <form onSubmit={submit} className="mb-6 rounded-xl p-4" style={{ background: '#fffdf7', border: '1px solid #f0e6c8' }}>
+          <form onSubmit={submit} className="mb-6 rounded-xl p-4 bg-[#f8f9fb] border border-[#e1e2e4]">
             <p className="text-sm font-semibold text-[#5d5f5f] mb-2">Chọn số sao</p>
             <GoldStars value={rating} onChange={setRating} />
-            {rating > 0 && <p className="text-sm font-bold mt-1" style={{ color: '#b8860b' }}>{RATING_LABEL[rating]}</p>}
-            <textarea className="w-full mt-3 rounded-lg border border-[#e6dcc0] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#e0a82e]/30 focus:border-[#e0a82e]"
+            {rating > 0 && <p className="text-sm font-bold mt-1 text-[#00288e]">{RATING_LABEL[rating]}</p>}
+            <textarea className="w-full mt-3 rounded-lg border border-[#c4c5d5] p-3 text-sm focus:outline-none focus:border-[#00288e]"
               rows={3} placeholder="Chia sẻ trải nghiệm khóa học..." value={comment} onChange={e => setComment(e.target.value)} />
             {err && <p className="text-sm text-[#ba1a1a] mt-1">{err}</p>}
             <div className="flex gap-2 mt-3">
-              <button type="submit" disabled={busy} className="gold-btn px-5 py-2 rounded-lg text-sm disabled:opacity-50">
+              <button type="submit" disabled={busy} className="blue-btn px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50">
                 {busy ? 'Đang gửi...' : (editingId === 'new' ? 'Gửi đánh giá' : 'Lưu thay đổi')}
               </button>
-              <button type="button" onClick={() => { setEditingId(null); setErr(''); }} className="px-5 py-2 rounded-lg text-sm font-semibold text-[#444653] hover:bg-[#f3eeda]">Hủy</button>
+              <button type="button" onClick={() => { setEditingId(null); setErr(''); }} className="px-5 py-2.5 rounded-lg text-sm font-semibold text-[#444653] bg-white border border-[#c4c5d5] hover:bg-[#f8f9fb]">Hủy</button>
             </div>
           </form>
         ) : (
           <div className="mb-6">
             {!user ? (
-              <p className="text-sm text-[#5d5f5f]"><a href="#/signin" className="font-semibold hover:underline" style={{ color: '#b8860b' }}>Đăng nhập</a> để viết đánh giá.</p>
+              <p className="text-sm text-[#5d5f5f]"><a href="#/signin" className="font-semibold text-[#00288e] hover:underline">Đăng nhập</a> để viết đánh giá.</p>
             ) : myReview ? null : (
-              <button onClick={openCreate} className="gold-btn inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm">
-                <span className="material-symbols-outlined text-[18px]">rate_review</span>Viết đánh giá
+              <button onClick={openCreate} className="blue-btn px-4 py-2.5 rounded-lg text-sm flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">edit_square</span>Viết đánh giá
               </button>
             )}
           </div>
@@ -250,7 +249,7 @@ export default function CourseGoldShowcase({ course, courseId, onEnroll, enrolle
         {loading ? (
           <p className="text-sm text-[#757684]">Đang tải đánh giá...</p>
         ) : count === 0 ? (
-          <p className="text-sm text-[#757684]">Chưa có đánh giá nào — hãy là người đầu tiên để lại phản hồi vàng! ⭐</p>
+          <p className="text-[#444653] text-sm flex items-center gap-2">Chưa có đánh giá nào — hãy là người đầu tiên để lại phản hồi vàng! <span className="material-symbols-outlined text-[#FFB800] text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span></p>
         ) : (
           <div className="space-y-4">
             {reviews.map(r => {
@@ -260,9 +259,11 @@ export default function CourseGoldShowcase({ course, courseId, onEnroll, enrolle
                 <div key={r.id} className="pb-4 border-b border-[#f3eeda] last:border-0">
                   <div className="flex items-center gap-3">
                     {r.reviewer_picture ? (
-                      <img src={r.reviewer_picture} alt={name} className="w-9 h-9 rounded-full object-cover ring-2 ring-[#f0d98a]" />
+                      <img src={r.reviewer_picture} alt={name} className="w-9 h-9 rounded-full object-cover shrink-0" />
                     ) : (
-                      <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm ring-2 ring-[#f0d98a]" style={{ background: '#fff3cf', color: '#b8860b' }}>{name.charAt(0).toUpperCase()}</div>
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 bg-[#dde1ff] text-[#00288e]">
+                        {name.charAt(0).toUpperCase()}
+                      </div>
                     )}
                     <div className="flex-grow">
                       <div className="text-sm font-semibold text-[#191c1e]">{name}{isMine && <span style={{ color: '#b8860b' }} className="font-medium"> (Bạn)</span>}</div>

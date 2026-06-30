@@ -57,7 +57,7 @@ function verifyToken(req, res, next) {
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
   if (!token) {
-    return res.status(401).json({ message: "No token provided. Please log in." });
+    return res.status(401).json({ message: "Không có token. Vui lòng đăng nhập." });
   }
 
   try {
@@ -65,7 +65,7 @@ function verifyToken(req, res, next) {
     req.user = decoded;   // { userId, email, name, picture, role }
     next();
   } catch (err) {
-    return res.status(401).json({ message: "Invalid or expired token. Please log in again." });
+    return res.status(401).json({ message: "Token không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại." });
   }
 }
 
@@ -73,14 +73,14 @@ function verifyToken(req, res, next) {
 // Must be used AFTER verifyToken. Returns 403 if the user is not an admin.
 function requireAdmin(req, res, next) {
   if (req.user?.role !== "admin") {
-    return res.status(403).json({ message: "Forbidden: admin access only." });
+    return res.status(403).json({ message: "Từ chối truy cập: chỉ dành cho quản trị viên." });
   }
   next();
 }
 
 function requireTutor(req, res, next) {
   if (req.user?.role !== "tutor") {
-    return res.status(403).json({ message: "Forbidden: tutor access only." });
+    return res.status(403).json({ message: "Từ chối truy cập: chỉ dành cho gia sư." });
   }
   next();
 }
@@ -472,7 +472,7 @@ app.get("/", (req, res) => {
 // Kiểm tra email đã tồn tại chưa (dùng trước khi đăng ký để báo lỗi sớm)
 app.post("/api/auth/check-email", async (req, res) => {
   const { email } = req.body || {};
-  if (!email) return res.status(400).json({ message: "Email is required." });
+  if (!email) return res.status(400).json({ message: "Email là bắt buộc." });
 
   try {
     const result = await pool.query(
@@ -496,7 +496,7 @@ app.post("/api/auth/check-email", async (req, res) => {
     });
   } catch (err) {
     console.error("check-email error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -510,12 +510,12 @@ app.post("/api/auth/register", async (req, res) => {
     if (!fullName || !email || !password) {
       return res
         .status(400)
-        .json({ message: "Full name, email and password are required." });
+        .json({ message: "Họ tên, email và mật khẩu là bắt buộc." });
     }
     if (password.length < 8) {
       return res
         .status(400)
-        .json({ message: "Password must be at least 8 characters." });
+        .json({ message: "Mật khẩu phải có ít nhất 8 ký tự." });
     }
 
     const allowedRoles = ["student", "parent", "tutor"];
@@ -535,7 +535,7 @@ app.post("/api/auth/register", async (req, res) => {
       }
       return res
         .status(409)
-        .json({ message: "Email already registered. Please sign in." });
+        .json({ message: "Email đã được đăng ký. Vui lòng đăng nhập." });
     }
 
     // Hash password
@@ -564,7 +564,7 @@ app.post("/api/auth/register", async (req, res) => {
     });
   } catch (error) {
     console.error("Register error:", error);
-    return res.status(500).json({ message: "Server error. Please try again." });
+    return res.status(500).json({ message: "Lỗi máy chủ. Vui lòng thử lại." });
   }
 });
 
@@ -573,13 +573,13 @@ app.post("/api/auth/forgot-password/request-otp", async (req, res) => {
   try {
     const { email } = req.body || {};
     if (!email) {
-      return res.status(400).json({ message: "Email is required." });
+      return res.status(400).json({ message: "Email là bắt buộc." });
     }
 
     const result = await pool.query("SELECT id, email FROM users WHERE email = $1", [email.toLowerCase().trim()]);
     if (result.rows.length === 0) {
       // Don't reveal if email exists or not, just return success
-      return res.json({ message: "Nß║┐u email tß╗ôn tß║íi, OTP ─æ├ú ─æ╞░ß╗úc gß╗¡i." });
+      return res.json({ message: "Nếu email tồn tại, OTP đã được gửi." });
     }
 
     // Generate 6-digit OTP
@@ -594,10 +594,10 @@ app.post("/api/auth/forgot-password/request-otp", async (req, res) => {
     // Send email without blocking
     sendPasswordResetEmail(result.rows[0].email, otp).catch(console.error);
 
-    return res.json({ message: "OTP ─æ├ú ─æ╞░ß╗úc gß╗¡i ─æß║┐n email cß╗ºa bß║ín." });
+    return res.json({ message: "OTP đã được gửi đến email của bạn." });
   } catch (error) {
     console.error("Request OTP error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -606,11 +606,11 @@ app.post("/api/auth/forgot-password/reset", async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body || {};
     if (!email || !otp || !newPassword) {
-      return res.status(400).json({ message: "Thiß║┐u th├┤ng tin y├¬u cß║ºu." });
+      return res.status(400).json({ message: "Thiếu thông tin yêu cầu." });
     }
 
     if (newPassword.length < 8) {
-      return res.status(400).json({ message: "Mß║¡t khß║⌐u phß║úi d├ái ├¡t nhß║Ñt 8 k├╜ tß╗▒." });
+      return res.status(400).json({ message: "Mật khẩu phải dài ít nhất 8 ký tự." });
     }
 
     const result = await pool.query(
@@ -619,17 +619,17 @@ app.post("/api/auth/forgot-password/reset", async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).json({ message: "OTP kh├┤ng hß╗úp lß╗ç hoß║╖c ─æ├ú hß║┐t hß║ín." });
+      return res.status(400).json({ message: "OTP không hợp lệ hoặc đã hết hạn." });
     }
 
     const user = result.rows[0];
 
     if (!user.reset_otp || user.reset_otp !== otp.trim()) {
-      return res.status(400).json({ message: "M├ú OTP kh├┤ng ch├¡nh x├íc." });
+      return res.status(400).json({ message: "Mã OTP không chính xác." });
     }
 
     if (new Date() > new Date(user.reset_otp_expiry)) {
-      return res.status(400).json({ message: "M├ú OTP ─æ├ú hß║┐t hß║ín. Vui l├▓ng y├¬u cß║ºu lß║íi." });
+      return res.status(400).json({ message: "Mã OTP đã hết hạn. Vui lòng yêu cầu lại." });
     }
 
     // OTP hß╗úp lß╗ç, tiß║┐n h├ánh ─æß╗òi mß║¡t khß║⌐u
@@ -641,10 +641,10 @@ app.post("/api/auth/forgot-password/reset", async (req, res) => {
       [passwordHash, user.id]
     );
 
-    return res.json({ message: "─Éß║╖t lß║íi mß║¡t khß║⌐u th├ánh c├┤ng!" });
+    return res.json({ message: "Đặt lại mật khẩu thành công!" });
   } catch (error) {
     console.error("Reset password error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -657,7 +657,7 @@ app.post("/api/auth/login", async (req, res) => {
     if (!email || !password) {
       return res
         .status(400)
-        .json({ message: "Email and password are required." });
+        .json({ message: "Email và mật khẩu là bắt buộc." });
     }
 
     // T├¼m user theo email
@@ -669,7 +669,7 @@ app.post("/api/auth/login", async (req, res) => {
     if (result.rows.length === 0) {
       return res
         .status(401)
-        .json({ message: "Invalid email or password." });
+        .json({ message: "Email hoặc mật khẩu không hợp lệ." });
     }
 
     const user = result.rows[0];
@@ -677,14 +677,14 @@ app.post("/api/auth/login", async (req, res) => {
     // User ─æ─âng k├╜ bß║▒ng Google, kh├┤ng c├│ password
     if (!user.password_hash) {
       return res.status(401).json({
-        message: "This account uses Google sign-in. Please use Google to log in.",
+        message: "Tài khoản này sử dụng đăng nhập Google. Vui lòng sử dụng Google để đăng nhập.",
       });
     }
 
     // Kiß╗âm tra password
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
-      return res.status(401).json({ message: "Invalid email or password." });
+      return res.status(401).json({ message: "Email hoặc mật khẩu không hợp lệ." });
     }
 
     const token = createToken(user);
@@ -706,7 +706,7 @@ app.post("/api/auth/login", async (req, res) => {
     });
   } catch (error) {
     console.error("Login error:", error);
-    return res.status(500).json({ message: "Server error. Please try again." });
+    return res.status(500).json({ message: "Lỗi máy chủ. Vui lòng thử lại." });
   }
 });
 
@@ -719,10 +719,10 @@ app.post("/api/auth/google", async (req, res) => {
     if (!googleClientId) {
       return res
         .status(500)
-        .json({ message: "GOOGLE_CLIENT_ID is not configured on the server." });
+        .json({ message: "GOOGLE_CLIENT_ID chưa được cấu hình trên máy chủ." });
     }
     if (!credential) {
-      return res.status(400).json({ message: "Missing Google credential." });
+      return res.status(400).json({ message: "Thiếu thông tin xác thực Google." });
     }
 
     // Verify Google token
@@ -733,7 +733,7 @@ app.post("/api/auth/google", async (req, res) => {
 
     const payload = ticket.getPayload();
     if (!payload?.email || !payload?.sub) {
-      return res.status(401).json({ message: "Invalid Google token payload." });
+      return res.status(401).json({ message: "Dữ liệu token Google không hợp lệ." });
     }
 
     const googleId = payload.sub;
@@ -786,7 +786,7 @@ app.post("/api/auth/google", async (req, res) => {
     });
   } catch (error) {
     console.error("Google auth error:", error);
-    return res.status(401).json({ message: "Google authentication failed." });
+    return res.status(401).json({ message: "Xác thực Google thất bại." });
   }
 });
 
@@ -802,10 +802,10 @@ app.put("/api/tutor/availability", verifyToken, async (req, res) => {
       "UPDATE tutor_profiles SET availability = $1 WHERE user_id = $2",
       [availability, req.user.userId]
     );
-    return res.json({ message: "Availability updated successfully." });
+    return res.json({ message: "Cập nhật lịch trống thành công." });
   } catch (error) {
     console.error("PUT /api/tutor/availability error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -853,7 +853,7 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
     return res.json({ availability, bookedSlots });
   } catch (error) {
     console.error("GET /api/tutors/:id/availability error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -861,7 +861,7 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
 app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
   try {
     const { filename, bucket } = req.body;
-    if (!filename) return res.status(400).json({ message: "filename is required." });
+    if (!filename) return res.status(400).json({ message: "Tên file là bắt buộc." });
     
     const targetBucket = bucket || 'tutor-documents';
     const ext = filename.split('.').pop();
@@ -883,7 +883,7 @@ app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Presigned URL error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -893,11 +893,11 @@ app.get("/api/tutor/profile", verifyToken, async (req, res) => {
       "SELECT * FROM tutor_profiles WHERE user_id = $1",
       [req.user.userId]
     );
-    if (result.rows.length === 0) return res.status(404).json({ message: "Profile not found." });
+    if (result.rows.length === 0) return res.status(404).json({ message: "Không tìm thấy hồ sơ." });
     return res.json(result.rows[0]);
   } catch (error) {
     console.error("Get tutor profile error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1032,7 +1032,7 @@ app.post(
       return res.status(200).json(result.rows[0]);
     } catch (error) {
       console.error("Tutor profile upload error:", error);
-      return res.status(500).json({ message: error.message || "Server error." });
+      return res.status(500).json({ message: error.message || "Lỗi máy chủ." });
     }
   }
 );
@@ -1061,7 +1061,7 @@ app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) =
     });
   } catch (error) {
     console.error("Stats error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1070,16 +1070,16 @@ app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) =
 app.get("/api/admin/document-url", verifyToken, requireAdmin, async (req, res) => {
   try {
     const { path } = req.query;
-    if (!path) return res.status(400).json({ message: "Path is required." });
+    if (!path) return res.status(400).json({ message: "Đường dẫn là bắt buộc." });
     
     // Convert path to signed URL via Supabase Storage REST API
     const signedUrl = await createSignedUrl(path);
-    if (!signedUrl) return res.status(500).json({ message: "Failed to generate URL. Check Supabase config." });
+    if (!signedUrl) return res.status(500).json({ message: "Không thể tạo URL. Kiểm tra cấu hình Supabase." });
     
     return res.json({ signedUrl });
   } catch (error) {
     console.error("Document URL error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1107,7 +1107,7 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
     return res.json(result.rows);
   } catch (error) {
     console.error("Pending tutors error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1147,7 +1147,7 @@ app.post("/api/admin/tutors/:id/release-hold", verifyToken, requireAdmin, async 
   } catch (err) {
     await client.query('ROLLBACK');
     console.error("Release hold error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   } finally {
     client.release();
   }
@@ -1194,7 +1194,7 @@ app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req
     return res.json(profile);
   } catch (error) {
     console.error("Approve error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1239,7 +1239,7 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
     return res.json(profile);
   } catch (error) {
     console.error("Reject error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1314,7 +1314,7 @@ app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
     return res.json({ users: result.rows, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     console.error("GET /api/admin/users error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1370,7 +1370,7 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
     return res.json(user);
   } catch (err) {
     console.error("GET /api/admin/users/:id error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1401,7 +1401,7 @@ app.patch("/api/admin/users/:id/ban", verifyToken, requireAdmin, async (req, res
     return res.json(result.rows[0]);
   } catch (err) {
     console.error("PATCH /api/admin/users/:id/ban error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1432,7 +1432,7 @@ app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, re
     return res.json(result.rows[0]);
   } catch (err) {
     console.error("PATCH /api/admin/users/:id/role error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1453,7 +1453,7 @@ app.get('/api/quizzes', verifyToken, async (req, res) => {
       ORDER BY q.created_at DESC
     `, [req.user.userId]);
     return res.json({ quizzes: result.rows });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── GET /api/subjects ────────────────────────────────────────────────────────
@@ -1461,7 +1461,7 @@ app.get('/api/subjects', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(`SELECT DISTINCT subject FROM quizzes ORDER BY subject`);
     return res.json({ subjects: result.rows.map(r => r.subject) });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── GET /api/quizzes/attempts/:attemptId ─────────────────────────────────────
@@ -1474,7 +1474,7 @@ app.get('/api/quizzes/attempts/:attemptId', verifyToken, async (req, res) => {
     const quiz = await pool.query(`SELECT * FROM quizzes WHERE id=$1`, [a.quiz_id]);
     const questions = await pool.query(`SELECT * FROM quiz_questions WHERE quiz_id=$1 ORDER BY question_order`, [a.quiz_id]);
     return res.json({ attempt: a, quiz: quiz.rows[0], questions: questions.rows });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── GET /api/quizzes/:id/start ───────────────────────────────────────────────
@@ -1491,7 +1491,7 @@ app.get('/api/quizzes/:id/start', verifyToken, async (req, res) => {
     }
     const questions = await pool.query(`SELECT id, question_text, option_a, option_b, option_c, option_d, question_order FROM quiz_questions WHERE quiz_id=$1 ORDER BY question_order`, [id]);
     return res.json({ quiz: quiz.rows[0], questions: questions.rows, attempt: attempt.rows[0] });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── POST /api/quizzes/:id/save-draft ─────────────────────────────────────────
@@ -1501,7 +1501,7 @@ app.post('/api/quizzes/:id/save-draft', verifyToken, async (req, res) => {
     await pool.query(`UPDATE quiz_attempts SET answers=$1, time_remaining_seconds=COALESCE($2, time_remaining_seconds) WHERE id=$3 AND student_id=$4`,
       [JSON.stringify(answers), timeRemainingSeconds !== undefined ? timeRemainingSeconds : null, attemptId, req.user.userId]);
     return res.json({ message: 'Draft saved.' });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── POST /api/quizzes/:id/submit ─────────────────────────────────────────────
@@ -1540,7 +1540,7 @@ app.post('/api/quizzes/:id/submit', verifyToken, async (req, res) => {
       [JSON.stringify(answers), score, correct, JSON.stringify(feedbackObj), attemptId]
     );
     return res.json({ score, total_correct: correct, total_questions: total, attempt: result.rows[0], feedback: feedbackObj });
-  } catch (e) { console.error('Quiz submit:', e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error('Quiz submit:', e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1568,7 +1568,7 @@ app.post('/api/practice/generate', verifyToken, async (req, res) => {
     const session = result.rows[0];
     const safeQ = questions.map((q,i) => ({ index:i, question:q.question, question_type:q.question_type, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
     return res.status(201).json({ session, questions: safeQ });
-  } catch (e) { console.error('Practice generate:', e); res.status(500).json({ message: e.message||'Server error.' }); }
+  } catch (e) { console.error('Practice generate:', e); res.status(500).json({ message: e.message||'Lỗi máy chủ.' }); }
 });
 
 // ─── GET /api/practice/history ────────────────────────────────────────────────
@@ -1579,7 +1579,7 @@ app.get('/api/practice/history', verifyToken, async (req, res) => {
       [req.user.userId]
     );
     return res.json({ sessions: r.rows });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── GET /api/practice/:sessionId/questions ───────────────────────────────────
@@ -1591,7 +1591,7 @@ app.get('/api/practice/:sessionId/questions', verifyToken, async (req, res) => {
     const session = r.rows[0];
     const questions = (session.questions || []).map((q,i) => ({ index:i, question:q.question, question_type:q.question_type, optionA:q.optionA, optionB:q.optionB, optionC:q.optionC, optionD:q.optionD }));
     return res.json({ session: { id:session.id, topic:session.topic, difficulty:session.difficulty, total_questions:session.total_questions, status:session.status, answers:session.answers, time_limit_mins:session.time_limit_mins, time_remaining_seconds:session.time_remaining_seconds }, questions });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── POST /api/practice/chat ──────────────────────────────────────────────────
@@ -1601,7 +1601,7 @@ app.post('/api/practice/chat', verifyToken, async (req, res) => {
     if (!messages?.length) return res.status(400).json({ message: 'Messages required.' });
     const result = await chatWithAI(messages);
     return res.json(result);
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── POST /api/practice/:sessionId/save-progress ────────────────────────────────
@@ -1618,7 +1618,7 @@ app.post('/api/practice/:sessionId/save-progress', verifyToken, async (req, res)
       [JSON.stringify(answers || {}), timeRemaining !== undefined ? timeRemaining : r.rows[0].time_remaining_seconds, sessionId]
     );
     return res.json({ message: 'Progress saved successfully.' });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── POST /api/practice/:sessionId/submit ─────────────────────────────────────
@@ -1657,7 +1657,7 @@ app.post('/api/practice/:sessionId/submit', verifyToken, async (req, res) => {
       [JSON.stringify(answers), JSON.stringify(questions), score, correct, sessionId]
     );
     return res.json({ score, total_correct:correct, total_questions:total, session: updated.rows[0] });
-  } catch (e) { console.error('Practice submit:', e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error('Practice submit:', e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── GET /api/practice/:sessionId/result ──────────────────────────────────────
@@ -1667,7 +1667,7 @@ app.get('/api/practice/:sessionId/result', verifyToken, async (req, res) => {
     const r = await pool.query(`SELECT * FROM practice_sessions WHERE id=$1 AND student_id=$2`, [sessionId, req.user.userId]);
     if (!r.rows.length) return res.status(404).json({ message: 'Session not found.' });
     return res.json({ session: r.rows[0] });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── DELETE /api/practice/:sessionId ──────────────────────────────────────────
@@ -1675,7 +1675,7 @@ app.delete('/api/practice/:sessionId', verifyToken, async (req, res) => {
   try {
     await pool.query(`DELETE FROM practice_sessions WHERE id=$1 AND student_id=$2`, [req.params.sessionId, req.user.userId]);
     return res.json({ message: 'Deleted.' });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1704,7 +1704,7 @@ app.get('/api/exam-papers', verifyToken, async (req, res) => {
     q += ' ORDER BY ep.created_at DESC';
     const r = await pool.query(q, params);
     return res.json({ papers: r.rows });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 
@@ -1723,7 +1723,7 @@ app.get('/api/exam-papers/:paperId/start', verifyToken, async (req, res) => {
     }
     const safeQ = shuffledData.map(q => ({ id:q.id, question_type:q.question_type, question_text:q.question_text, option_a:q.option_a, option_b:q.option_b, option_c:q.option_c, option_d:q.option_d }));
     return res.json({ paper: paper.rows[0], questions: safeQ, attempt: attempt.rows[0] });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ─── GET /api/exam-papers/attempts/:attemptId ──────────────────────────────────
@@ -1750,7 +1750,7 @@ app.get('/api/exam-papers/attempts/:attemptId', verifyToken, async (req, res) =>
     }));
     
     return res.json({ attempt: a, paper: paper.rows[0], questions });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 // ─── POST /api/exam-papers/:paperId/save-draft ──────────────────────────────────
 app.post('/api/exam-papers/:paperId/save-draft', verifyToken, async (req, res) => {
@@ -1759,7 +1759,7 @@ app.post('/api/exam-papers/:paperId/save-draft', verifyToken, async (req, res) =
     await pool.query(`UPDATE exam_paper_attempts SET answers=$1, time_remaining_seconds=COALESCE($2, time_remaining_seconds) WHERE id=$3 AND student_id=$4`,
       [JSON.stringify(answers), timeRemainingSeconds !== undefined ? timeRemainingSeconds : null, attemptId, req.user.userId]);
     return res.json({ message: 'Draft saved.' });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 app.post('/api/exam-papers/:paperId/submit', verifyToken, async (req, res) => {
@@ -1804,7 +1804,7 @@ app.post('/api/exam-papers/:paperId/submit', verifyToken, async (req, res) => {
       [JSON.stringify(answers), score, correct, JSON.stringify(feedbackObj), attemptId]
     );
     return res.json({ score, total_correct:correct, total_questions:total, attempt_id:attemptId, submitted_at:updated.rows[0].submitted_at, feedback: feedbackObj });
-  } catch (e) { console.error('Exam submit error:', e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error('Exam submit error:', e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1928,7 +1928,7 @@ app.get("/api/parent/overview", verifyToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Parent overview error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1955,7 +1955,7 @@ app.get("/api/parent/students", verifyToken, async (req, res) => {
     return res.json({ students: studentsRes.rows });
   } catch (error) {
     console.error("Parent students error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -1986,7 +1986,7 @@ app.get("/api/parent/tutors", verifyToken, async (req, res) => {
     return res.json({ tutors: res2.rows });
   } catch (error) {
     console.error("Parent tutors error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -2060,7 +2060,7 @@ app.get("/api/parent/activity", verifyToken, async (req, res) => {
     return res.json({ activities: all.slice(0, 50) });
   } catch (error) {
     console.error("Parent activity error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -2085,7 +2085,7 @@ app.get('/api/student/link-code', verifyToken, async (req, res) => {
     do { code=generateLinkCode(); tries++; } while (tries<10 && (await pool.query('SELECT id FROM student_link_codes WHERE code=$1',[code])).rows.length>0);
     const r = await pool.query('INSERT INTO student_link_codes (student_id,code) VALUES ($1,$2) RETURNING code,created_at', [studentId,code]);
     return res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // Student: view parents monitoring them
@@ -2097,7 +2097,7 @@ app.get('/api/student/parents', verifyToken, async (req, res) => {
       [req.user.userId]
     );
     return res.json({ parents: r.rows });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // Parent: list linked children + stats
@@ -2115,7 +2115,7 @@ app.get('/api/parent/children', verifyToken, async (req, res) => {
       [req.user.userId]
     );
     return res.json({ children: r.rows });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // Parent: link via code
@@ -2133,7 +2133,7 @@ app.post('/api/parent/link-child', verifyToken, async (req, res) => {
     await pool.query('INSERT INTO parent_children (parent_id,student_id,nickname) VALUES ($1,$2,$3)', [parentId,studentId,nickname?.trim()||null]);
     const student = await pool.query('SELECT id,full_name,email,picture FROM users WHERE id=$1', [studentId]);
     return res.status(201).json({ message: 'Liên kết thành công!', student: student.rows[0] });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // Parent: create new student account + auto-link
@@ -2154,7 +2154,7 @@ app.post('/api/parent/create-child', verifyToken, async (req, res) => {
     do { code=generateLinkCode(); tries++; } while (tries<10 && (await pool.query('SELECT id FROM student_link_codes WHERE code=$1',[code])).rows.length>0);
     await pool.query('INSERT INTO student_link_codes (student_id,code) VALUES ($1,$2)', [s.id,code]);
     return res.status(201).json({ message: 'Tạo tài khoản thành công!', student: s });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // Parent: unlink
@@ -2163,7 +2163,7 @@ app.delete('/api/parent/children/:studentId', verifyToken, async (req, res) => {
     const r = await pool.query('DELETE FROM parent_children WHERE parent_id=$1 AND student_id=$2 RETURNING id', [req.user.userId, req.params.studentId]);
     if (!r.rows.length) return res.status(404).json({ message: 'Không tìm thấy liên kết.' });
     return res.json({ message: 'Đã hủy liên kết.' });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // Parent: get child's detailed progress
@@ -2179,7 +2179,7 @@ app.get('/api/parent/children/:studentId/progress', verifyToken, async (req, res
       pool.query(`SELECT epa.id,epa.score,epa.submitted_at,epa.total_correct,ep.title,ep.subject,ep.grade,ep.year,ep.total_questions FROM exam_paper_attempts epa JOIN exam_papers ep ON epa.exam_paper_id=ep.id WHERE epa.student_id=$1 AND epa.status='submitted' ORDER BY epa.submitted_at DESC LIMIT 20`, [studentId])
     ]);
     return res.json({ quiz_attempts:quiz.rows, practice_sessions:practice.rows, exam_attempts:exam.rows });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2208,7 +2208,7 @@ app.get('/api/parent/children/:studentId/schedule', verifyToken, async (req, res
     `, [studentId]);
 
     return res.json({ sessions: sessions.rows, absences_this_month: parseInt(absences.rows[0].count) });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // POST /api/parent/children/:studentId/schedule/:sessionId/leave
@@ -2238,7 +2238,7 @@ app.post('/api/parent/children/:studentId/schedule/:sessionId/leave', verifyToke
     ]);
 
     return res.json({ message: 'Đã gửi yêu cầu nghỉ phép.' });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // GET /api/parent/children/:studentId/reviews
@@ -2257,7 +2257,7 @@ app.get('/api/parent/children/:studentId/reviews', verifyToken, async (req, res)
     `, [studentId]);
 
     return res.json({ reviews: reviews.rows });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // POST /api/tutor/reviews — gia sư tạo nhận xét định kỳ
@@ -2283,7 +2283,7 @@ app.post('/api/tutor/reviews', verifyToken, requireTutor, async (req, res) => {
           review.rows[0].id]);
     }
     return res.status(201).json({ review: review.rows[0] });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // GET /api/parent/invoices
@@ -2311,7 +2311,7 @@ app.get('/api/parent/invoices', verifyToken, async (req, res) => {
 
     return res.json({ pending: pending.rows, paid: paid.rows,
       summary: { total_debt: totalDebt, total_paid: totalPaid, overdue_count: overdueCount } });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // GET /api/notifications
@@ -2323,7 +2323,7 @@ app.get('/api/notifications', verifyToken, async (req, res) => {
     );
     const unreadCount = notifs.rows.filter(n => !n.is_read).length;
     return res.json({ notifications: notifs.rows, unread_count: unreadCount });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // PUT /api/notifications/read-all
@@ -2331,7 +2331,7 @@ app.put('/api/notifications/read-all', verifyToken, async (req, res) => {
   try {
     await pool.query('UPDATE notifications SET is_read=TRUE WHERE user_id=$1', [req.user.userId]);
     return res.json({ message: 'OK' });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // PUT /api/notifications/:id/read
@@ -2339,7 +2339,7 @@ app.put('/api/notifications/:id/read', verifyToken, async (req, res) => {
   try {
     await pool.query('UPDATE notifications SET is_read=TRUE WHERE id=$1 AND user_id=$2', [req.params.id, req.user.userId]);
     return res.json({ message: 'OK' });
-  } catch (e) { res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 
@@ -2420,7 +2420,7 @@ app.get('/api/chat/conversations', verifyToken, async (req, res) => {
       ORDER BY other_id, last_message_at DESC
     `, [userId]);
     return res.json({ conversations: result.rows });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // GET /api/chat/contacts — danh sách liên hệ để nhắn tin (dựa theo role)
@@ -2510,7 +2510,7 @@ app.get('/api/chat/contacts', verifyToken, async (req, res) => {
       result = { rows: [] };
     }
     return res.json({ contacts: result.rows });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 async function checkChatPermission(userId, userRole, otherId) {
@@ -2618,7 +2618,7 @@ app.post('/api/chat/start', verifyToken, async (req, res) => {
       tutor: tutorCheck.rows[0],
       message: firstMsg,
     });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // GET /api/chat/:otherId — lịch sử tin nhắn + đánh dấu đã đọc
@@ -2657,7 +2657,7 @@ app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
       `SELECT id, full_name, email, picture, role FROM users WHERE id=$1`, [otherId]
     );
     return res.json({ messages: result.rows, other: other.rows[0] || null });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // POST /api/chat — gửi tin nhắn text
@@ -2699,7 +2699,7 @@ app.post('/api/chat', verifyToken, async (req, res) => {
     );
 
     return res.status(201).json({ message: msg.rows[0] });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // POST /api/chat/upload — upload file (ảnh/video/tệp) lên Supabase Storage
@@ -2830,7 +2830,7 @@ app.post('/api/tutor/grade-attempt', verifyToken, requireTutor, async (req, res)
     }
   } catch (e) {
     console.error('Tutor grade error:', e);
-    return res.status(500).json({ message: 'Server error.' });
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 });
 
@@ -3075,7 +3075,7 @@ app.get("/api/courses", async (req, res) => {
     return res.json(r.rows);
   } catch (err) {
     console.error("GET /api/courses error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -3105,7 +3105,7 @@ app.get("/api/courses/:id", async (req, res) => {
     return res.json({ ...course, lessons });
   } catch (err) {
     console.error("GET /api/courses/:id error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -3170,7 +3170,7 @@ app.get("/api/wishlist", verifyToken, async (req, res) => {
        FROM wishlists w JOIN users u ON u.id = w.item_id LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
        WHERE w.user_id = $1 AND w.item_type = 'tutor' ORDER BY w.created_at DESC`, [uid]);
     return res.json({ courses: courses.rows, tutors: tutors.rows });
-  } catch (e) { console.error("GET /api/wishlist:", e.message); return res.status(500).json({ message: "Server error." }); }
+  } catch (e) { console.error("GET /api/wishlist:", e.message); return res.status(500).json({ message: "Lỗi máy chủ." }); }
 });
 
 app.post("/api/wishlist", verifyToken, async (req, res) => {
@@ -3181,7 +3181,7 @@ app.post("/api/wishlist", verifyToken, async (req, res) => {
       `INSERT INTO wishlists (user_id, item_type, item_id) VALUES ($1,$2,$3)
        ON CONFLICT (user_id, item_type, item_id) DO NOTHING`, [req.user.userId, item_type, item_id]);
     return res.status(201).json({ ok: true });
-  } catch (e) { console.error("POST /api/wishlist:", e.message); return res.status(500).json({ message: "Server error." }); }
+  } catch (e) { console.error("POST /api/wishlist:", e.message); return res.status(500).json({ message: "Lỗi máy chủ." }); }
 });
 
 app.delete("/api/wishlist/:type/:id", verifyToken, async (req, res) => {
@@ -3189,7 +3189,7 @@ app.delete("/api/wishlist/:type/:id", verifyToken, async (req, res) => {
     await pool.query(`DELETE FROM wishlists WHERE user_id=$1 AND item_type=$2 AND item_id=$3`,
       [req.user.userId, req.params.type, req.params.id]);
     return res.json({ ok: true });
-  } catch (e) { console.error("DELETE /api/wishlist:", e.message); return res.status(500).json({ message: "Server error." }); }
+  } catch (e) { console.error("DELETE /api/wishlist:", e.message); return res.status(500).json({ message: "Lỗi máy chủ." }); }
 });
 
 // ══ GET /api/student/my-courses ─ Trang MyCourses (khóa học + thống kê) ════
@@ -3246,7 +3246,7 @@ app.get('/api/student/my-courses', verifyToken, async (req, res) => {
     return res.json({ success: true, data: { courses, stats } });
   } catch (e) {
     console.error('GET /api/student/my-courses:', e.message);
-    return res.status(500).json({ success: false, message: 'Server error.' });
+    return res.status(500).json({ success: false, message: 'Lỗi máy chủ.' });
   }
 });
 
@@ -3263,7 +3263,7 @@ app.get("/api/student/orders", verifyToken, async (req, res) => {
        WHERE ce.student_id = $1
        ORDER BY ce.created_at DESC`, [req.user.userId]);
     return res.json(r.rows);
-  } catch (e) { console.error("GET /api/student/orders:", e.message); return res.status(500).json({ message: "Server error." }); }
+  } catch (e) { console.error("GET /api/student/orders:", e.message); return res.status(500).json({ message: "Lỗi máy chủ." }); }
 });
 
 // ══ Chứng chỉ hoàn thành khóa học ═════════════════════════════════════════
@@ -3313,7 +3313,7 @@ app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
       issuedAt: new Date().toISOString(),
       certId: `EDUX-${String(courseId).slice(0, 8).toUpperCase()}-${String(req.user.userId).slice(0, 6).toUpperCase()}`,
     });
-  } catch (e) { console.error("GET certificate:", e.message); return res.status(500).json({ message: "Server error." }); }
+  } catch (e) { console.error("GET certificate:", e.message); return res.status(500).json({ message: "Lỗi máy chủ." }); }
 });
 
 // ══ Thanh toán giỏ hàng bằng VÍ (trừ số dư + đăng ký nhiều khóa) ══════════
@@ -3424,7 +3424,7 @@ app.get("/api/courses/:id/enrollment-status", verifyToken, async (req, res) => {
     return res.json({ enrolled: false });
   } catch (err) {
     console.error("GET enrollment-status error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -3659,7 +3659,7 @@ app.get("/api/tutors", async (req, res) => {
     });
   } catch (err) {
     console.error("GET /api/tutors error:", err.message);
-    return res.status(500).json({ message: "Server error.", detail: err.message });
+    return res.status(500).json({ message: "Lỗi máy chủ.", detail: err.message });
   }
 });
 
@@ -3782,7 +3782,7 @@ app.post("/api/tutors/matches", async (req, res) => {
     return res.json({ tutors, total: tutors.length });
   } catch (err) {
     console.error("POST /api/tutors/matches error:", err.message);
-    return res.status(500).json({ message: "Server error.", detail: err.message });
+    return res.status(500).json({ message: "Lỗi máy chủ.", detail: err.message });
   }
 });
 
@@ -3870,7 +3870,7 @@ app.get("/api/tutors/:id", async (req, res) => {
     return res.json(responseData);
   } catch (err) {
     console.error("GET /api/tutors/:id error:", err.message);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -3908,7 +3908,7 @@ app.get("/api/entity-reviews", async (req, res) => {
     return res.json({ reviews: r.rows, avg: Math.round(avg * 10) / 10, count });
   } catch (e) {
     console.error("GET /api/entity-reviews:", e.message);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -3966,7 +3966,7 @@ app.post("/api/entity-reviews", verifyToken, async (req, res) => {
   } catch (e) {
     if (e.code === "23505") return res.status(409).json({ message: "Bạn đã đánh giá rồi." });
     console.error("POST /api/entity-reviews:", e.message);
-    return res.status(500).json({ message: "Server error.", detail: e.message });
+    return res.status(500).json({ message: "Lỗi máy chủ.", detail: e.message });
   }
 });
 
@@ -3987,7 +3987,7 @@ app.put("/api/entity-reviews/:id", verifyToken, async (req, res) => {
     return res.json(r.rows[0]);
   } catch (e) {
     console.error("PUT /api/entity-reviews:", e.message);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -3998,7 +3998,7 @@ app.delete("/api/entity-reviews/:id", verifyToken, async (req, res) => {
     return res.json({ message: "Đã xóa đánh giá." });
   } catch (e) {
     console.error("DELETE /api/entity-reviews:", e.message);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -4036,7 +4036,7 @@ app.get("/api/reviews/featured", async (req, res) => {
     return res.json(result.rows);
   } catch (err) {
     console.error("GET /api/reviews/featured error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -4060,7 +4060,7 @@ app.post("/api/reviews", verifyToken, async (req, res) => {
     return res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error("POST /api/reviews error:", err);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -4512,7 +4512,7 @@ app.get("/api/tutor/courses", verifyToken, async (req, res) => {
     })));
   } catch (error) {
     console.error("Get tutor courses error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -4598,7 +4598,7 @@ app.post("/api/tutor/courses", verifyToken, async (req, res) => {
     return await upsertTutorCourse(req, res);
   } catch (error) {
     console.error("Create course error:", error);
-    return res.status(500).json({ message: error.message || "Server error." });
+    return res.status(500).json({ message: error.message || "Lỗi máy chủ." });
   }
 });
 
@@ -4607,7 +4607,7 @@ app.patch("/api/tutor/courses/:id", verifyToken, async (req, res) => {
     return await upsertTutorCourse(req, res, req.params.id);
   } catch (error) {
     console.error("Update course error:", error);
-    return res.status(500).json({ message: error.message || "Server error." });
+    return res.status(500).json({ message: error.message || "Lỗi máy chủ." });
   }
 });
 
@@ -4623,7 +4623,7 @@ app.delete("/api/tutor/courses/:id", verifyToken, async (req, res) => {
     return res.json({ message: "Course archived." });
   } catch (error) {
     console.error("Archive course error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -4704,7 +4704,7 @@ app.get("/api/tutor/students", verifyToken, async (req, res) => {
     return res.json(students);
   } catch (error) {
     console.error("Get tutor students error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -4731,7 +4731,7 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
     return res.json(result.rows);
   } catch (error) {
     console.error("[bookings] GET error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -4874,7 +4874,7 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
 
   } catch (error) {
     console.error("[student/schedule] GET error:", error);
-    return res.status(500).json({ success: false, error: "Server error." });
+    return res.status(500).json({ success: false, error: "Lỗi máy chủ." });
   }
 });
 
@@ -4903,7 +4903,7 @@ app.get("/api/student/bookings", verifyToken, async (req, res) => {
     return res.json({ bookings: result.rows });
   } catch (error) {
     console.error("[student/bookings] GET error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -4934,7 +4934,7 @@ app.get("/api/admin/disputes", verifyToken, async (req, res) => {
     return res.json({ disputes: result.rows });
   } catch (e) {
     console.error("Admin disputes error:", e);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -5074,7 +5074,7 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
     return res.json(result.rows);
   } catch (error) {
     console.error("[tutor/bookings] GET error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -5288,7 +5288,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error("[bookings PATCH] error:", e);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   } finally {
     client.release();
   }
@@ -5309,7 +5309,7 @@ app.delete("/api/bookings/:id", verifyToken, async (req, res) => {
     return res.json({ message: "Đã hủy lịch học.", id: result.rows[0].id });
   } catch (error) {
     console.error("[bookings] DELETE error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -5692,7 +5692,7 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error("Update attendance error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   } finally {
     client.release();
   }
@@ -5818,7 +5818,7 @@ app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Get tutor earnings error:", error);
-    return res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -6087,7 +6087,7 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Report error:', e);
-    return res.status(500).json({ message: 'Server error.' });
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   } finally {
     client.release();
   }
@@ -6209,7 +6209,7 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Course report error:', e);
-    return res.status(500).json({ message: 'Server error.' });
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   } finally {
     client.release();
   }
@@ -6393,7 +6393,7 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Manual release error:', e);
-    return res.status(500).json({ success: false, message: 'Server error.' });
+    return res.status(500).json({ success: false, message: 'Lỗi máy chủ.' });
   } finally {
     client.release();
   }
@@ -6415,7 +6415,7 @@ app.get('/api/payment/transactions', verifyToken, async (req, res) => {
     return res.json({ transactions: transactions.rows });
   } catch (e) {
     console.error('Transactions error:', e);
-    return res.status(500).json({ message: 'Server error.' });
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 });
 
@@ -6431,7 +6431,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     ]);
     return res.json({ wallet: { ...wallet, total_deposited: Number(deposited.rows[0].total), total_earned: Number(earned.rows[0].total) } });
   } catch (e) {
-    res.status(500).json({ message: 'Server error.' });
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 });
   try {

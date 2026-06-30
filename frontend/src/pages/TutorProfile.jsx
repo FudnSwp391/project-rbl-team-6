@@ -315,20 +315,49 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               </div>
             </section>
 
-            {/* Trust stats */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { value: tutor.completed_lessons_count ?? 0, label: 'Buổi học', color: 'text-[#00288e]' },
-                { value: (parseFloat(tutor.rating) || 0).toFixed(1), label: 'Đánh giá', color: 'text-[#FFB800]' },
-                { value: tutor.total_students ?? 0, label: 'Học sinh',  color: 'text-indigo-800' },
-                { value: tutor.review_count ?? 0, label: 'Lượt đánh giá', color: 'text-green-600' },
-              ].map(stat => (
-                <div key={stat.label} className="bg-white rounded-xl p-3 tutor-profile-card flex flex-col items-center text-center">
-                  <span className={`text-2xl font-bold ${stat.color}`}>{stat.value}</span>
-                  <span className="text-xs text-[#444653] mt-0.5">{stat.label}</span>
-                </div>
-              ))}
-            </div>
+            {/* Video demo bài giảng */}
+            <section className="bg-white rounded-2xl p-6 tutor-profile-card">
+              <h2 className="text-xl font-bold text-[#00288e] mb-4 flex items-center gap-2">
+                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>ondemand_video</span>
+                Video demo bài giảng
+                <span className="text-xs font-normal text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full ml-2 border border-emerald-200">Học thử miễn phí</span>
+              </h2>
+              <div className="w-full bg-gradient-to-br from-[#2a2414] to-[#120f08] text-white rounded-xl aspect-video flex flex-col items-center justify-center p-6 text-center shadow-inner border-4 border-white ring-1 ring-[#e1e2e4]">
+                <span className="material-symbols-outlined text-[48px] text-[#3a6fe0] mb-4 opacity-80" style={{ fontVariationSettings: "'FILL' 1" }}>movie</span>
+                <p className="font-semibold text-sm mb-1 text-white/90">
+                  Gia sư chưa tải video demo cho khóa {tutor.subjects && tutor.subjects.length > 0 ? tutor.subjects[0] : 'này'}
+                </p>
+                <p className="text-xs text-white/60">
+                  Video demo sẽ tự hiển thị khi gia sư thêm bài giảng "Xem trước".
+                </p>
+              </div>
+            </section>
+
+            {/* BẢNG VÀNG THÀNH TÍCH */}
+            <section className="rounded-2xl p-6 tutor-profile-card bg-gradient-to-r from-[#e3f2fd] via-[#eaf4ff] to-[#fff8e1] shadow-[inset_0_2px_10px_rgba(255,255,255,0.7)] border border-[#bbdefb]">
+              <div className="flex flex-col gap-1 mb-5">
+                <h2 className="text-lg md:text-xl font-bold text-[#00288e] flex items-center gap-2 uppercase tracking-wide">
+                  <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 26, fontVariationSettings: "'FILL' 1" }}>workspace_premium</span>
+                  BẢNG VÀNG THÀNH TÍCH
+                </h2>
+                <p className="text-xs md:text-sm text-[#00288e]/70 ml-9 md:ml-10">Thành tích khóa học - Học làm người</p>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { value: (parseFloat(tutor.rating) || 0).toFixed(1), label: 'ĐIỂM ĐÁNH GIÁ', icon: 'star' },
+                  { value: tutor.completed_lessons_count ?? '—', label: 'HỌC VIÊN HÀI LÒNG', icon: 'verified' },
+                  { value: tutor.total_students ?? 3, label: 'BÀI GIẢNG', icon: 'play_lesson' },
+                  { value: tutor.review_count ?? 0, label: 'LƯỢT PHẢN HỒI', icon: 'reviews' },
+                ].map(stat => (
+                  <div key={stat.label} className="bg-white/95 backdrop-blur-sm rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-sm border border-white h-full hover:shadow-md transition-shadow">
+                    <span className="material-symbols-outlined text-[#00288e] mb-2" style={{ fontVariationSettings: "'FILL' 1" }}>{stat.icon}</span>
+                    <span className="text-2xl font-black text-[#00288e]">{stat.value}</span>
+                    <span className="text-[10px] font-bold text-[#00288e]/70 mt-1 uppercase tracking-wider">{stat.label}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
 
             {/* Giới thiệu */}
             <SectionCard icon="person" title="Giới thiệu">
@@ -383,18 +412,29 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               )}
             </SectionCard>
 
-            {/* Đánh giá */}
-            <SectionCard icon="star" title={`Đánh giá từ học sinh (${tutor.review_count})`}>
-              <div className="flex items-center gap-4 mb-5 p-4 bg-[#f8f9fb] rounded-xl">
-                <span className="text-5xl font-bold text-[#00288e]">{(parseFloat(tutor.rating) || 0).toFixed(1)}</span>
-                <div>
-                  <StarRating value={parseFloat(tutor.rating) || 0} size={20} />
-                  <p className="text-sm text-[#444653] mt-1">{tutor.review_count ?? 0} đánh giá</p>
-                </div>
+            {/* Phản hồi học viên */}
+            <section className="bg-white rounded-2xl p-6 tutor-profile-card">
+              <h2 className="text-xl font-bold text-[#00288e] mb-5 flex items-center gap-2">
+                <span className="material-symbols-outlined text-[#00288e]" style={{ fontVariationSettings: "'FILL' 1" }}>rate_review</span>
+                Phản hồi học viên ({tutor.review_count ?? 0})
+              </h2>
+
+              <div className="mb-6">
+                <button className="bg-[#1e40af] text-white px-4 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 hover:bg-[#1e3a8a] transition-colors shadow-sm active:scale-95">
+                  <span className="material-symbols-outlined text-[18px]">edit_square</span>
+                  Viết đánh giá
+                </button>
               </div>
-              
+
               {tutor.reviews && tutor.reviews.length > 0 ? (
                 <div className="space-y-4">
+                  <div className="flex items-center gap-4 mb-5 p-4 bg-[#f8f9fb] rounded-xl">
+                    <span className="text-5xl font-bold text-[#00288e]">{(parseFloat(tutor.rating) || 0).toFixed(1)}</span>
+                    <div>
+                      <StarRating value={parseFloat(tutor.rating) || 0} size={20} />
+                      <p className="text-sm text-[#444653] mt-1">{tutor.review_count ?? 0} đánh giá</p>
+                    </div>
+                  </div>
                   {tutor.reviews.map(r => (
                     <div key={r.id} className="p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]">
                       <div className="flex items-start gap-3">
@@ -418,9 +458,12 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                   ))}
                 </div>
               ) : (
-                <p className="text-[#757684] italic">Chưa có đánh giá</p>
+                <p className="text-[#444653] text-sm flex items-center gap-2 mt-4">
+                  Chưa có đánh giá nào — hãy là người đầu tiên để lại phản hồi vàng!
+                  <span className="material-symbols-outlined text-[#FFB800] text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                </p>
               )}
-            </SectionCard>
+            </section>
           </div>
 
           {/* ════ RIGHT COLUMN (sticky booking card) ════ */}
