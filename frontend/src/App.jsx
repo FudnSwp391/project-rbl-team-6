@@ -42,48 +42,48 @@ const tutors = [
   {
     id: 1,
     name: 'Dr. Sarah Jenkins',
-    subjects: ['Advanced Mathematics', 'Physics'],
+    subjects: ['Toán học nâng cao', 'Vật lý'],
     rating: 4.9,
     reviews: 120,
     rate: 45,
     description:
-      'Experienced university professor specializing in making complex mathematical concepts accessible to all levels.',
+      'Giáo sư đại học giàu kinh nghiệm, chuyên giúp sinh viên ở mọi trình độ tiếp cận các khái niệm toán học phức tạp một cách dễ hiểu.',
     avatar:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuAei6flyccoubtUkB2-JJhNfR9B-0SJqPfzmsGbxbjo0bwiIVbwttMeDMBINgJ5UBkNdaUIYVbXBh1wlNtftafnZqAUsknNmqfA8lgHYXmRibrLQLDDswAcDKaWexFiCJ0F5lYIqta06gn9UkHf9Yo6UEX6YY0zrRfLCox5fQYJGFjFtxYkapQrfLw5EWLC5MzcrAxy7Y4f4YlIDMNhd-wcULt1NSUWpDYZIjFGp0eSYw54W6Gk7zh3ebHETXHFVRvZ1FMlOY8uTcI',
   },
   {
     id: 2,
     name: 'David Chen',
-    subjects: ['Computer Science', 'Python'],
+    subjects: ['Khoa học Máy tính', 'Python'],
     rating: 5.0,
     reviews: 89,
     rate: 50,
     description:
-      'Former software engineer turned passionate educator, helping students build real-world coding skills.',
+      'Cựu kỹ sư phần mềm trở thành nhà giáo dục đầy nhiệt huyết, giúp học sinh xây dựng kỹ năng lập trình thực tế.',
     avatar:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuAqjwfwD85os_xcrUS6mBaT3L9cLxt_GyvK4DrMZMLL_ViTjYA5rM6aoXYoL153K1rXR10VvfnP00wQJRxBpqD8TtAgijnGQGepu7QT71lFgb-v8Mk9s7Zt0KvvSFlhluT9IML0DnyfosJYvm7BtNA6LhucaITW7Bsfpe13JhVa-0jbAy7f8B8UF7nNc8Vl8EyLjDJLmgkalntGMfzg8RN8YIzbxdlzDAHRB0kaNsi9K8_KvcbpfhL2gU_yw96vMEOsLznkPRny_Dk',
   },
   {
     id: 3,
     name: 'Elena Rodriguez',
-    subjects: ['Spanish', 'Literature'],
+    subjects: ['Tiếng Tây Ban Nha', 'Văn học'],
     rating: 4.8,
     reviews: 203,
     rate: 35,
     description:
-      'Native speaker offering immersive language lessons tailored to your individual learning pace and goals.',
+      'Người bản xứ cung cấp các bài học ngôn ngữ sống động phù hợp với tốc độ và mục tiêu học tập cá nhân của bạn.',
     avatar:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuCRPJ_nedKK76hx96Ioc925HajYJQrzRqKLk3-69yfy23Xp44nYiq2sidEe7r8Nc_XQitfR1vzCrnh9xpx05P_1zY2dgchQEncPRuiqThxZaV_qsRdGyL3NHOoTOBgsQM2wIO7EUWFuPmIQRIixXTJOXDPWyAbH50Hq9ljZxjUJLibVBmmhwTX4eSFXNwOjgXWJiK2DHUtYd0noMdDuglxTsYdwBnOKZUw2ti3RjsJTGH21zphbEicxrYLvzmsZETqsJYJs8BEDMgk',
   },
   {
     id: 4,
     name: 'James Wilson',
-    subjects: ['Chemistry', 'Biology'],
+    subjects: ['Hóa học', 'Sinh học'],
     rating: 4.7,
     reviews: 92,
     rate: 40,
     description:
-      'Dedicated science tutor focused on developing strong foundational understanding and critical thinking.',
+      'Gia sư khoa học tận tâm tập trung vào việc phát triển nền tảng hiểu biết vững chắc và tư duy phản biện.',
     avatar:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuDrbKTdRT8Kzgeb-fbmF1apykCqp-cDYVBmdeGP1NTKEm3OxFcXsoOeajBIr3osh_BwXPaW5vJSWueBaT866ZFbIJlaZy2-n3PE5ESBtwnzJu1cU-svmk7wSLbE8T1LVaX8q-DR0_VdCm1Y7lDn8hYECkyZ37CuP3RDScRP1JCiSLirfyS4LF-8i5zFX2-tE5kb0K7Z6zPzjzw88GBnmrEPUNAwZA75pgLwpqNxVFTbe6vCee5dkoPSyM4EY0wYMdZS9y_ELU2gV24',
   },
@@ -343,14 +343,14 @@ function HomePage({ onGoSignIn }) {
                   flexDirection: 'column',
                   overflow: 'hidden'
                 }}>
-                  <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Dashboard</a>
-                  <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
-                  <a href="#" onClick={(e) => e.preventDefault()} style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
+                  <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Bảng điều khiển</a>
+                  <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Khóa học của tôi</a>
+                  <a href="#" onClick={(e) => e.preventDefault()} style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Cài đặt</a>
                   <button 
                     onClick={logout} 
                     style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
                   >
-                    Logout
+                    Đăng xuất
                   </button>
                 </div>
               )}
