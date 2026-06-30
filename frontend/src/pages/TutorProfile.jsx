@@ -581,6 +581,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 </div>
               ) : (
                 chatMessages.map((msg, idx) => {
+                  if (!msg) return null;
                   const isMe = msg.sender_id === user?.id
                   return (
                     <div key={msg.id || idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
@@ -589,9 +590,9 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                           ? 'bg-[#00288e] text-white rounded-br-sm'
                           : 'bg-white text-[#191c1e] shadow-sm border border-[#e1e2e4] rounded-bl-sm'
                       }`}>
-                        <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                        <p className="leading-relaxed whitespace-pre-wrap">{msg.content || ''}</p>
                         <p className={`text-[10px] mt-1 ${isMe ? 'text-white/60 text-right' : 'text-[#757684]'}`}>
-                          {new Date(msg.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                          {msg.created_at ? new Date(msg.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''}
                         </p>
                       </div>
                     </div>

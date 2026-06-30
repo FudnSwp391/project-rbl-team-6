@@ -150,7 +150,7 @@ export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
           <section className="lg:col-span-8 bg-white rounded-xl p-10 border border-[#e1e2e4] shadow-sm">
             <div className="flex items-center justify-between mb-10">
               <h2 className="text-2xl font-semibold text-[#191c1e]">Môn Học Phổ Biến</h2>
-              <a className="text-[#00288e] text-sm font-semibold hover:underline" href="#">Xem Tất Cả</a>
+              <a className="text-[#00288e] text-sm font-semibold hover:underline" href="#" onClick={(e) => e.preventDefault()}>Xem Tất Cả</a>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {[
@@ -212,11 +212,11 @@ export default function SubjectsPage({ onGoSignIn, onGoSignUp, user }) {
             <p className="text-xs font-medium text-[#444653]">© 2024 EduX. Đã đăng ký bản quyền.</p>
           </div>
           <div className="flex flex-wrap justify-center gap-6">
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Chính Sách Bảo Mật</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Điều Khoản Dịch Vụ</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Trung Tâm Hỗ Trợ</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Liên Hệ</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Tuyển Dụng</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Chính Sách Bảo Mật</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Điều Khoản Dịch Vụ</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Trung Tâm Hỗ Trợ</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Liên Hệ</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Tuyển Dụng</a>
           </div>
         </div>
       </footer>

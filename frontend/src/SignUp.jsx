@@ -435,37 +435,37 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
           <div className="md:col-span-3 flex flex-wrap gap-md justify-start md:justify-end">
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
               Tìm Gia Sư
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
               Trở Thành Gia Sư
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
               Môn Học
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
               Về Chúng Tôi
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
               Hỗ Trợ
             </a>
             <a
               className="text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all"
-              href="#"
+              href="#" onClick={(e) => e.preventDefault()}
             >
               Chính Sách Bảo Mật
             </a>

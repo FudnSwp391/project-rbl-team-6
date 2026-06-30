@@ -6,9 +6,8 @@
  */
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
-import QuizList from './QuizList'
+import AssessmentsWrapper from './components/AssessmentsWrapper'
 import PracticeMode from './PracticeMode'
-import ExamPapers from './ExamPapers'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
@@ -152,9 +151,9 @@ export default function StudentDashboard() {
         <main className={`overflow-x-hidden p-md lg:p-lg ${activeSection === 'schedule' ? 'block' : 'flex-1 overflow-y-auto'}`}>
           <div className={`max-w-container-max mx-auto flex flex-col gap-xl ${activeSection === 'schedule' ? 'pb-8' : 'pb-xl'}`}>
 
-            {/* ── Assessments Section ── */}
+            {/* ── Assessments Section (Gộp Bài tập & Đề thi) ── */}
             {activeSection === 'assessments' && (
-              <QuizList token={token} />
+              <AssessmentsWrapper token={token} />
             )}
 
             {/* ── Profile Section ── */}
@@ -167,10 +166,7 @@ export default function StudentDashboard() {
               <PracticeMode token={token} />
             )}
 
-            {/* ── Đề thi Section ── */}
-            {activeSection === 'exam-papers' && (
-              <ExamPapers token={token} />
-            )}
+
 
             {/* ── Parent Link Section ── */}
             {activeSection === 'parent-link' && (
@@ -459,7 +455,9 @@ function StudentBookingsSection({ token }) {
   const [actionLoading, setActionLoading] = useState(null)
   const [reportModal, setReportModal] = useState(null) // booking object
   const [reportReason, setReportReason] = useState('')
-
+  const [reportSeverity, setReportSeverity] = useState('medium')
+  const [reportEvidence, setReportEvidence] = useState(null)
+  
   const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
   const fetchBookings = async () => {
@@ -502,16 +500,26 @@ function StudentBookingsSection({ token }) {
     if (!reportReason.trim()) return alert('Vui lòng nhập lý do báo cáo.')
     setActionLoading(reportModal.id + '_report')
     try {
+      let evidenceUrl = null;
+      if (reportEvidence) {
+        const { uploadEvidenceFile } = await import('./services/upload');
+        const { useAuth } = await import('./AuthContext');
+        // We might not have user directly, but uploadEvidenceFile can just use 'anonymous' or token decoded id if not provided.
+        evidenceUrl = await uploadEvidenceFile(reportEvidence, 'student');
+      }
+
       const res = await fetch(`${API_BASE}/api/bookings/${reportModal.id}/report`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ reason: reportReason })
+        body: JSON.stringify({ reason: reportReason, severity: reportSeverity, evidenceUrl })
       })
       const data = await res.json()
       if (res.ok) {
-        alert('✅ Đã gửi báo cáo. Admin sẽ xem xét trong 24-48h. Tiền tạm thời bị giữ lại.')
+        alert('✅ Đã gửi khiếu nại. Admin sẽ xem xét. Tiền tạm thời bị giữ lại.')
         setReportModal(null)
         setReportReason('')
+        setReportSeverity('medium')
+        setReportEvidence(null)
         fetchBookings()
       } else {
         alert(data.message || 'Có lỗi xảy ra.')
@@ -724,7 +732,7 @@ function StudentBookingsSection({ token }) {
       {/* Report Modal */}
       {reportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden">
+          <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
               <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
                 <span className="material-symbols-outlined text-red-500">report</span>
@@ -734,11 +742,21 @@ function StudentBookingsSection({ token }) {
                 <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
             </div>
-            <div className="p-4 flex flex-col gap-4">
+            <div className="p-4 flex flex-col gap-4 overflow-y-auto">
               <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm">
                 <p className="font-medium text-red-800">{reportModal.subject} — {reportModal.tutor_full_name || reportModal.tutor_name}</p>
                 <p className="text-red-600 text-xs mt-1">Tiền sẽ bị tạm giữ cho đến khi Admin giải quyết (24–48h).</p>
               </div>
+
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Mức độ nghiêm trọng</label>
+                <select className="w-full p-3 border border-outline-variant rounded-xl mb-1 focus:border-primary focus:ring-1 focus:ring-primary outline-none" value={reportSeverity} onChange={e => setReportSeverity(e.target.value)}>
+                  <option value="low">Thấp (Góp ý nhẹ)</option>
+                  <option value="medium">Trung bình (Vắng không phép, trễ giờ)</option>
+                  <option value="high">Cao (Hành vi sai trái, lừa đảo)</option>
+                </select>
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-on-surface-variant mb-1">Lý do báo cáo <span className="text-error">*</span></label>
                 <textarea value={reportReason} onChange={e => setReportReason(e.target.value)} rows={4}
@@ -746,6 +764,17 @@ function StudentBookingsSection({ token }) {
                   className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
                 />
               </div>
+
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Bằng chứng (Hình ảnh/Video nếu có)</label>
+                <input 
+                  type="file" 
+                  accept="image/*,video/*"
+                  className="w-full text-body-sm text-on-surface-variant file:mr-sm file:py-xs file:px-md file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-container file:text-primary hover:file:bg-primary/20"
+                  onChange={e => setReportEvidence(e.target.files[0])}
+                />
+              </div>
+
               <button onClick={handleReport} disabled={!reportReason.trim() || actionLoading === reportModal.id + '_report'}
                 className="h-11 w-full rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                 {actionLoading === reportModal.id + '_report' && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}

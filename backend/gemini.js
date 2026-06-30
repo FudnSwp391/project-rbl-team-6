@@ -569,7 +569,8 @@ IMPORTANT: Return ONLY a valid JSON object. No markdown, no extra text.
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     const result = await model.generateContent(prompt);
     const text = result.response.text().trim();
-    const clean = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const clean = jsonMatch ? jsonMatch[0] : "{}";
     const parsed = JSON.parse(clean);
     return {
       score: parsed.score || 0,
@@ -586,7 +587,8 @@ IMPORTANT: Return ONLY a valid JSON object. No markdown, no extra text.
             max_tokens: 1024,
           });
           const text = completion.choices[0]?.message?.content?.trim() || "{}";
-          const clean = text.replace(/^ + "`" + (?:json)?\s*/i, "").replace(/\s* + "`" + $/i, "").trim();
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          const clean = jsonMatch ? jsonMatch[0] : "{}";
           const parsed = JSON.parse(clean);
           return { score: parsed.score || 0, feedback: parsed.feedback || "Không thể tải nhận xét." };
         } catch (err) {

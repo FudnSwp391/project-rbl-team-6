@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import StudentSidebar from '../components/StudentSidebar';
 import { apiRequest } from '../services/api';
+import { uploadEvidenceFile } from '../services/upload';
 
 export default function MyCourses() {
   const { user, logout } = useAuth();
@@ -13,6 +14,58 @@ export default function MyCourses() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [suggestedCourses, setSuggestedCourses] = useState([]);
+
+  // Report Modal State
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [selectedCourseToReport, setSelectedCourseToReport] = useState(null);
+  const [reportReason, setReportReason] = useState('');
+  const [reportSeverity, setReportSeverity] = useState('medium');
+  const [reportEvidence, setReportEvidence] = useState(null);
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportError, setReportError] = useState(null);
+
+  const handleOpenReport = (e, course) => {
+    e.stopPropagation();
+    setSelectedCourseToReport(course);
+    setReportReason('');
+    setReportSeverity('medium');
+    setReportEvidence(null);
+    setReportError(null);
+    setReportModalOpen(true);
+  };
+
+  const submitReport = async () => {
+    if (!reportReason.trim()) {
+      setReportError('Vui lòng nhập lý do khiếu nại.');
+      return;
+    }
+    setReportSubmitting(true);
+    setReportError(null);
+    try {
+      let evidenceUrl = null;
+      if (reportEvidence) {
+        evidenceUrl = await uploadEvidenceFile(reportEvidence, user?.id || 'anonymous');
+      }
+      const res = await apiRequest(`/api/courses/${selectedCourseToReport.course_id}/report`, {
+        method: 'POST',
+        body: JSON.stringify({
+          reason: reportReason,
+          severity: reportSeverity,
+          evidenceUrl
+        })
+      });
+      if (res.success || res.message) {
+        alert(res.message || 'Gửi khiếu nại thành công!');
+        setReportModalOpen(false);
+      } else {
+        setReportError(res.message || 'Lỗi gửi khiếu nại');
+      }
+    } catch (e) {
+      setReportError(e.message || 'Đã xảy ra lỗi.');
+    } finally {
+      setReportSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     const fetchMyCourses = async () => {
@@ -59,8 +112,8 @@ export default function MyCourses() {
 
   const filteredCourses = courses.filter(course => {
     if (filter === 'all') return true;
-    if (filter === 'active') return course.progress_percentage < 100;
-    if (filter === 'completed') return course.progress_percentage >= 100;
+    if (filter === 'active') return (course.progress_percent || 0) < 100;
+    if (filter === 'completed') return (course.progress_percent || 0) >= 100;
     return true;
   });
 
@@ -156,19 +209,19 @@ export default function MyCourses() {
                       <h3 className="text-headline-md font-bold text-on-surface mb-xs line-clamp-2">{course.title}</h3>
                       <div className="flex items-center gap-xs mb-md">
                         <span className="material-symbols-outlined text-secondary text-[20px]">person</span>
-                        <span className="text-label-sm text-secondary">Giảng viên: {course.instructor_name || 'Đang cập nhật'}</span>
+                        <span className="text-label-sm text-secondary">Giảng viên: {course.tutor_name || 'Đang cập nhật'}</span>
                       </div>
                       <div className="mt-auto">
                         <div className="flex justify-between items-center mb-base">
-                          <span className={`text-label-sm font-bold ${course.progress_percentage >= 100 ? 'text-secondary' : 'text-primary'}`}>
-                            Tiến độ: {course.progress_percentage}%
+                          <span className={`text-label-sm font-bold ${(course.progress_percent || 0) >= 100 ? 'text-secondary' : 'text-primary'}`}>
+                            Tiến độ: {course.progress_percent || 0}%
                           </span>
-                          <span className="text-label-sm text-secondary">{course.completed_lessons}/{course.total_lessons} Bài học</span>
+                          <span className="text-label-sm text-secondary">{course.completed_lessons || 0}/{course.total_lessons || 0} Bài học</span>
                         </div>
                         <div className="w-full bg-surface-container h-1.5 rounded-full mb-md overflow-hidden">
-                          <div className={`${course.progress_percentage >= 100 ? 'bg-outline-variant' : 'bg-primary'} h-full rounded-full`} style={{ width: course.progress_percentage + '%' }}></div>
+                          <div className={`${(course.progress_percent || 0) >= 100 ? 'bg-outline-variant' : 'bg-primary'} h-full rounded-full`} style={{ width: (course.progress_percent || 0) + '%' }}></div>
                         </div>
-                        {course.progress_percentage >= 100 ? (
+                        {(course.progress_percent || 0) >= 100 ? (
                           <button className="w-full py-md bg-secondary-container text-primary font-label-md rounded-lg hover:bg-surface-container-high transition-colors flex items-center justify-center gap-xs">
                             <span className="material-symbols-outlined text-[18px]">workspace_premium</span>
                             Xem chứng chỉ
@@ -179,6 +232,10 @@ export default function MyCourses() {
                             Tiếp tục học
                           </button>
                         )}
+                        <button className="w-full mt-sm py-sm text-red-500 font-label-md rounded-lg hover:bg-red-50 transition-colors flex items-center justify-center gap-xs" onClick={(e) => handleOpenReport(e, course)}>
+                          <span className="material-symbols-outlined text-[18px]">report</span>
+                          Khiếu nại / Hoàn tiền
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -257,6 +314,60 @@ export default function MyCourses() {
           </div>
         </div>
       </main>
+
+      {/* Report Modal */}
+      {reportModalOpen && selectedCourseToReport && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-md">
+          <div className="bg-surface rounded-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-lg border-b border-outline-variant flex justify-between items-center bg-surface-container-lowest">
+              <h3 className="text-headline-sm font-bold text-on-surface">Khiếu nại khóa học</h3>
+              <button className="text-on-surface-variant hover:text-error transition-colors" onClick={() => setReportModalOpen(false)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="p-lg overflow-y-auto">
+              <p className="text-body-md text-on-surface-variant mb-md">
+                Bạn đang khiếu nại khóa học <strong className="text-primary">{selectedCourseToReport.title}</strong>. 
+                <br/>Hệ thống sẽ tự động hoàn tiền nếu bạn chưa học quá 20% và đăng ký chưa quá 7 ngày.
+              </p>
+              {reportError && <div className="p-sm bg-red-100 text-red-600 rounded mb-md text-label-md">{reportError}</div>}
+              
+              <label className="block text-label-md font-bold text-on-surface mb-xs mt-md">Mức độ nghiêm trọng</label>
+              <select className="w-full p-sm border border-outline-variant rounded mb-md focus:border-primary focus:ring-1 focus:ring-primary outline-none" value={reportSeverity} onChange={e => setReportSeverity(e.target.value)}>
+                <option value="low">Thấp (Góp ý, nội dung chưa tốt)</option>
+                <option value="medium">Trung bình (Giảng viên không hỗ trợ, chất lượng kém)</option>
+                <option value="high">Cao (Lừa đảo, nội dung sai lệch nghiêm trọng)</option>
+              </select>
+
+              <label className="block text-label-md font-bold text-on-surface mb-xs">Lý do khiếu nại</label>
+              <textarea 
+                className="w-full p-sm border border-outline-variant rounded mb-md min-h-[100px] focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                placeholder="Vui lòng mô tả chi tiết vấn đề bạn gặp phải..."
+                value={reportReason}
+                onChange={e => setReportReason(e.target.value)}
+              ></textarea>
+
+              <label className="block text-label-md font-bold text-on-surface mb-xs">Bằng chứng (Hình ảnh/Video nếu có)</label>
+              <input 
+                type="file" 
+                accept="image/*,video/*"
+                className="w-full text-body-sm text-on-surface-variant file:mr-sm file:py-xs file:px-md file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-container file:text-primary hover:file:bg-primary/20"
+                onChange={e => setReportEvidence(e.target.files[0])}
+              />
+            </div>
+            <div className="p-lg border-t border-outline-variant bg-surface-container-lowest flex justify-end gap-md">
+              <button className="px-lg py-sm text-on-surface-variant font-label-md rounded hover:bg-surface-variant transition-colors" onClick={() => setReportModalOpen(false)}>Hủy</button>
+              <button 
+                className="px-lg py-sm bg-error text-white font-label-md rounded hover:bg-red-600 transition-colors flex items-center gap-sm disabled:opacity-50"
+                onClick={submitReport}
+                disabled={reportSubmitting}
+              >
+                {reportSubmitting ? <span className="material-symbols-outlined animate-spin">refresh</span> : 'Gửi khiếu nại'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

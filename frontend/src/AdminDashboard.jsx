@@ -1860,6 +1860,7 @@ function ComplaintsView({ token }) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [resolveModal, setResolveModal] = useState(null)
   const [adminNote, setAdminNote] = useState('')
+  const [penaltyType, setPenaltyType] = useState('NONE')
   const [resolving, setResolving] = useState(false)
 
   const fetchDisputes = async () => {
@@ -1883,12 +1884,12 @@ function ComplaintsView({ token }) {
       const res = await fetch(API_BASE + '/api/escrow/resolve-dispute-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('token') },
-        body: JSON.stringify({ disputeId: resolveModal.id, decision, adminNote })
+        body: JSON.stringify({ disputeId: resolveModal.id, decision, adminNote, penaltyType })
       })
       const data = await res.json()
       if (data.success) {
         alert('Đã xử lý: ' + (decision === 'REFUND_TO_STUDENT' ? 'Hoàn tiền cho học sinh' : 'Giải ngân cho gia sư'))
-        setResolveModal(null); setAdminNote(''); fetchDisputes()
+        setResolveModal(null); setAdminNote(''); setPenaltyType('NONE'); fetchDisputes()
       } else { alert(data.message || 'Có lỗi xảy ra.') }
     } catch { alert('Lỗi kết nối.') }
     setResolving(false)
@@ -1966,11 +1967,20 @@ function ComplaintsView({ token }) {
             <tbody className="divide-y divide-outline-variant">
               {filtered.map(d => (
                 <tr key={d.id} className={`hover:bg-gray-50 transition-colors ${d.status==='OPEN'?'bg-red-50/30':''}`}>
-                  <td className="py-3 px-4 text-sm font-medium text-on-surface">{d.reporter_name}</td>
-                  <td className="py-3 px-4 text-sm text-on-surface">{d.tutor_full_name || d.tutor_name}</td>
-                  <td className="py-3 px-4 text-sm"><p>{d.subject}</p><p className="text-xs text-on-surface-variant">{fmtDate(d.lesson_date)}</p></td>
+                  <td className="py-3 px-4 text-sm font-medium text-on-surface">{d.reporter_name} {d.raised_by_parent ? '(Phụ huynh)' : ''}</td>
+                  <td className="py-3 px-4 text-sm text-on-surface">{d.tutor_full_name || d.tutor_name || d.d_tutor_id}</td>
+                  <td className="py-3 px-4 text-sm">
+                    {d.target_type === 'course' ? (
+                      <p><span className="bg-primary/10 text-primary text-[10px] px-1 rounded uppercase mr-1">Khóa học</span>{d.course_title}</p>
+                    ) : (
+                      <><p>{d.subject}</p><p className="text-xs text-on-surface-variant">{fmtDate(d.lesson_date)}</p></>
+                    )}
+                  </td>
                   <td className="py-3 px-4 text-sm font-semibold text-primary">{fmtMoney(d.lesson_fee)}</td>
-                  <td className="py-3 px-4 text-sm text-on-surface-variant max-w-[180px]"><p className="truncate" title={d.reason}>{d.reason}</p></td>
+                  <td className="py-3 px-4 text-sm text-on-surface-variant max-w-[180px]">
+                    <p className="truncate font-bold text-red-500 uppercase text-[10px] mb-1">{d.severity}</p>
+                    <p className="truncate" title={d.reason}>{d.reason}</p>
+                  </td>
                   <td className="py-3 px-4 text-sm text-on-surface-variant">{fmtDate(d.created_at)}</td>
                   <td className="py-3 px-4">
                     <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${statusColor[d.status]||'bg-gray-100 text-gray-600'}`}>{statusLabel[d.status]||d.status}</span>
@@ -2003,35 +2013,59 @@ function ComplaintsView({ token }) {
             </div>
             <div className="p-5 space-y-4">
               <div className="bg-gray-50 rounded-xl p-4 text-sm space-y-2">
-                <div className="flex justify-between"><span className="text-on-surface-variant">Người báo cáo:</span><span className="font-medium">{resolveModal.reporter_name}</span></div>
-                <div className="flex justify-between"><span className="text-on-surface-variant">Gia sư:</span><span className="font-medium">{resolveModal.tutor_full_name}</span></div>
-                <div className="flex justify-between"><span className="text-on-surface-variant">Môn học:</span><span className="font-medium">{resolveModal.subject} — {fmtDate(resolveModal.lesson_date)}</span></div>
+                <div className="flex justify-between"><span className="text-on-surface-variant">Người báo cáo:</span><span className="font-medium">{resolveModal.reporter_name} {resolveModal.raised_by_parent ? '(Phụ huynh)' : ''}</span></div>
+                <div className="flex justify-between"><span className="text-on-surface-variant">Gia sư bị khiếu nại:</span><span className="font-medium">{resolveModal.tutor_full_name || resolveModal.tutor_name || 'N/A'}</span></div>
+                <div className="flex justify-between"><span className="text-on-surface-variant">{resolveModal.target_type === 'course' ? 'Khóa học:' : 'Môn học:'}</span><span className="font-medium">{resolveModal.target_type === 'course' ? resolveModal.course_title : `${resolveModal.subject} — ${fmtDate(resolveModal.lesson_date)}`}</span></div>
                 <div className="flex justify-between"><span className="text-on-surface-variant">Số tiền:</span><span className="font-bold text-primary text-base">{fmtMoney(resolveModal.lesson_fee)}</span></div>
+                <div className="flex justify-between"><span className="text-on-surface-variant">Mức độ:</span><span className="font-bold text-red-500 uppercase">{resolveModal.severity}</span></div>
                 <div className="pt-2 border-t border-gray-200">
                   <span className="text-on-surface-variant">Lý do:</span>
                   <p className="text-on-surface mt-1 italic">"{resolveModal.reason}"</p>
                 </div>
+                {resolveModal.evidence_url && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <span className="text-on-surface-variant">Bằng chứng:</span>
+                    <a href={resolveModal.evidence_url} target="_blank" rel="noopener noreferrer" className="block mt-1 text-primary hover:underline">Xem đính kèm</a>
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-on-surface-variant mb-1">Ghi chú phán quyết</label>
-                <textarea value={adminNote} onChange={e => setAdminNote(e.target.value)} rows={3}
-                  placeholder="Lý do phán quyết..."
-                  className="w-full p-3 rounded-xl border border-gray-300 focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm" />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-on-surface-variant mb-1">Ghi chú phán quyết</label>
+                  <textarea value={adminNote} onChange={e => setAdminNote(e.target.value)} rows={3}
+                    placeholder="Lý do phán quyết..."
+                    className="w-full p-3 rounded-xl border border-gray-300 focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-on-surface-variant mb-1">Hình thức xử phạt gia sư</label>
+                  <select value={penaltyType} onChange={e => setPenaltyType(e.target.value)} className="w-full p-3 rounded-xl border border-gray-300 focus:border-primary focus:ring-1 focus:ring-primary text-sm outline-none">
+                    <option value="NONE">Không phạt (Chỉ nhắc nhở)</option>
+                    <option value="WARNING">Cảnh cáo (Gửi thông báo)</option>
+                    <option value="DEDUCT_REP">Trừ điểm uy tín (-10 điểm)</option>
+                    <option value="SUSPEND_3_DAYS">Đình chỉ tạm thời (-20 điểm)</option>
+                    <option value="BAN">Khóa tài khoản vĩnh viễn</option>
+                  </select>
+                  <p className="text-xs text-on-surface-variant mt-2">
+                    * Lưu ý: Nếu điểm uy tín của gia sư rơi xuống dưới 30, hệ thống sẽ <strong>tự động khóa tài khoản</strong>.
+                  </p>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2">
                 <button onClick={() => handleResolve('REFUND_TO_STUDENT')} disabled={resolving}
-                  className="p-4 rounded-xl bg-red-50 border-2 border-red-300 hover:border-red-500 hover:bg-red-100 transition-all disabled:opacity-50 text-left">
+                  className="p-4 rounded-xl bg-red-50 border-2 border-red-300 hover:border-red-500 hover:bg-red-100 transition-all disabled:opacity-50 text-left relative overflow-hidden group">
                   <span className="material-symbols-outlined text-red-600 text-[22px] block mb-2">undo</span>
-                  <p className="font-bold text-red-800 text-sm">Hoàn tiền → Học sinh</p>
-                  <p className="text-xs text-red-600 mt-1">Gia sư vi phạm. Trừ -10đ uy tín.</p>
+                  <p className="font-bold text-red-800 text-sm">Chấp nhận khiếu nại (Hoàn tiền)</p>
+                  <p className="text-xs text-red-600 mt-1">Hoàn lại tiền cho học sinh và áp dụng hình thức xử phạt với gia sư.</p>
                   <p className="text-xs font-bold text-red-700 mt-2">→ {fmtMoney(resolveModal.lesson_fee)}</p>
+                  <div className="absolute inset-0 bg-red-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 </button>
                 <button onClick={() => handleResolve('RELEASE_TO_TUTOR')} disabled={resolving}
-                  className="p-4 rounded-xl bg-blue-50 border-2 border-blue-300 hover:border-blue-500 hover:bg-blue-100 transition-all disabled:opacity-50 text-left">
+                  className="p-4 rounded-xl bg-blue-50 border-2 border-blue-300 hover:border-blue-500 hover:bg-blue-100 transition-all disabled:opacity-50 text-left relative overflow-hidden group">
                   <span className="material-symbols-outlined text-blue-600 text-[22px] block mb-2">payments</span>
-                  <p className="font-bold text-blue-800 text-sm">Giải ngân → Gia sư</p>
-                  <p className="text-xs text-blue-600 mt-1">Khiếu nại không có cơ sở.</p>
+                  <p className="font-bold text-blue-800 text-sm">Bác bỏ khiếu nại (Giải ngân)</p>
+                  <p className="text-xs text-blue-600 mt-1">Gia sư không có lỗi. Giữ nguyên doanh thu cho gia sư.</p>
                   <p className="text-xs font-bold text-blue-700 mt-2">→ {fmtMoney(Math.floor(Number(resolveModal.lesson_fee||0)*0.9))}</p>
+                  <div className="absolute inset-0 bg-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 </button>
               </div>
               {resolving && <div className="text-center text-sm text-on-surface-variant flex items-center justify-center gap-2"><div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin"/>Đang xử lý...</div>}

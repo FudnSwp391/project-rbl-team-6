@@ -119,7 +119,7 @@ export async function getTutorAvailability(tutorId, params = {}) {
     const idNum = parseInt(tutorId, 10);
     const tutor = findTutorByAnyId(mockTutors, tutorId) || mockTutors.find(t => t.id === idNum);
     if (!tutor) {
-      throw new Error(`Tutor with ID ${tutorId} not found.`);
+      throw new Error(`Tutor with ID ${tutorId} not found.`, { cause: error });
     }
     await new Promise(resolve => setTimeout(resolve, 500));
     return tutor.availability;
@@ -256,7 +256,7 @@ export async function updateBookingStatus(bookingId, status) {
       return bookings[index];
     }
     
-    throw new Error(`Booking with ID ${bookingId} not found.`);
+    throw new Error(`Booking with ID ${bookingId} not found.`, { cause: error });
   }
 }
 
