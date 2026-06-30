@@ -49,8 +49,16 @@ function TutorCard({ tutor, isMock, onFav }) {
     ? tutor.subjects.split(',').map(s => s.trim()).filter(Boolean).slice(0, 3)
     : [];
 
+  const handleViewProfile = () => {
+    sessionStorage.setItem('viewingTutor', JSON.stringify(tutor));
+    window.location.hash = `/tutor-detail/${tutor.id}`;
+  };
+
   return (
-    <div className="group bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col border border-transparent hover:border-[#00288e]/10">
+    <div 
+      onClick={handleViewProfile}
+      className="group bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col border border-transparent hover:border-[#00288e]/10 cursor-pointer"
+    >
       <div className="relative h-48 overflow-hidden bg-[#edeef0]">
         {avatar ? (
           <img
@@ -117,9 +125,9 @@ function TutorCard({ tutor, isMock, onFav }) {
             <span className="text-xs font-normal text-[#5d5f5f]">/giờ</span>
           </span>
           <button
-            onClick={() => {
-              sessionStorage.setItem('viewingTutor', JSON.stringify(tutor));
-              window.location.hash = `/tutor-detail/${tutor.id}`;
+            onClick={(e) => {
+              e.stopPropagation();
+              handleViewProfile();
             }}
             className="btn-shine px-5 py-2 border border-[#00288e] text-[#00288e] hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 rounded-lg text-sm font-semibold transition-all"
           >
