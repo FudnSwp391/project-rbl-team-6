@@ -34,7 +34,6 @@ export default function WishlistPage({ user, onGoSignIn }) {
       .catch(() => setData({ courses: [], tutors: [] }))
       .finally(() => setLoading(false));
   }, [token]);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { window.scrollTo(0, 0); load(); }, [load]);
 
   const remove = async (type, id) => {

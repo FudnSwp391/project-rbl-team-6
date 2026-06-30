@@ -257,8 +257,7 @@ export default function TutorDashboard() {
         {/* Bottom */}
         <div className="px-md mt-auto pt-lg border-t border-surface-variant/50 flex flex-col gap-2">
           <a
-            href="#"
-            onClick={(e) => e.preventDefault()}
+            href="#" onClick={(e) => e.preventDefault()}
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
           >
             <span className="material-symbols-outlined">settings</span>
@@ -436,7 +435,7 @@ export default function TutorDashboard() {
                 )}
 
                 <div className="p-4 bg-surface-container-lowest/30 border-t border-surface-variant/50 text-center">
-                  <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('Requests'); }} className="text-primary font-label-md hover:underline cursor-pointer">
+                  <a href="#" onClick={(e) => e.preventDefault()} className="text-primary font-label-md hover:underline">
                     View all requests ({requests.length})
                   </a>
                 </div>

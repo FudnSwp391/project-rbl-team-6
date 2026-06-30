@@ -7,7 +7,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
     window.scrollTo(0, 0);
   }, []);
 
-  // Gia sÆ° Ä‘ang xem (Ä‘Æ°á»£c FindTutorsPage / AI Gá»£i Ã½ / Trang chá»§ lÆ°u khi Ä‘iá»u hÆ°á»›ng)
+  // Gia sư đang xem (được FindTutorsPage / AI Gợi ý / Trang chủ lưu khi điều hướng)
   let viewingTutor = null;
   try { viewingTutor = JSON.parse(sessionStorage.getItem('viewingTutor') || 'null'); } catch { viewingTutor = null; }
 
@@ -31,16 +31,16 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
 
           {/* Nav Links (Centered) */}
           <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/find-tutors">TÃ¬m Gia SÆ°</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trá»Ÿ ThÃ nh Gia SÆ°</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">MÃ´n Há»c</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">KhÃ³a Há»c</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
           </nav>
 
           {/* Auth Buttons */}
           <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#444653] hover:text-[#00288e] flex items-center transition-colors" title="Giá» hÃ ng">
+              <a href="#/cart" className="text-[#444653] hover:text-[#00288e] flex items-center transition-colors" title="Giỏ hàng">
                 <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
               </a>
             )}
@@ -53,13 +53,13 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
                  }}
                  className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm"
                >
-                 Báº£ng Äiá»u Khiá»ƒn
+                 Bảng Điều Khiển
                </button>
             ) : (
               <>
-                <button onClick={onGoSignIn} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">ÄÄƒng Nháº­p</button>
+                <button onClick={onGoSignIn} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Đăng Nhập</button>
                 <button onClick={onGoSignUp} className="btn-shine bg-gradient-to-r from-[#00288e] via-[#2747c4] to-[#3a6fe0] text-white px-6 py-2.5 rounded-lg font-semibold text-sm hover:-translate-y-0.5 hover:shadow-[0_14px_30px_-8px_rgba(55,85,195,0.55)] transition-all active:scale-95 shadow-sm">
-                  Tham Gia Miá»…n PhÃ­
+                  Tham Gia Miễn Phí
                 </button>
               </>
             )}
@@ -77,7 +77,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
                 className="mb-4 text-[#444653] hover:text-[#00288e] text-sm font-semibold flex items-center gap-1 transition-colors"
               >
                 <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-                Quay láº¡i tÃ¬m kiáº¿m
+                Quay lại tìm kiếm
               </button>
               
               <div className="relative w-48 h-48 mx-auto mb-6">
@@ -91,36 +91,36 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
                 <div className="flex items-center justify-center gap-1 text-[#444653]">
                   <span className="material-symbols-outlined text-[#FFB800]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>
                   <span className="text-sm font-bold text-[#191c1e]">4.9</span>
-                  <span className="text-sm">(124 nháº­n xÃ©t)</span>
+                  <span className="text-sm">(124 nhận xét)</span>
                 </div>
               </div>
               <div className="space-y-3 mb-10">
                 <button onClick={() => window.location.hash = '/booking/' + (viewingTutor?.id || '')} className="w-full h-[48px] bg-[#00288e] text-white text-sm font-semibold rounded-lg hover:bg-[#1e40af] transition-all flex items-center justify-center gap-2 active-interaction shadow-sm">
-                  <span className="material-symbols-outlined">event_available</span> Äáº·t Lá»‹ch Há»c
+                  <span className="material-symbols-outlined">event_available</span> Đặt Lịch Học
                 </button>
                 <button className="btn-shine w-full h-[48px] border border-[#c4c5d5] text-[#00288e] text-sm font-semibold rounded-lg hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2 active-interaction bg-white">
-                  <span className="material-symbols-outlined">chat_bubble</span> Nháº¯n Tin
+                  <span className="material-symbols-outlined">chat_bubble</span> Nhắn Tin
                 </button>
               </div>
               <div className="border-t border-[#e1e2e4] pt-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-[#444653]">
                     <span className="material-symbols-outlined">payments</span>
-                    <span className="text-base">GiÃ¡ theo giá»</span>
+                    <span className="text-base">Giá theo giờ</span>
                   </div>
-                  <span className="text-sm font-semibold text-[#00288e]">$65/giá»</span>
+                  <span className="text-sm font-semibold text-[#00288e]">$65/giờ</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-[#444653]">
                     <span className="material-symbols-outlined">schedule</span>
-                    <span className="text-base">Thá»i gian pháº£n há»“i</span>
+                    <span className="text-base">Thời gian phản hồi</span>
                   </div>
-                  <span className="text-sm font-semibold text-[#191c1e]">~2 giá»</span>
+                  <span className="text-sm font-semibold text-[#191c1e]">~2 giờ</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-[#444653]">
                     <span className="material-symbols-outlined">groups</span>
-                    <span className="text-base">Há»c sinh Ä‘Ã£ dáº¡y</span>
+                    <span className="text-base">Học sinh đã dạy</span>
                   </div>
                   <span className="text-sm font-semibold text-[#191c1e]">450+</span>
                 </div>
@@ -132,16 +132,16 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
           <div className="lg:col-span-8 space-y-6">
             {/* About Section */}
             <section className="bg-white rounded-xl p-8 card-shadow border border-transparent hover:border-[#00288e]/10 transition-colors">
-              <h2 className="text-2xl font-semibold text-[#191c1e] mb-4">Giá»›i thiá»‡u</h2>
+              <h2 className="text-2xl font-semibold text-[#191c1e] mb-4">Giới thiệu</h2>
               <p className="text-base text-[#444653] leading-relaxed">
-                Vá»›i hÆ¡n 12 nÄƒm kinh nghiá»‡m trong giÃ¡o dá»¥c Ä‘áº¡i há»c, triáº¿t lÃ½ giáº£ng dáº¡y cá»§a tÃ´i báº¯t nguá»“n tá»« viá»‡c lÃ m cho cÃ¡c khÃ¡i niá»‡m toÃ¡n há»c phá»©c táº¡p trá»Ÿ nÃªn dá»… tiáº¿p cáº­n vÃ  trá»±c quan. TÃ´i tin ráº±ng má»—i há»c sinh Ä‘á»u cÃ³ kháº£ nÄƒng tá»a sÃ¡ng trong lÄ©nh vá»±c STEM náº¿u Ä‘Æ°á»£c trang bá»‹ phÆ°Æ¡ng phÃ¡p vÃ  sá»± khÃ­ch lá»‡ Ä‘Ãºng Ä‘áº¯n. Ná»n táº£ng ToÃ¡n há»c á»¨ng dá»¥ng cá»§a tÃ´i giÃºp tÃ´i Ä‘Æ°a bá»‘i cáº£nh thá»±c táº¿ vÃ o cÃ¡c bÃ i giáº£ng lÃ½ thuyáº¿t vá» giáº£i tÃ­ch vÃ  Ä‘áº¡i sá»‘, giÃºp há»c sinh nháº­n ra váº» Ä‘áº¹p trong nhá»¯ng con sá»‘.
+                Với hơn 12 năm kinh nghiệm trong giáo dục đại học, triết lý giảng dạy của tôi bắt nguồn từ việc làm cho các khái niệm toán học phức tạp trở nên dễ tiếp cận và trực quan. Tôi tin rằng mỗi học sinh đều có khả năng tỏa sáng trong lĩnh vực STEM nếu được trang bị phương pháp và sự khích lệ đúng đắn. Nền tảng Toán học Ứng dụng của tôi giúp tôi đưa bối cảnh thực tế vào các bài giảng lý thuyết về giải tích và đại số, giúp học sinh nhận ra vẻ đẹp trong những con số.
               </p>
             </section>
 
             {/* Demo Lesson Section */}
             <section className="bg-white rounded-xl p-8 card-shadow border border-transparent hover:border-[#00288e]/10 transition-colors">
-              <h2 className="text-2xl font-semibold text-[#191c1e] mb-2">BÃ i Há»c Máº«u</h2>
-              <p className="text-base text-[#444653] mb-4">Xem trÆ°á»›c phong cÃ¡ch vÃ  phÆ°Æ¡ng phÃ¡p giáº£ng dáº¡y cá»§a tÃ´i.</p>
+              <h2 className="text-2xl font-semibold text-[#191c1e] mb-2">Bài Học Mẫu</h2>
+              <p className="text-base text-[#444653] mb-4">Xem trước phong cách và phương pháp giảng dạy của tôi.</p>
               <div className="relative rounded-lg overflow-hidden cursor-pointer group bg-[#edeef0] aspect-video flex items-center justify-center">
                 <img src="https://images.unsplash.com/photo-1513258496099-48168024aec0?q=80&w=1000&auto=format&fit=crop" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt="Demo preview" />
                 <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors">
@@ -154,7 +154,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
 
             {/* Expertise Section */}
             <section className="bg-white rounded-xl p-8 card-shadow border border-transparent hover:border-[#00288e]/10 transition-colors">
-              <h2 className="text-2xl font-semibold text-[#191c1e] mb-6">ChuyÃªn MÃ´n</h2>
+              <h2 className="text-2xl font-semibold text-[#191c1e] mb-6">Chuyên Môn</h2>
               <div className="flex flex-wrap gap-3">
                 <span className="px-4 py-2 bg-[#00288e]/10 text-[#00288e] text-sm font-semibold rounded-full border border-[#00288e]/20 hover:bg-[#00288e]/20 transition-colors cursor-default">Advanced Mathematics</span>
                 <span className="px-4 py-2 bg-[#00288e]/10 text-[#00288e] text-sm font-semibold rounded-full border border-[#00288e]/20 hover:bg-[#00288e]/20 transition-colors cursor-default">Calculus I, II &amp; III</span>
@@ -166,7 +166,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
 
             {/* Education Section */}
             <section className="bg-white rounded-xl p-8 card-shadow border border-transparent hover:border-[#00288e]/10 transition-colors">
-              <h2 className="text-2xl font-semibold text-[#191c1e] mb-6">Há»c Váº¥n</h2>
+              <h2 className="text-2xl font-semibold text-[#191c1e] mb-6">Học Vấn</h2>
               <div className="space-y-8">
                 <div className="flex items-start gap-4">
                   <div className="w-12 h-12 rounded-lg bg-[#f3f4f6] flex items-center justify-center shrink-0">
@@ -194,8 +194,8 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
             {/* Reviews Section */}
             <section className="bg-white rounded-xl p-8 card-shadow border border-transparent hover:border-[#00288e]/10 transition-colors">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-2xl font-semibold text-[#191c1e]">Nháº­n XÃ©t</h2>
-                <button className="text-[#00288e] text-sm font-semibold hover:underline">Xem Táº¥t Cáº£</button>
+                <h2 className="text-2xl font-semibold text-[#191c1e]">Nhận Xét</h2>
+                <button className="text-[#00288e] text-sm font-semibold hover:underline">Xem Tất Cả</button>
               </div>
               <div className="space-y-8 divide-y divide-[#e1e2e4]">
                 <div className="pt-6 first:pt-0">
@@ -209,9 +209,9 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
                         </div>
                       </div>
                     </div>
-                    <span className="text-xs font-medium text-[#757684]">2 ngÃ y trÆ°á»›c</span>
+                    <span className="text-xs font-medium text-[#757684]">2 ngày trước</span>
                   </div>
-                  <p className="text-base text-[#444653] italic">"CÃ´ Jenkins Ä‘Ã£ giÃºp tÃ´i vÆ°á»£t qua ká»³ thi Giáº£i TÃ­ch xuáº¥t sáº¯c! CÃ´ áº¥y giáº£i thÃ­ch nhá»¯ng thá»© tÃ´i Ä‘Ã£ váº­t lá»™n nhiá»u thÃ¡ng chá»‰ trong má»™t giá». Ráº¥t Ä‘Ã¡ng Ä‘á»ƒ thá»­."</p>
+                  <p className="text-base text-[#444653] italic">"Cô Jenkins đã giúp tôi vượt qua kỳ thi Giải Tích xuất sắc! Cô ấy giải thích những thứ tôi đã vật lộn nhiều tháng chỉ trong một giờ. Rất đáng để thử."</p>
                 </div>
                 
                 <div className="pt-6">
@@ -229,18 +229,18 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
                         </div>
                       </div>
                     </div>
-                    <span className="text-xs font-medium text-[#757684]">1 tuáº§n trÆ°á»›c</span>
+                    <span className="text-xs font-medium text-[#757684]">1 tuần trước</span>
                   </div>
-                  <p className="text-base text-[#444653] italic">"Ráº¥t kiÃªn nháº«n vÃ  am hiá»ƒu. CÃ´ áº¥y cÃ³ cÃ¡ch hÃ¬nh dung cÃ¡c bÃ i toÃ¡n khiáº¿n tÃ´i hiá»ƒu ngay láº­p tá»©c. Cháº¯c cháº¯n sáº½ Ä‘áº·t lá»‹ch láº¡i."</p>
+                  <p className="text-base text-[#444653] italic">"Rất kiên nhẫn và am hiểu. Cô ấy có cách hình dung các bài toán khiến tôi hiểu ngay lập tức. Chắc chắn sẽ đặt lịch lại."</p>
                 </div>
               </div>
             </section>
           </div>
         </div>
 
-        {/* TV3: Khu Ä‘Ã¡nh giÃ¡ gia sÆ° (hiá»‡n khi tá»›i tá»« danh sÃ¡ch/AI/trang chá»§) */}
+        {/* TV3: Khu đánh giá gia sư (hiện khi tới từ danh sách/AI/trang chủ) */}
         {viewingTutor?.id && (
-          <EntityReviews targetType="tutor" targetId={viewingTutor.id} title="ÄÃ¡nh giÃ¡ gia sÆ°" />
+          <EntityReviews targetType="tutor" targetId={viewingTutor.id} title="Đánh giá gia sư" />
         )}
       </main>
 
@@ -249,17 +249,16 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
         <div className="max-w-[1280px] mx-auto px-6 py-10 flex flex-col md:flex-row justify-between items-center gap-6">
           <div className="flex flex-col items-center md:items-start gap-2">
             <span className="text-2xl font-bold text-[#00288e]">EduX</span>
-            <p className="text-xs font-medium text-[#444653]">Â© 2024 EduX. ÄÃ£ Ä‘Äƒng kÃ½ báº£n quyá»n.</p>
+            <p className="text-xs font-medium text-[#444653]">© 2024 EduX. Đã đăng ký bản quyền.</p>
           </div>
           <div className="flex flex-wrap justify-center gap-6">
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>ChÃ­nh SÃ¡ch Báº£o Máº­t</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Äiá»u Khoáº£n Dá»‹ch Vá»¥</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Trung TÃ¢m Trá»£ GiÃºp</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>LiÃªn Há»‡</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Chính Sách Bảo Mật</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Điều Khoản Dịch Vụ</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Trung Tâm Trợ Giúp</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Liên Hệ</a>
           </div>
         </div>
       </footer>
     </div>
   );
 }
-

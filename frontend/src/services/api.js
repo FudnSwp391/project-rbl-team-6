@@ -52,7 +52,7 @@ export async function getTutorDetail(tutorId) {
     const idNum = parseInt(tutorId, 10);
     const tutor = findTutorByAnyId(mockTutors, tutorId) || mockTutors.find(t => t.id === idNum);
     if (!tutor) {
-      throw new Error(`Tutor with ID ${tutorId} not found.`, { cause: error });
+      throw new Error(`Tutor with ID ${tutorId} not found.`);
     }
     // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 600));
@@ -171,6 +171,8 @@ export async function createBooking(bookingData) {
     note,
     tutorName,
     tutor_name,
+    studentId,
+    childName,
   } = bookingData || {};
 
   // Resolve tutorId — accept both camelCase and snake_case

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import BookingModal from '../components/BookingModal'
 import { useAuth } from '../AuthContext'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
@@ -85,11 +86,8 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
 
   useEffect(() => {
     window.scrollTo(0, 0)
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setNotFound(false)
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setErrorMsg(null)
 
     fetch(`${API_BASE}/api/tutors/${tutorId}`)

@@ -53,18 +53,18 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
     setErrors((prev) => ({ ...prev, [name]: '', submit: '', success: '' }))
   }
 
-  // â”€â”€â”€ LOGIN LOGIC â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── LOGIN LOGIC ─────────────────────────────────────────────────────────────
   const validateLogin = () => {
     const nextErrors = {}
     if (!formData.email.trim()) {
-      nextErrors.email = 'Email lÃ  báº¯t buá»™c.'
+      nextErrors.email = 'Email là bắt buộc.'
     } else if (!EMAIL_REGEX.test(formData.email)) {
-      nextErrors.email = 'Vui lÃ²ng nháº­p Ä‘á»‹a chá»‰ email há»£p lá»‡.'
+      nextErrors.email = 'Vui lòng nhập địa chỉ email hợp lệ.'
     }
     if (!formData.password) {
-      nextErrors.password = 'Máº­t kháº©u lÃ  báº¯t buá»™c.'
+      nextErrors.password = 'Mật khẩu là bắt buộc.'
     } else if (formData.password.length < 8) {
-      nextErrors.password = 'Máº­t kháº©u pháº£i cÃ³ Ã­t nháº¥t 8 kÃ½ tá»±.'
+      nextErrors.password = 'Mật khẩu phải có ít nhất 8 ký tự.'
     }
     return nextErrors
   }
@@ -83,7 +83,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         body: JSON.stringify({ email: formData.email, password: formData.password }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data?.message || 'ÄÄƒng nháº­p tháº¥t báº¡i.')
+      if (!response.ok) throw new Error(data?.message || 'Đăng nhập thất bại.')
       
       // Save credentials for quick testing
       if (rememberMe) {
@@ -105,7 +105,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         login(data.token, data.user)
       }
     } catch (error) {
-      setErrors({ submit: error.message || 'ÄÄƒng nháº­p tháº¥t báº¡i. Vui lÃ²ng thá»­ láº¡i.' })
+      setErrors({ submit: error.message || 'Đăng nhập thất bại. Vui lòng thử lại.' })
     } finally {
       setIsSubmitting(false)
     }
@@ -114,7 +114,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   const handleGoogleSuccess = async (credentialResponse) => {
     const credential = credentialResponse?.credential
     if (!credential) {
-      setGoogleError('Google khÃ´ng tráº£ vá» thÃ´ng tin xÃ¡c thá»±c há»£p lá»‡.')
+      setGoogleError('Google không trả về thông tin xác thực hợp lệ.')
       return
     }
     setGoogleError('')
@@ -126,7 +126,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         body: JSON.stringify({ credential }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data?.message || 'ÄÄƒng nháº­p báº±ng Google tháº¥t báº¡i.')
+      if (!response.ok) throw new Error(data?.message || 'Đăng nhập bằng Google thất bại.')
       if (data.suspiciousLogin) {
         setSuspiciousAlert(data.loginIP)
         setTimeout(() => { login(data.token, data.user) }, 3500)
@@ -134,17 +134,17 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         login(data.token, data.user)
       }
     } catch (error) {
-      setGoogleError(error.message || 'ÄÄƒng nháº­p báº±ng Google tháº¥t báº¡i.')
+      setGoogleError(error.message || 'Đăng nhập bằng Google thất bại.')
     } finally {
       setIsGoogleSubmitting(false)
     }
   }
 
-  // â”€â”€â”€ FORGOT PASSWORD LOGIC â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── FORGOT PASSWORD LOGIC ───────────────────────────────────────────────────
   const handleRequestOtp = async (e) => {
     e.preventDefault()
     if (!EMAIL_REGEX.test(forgotData.email)) {
-      setErrors({ email: 'Vui lÃ²ng nháº­p Ä‘á»‹a chá»‰ email há»£p lá»‡.' })
+      setErrors({ email: 'Vui lòng nhập địa chỉ email hợp lệ.' })
       return
     }
     setIsSubmitting(true)
@@ -155,7 +155,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         body: JSON.stringify({ email: forgotData.email }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data?.message || 'KhÃ´ng thá»ƒ gá»­i OTP.')
+      if (!response.ok) throw new Error(data?.message || 'Không thể gửi OTP.')
       setErrors({ success: data.message })
       setViewMode('forgot_otp')
     } catch (error) {
@@ -168,7 +168,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   const handleVerifyOtpToReset = async (e) => {
     e.preventDefault()
     if (forgotData.otp.length < 6) {
-      setErrors({ otp: 'Vui lÃ²ng nháº­p mÃ£ OTP gá»“m 6 chá»¯ sá»‘.' })
+      setErrors({ otp: 'Vui lòng nhập mã OTP gồm 6 chữ số.' })
       return
     }
     setViewMode('forgot_new_pwd')
@@ -177,11 +177,11 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   const handleResetPassword = async (e) => {
     e.preventDefault()
     if (forgotData.newPassword.length < 8) {
-      setErrors({ newPassword: 'Máº­t kháº©u pháº£i cÃ³ Ã­t nháº¥t 8 kÃ½ tá»±.' })
+      setErrors({ newPassword: 'Mật khẩu phải có ít nhất 8 ký tự.' })
       return
     }
     if (forgotData.newPassword !== forgotData.confirmPassword) {
-      setErrors({ confirmPassword: 'Máº­t kháº©u khÃ´ng khá»›p.' })
+      setErrors({ confirmPassword: 'Mật khẩu không khớp.' })
       return
     }
 
@@ -197,9 +197,9 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data?.message || 'KhÃ´ng thá»ƒ Ä‘áº·t láº¡i máº­t kháº©u.')
+      if (!response.ok) throw new Error(data?.message || 'Không thể đặt lại mật khẩu.')
       
-      setErrors({ success: 'Äáº·t láº¡i máº­t kháº©u thÃ nh cÃ´ng! Báº¡n cÃ³ thá»ƒ Ä‘Äƒng nháº­p ngay bÃ¢y giá».' })
+      setErrors({ success: 'Đặt lại mật khẩu thành công! Bạn có thể đăng nhập ngay bây giờ.' })
       setViewMode('login')
       setForgotData({ email: '', otp: '', newPassword: '', confirmPassword: '' })
     } catch (error) {
@@ -210,20 +210,20 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
     }
   }
 
-  // â”€â”€â”€ RENDERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── RENDERS ─────────────────────────────────────────────────────────────────
   const renderLoginForm = () => (
     <div>
       {suspiciousAlert && (
         <div className="mb-4 rounded-xl bg-orange-50 border border-orange-300 p-4 flex gap-3 items-start animate-in fade-in slide-in-from-top-2">
           <span className="material-symbols-outlined text-orange-500 text-[22px] mt-0.5 shrink-0">gpp_maybe</span>
           <div className="flex-1">
-            <p className="text-sm font-semibold text-orange-800">ÄÄƒng nháº­p tá»« Ä‘á»‹a chá»‰ IP má»›i</p>
+            <p className="text-sm font-semibold text-orange-800">Đăng nhập từ địa chỉ IP mới</p>
             <p className="text-xs text-orange-700 mt-1">
-              ChÃºng tÃ´i phÃ¡t hiá»‡n Ä‘Äƒng nháº­p tá»« IP <strong>{suspiciousAlert}</strong> â€” khÃ¡c vá»›i cÃ¡c láº§n trÆ°á»›c.
-              Náº¿u khÃ´ng pháº£i báº¡n, hÃ£y Ä‘á»•i máº­t kháº©u ngay.
+              Chúng tôi phát hiện đăng nhập từ IP <strong>{suspiciousAlert}</strong> — khác với các lần trước.
+              Nếu không phải bạn, hãy đổi mật khẩu ngay.
             </p>
           </div>
-          <button type="button" onClick={() => setSuspiciousAlert(null)} className="text-orange-400 hover:text-orange-600 text-lg leading-none">âœ•</button>
+          <button type="button" onClick={() => setSuspiciousAlert(null)} className="text-orange-400 hover:text-orange-600 text-lg leading-none">✕</button>
         </div>
       )}
     <form className="space-y-md transition-opacity duration-300 animate-in fade-in" onSubmit={handleLoginSubmit} noValidate>
@@ -233,7 +233,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
             <span className="material-symbols-outlined text-outline mr-sm group-focus-within:text-primary">mail</span>
             <input
               className="w-full bg-transparent border-none focus:ring-0 font-body-md text-body-md text-on-surface placeholder:text-outline-variant outline-none"
-              placeholder="Äá»‹a chá»‰ Email" required type="email" name="email"
+              placeholder="Địa chỉ Email" required type="email" name="email"
               value={formData.email} onChange={handleChange}
             />
           </div>
@@ -245,7 +245,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
             <span className="material-symbols-outlined text-outline mr-sm group-focus-within:text-primary">lock</span>
             <input
               className="w-full bg-transparent border-none focus:ring-0 font-body-md text-body-md text-on-surface placeholder:text-outline-variant outline-none"
-              placeholder="Máº­t Kháº©u" required type="password" name="password"
+              placeholder="Mật Khẩu" required type="password" name="password"
               value={formData.password} onChange={handleChange}
             />
           </div>
@@ -270,7 +270,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
               )}
             </div>
           </div>
-          <span className="font-label-sm text-label-sm text-on-surface-variant">Nhá»› máº­t kháº©u</span>
+          <span className="font-label-sm text-label-sm text-on-surface-variant">Nhớ mật khẩu</span>
         </label>
 
         {errors.success ? (
@@ -281,7 +281,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
           onClick={() => { setViewMode('forgot_email'); setErrors({}); }}
           className="font-label-sm text-label-sm text-primary hover:text-primary-container transition-colors focus:outline-none focus:underline"
         >
-          QuÃªn máº­t kháº©u?
+          Quên mật khẩu?
         </button>
       </div>
 
@@ -291,7 +291,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         className="w-full bg-[#00288e] hover:bg-primary-container text-white font-label-md text-label-md min-h-[56px] rounded-xl transition-all duration-200 shadow-md hover:shadow-lg focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center"
         type="submit" disabled={isSubmitting}
       >
-        {isSubmitting ? 'Äang ÄÄƒng Nháº­p...' : 'ÄÄƒng Nháº­p'}
+        {isSubmitting ? 'Đang Đăng Nhập...' : 'Đăng Nhập'}
       </button>
 
       <div className="flex items-center justify-between my-lg relative">
@@ -304,14 +304,14 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         {googleClientId ? (
           <GoogleLogin
             onSuccess={handleGoogleSuccess}
-            onError={() => setGoogleError('Cá»­a sá»• Ä‘Äƒng nháº­p Google tháº¥t báº¡i.')}
+            onError={() => setGoogleError('Cửa sổ đăng nhập Google thất bại.')}
             shape="pill" text="continue_with" size="large" width="360" useOneTap={false}
           />
         ) : (
           <p className="font-label-sm text-label-sm text-error px-2 text-center">Missing VITE_GOOGLE_CLIENT_ID</p>
         )}
       </div>
-      {isGoogleSubmitting && <p className="text-sm text-on-surface-variant">Äang xÃ¡c minh tÃ i khoáº£n Google...</p>}
+      {isGoogleSubmitting && <p className="text-sm text-on-surface-variant">Đang xác minh tài khoản Google...</p>}
       {googleError && <p className="text-sm text-red-600">{googleError}</p>}
     </form>
     </div>
@@ -320,8 +320,8 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   const renderForgotEmail = () => (
     <form className="space-y-md transition-opacity duration-300 animate-in slide-in-from-right-4" onSubmit={handleRequestOtp} noValidate>
       <div className="text-center mb-6">
-        <h2 className="text-title-lg font-bold text-on-surface mb-2">Äáº·t Láº¡i Máº­t Kháº©u</h2>
-        <p className="text-body-md text-on-surface-variant">Nháº­p Ä‘á»‹a chá»‰ email cá»§a báº¡n vÃ  chÃºng tÃ´i sáº½ gá»­i mÃ£ OTP gá»“m 6 chá»¯ sá»‘ Ä‘á»ƒ Ä‘áº·t láº¡i máº­t kháº©u.</p>
+        <h2 className="text-title-lg font-bold text-on-surface mb-2">Đặt Lại Mật Khẩu</h2>
+        <p className="text-body-md text-on-surface-variant">Nhập địa chỉ email của bạn và chúng tôi sẽ gửi mã OTP gồm 6 chữ số để đặt lại mật khẩu.</p>
       </div>
       
       <div className="relative group">
@@ -329,7 +329,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
           <span className="material-symbols-outlined text-outline mr-sm group-focus-within:text-primary">mail</span>
           <input
             className="w-full bg-transparent border-none focus:ring-0 font-body-md text-body-md text-on-surface placeholder:text-outline-variant outline-none"
-            placeholder="Nháº­p email cá»§a báº¡n" required type="email" name="email"
+            placeholder="Nhập email của bạn" required type="email" name="email"
             value={forgotData.email} onChange={handleForgotChange}
           />
         </div>
@@ -342,14 +342,14 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         className="w-full bg-[#00288e] hover:bg-primary-container text-white font-label-md text-label-md min-h-[56px] rounded-xl transition-all duration-200 shadow-md hover:shadow-lg disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center"
         type="submit" disabled={isSubmitting}
       >
-        {isSubmitting ? 'Äang Gá»­i OTP...' : 'Gá»­i OTP'}
+        {isSubmitting ? 'Đang Gửi OTP...' : 'Gửi OTP'}
       </button>
 
       <button
         type="button" onClick={() => { setViewMode('login'); setErrors({}); }}
         className="w-full mt-4 text-center text-primary font-label-md hover:underline"
       >
-        Quay Láº¡i ÄÄƒng Nháº­p
+        Quay Lại Đăng Nhập
       </button>
     </form>
   )
@@ -357,8 +357,8 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   const renderForgotOtp = () => (
     <form className="space-y-md transition-opacity duration-300 animate-in slide-in-from-right-4" onSubmit={handleVerifyOtpToReset} noValidate>
       <div className="text-center mb-6">
-        <h2 className="text-title-lg font-bold text-on-surface mb-2">Nháº­p MÃ£ OTP</h2>
-        <p className="text-body-md text-on-surface-variant">ChÃºng tÃ´i Ä‘Ã£ gá»­i mÃ£ gá»“m 6 chá»¯ sá»‘ Ä‘áº¿n <strong>{forgotData.email}</strong></p>
+        <h2 className="text-title-lg font-bold text-on-surface mb-2">Nhập Mã OTP</h2>
+        <p className="text-body-md text-on-surface-variant">Chúng tôi đã gửi mã gồm 6 chữ số đến <strong>{forgotData.email}</strong></p>
       </div>
       
       <div className="relative group">
@@ -366,7 +366,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
           <span className="material-symbols-outlined text-outline mr-sm group-focus-within:text-primary">password</span>
           <input
             className="w-full bg-transparent border-none focus:ring-0 font-body-md text-body-md text-on-surface placeholder:text-outline-variant outline-none tracking-widest text-center text-xl"
-            placeholder="â€¢ â€¢ â€¢ â€¢ â€¢ â€¢" required type="text" maxLength={6} name="otp"
+            placeholder="• • • • • •" required type="text" maxLength={6} name="otp"
             value={forgotData.otp} onChange={handleForgotChange}
           />
         </div>
@@ -378,7 +378,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         className="w-full bg-[#00288e] hover:bg-primary-container text-white font-label-md text-label-md min-h-[56px] rounded-xl transition-all duration-200 shadow-md hover:shadow-lg disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center"
         type="submit"
       >
-        XÃ¡c Minh OTP
+        Xác Minh OTP
       </button>
 
       <div className="flex justify-between mt-4">
@@ -386,13 +386,13 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
           type="button" onClick={() => { setViewMode('login'); setErrors({}); }}
           className="text-primary font-label-md hover:underline text-sm"
         >
-          Há»§y
+          Hủy
         </button>
         <button
           type="button" onClick={handleRequestOtp} disabled={isSubmitting}
           className="text-primary font-label-md hover:underline text-sm"
         >
-          Gá»­i Láº¡i OTP
+          Gửi Lại OTP
         </button>
       </div>
     </form>
@@ -401,8 +401,8 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   const renderForgotNewPwd = () => (
     <form className="space-y-md transition-opacity duration-300 animate-in slide-in-from-right-4" onSubmit={handleResetPassword} noValidate>
       <div className="text-center mb-6">
-        <h2 className="text-title-lg font-bold text-on-surface mb-2">Máº­t Kháº©u Má»›i</h2>
-        <p className="text-body-md text-on-surface-variant">Táº¡o máº­t kháº©u má»›i báº£o máº­t cho tÃ i khoáº£n cá»§a báº¡n.</p>
+        <h2 className="text-title-lg font-bold text-on-surface mb-2">Mật Khẩu Mới</h2>
+        <p className="text-body-md text-on-surface-variant">Tạo mật khẩu mới bảo mật cho tài khoản của bạn.</p>
       </div>
       
       <div className="space-y-4">
@@ -411,7 +411,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
             <span className="material-symbols-outlined text-outline mr-sm group-focus-within:text-primary">lock_reset</span>
             <input
               className="w-full bg-transparent border-none focus:ring-0 font-body-md text-body-md text-on-surface placeholder:text-outline-variant outline-none"
-              placeholder="Máº­t kháº©u má»›i (tá»‘i thiá»ƒu 8 kÃ½ tá»±)" required type="password" name="newPassword"
+              placeholder="Mật khẩu mới (tối thiểu 8 ký tự)" required type="password" name="newPassword"
               value={forgotData.newPassword} onChange={handleForgotChange}
             />
           </div>
@@ -423,7 +423,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
             <span className="material-symbols-outlined text-outline mr-sm group-focus-within:text-primary">lock_reset</span>
             <input
               className="w-full bg-transparent border-none focus:ring-0 font-body-md text-body-md text-on-surface placeholder:text-outline-variant outline-none"
-              placeholder="XÃ¡c nháº­n máº­t kháº©u má»›i" required type="password" name="confirmPassword"
+              placeholder="Xác nhận mật khẩu mới" required type="password" name="confirmPassword"
               value={forgotData.confirmPassword} onChange={handleForgotChange}
             />
           </div>
@@ -437,14 +437,14 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
         className="w-full bg-[#00288e] hover:bg-primary-container text-white font-label-md text-label-md min-h-[56px] rounded-xl transition-all duration-200 shadow-md hover:shadow-lg disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center"
         type="submit" disabled={isSubmitting}
       >
-        {isSubmitting ? 'Äang Äáº·t Láº¡i...' : 'Äáº·t Láº¡i Máº­t Kháº©u'}
+        {isSubmitting ? 'Đang Đặt Lại...' : 'Đặt Lại Mật Khẩu'}
       </button>
 
       <button
         type="button" onClick={() => { setViewMode('login'); setErrors({}); }}
         className="w-full mt-4 text-center text-primary font-label-md hover:underline"
       >
-        Há»§y
+        Hủy
       </button>
     </form>
   )
@@ -470,13 +470,13 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
                 className="flex-1 py-3 text-center font-label-md text-label-md rounded-lg bg-white shadow-sm text-on-surface transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-opacity-50"
                 id="tab-login" type="button"
               >
-                ÄÄƒng Nháº­p
+                Đăng Nhập
               </button>
               <button
                 className="flex-1 py-3 text-center font-label-md text-label-md rounded-lg text-on-surface-variant hover:text-on-surface transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-opacity-50"
                 id="tab-signup" type="button" onClick={onSwitchToSignUp}
               >
-                ÄÄƒng KÃ½
+                Đăng Ký
               </button>
             </div>
           )}
@@ -495,16 +495,16 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
               <span className="material-symbols-outlined">school</span> EduX
             </a>
             <p className="font-body-md text-body-md text-on-surface dark:text-inverse-on-surface mt-xs opacity-80">
-              Báº£n quyá»n 2024 EduX. Trao quyá»n tri thá»©c toÃ n cáº§u.
+              Bản quyền 2024 EduX. Trao quyền tri thức toàn cầu.
             </p>
           </div>
           <div className="md:col-span-3 flex flex-wrap gap-md justify-start md:justify-end">
-            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>TÃ¬m Gia SÆ°</a>
-            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>Trá»Ÿ ThÃ nh Gia SÆ°</a>
-            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>MÃ´n Há»c</a>
-            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>Vá» ChÃºng TÃ´i</a>
-            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>Há»— Trá»£</a>
-            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>ChÃ­nh SÃ¡ch Báº£o Máº­t</a>
+            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>Tìm Gia Sư</a>
+            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>Trở Thành Gia Sư</a>
+            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>Môn Học</a>
+            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>Về Chúng Tôi</a>
+            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>Hỗ Trợ</a>
+            <a className="font-body-md text-body-md text-on-secondary-container dark:text-surface-variant hover:underline hover:text-primary dark:hover:text-primary-fixed transition-all" href="#" onClick={(e) => e.preventDefault()}>Chính Sách Bảo Mật</a>
           </div>
         </div>
       </footer>
@@ -517,4 +517,3 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
     </>
   )
 }
-

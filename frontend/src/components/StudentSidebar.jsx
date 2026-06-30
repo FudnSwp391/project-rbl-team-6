@@ -7,15 +7,15 @@ const NAV_ITEMS = [
   { icon: 'chat', label: 'Messages', href: '#/dashboard/messages', id: 'messages' },
   { icon: 'quiz', label: 'Assessments', href: '#/dashboard/assessments', id: 'assessments' },
   { icon: 'psychology', label: 'AI Practice', href: '#/dashboard/practice', id: 'practice' },
-  { icon: 'description', label: 'Äá» thi', href: '#/dashboard/exam-papers', id: 'exam-papers' },
-  { icon: 'person', label: 'Há»“ sÆ¡ cÃ¡ nhÃ¢n', href: '#/dashboard/profile', id: 'profile' },
-  { icon: 'family_restroom', label: 'MÃ£ chia sáº»', href: '#/dashboard/parent-link', id: 'parent-link' },
+  { icon: 'description', label: 'Đề thi', href: '#/dashboard/exam-papers', id: 'exam-papers' },
+  { icon: 'person', label: 'Hồ sơ cá nhân', href: '#/dashboard/profile', id: 'profile' },
+  { icon: 'family_restroom', label: 'Mã chia sẻ', href: '#/dashboard/parent-link', id: 'parent-link' },
 ]
 
 export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRoute, logout }) {
   return (
     <>
-      {/* â”€â”€ Mobile overlay â”€â”€ */}
+      {/* ── Mobile overlay ── */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-[50] bg-black/40 lg:hidden"
@@ -23,7 +23,7 @@ export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRout
         />
       )}
 
-      {/* â”€â”€ Sidebar â”€â”€ */}
+      {/* ── Sidebar ── */}
       <nav
         className={`
           fixed left-0 top-0 h-full z-[60] flex flex-col py-lg w-64
@@ -107,4 +107,3 @@ export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRout
     </>
   )
 }
-
