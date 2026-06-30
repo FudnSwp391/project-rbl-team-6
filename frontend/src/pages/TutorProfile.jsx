@@ -334,13 +334,13 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             </section>
 
             {/* BẢNG VÀNG THÀNH TÍCH */}
-            <section className="rounded-2xl p-6 tutor-profile-card bg-gradient-to-br from-[#e0edff] via-[#f0f5ff] to-[#fff7d6] shadow-[inset_0_2px_10px_rgba(255,255,255,0.7)] border border-[#c4dbff]">
+            <section className="rounded-2xl p-6 tutor-profile-card bg-gradient-to-r from-[#e3f2fd] via-[#eaf4ff] to-[#fff8e1] shadow-[inset_0_2px_10px_rgba(255,255,255,0.7)] border border-[#bbdefb]">
               <div className="flex flex-col gap-1 mb-5">
                 <h2 className="text-lg md:text-xl font-bold text-[#00288e] flex items-center gap-2 uppercase tracking-wide">
                   <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 26, fontVariationSettings: "'FILL' 1" }}>workspace_premium</span>
                   BẢNG VÀNG THÀNH TÍCH
                 </h2>
-                <p className="text-xs md:text-sm text-[#00288e]/70 ml-9 md:ml-10">Thành tích khóa học - Hành trang tri thức</p>
+                <p className="text-xs md:text-sm text-[#00288e]/70 ml-9 md:ml-10">Thành tích khóa học - Học làm người</p>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
