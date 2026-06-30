@@ -344,7 +344,9 @@ function HomePage({ onGoSignIn }) {
                   overflow: 'hidden'
                 }}>
                   <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Bảng điều khiển</a>
-                  <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Khóa học của tôi</a>
+                  {user.role === 'student' && (
+                    <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Khóa học của tôi</a>
+                  )}
                   <a href="#" onClick={(e) => e.preventDefault()} style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Cài đặt</a>
                   <button 
                     onClick={logout} 
@@ -413,14 +415,22 @@ function HomePage({ onGoSignIn }) {
               </label>
               <label className="search-field">
                 <span className="material-symbols-outlined">location_on</span>
-                <input
-                  type="text"
+                <select
                   value={place}
                   onChange={(event) => setPlace(event.target.value)}
-                  placeholder="Học trực tuyến hay tại địa điểm cụ thể?"
-                />
+                >
+                  <option value="">Hình thức học (Tất cả)</option>
+                  <option value="online">Học trực tuyến (Online)</option>
+                  <option value="offline">Tại địa điểm cụ thể (Offline)</option>
+                </select>
               </label>
-              <button type="button" className="btn btn-primary search-button">
+              <button 
+                type="button" 
+                className="btn btn-primary search-button"
+                onClick={() => {
+                  window.location.hash = `/find-tutors?search=${encodeURIComponent(topic)}&method=${encodeURIComponent(place)}`;
+                }}
+              >
                 Tìm Kiếm
               </button>
             </div>

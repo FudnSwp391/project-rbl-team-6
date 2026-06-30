@@ -147,12 +147,15 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   const [loading, setLoading]         = useState(true);
   const [isMock, setIsMock]           = useState(false);
 
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch]           = useState('');
+  const hashParts = window.location.hash.split('?');
+  const initialParams = new URLSearchParams(hashParts.length > 1 ? hashParts[1] : '');
+
+  const [searchInput, setSearchInput] = useState(initialParams.get('search') || '');
+  const [search, setSearch]           = useState(initialParams.get('search') || '');
   const [selectedSubjects, setSelectedSubjects] = useState([]);
   const [maxPrice, setMaxPrice]       = useState(200);
   const [sort, setSort]               = useState('rating');
-  const [method, setMethod]           = useState('');
+  const [method, setMethod]           = useState(initialParams.get('method') || '');
   const [level, setLevel]             = useState('');
   const [favMsg, setFavMsg]           = useState('');
 
