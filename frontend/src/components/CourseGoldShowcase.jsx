@@ -167,7 +167,7 @@ export default function CourseGoldShowcase({ course, courseId, onEnroll, enrolle
             <span className="material-symbols-outlined cgs-trophy" style={{ fontSize: 32, color: '#00288e', fontVariationSettings: "'FILL' 1" }}>workspace_premium</span>
             <div>
               <h2 className="text-lg md:text-xl font-bold tracking-wide uppercase" style={{ color: '#00288e' }}>BẢNG VÀNG THÀNH TÍCH</h2>
-              <p className="text-xs md:text-sm font-semibold" style={{ color: '#00288e', opacity: 0.7 }}>Thành tích khóa học · Học làm người</p>
+              <p className="text-xs md:text-sm font-semibold" style={{ color: '#00288e', opacity: 0.7 }}>Thành tích khóa học - {course.title}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
