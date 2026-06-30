@@ -1,4 +1,4 @@
-﻿import React from 'react'
+import React from 'react'
 
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Dashboard', href: '#/dashboard', id: 'dashboard' },

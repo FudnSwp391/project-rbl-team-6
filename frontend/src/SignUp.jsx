@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 import { useAuth } from './AuthContext'   // â† Global auth state
 import { GoogleLogin } from '@react-oauth/google'
 

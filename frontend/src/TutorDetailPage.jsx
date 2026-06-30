@@ -1,4 +1,4 @@
-﻿import React, { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import EntityReviews from './components/EntityReviews';
 
 export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
