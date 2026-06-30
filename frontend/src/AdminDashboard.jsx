@@ -2,6 +2,31 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from './AuthContext'
 import NotificationDropdown from './components/NotificationDropdown'
 
+// ─── Transaction Management Modules ──────────────────────────────────────────
+import FinancialOverview     from './admin/transactions/FinancialOverview'
+import LessonPayments        from './admin/transactions/LessonPayments'
+import CourseTransactions    from './admin/transactions/CourseTransactions'
+import TutorWithdrawals      from './admin/transactions/TutorWithdrawals'
+import RefundManagement      from './admin/transactions/RefundManagement'
+import DisputeManagement     from './admin/transactions/DisputeManagement'
+import FailedTransactions    from './admin/transactions/FailedTransactions'
+import PaymentGateways       from './admin/transactions/PaymentGateways'
+import CommissionManagement  from './admin/transactions/CommissionManagement'
+import PlatformRevenue       from './admin/transactions/PlatformRevenue'
+import SystemWallet          from './admin/transactions/SystemWallet'
+import PromotionTransactions from './admin/transactions/PromotionTransactions'
+import FinancialReports      from './admin/transactions/FinancialReports'
+import Reconciliation        from './admin/transactions/Reconciliation'
+import FraudAlerts           from './admin/transactions/FraudAlerts'
+import NotificationCenter    from './admin/transactions/NotificationCenter'
+import AuditLogs             from './admin/transactions/AuditLogs'
+
+import { DISPUTES } from './admin/transactions/mockData'
+import { COMPLAINTS, REPORTED_REVIEWS, VIOLATIONS } from './admin/services/mockData'
+import Complaints from './admin/services/Complaints'
+import Reviews from './admin/services/Reviews'
+import Violations from './admin/services/Violations'
+
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
 async function authFetch(url, token, options = {}) {
@@ -23,15 +48,44 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('vi-VN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+const TX_SUB_ITEMS = [
+  { id: 'tx-overview',     label: 'Tổng Quan Tài Chính',    icon: 'bar_chart' },
+  { id: 'tx-lessons',      label: 'Thanh Toán Buổi Học',       icon: 'receipt_long' },
+  { id: 'tx-courses',      label: 'Giao Dịch Khóa Học',   icon: 'school' },
+  { id: 'tx-withdrawals',  label: 'Gia Sư Rút Tiền',     icon: 'account_balance' },
+  { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
+  { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
+  { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
+  { id: 'tx-gateways',     label: 'Cổng Thanh Toán',      icon: 'credit_card' },
+  { id: 'tx-commissions',  label: 'Quản Lý Hoa Hồng',       icon: 'percent' },
+  { id: 'tx-platform-revenue', label: 'Doanh Thu Nền Tảng',  icon: 'trending_up' },
+  { id: 'tx-system-wallet', label: 'Ví Hệ Thống',        icon: 'savings' },
+  { id: 'tx-promotions',   label: 'Khuyến Mãi',            icon: 'local_offer' },
+  { id: 'tx-reports',      label: 'Báo Cáo Tài Chính',     icon: 'assessment' },
+  { id: 'tx-reconciliation', label: 'Đối Soát',      icon: 'compare_arrows' },
+  { id: 'tx-fraud',        label: 'Cảnh Báo Gian Lận',          icon: 'warning' },
+  { id: 'tx-notifications', label: 'Trung Tâm Thông Báo',  icon: 'notifications' },
+  { id: 'tx-audit',        label: 'Nhật Ký Admin',            icon: 'history_edu' },
+]
+
+const TX_VIEW_IDS = new Set(TX_SUB_ITEMS.map(i => i.id))
+
+const SM_SUB_ITEMS = [
+  { id: 'sm-complaints',   label: 'Khiếu nại',             icon: 'report_problem' },
+  { id: 'sm-reviews',      label: 'Đánh giá',              icon: 'reviews' },
+  { id: 'sm-violations',   label: 'Báo cáo vi phạm',       icon: 'gavel' },
+  { id: 'sm-moderation',   label: 'Kiểm duyệt nội dung',   icon: 'policy' },
+]
+const SM_VIEW_IDS = new Set(SM_SUB_ITEMS.map(i => i.id))
+
 const NAV_ITEMS = [
   { id: 'dashboard',       label: 'Tổng quan',             icon: 'dashboard' },
   { id: 'tutor-approval',  label: 'Duyệt gia sư',          icon: 'how_to_reg' },
   { id: 'user-management', label: 'Quản lý người dùng',    icon: 'group' },
   { id: 'subjects',        label: 'Môn học',               icon: 'subject' },
-  { id: 'lessons',         label: 'Bài học',               icon: 'menu_book' },
-  { id: 'transactions',    label: 'Giao dịch',             icon: 'payments' },
-  { id: 'complaints',      label: 'Khiếu nại',             icon: 'report_problem' },
-  { id: 'reviews',         label: 'Đánh giá',              icon: 'reviews' },
+  { id: 'lessons',         label: 'Khóa học',              icon: 'school' },
+  { id: 'transactions',    label: 'Giao dịch',             icon: 'payments', hasSubmenu: true },
+  { id: 'services',        label: 'Quản lý dịch vụ',       icon: 'support_agent', hasSubmenu: true },
   { id: 'reports',         label: 'Báo cáo',               icon: 'assessment' },
   { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology' },
   { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu' },
@@ -43,6 +97,18 @@ export default function AdminDashboard() {
   const { user, token, logout } = useAuth()
 
   const [activeView, setActiveView]   = useState('dashboard')
+  const [txMenuOpen, setTxMenuOpen]   = useState(false)
+  const [smMenuOpen, setSmMenuOpen]   = useState(false)
+
+  // ── Global Service/Transaction States ──
+  const [globalDisputes, setGlobalDisputes] = useState(DISPUTES)
+  const [globalComplaints, setGlobalComplaints] = useState(COMPLAINTS)
+  const [globalReviews, setGlobalReviews] = useState(REPORTED_REVIEWS)
+  const [globalViolations, setGlobalViolations] = useState(VIOLATIONS)
+
+  const handleAddDispute = (dispute) => setGlobalDisputes(prev => [dispute, ...prev])
+  const handleUpdateComplaint = (id, updates) => setGlobalComplaints(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c))
+  const handleUpdateDispute = (updatedDispute) => setGlobalDisputes(prev => prev.map(d => d.id === updatedDispute.id ? updatedDispute : d))
 
   // ── Tutor data ──
   const [stats,   setStats]   = useState({ pending: 0, approved: 0, rejected: 0, total: 0 })
@@ -164,7 +230,62 @@ export default function AdminDashboard() {
 
         <nav className="flex-1 overflow-y-auto space-y-0.5 pr-1">
           {NAV_ITEMS.map(item => {
-            const active = activeView === item.id
+            const isTxParent = item.id === 'transactions'
+            const isSmParent = item.id === 'services'
+            const hasSub = item.hasSubmenu
+            
+            const isTxActive = TX_VIEW_IDS.has(activeView)
+            const isSmActive = SM_VIEW_IDS.has(activeView)
+            
+            const active = activeView === item.id || (isTxParent && isTxActive) || (isSmParent && isSmActive)
+
+            if (hasSub) {
+              const isOpen = isTxParent ? txMenuOpen : smMenuOpen
+              const setOpen = isTxParent ? () => setTxMenuOpen(!txMenuOpen) : () => setSmMenuOpen(!smMenuOpen)
+              const subItems = isTxParent ? TX_SUB_ITEMS : SM_SUB_ITEMS
+              const isActiveGrp = isTxParent ? isTxActive : isSmActive
+
+              return (
+                <div key={item.id}>
+                  <a
+                    href="#"
+                    onClick={e => { e.preventDefault(); setOpen() }}
+                    className={`flex items-center gap-3 px-3 py-3 rounded-lg transition-all cursor-pointer select-none active:scale-95 ${
+                      isActiveGrp
+                        ? 'text-primary font-bold bg-blue-50'
+                        : 'text-on-surface-variant hover:text-primary hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[20px]" style={isActiveGrp ? { fontVariationSettings: "'FILL' 1" } : {}}>{item.icon}</span>
+                    <span className="text-sm font-semibold flex-1">{item.label}</span>
+                    <span className="material-symbols-outlined text-[18px] transition-transform" style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>expand_more</span>
+                  </a>
+                  {isOpen && (
+                    <div className="ml-3 mt-0.5 space-y-0.5 border-l-2 border-blue-100 pl-2">
+                      {subItems.map(sub => {
+                        const subActive = activeView === sub.id
+                        return (
+                          <a
+                            key={sub.id}
+                            href="#"
+                            onClick={e => { e.preventDefault(); setActiveView(sub.id) }}
+                            className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all cursor-pointer text-xs ${
+                              subActive
+                                ? 'text-primary font-bold bg-blue-50'
+                                : 'text-on-surface-variant hover:text-primary hover:bg-gray-50'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-[15px]" style={subActive ? { fontVariationSettings: "'FILL' 1" } : {}}>{sub.icon}</span>
+                            <span className="font-semibold">{sub.label}</span>
+                          </a>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            }
+
             return (
               <a
                 key={item.id}
@@ -263,10 +384,39 @@ export default function AdminDashboard() {
           )}
           {activeView === 'user-management' && <UserManagementView />}
           {activeView === 'subjects'         && <SubjectsView />}
-          {activeView === 'lessons'          && <LessonsView />}
+          {activeView === 'lessons'          && <CourseManagementView />}
           {activeView === 'transactions'     && <TransactionsView token={token} />}
-          {activeView === 'complaints'       && <ComplaintsView token={token} />}
-          {activeView === 'reviews'          && <ReviewsView />}
+          {/* ── Transaction Management Module ── */}
+          {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} />}
+          {activeView === 'tx-lessons'       && <LessonPayments />}
+          {activeView === 'tx-courses'       && <CourseTransactions />}
+          {activeView === 'tx-withdrawals'   && <TutorWithdrawals />}
+          {activeView === 'tx-refunds'       && <RefundManagement />}
+          {activeView === 'tx-disputes'      && <DisputeManagement disputes={globalDisputes} onUpdateDispute={handleUpdateDispute} />}
+          {activeView === 'tx-failed'        && <FailedTransactions />}
+          {activeView === 'tx-gateways'      && <PaymentGateways />}
+          {activeView === 'tx-commissions'   && <CommissionManagement />}
+          {activeView === 'tx-platform-revenue' && <PlatformRevenue />}
+          {activeView === 'tx-system-wallet' && <SystemWallet />}
+          {activeView === 'tx-promotions'    && <PromotionTransactions />}
+          {activeView === 'tx-reports'       && <FinancialReports />}
+          {activeView === 'tx-reconciliation' && <Reconciliation />}
+          {activeView === 'tx-fraud'         && <FraudAlerts />}
+          {activeView === 'tx-notifications' && <NotificationCenter />}
+          {activeView === 'tx-audit'         && <AuditLogs />}
+          
+          {/* ── Service Management Module ── */}
+          {activeView === 'sm-complaints'    && <Complaints complaints={globalComplaints} onUpdateComplaint={handleUpdateComplaint} onAddDispute={handleAddDispute} onNavigate={setActiveView} />}
+          {activeView === 'sm-reviews'       && <Reviews reviews={globalReviews} />}
+          {activeView === 'sm-violations'    && <Violations violations={globalViolations} />}
+          {activeView === 'sm-moderation'    && (
+            <div className="p-8 max-w-[1400px] mx-auto text-center mt-20">
+              <span className="material-symbols-outlined text-gray-300" style={{fontSize: '80px'}}>policy</span>
+              <h2 className="text-2xl font-bold text-gray-900 mt-4">Kiểm duyệt nội dung</h2>
+              <p className="text-gray-500 mt-2">Tính năng đang trong quá trình phát triển.</p>
+            </div>
+          )}
+
           {activeView === 'reports'          && <ReportsView />}
           {activeView === 'ai-insights'      && <AIInsightsView />}
           {activeView === 'audit-logs'       && <AuditLogsView />}
@@ -1618,100 +1768,700 @@ function SubjectsView() {
   )
 }
 
-// ─── Lessons View ─────────────────────────────────────────────────────────────
-const MOCK_LESSONS = [
-  { id: 'L001', title: 'Nhập môn Giải tích',            tutor: 'Trần Thị Bích',   subject: 'Toán học',     status: 'Hoạt động',  date: '2024-06-01', students: 24 },
-  { id: 'L002', title: 'Các định luật Newton',          tutor: 'Phạm Quỳnh Anh',  subject: 'Vật lý',       status: 'Hoạt động',  date: '2024-06-03', students: 18 },
-  { id: 'L003', title: 'Cơ sở Hóa học Hữu cơ',         tutor: 'Bùi Phương Thảo', subject: 'Hóa học',      status: 'Bản nháp',   date: '2024-06-05', students: 0  },
-  { id: 'L004', title: 'Nắm vững Ngữ pháp tiếng Anh',  tutor: 'Trần Thị Bích',   subject: 'Tiếng Anh',    status: 'Hoạt động',  date: '2024-06-07', students: 51 },
-  { id: 'L005', title: 'Cấu trúc dữ liệu & Thuật toán', tutor: 'Phạm Quỳnh Anh', subject: 'CNTT',         status: 'Hoạt động',  date: '2024-06-09', students: 37 },
-  { id: 'L006', title: 'Lịch sử Chiến tranh Việt Nam',  tutor: 'Bùi Phương Thảo', subject: 'Lịch sử',     status: 'Lưu trữ',    date: '2024-05-20', students: 12 },
+// ─── Course Management View ───────────────────────────────────────────────────
+const SUBJECT_META = {
+  'Toán học':   { tag: 'bg-blue-50 text-blue-700',     grad: 'from-blue-500 to-indigo-700',   icon: 'functions' },
+  'Lập trình':  { tag: 'bg-violet-50 text-violet-700', grad: 'from-violet-500 to-indigo-700',  icon: 'code' },
+  'Tiếng Anh':  { tag: 'bg-rose-50 text-rose-700',     grad: 'from-rose-500 to-pink-700',     icon: 'translate' },
+  'Vật lý':     { tag: 'bg-cyan-50 text-cyan-700',     grad: 'from-cyan-500 to-sky-700',      icon: 'rocket_launch' },
+  'Hóa học':    { tag: 'bg-emerald-50 text-emerald-700', grad: 'from-emerald-500 to-teal-700', icon: 'science' },
+  'Văn học':    { tag: 'bg-amber-50 text-amber-700',   grad: 'from-amber-500 to-orange-600',  icon: 'menu_book' },
+  'Lịch sử':    { tag: 'bg-orange-50 text-orange-700', grad: 'from-orange-500 to-red-600',    icon: 'history_edu' },
+  'Sinh học':   { tag: 'bg-teal-50 text-teal-700',     grad: 'from-teal-500 to-emerald-700',  icon: 'biotech' },
+}
+const subjMeta = s => SUBJECT_META[s] || { tag: 'bg-gray-100 text-gray-600', grad: 'from-gray-400 to-gray-600', icon: 'school' }
+
+const C_STATUS_META = {
+  'Hoạt động':  { badge: 'bg-green-100 text-green-700',  dot: 'bg-green-500',  icon: 'check_circle' },
+  'Bản nháp':   { badge: 'bg-gray-100 text-gray-600',    dot: 'bg-gray-400',   icon: 'edit_note' },
+  'Đã lưu trữ': { badge: 'bg-slate-100 text-slate-600',  dot: 'bg-slate-400',  icon: 'inventory_2' },
+  'Bị báo cáo': { badge: 'bg-red-100 text-red-700',      dot: 'bg-red-500',    icon: 'flag' },
+}
+const cStatusMeta = s => C_STATUS_META[s] || C_STATUS_META['Bản nháp']
+
+const AVATAR_COLORS = ['bg-blue-600','bg-violet-600','bg-rose-600','bg-emerald-600','bg-orange-600','bg-cyan-600']
+const initialsOf = name => name.split(' ').filter(Boolean).slice(-2).map(w => w[0]).join('').toUpperCase()
+
+const MOCK_COURSES = [
+  { id: 'C-1001', title: 'Luyện thi THPT Quốc gia môn Toán 2026', tutor: 'Trần Thị Bích',  subject: 'Toán học',  students: 1204, lessons: 24, rating: 4.9, reviews: 312, price: 599000,  premium: true,  status: 'Hoạt động', created: '2025-09-12', updated: '2026-06-24', revenue: 245000000, completion: 78, desc: 'Hệ thống hóa toàn bộ kiến thức Toán THPT, bám sát cấu trúc đề thi 2026 với hơn 600 bài tập tự luận và trắc nghiệm có lời giải chi tiết.' },
+  { id: 'C-1002', title: 'Lập trình Web Full-Stack với React & Node', tutor: 'Phạm Quỳnh Anh', subject: 'Lập trình', students: 2860, lessons: 58, rating: 4.8, reviews: 740, price: 899000,  premium: true,  status: 'Hoạt động', created: '2025-05-03', updated: '2026-06-20', revenue: 1280000000, completion: 64, desc: 'Xây dựng ứng dụng web hoàn chỉnh từ giao diện đến backend: React, Node.js, Express, PostgreSQL và triển khai thực tế lên cloud.' },
+  { id: 'C-1003', title: 'Tiếng Anh giao tiếp cấp tốc 30 ngày', tutor: 'Nguyễn Hải Đăng', subject: 'Tiếng Anh', students: 540,  lessons: 32, rating: 4.7, reviews: 188, price: 0,       premium: false, status: 'Hoạt động', created: '2025-11-20', updated: '2026-06-18', revenue: 0,         completion: 71, desc: 'Lộ trình luyện phản xạ giao tiếp theo chủ đề thực tế, tập trung phát âm và nghe hiểu cho người đi làm bận rộn.' },
+  { id: 'C-1004', title: 'Hóa học Hữu cơ chuyên sâu lớp 12', tutor: 'Bùi Phương Thảo', subject: 'Hóa học',  students: 0,    lessons: 18, rating: 0,   reviews: 0,   price: 499000,  premium: false, status: 'Bản nháp',  created: '2026-06-22', updated: '2026-06-22', revenue: 0,         completion: 0,  desc: 'Phân tích chuyên sâu các chuỗi phản ứng hữu cơ, cơ chế và bài toán nhận biết — đang soạn thảo, chưa xuất bản.' },
+  { id: 'C-1005', title: 'Vật lý 12 — Dao động & Sóng cơ', tutor: 'Lê Minh Tuấn',  subject: 'Vật lý',    students: 312,  lessons: 21, rating: 4.6, reviews: 96,  price: 399000,  premium: false, status: 'Hoạt động', created: '2026-06-15', updated: '2026-06-21', revenue: 124000000, completion: 58, desc: 'Trọng tâm chuyên đề Dao động và Sóng cơ với phương pháp giải nhanh, kèm hệ thống bài tập phân hóa theo mức độ.' },
+  { id: 'C-1006', title: 'Python cho người mới bắt đầu', tutor: 'Phạm Quỳnh Anh', subject: 'Lập trình', students: 4120, lessons: 40, rating: 4.9, reviews: 1530, price: 0,      premium: false, status: 'Hoạt động', created: '2025-03-01', updated: '2026-06-15', revenue: 0,         completion: 82, desc: 'Khởi đầu hành trình lập trình với Python: cú pháp, cấu trúc dữ liệu, hàm và 12 dự án nhỏ thực hành.' },
+  { id: 'C-1007', title: 'Ngữ pháp tiếng Anh từ A đến Z', tutor: 'Nguyễn Hải Đăng', subject: 'Tiếng Anh', students: 96,   lessons: 16, rating: 4.4, reviews: 41,  price: 299000,  premium: false, status: 'Bản nháp',  created: '2026-06-08', updated: '2026-06-10', revenue: 0,         completion: 0,  desc: 'Tổng hợp toàn bộ điểm ngữ pháp cốt lõi, đang trong giai đoạn soạn thảo và chưa xuất bản.' },
+  { id: 'C-1008', title: 'Lịch sử Việt Nam hiện đại', tutor: 'Đỗ Quang Huy',   subject: 'Lịch sử',   students: 88,   lessons: 14, rating: 4.2, reviews: 33,  price: 0,       premium: false, status: 'Đã lưu trữ', created: '2024-09-10', updated: '2026-03-02', revenue: 0,         completion: 55, desc: 'Khóa học đã được lưu trữ — nội dung về giai đoạn lịch sử Việt Nam từ 1945 đến nay.' },
+  { id: 'C-1009', title: 'Luyện viết IELTS Writing 7.0+', tutor: 'Nguyễn Hải Đăng', subject: 'Tiếng Anh', students: 760,  lessons: 28, rating: 4.8, reviews: 410, price: 1290000, premium: true,  status: 'Hoạt động', created: '2025-07-19', updated: '2026-06-23', revenue: 615000000, completion: 69, desc: 'Phương pháp viết Task 1 & Task 2 theo band điểm, chữa bài chi tiết và ngân hàng mẫu câu học thuật.' },
+  { id: 'C-1010', title: 'Cấu trúc dữ liệu & Giải thuật', tutor: 'Lê Minh Tuấn',  subject: 'Lập trình', students: 1530, lessons: 46, rating: 3.9, reviews: 220, price: 799000,  premium: true,  status: 'Bị báo cáo', created: '2025-08-05', updated: '2026-06-19', revenue: 712000000, completion: 48, desc: 'Khóa học bị báo cáo về vấn đề bản quyền tài liệu — cần kiểm duyệt lại trước khi tiếp tục phân phối.' },
+  { id: 'C-1011', title: 'Sinh học phân tử nâng cao', tutor: 'Bùi Phương Thảo', subject: 'Sinh học',  students: 210,  lessons: 22, rating: 4.5, reviews: 64,  price: 549000,  premium: false, status: 'Hoạt động', created: '2025-10-02', updated: '2026-06-12', revenue: 92000000,  completion: 60, desc: 'Đi sâu vào cơ chế di truyền cấp phân tử, công nghệ gen và ứng dụng trong y sinh hiện đại.' },
+  { id: 'C-1012', title: 'Văn học Việt Nam lớp 12', tutor: 'Đỗ Quang Huy',   subject: 'Văn học',   students: 980,  lessons: 20, rating: 4.6, reviews: 158, price: 349000,  premium: false, status: 'Hoạt động', created: '2025-06-14', updated: '2026-06-08', revenue: 188000000, completion: 73, desc: 'Phân tích các tác phẩm trọng tâm trong chương trình, kỹ năng làm văn nghị luận và mở bài ấn tượng.' },
 ]
 
-function LessonsView() {
-  const [statusFilter, setStatusFilter] = useState('Tất cả')
-  const statusColor = s => s === 'Hoạt động' ? 'bg-green-100 text-green-700' : s === 'Bản nháp' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'
-  const filtered = statusFilter === 'Tất cả' ? MOCK_LESSONS : MOCK_LESSONS.filter(l => l.status === statusFilter)
+const AI_COURSE_INSIGHTS = [
+  { icon: 'trending_down', tone: 'text-amber-600', bg: 'bg-amber-50',  text: '42% học viên dừng lại ở Module 3 — nội dung có thể quá dài hoặc khó tiếp thu.' },
+  { icon: 'content_cut',   tone: 'text-blue-600',  bg: 'bg-blue-50',   text: 'Đề xuất chia nhỏ video bài giảng dài hơn 20 phút để tăng tỷ lệ hoàn thành.' },
+  { icon: 'quiz',          tone: 'text-violet-600', bg: 'bg-violet-50', text: 'Nên bổ sung Quiz sau Lesson 8 để củng cố kiến thức nền trước phần nâng cao.' },
+  { icon: 'visibility_off',tone: 'text-rose-600',  bg: 'bg-rose-50',   text: 'Nội dung Chương 2 có tỷ lệ xem thấp nhất — cân nhắc làm lại phần mở đầu.' },
+  { icon: 'star_half',     tone: 'text-red-600',   bg: 'bg-red-50',    text: 'Điểm đánh giá trung bình giảm 12% trong tháng này, chủ yếu ở khóa “CTDL & Giải thuật”.' },
+]
 
+const fmtVND = n => n === 0 ? 'Miễn phí' : n.toLocaleString('vi-VN') + 'đ'
+const fmtCompactVND = n => {
+  if (!n) return '—'
+  if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + ' tỷ'
+  if (n >= 1e6) return Math.round(n / 1e6) + ' triệu'
+  if (n >= 1e3) return Math.round(n / 1e3) + 'K'
+  return n.toLocaleString('vi-VN')
+}
+const fmtDMY = iso => {
+  if (!iso) return '—'
+  const d = new Date(iso), p = x => String(x).padStart(2, '0')
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`
+}
+const fmtInt = n => (n || 0).toLocaleString('vi-VN')
+
+const C_CHIPS = [
+  { key: 'Tất cả' },
+  { key: 'Đang hoạt động', match: c => c.status === 'Hoạt động' },
+  { key: 'Bản nháp',       match: c => c.status === 'Bản nháp' },
+  { key: 'Lưu trữ',        match: c => c.status === 'Đã lưu trữ' },
+  { key: 'Bị báo cáo',     match: c => c.status === 'Bị báo cáo' },
+  { key: 'Miễn phí',       match: c => c.price === 0 },
+  { key: 'Premium',        match: c => c.premium },
+]
+
+const MODULE_TITLES = ['Nhập môn & Nền tảng', 'Kiến thức trọng tâm', 'Luyện tập chuyên sâu', 'Tổng ôn & Thực chiến']
+function buildModules(course) {
+  const total = course.lessons || 0
+  const count = Math.min(4, Math.max(2, Math.round(total / 8) || 2))
+  const per = Math.ceil(total / count)
+  let n = 0
+  const mods = []
+  for (let m = 0; m < count; m++) {
+    const items = []
+    for (let i = 0; i < per && n < total; i++, n++) {
+      items.push({ type: 'lesson', title: `Bài ${n + 1}: ${course.subject} — chuyên đề ${n + 1}`, duration: `${10 + (n * 4) % 35} phút` })
+    }
+    items.push({ type: 'quiz', title: `Quiz kiểm tra Module ${m + 1}`, q: 8 + (m * 2) % 10 })
+    mods.push({ title: `Module ${m + 1}: ${MODULE_TITLES[m] || 'Nội dung mở rộng'}`, items })
+  }
+  return mods
+}
+
+const REVIEW_AUTHORS = ['Ngọc Mai', 'Hoàng Long', 'Thu Hà', 'Đức Anh', 'Phương Linh', 'Gia Bảo']
+const REVIEW_TEXTS = [
+  'Khóa học rất chi tiết, giảng viên giải thích dễ hiểu và tận tâm.',
+  'Nội dung bám sát thực tế, bài tập phong phú. Mình tiến bộ rõ rệt.',
+  'Phần đầu hơi nhanh nhưng càng về sau càng cuốn, rất đáng tiền.',
+  'Video chất lượng cao, có quiz củng cố sau mỗi chương rất hữu ích.',
+  'Mong giảng viên cập nhật thêm ví dụ mới cho phần nâng cao.',
+]
+function buildReviews(course) {
+  if (!course.reviews) return []
+  const base = Math.round(course.rating)
+  return REVIEW_AUTHORS.slice(0, 4).map((name, i) => ({
+    name,
+    score: Math.max(3, Math.min(5, base - (i % 2))),
+    comment: REVIEW_TEXTS[i % REVIEW_TEXTS.length],
+    date: fmtDMY(new Date(Date.now() - (i + 1) * 86400000 * 6).toISOString()),
+  }))
+}
+
+// ── Course Thumbnail ──
+function CourseThumb({ course, size = 'sm' }) {
+  const m = subjMeta(course.subject)
+  const dims = size === 'lg' ? 'w-full h-40 rounded-xl' : 'w-14 h-10 rounded-lg'
+  const icon = size === 'lg' ? 'text-[56px]' : 'text-[20px]'
   return (
-    <div className="p-10 max-w-[1280px] mx-auto">
-      <div className="flex justify-between items-end mb-8">
-        <div>
-          <h2 className="text-3xl font-bold text-on-background">Bài học</h2>
-          <p className="text-sm text-on-surface-variant mt-1">Theo dõi tất cả nội dung bài học đã được đăng tải.</p>
-        </div>
-        <button className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-primary/90">
-          <span className="material-symbols-outlined text-[18px]">download</span> Xuất
-        </button>
-      </div>
+    <div className={`relative bg-gradient-to-br ${m.grad} ${dims} flex items-center justify-center overflow-hidden shrink-0`}>
+      <span className={`material-symbols-outlined text-white/90 ${icon}`}>{m.icon}</span>
+      {course.premium && size === 'lg' && (
+        <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-amber-400 text-amber-900 text-[11px] font-bold flex items-center gap-1">
+          <span className="material-symbols-outlined text-[13px]">workspace_premium</span> Premium
+        </span>
+      )}
+    </div>
+  )
+}
 
-      <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-outline-variant">
-          {['Tất cả','Hoạt động','Bản nháp','Lưu trữ'].map(s => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${statusFilter === s ? 'bg-primary text-white' : 'bg-gray-100 text-on-surface-variant hover:bg-gray-200'}`}
-            >
-              {s}
+// ── Tutor cell ──
+function TutorBadge({ name, idx }) {
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <div className={`w-7 h-7 rounded-full ${AVATAR_COLORS[idx % AVATAR_COLORS.length]} flex items-center justify-center text-white text-[11px] font-bold shrink-0`}>
+        {initialsOf(name)}
+      </div>
+      <span className="text-sm text-on-surface truncate">{name}</span>
+    </div>
+  )
+}
+
+// ── AI Insights Card ──
+function AICourseInsightsCard() {
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-outline-variant bg-gradient-to-r from-primary/5 to-transparent">
+        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
+          <span className="material-symbols-outlined">smart_toy</span>
+        </div>
+        <div>
+          <h3 className="text-base font-bold text-on-background flex items-center gap-2">
+            AI Insights
+            <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wide">Beta</span>
+          </h3>
+          <p className="text-xs text-on-surface-variant">Phân tích tự động dựa trên hành vi học tập của học viên.</p>
+        </div>
+      </div>
+      <div className="grid md:grid-cols-2 gap-3 p-6">
+        {AI_COURSE_INSIGHTS.map((ins, i) => (
+          <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+            <div className={`w-8 h-8 rounded-lg ${ins.bg} ${ins.tone} flex items-center justify-center shrink-0`}>
+              <span className="material-symbols-outlined text-[18px]">{ins.icon}</span>
+            </div>
+            <p className="text-sm text-on-surface leading-snug">{ins.text}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Course Detail Drawer ──
+function DrawerDetail({ label, value }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wide">{label}</p>
+      <p className="text-sm text-on-surface font-medium mt-0.5">{value}</p>
+    </div>
+  )
+}
+
+function CourseDrawer({ course, show, tab, onTab, onClose }) {
+  if (!course) return null
+  const m = subjMeta(course.subject)
+  const modules = buildModules(course)
+  const reviews = buildReviews(course)
+  const st = cStatusMeta(course.status)
+  const hours = Math.max(1, Math.round((course.lessons * 16) / 60))
+  const TABS = [
+    { id: 'info',    label: 'Thông tin', icon: 'info' },
+    { id: 'content', label: 'Nội dung',  icon: 'list_alt' },
+    { id: 'stats',   label: 'Thống kê',  icon: 'insights' },
+    { id: 'reviews', label: 'Đánh giá',  icon: 'reviews' },
+  ]
+  return (
+    <div className={`fixed inset-0 z-[70] ${show ? '' : 'pointer-events-none'}`}>
+      <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${show ? 'opacity-100' : 'opacity-0'}`} onClick={onClose} />
+      <aside className={`absolute top-0 right-0 h-full w-full max-w-[540px] bg-surface shadow-2xl flex flex-col transform transition-transform duration-300 ${show ? 'translate-x-0' : 'translate-x-full'}`}>
+        {/* Header */}
+        <div className="p-6 bg-white border-b border-outline-variant">
+          <div className="flex justify-between items-start mb-4">
+            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1.5 ${st.badge}`}>
+              <span className="material-symbols-outlined text-[14px]">{st.icon}</span>{course.status}
+            </span>
+            <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 transition-colors">
+              <span className="material-symbols-outlined">close</span>
             </button>
-          ))}
-          <div className="ml-auto relative">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
-            <input className="pl-9 pr-4 py-2 bg-gray-50 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary w-56" placeholder="Tìm kiếm bài học..." />
+          </div>
+          <CourseThumb course={course} size="lg" />
+          <h2 className="text-xl font-bold text-on-background mt-4 leading-snug">{course.title}</h2>
+          <div className="flex items-center gap-3 mt-2 text-sm text-on-surface-variant">
+            <span className="font-mono text-xs">#{course.id}</span>
+            <span className="w-1 h-1 rounded-full bg-outline-variant" />
+            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${m.tag}`}>{course.subject}</span>
+            <span className="w-1 h-1 rounded-full bg-outline-variant" />
+            <span className="font-semibold text-on-surface">{fmtVND(course.price)}</span>
           </div>
         </div>
+        {/* Tabs */}
+        <div className="flex items-center gap-1 px-6 bg-white border-b border-outline-variant">
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => onTab(t.id)}
+              className={`flex items-center gap-1.5 px-3 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors ${tab === t.id ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}>
+              <span className="material-symbols-outlined text-[18px]">{t.icon}</span>{t.label}
+            </button>
+          ))}
+        </div>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {tab === 'info' && (
+            <div className="space-y-6">
+              <div>
+                <h4 className="text-sm font-bold text-on-background mb-2">Mô tả khóa học</h4>
+                <p className="text-sm text-on-surface-variant leading-relaxed">{course.desc}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4 p-4 rounded-xl bg-white border border-outline-variant">
+                <DrawerDetail label="Gia sư" value={course.tutor} />
+                <DrawerDetail label="Môn học" value={course.subject} />
+                <DrawerDetail label="Giá bán" value={fmtVND(course.price)} />
+                <DrawerDetail label="Số bài học" value={`${course.lessons} bài`} />
+                <DrawerDetail label="Ngày tạo" value={fmtDMY(course.created)} />
+                <DrawerDetail label="Cập nhật" value={fmtDMY(course.updated)} />
+                <DrawerDetail label="Học viên" value={fmtInt(course.students)} />
+                <DrawerDetail label="Đánh giá" value={course.rating ? `⭐ ${course.rating} (${course.reviews})` : 'Chưa có'} />
+              </div>
+            </div>
+          )}
+          {tab === 'content' && (
+            <div className="space-y-4">
+              {modules.map((mod, i) => (
+                <div key={i} className="bg-white rounded-xl border border-outline-variant overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-outline-variant">
+                    <p className="text-sm font-bold text-on-surface">{mod.title}</p>
+                    <span className="text-xs text-on-surface-variant">{mod.items.length} mục</span>
+                  </div>
+                  <ul className="divide-y divide-outline-variant">
+                    {mod.items.map((it, j) => (
+                      <li key={j} className="flex items-center gap-3 px-4 py-2.5">
+                        <span className={`material-symbols-outlined text-[18px] ${it.type === 'quiz' ? 'text-violet-600' : 'text-primary'}`}>
+                          {it.type === 'quiz' ? 'quiz' : 'play_circle'}
+                        </span>
+                        <span className="text-sm text-on-surface flex-1 truncate">{it.title}</span>
+                        <span className="text-xs text-on-surface-variant shrink-0">{it.type === 'quiz' ? `${it.q} câu` : it.duration}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+          {tab === 'stats' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'Tổng học viên', value: fmtInt(course.students), icon: 'group', color: 'text-blue-600 bg-blue-50' },
+                  { label: 'Tỷ lệ hoàn thành', value: `${course.completion}%`, icon: 'task_alt', color: 'text-emerald-600 bg-emerald-50' },
+                  { label: 'Doanh thu', value: fmtCompactVND(course.revenue), icon: 'payments', color: 'text-violet-600 bg-violet-50' },
+                  { label: 'Thời lượng', value: `${hours} giờ`, icon: 'schedule', color: 'text-amber-600 bg-amber-50' },
+                ].map((s, i) => (
+                  <div key={i} className="bg-white rounded-xl border border-outline-variant p-4">
+                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${s.color} mb-3`}>
+                      <span className="material-symbols-outlined text-[20px]">{s.icon}</span>
+                    </div>
+                    <p className="text-xl font-bold text-on-background">{s.value}</p>
+                    <p className="text-xs text-on-surface-variant mt-0.5">{s.label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="bg-white rounded-xl border border-outline-variant p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-bold text-on-surface">Đánh giá trung bình</p>
+                  <p className="text-sm font-bold text-amber-500">⭐ {course.rating || '—'}</p>
+                </div>
+                <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                  <div className="bg-amber-400 h-full rounded-full" style={{ width: `${(course.rating / 5) * 100}%` }} />
+                </div>
+                <p className="text-xs text-on-surface-variant mt-2">Dựa trên {fmtInt(course.reviews)} lượt đánh giá</p>
+              </div>
+            </div>
+          )}
+          {tab === 'reviews' && (
+            <div className="space-y-3">
+              {reviews.length === 0 && (
+                <div className="text-center py-12 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[48px] text-gray-300">reviews</span>
+                  <p className="text-sm mt-2">Khóa học chưa có đánh giá nào.</p>
+                </div>
+              )}
+              {reviews.map((r, i) => (
+                <div key={i} className="bg-white rounded-xl border border-outline-variant p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-8 h-8 rounded-full ${AVATAR_COLORS[i % AVATAR_COLORS.length]} flex items-center justify-center text-white text-xs font-bold`}>{initialsOf(r.name)}</div>
+                      <div>
+                        <p className="text-sm font-semibold text-on-surface">{r.name}</p>
+                        <p className="text-[11px] text-on-surface-variant">{r.date}</p>
+                      </div>
+                    </div>
+                    <span className="text-amber-500 text-sm font-bold">{'★'.repeat(r.score)}<span className="text-gray-300">{'★'.repeat(5 - r.score)}</span></span>
+                  </div>
+                  <p className="text-sm text-on-surface-variant leading-relaxed">{r.comment}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  )
+}
 
-        <table className="w-full text-left">
-          <thead className="bg-gray-50 border-b border-outline-variant">
-            <tr>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Bài học</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Gia sư</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Môn học</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Học sinh</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Trạng thái</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Ngày tạo</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase text-right">Thao tác</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-outline-variant">
-            {filtered.map(l => (
-              <tr key={l.id} className="hover:bg-gray-50 transition-colors group">
-                <td className="py-4 px-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                      <span className="material-symbols-outlined text-[18px]">menu_book</span>
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-on-surface">{l.title}</p>
-                      <p className="text-xs text-on-surface-variant">#{l.id}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="py-4 px-6 text-sm text-on-surface">{l.tutor}</td>
-                <td className="py-4 px-6">
-                  <span className="px-2.5 py-1 bg-blue-50 text-primary text-xs font-semibold rounded">{l.subject}</span>
-                </td>
-                <td className="py-4 px-6 text-sm text-on-surface">{l.students}</td>
-                <td className="py-4 px-6">
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${statusColor(l.status)}`}>{l.status}</span>
-                </td>
-                <td className="py-4 px-6 text-sm text-on-surface-variant">{fmtDate(l.date)}</td>
-                <td className="py-4 px-6 text-right">
-                  <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button className="p-1.5 hover:bg-blue-50 rounded-lg text-primary transition-colors">
-                      <span className="material-symbols-outlined text-[18px]">visibility</span>
-                    </button>
-                    <button className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 transition-colors">
-                      <span className="material-symbols-outlined text-[18px]">delete</span>
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+function CourseManagementView() {
+  const [courses, setCourses]         = useState(MOCK_COURSES)
+  const [loading, setLoading]         = useState(true)
+  const [statusFilter, setStatusFilter] = useState('Tất cả')
+  const [search, setSearch]           = useState('')
+  const [sort, setSort]               = useState({ key: 'updated', dir: 'desc' })
+  const [selected, setSelected]       = useState(() => new Set())
+  const [page, setPage]               = useState(1)
+  const pageSize = 6
+  const [drawer, setDrawer]           = useState(null)
+  const [drawerShow, setDrawerShow]   = useState(false)
+  const [drawerTab, setDrawerTab]     = useState('info')
+  const [menu, setMenu]               = useState(null)   // { id, x, y }
+  const [confirm, setConfirm]         = useState(null)   // { title, message, danger, confirmLabel, onConfirm }
+  const [toast, setToast]             = useState(null)
+
+  useEffect(() => { const t = setTimeout(() => setLoading(false), 650); return () => clearTimeout(t) }, [])
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t) }, [toast])
+  useEffect(() => { setPage(1) }, [statusFilter, search])
+
+  const showToast = (msg, type = 'success') => setToast({ msg, type })
+
+  // ── Derived rows ──
+  const chip = C_CHIPS.find(c => c.key === statusFilter)
+  const filtered = courses.filter(c => {
+    if (chip && chip.match && !chip.match(c)) return false
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      if (!(c.title.toLowerCase().includes(q) || c.id.toLowerCase().includes(q) || c.tutor.toLowerCase().includes(q))) return false
+    }
+    return true
+  })
+  const sorted = [...filtered].sort((a, b) => {
+    const dir = sort.dir === 'asc' ? 1 : -1
+    let av = a[sort.key], bv = b[sort.key]
+    if (sort.key === 'updated' || sort.key === 'created') { av = new Date(av).getTime(); bv = new Date(bv).getTime() }
+    if (sort.key === 'title' || sort.key === 'tutor' || sort.key === 'subject') { av = String(av).toLowerCase(); bv = String(bv).toLowerCase() }
+    return av < bv ? -dir : av > bv ? dir : 0
+  })
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize))
+  const safePage = Math.min(page, totalPages)
+  const pageRows = sorted.slice((safePage - 1) * pageSize, safePage * pageSize)
+
+  const toggleSort = key => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' })
+  const pageIds = pageRows.map(c => c.id)
+  const allPageSelected = pageIds.length > 0 && pageIds.every(id => selected.has(id))
+  const somePageSelected = pageIds.some(id => selected.has(id))
+  const togglePageAll = () => setSelected(prev => {
+    const next = new Set(prev)
+    if (allPageSelected) pageIds.forEach(id => next.delete(id))
+    else pageIds.forEach(id => next.add(id))
+    return next
+  })
+  const toggleOne = id => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const clearSelection = () => setSelected(new Set())
+
+  // ── Mutations ──
+  const setStatus = (ids, status, msg) => {
+    setCourses(prev => prev.map(c => ids.includes(c.id) ? { ...c, status, updated: new Date().toISOString().slice(0, 10) } : c))
+    showToast(msg)
+  }
+  const removeCourses = (ids, msg) => { setCourses(prev => prev.filter(c => !ids.includes(c.id))); showToast(msg) }
+
+  const askConfirm = cfg => setConfirm(cfg)
+  const idsLabel = ids => ids.length === 1 ? `khóa học #${ids[0]}` : `${ids.length} khóa học`
+
+  const doArchive  = ids => askConfirm({ title: 'Lưu trữ khóa học', message: `Lưu trữ ${idsLabel(ids)}? Khóa học sẽ ẩn khỏi trang chủ nhưng dữ liệu được giữ lại.`, confirmLabel: 'Lưu trữ', danger: false, onConfirm: () => { setStatus(ids, 'Đã lưu trữ', `Đã lưu trữ ${idsLabel(ids)}.`); clearSelection() } })
+  const doHide     = ids => askConfirm({ title: 'Ẩn khóa học', message: `Ẩn ${idsLabel(ids)} khỏi kết quả tìm kiếm công khai?`, confirmLabel: 'Ẩn', danger: false, onConfirm: () => { showToast(`Đã ẩn ${idsLabel(ids)}.`); clearSelection() } })
+  const doDelete   = ids => askConfirm({ title: 'Xóa khóa học', message: `Hành động này không thể hoàn tác. Xóa vĩnh viễn ${idsLabel(ids)}?`, confirmLabel: 'Xóa vĩnh viễn', danger: true, onConfirm: () => { removeCourses(ids, `Đã xóa ${idsLabel(ids)}.`); clearSelection() } })
+
+  const openMenu = (e, id) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu(menu && menu.id === id ? null : { id, x: r.right, y: r.bottom }) }
+  const openDrawer = c => { setDrawer(c); setDrawerTab('info'); requestAnimationFrame(() => setDrawerShow(true)) }
+  const closeDrawer = () => { setDrawerShow(false); setTimeout(() => setDrawer(null), 280) }
+
+  const exportExcel = () => {
+    const headers = ['ID', 'Khóa học', 'Gia sư', 'Môn học', 'Học viên', 'Số bài', 'Đánh giá', 'Giá', 'Trạng thái', 'Cập nhật', 'Doanh thu (đ)']
+    const rows = sorted.map(c => [c.id, c.title, c.tutor, c.subject, c.students, c.lessons, c.rating, c.price === 0 ? 'Miễn phí' : c.price, c.status, fmtDMY(c.updated), c.revenue])
+    const esc = v => `"${String(v).replace(/"/g, '""')}"`
+    const csv = '﻿' + [headers, ...rows].map(r => r.map(esc).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `khoa-hoc-edux-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click(); URL.revokeObjectURL(url)
+    showToast(`Đã xuất ${sorted.length} khóa học ra Excel.`)
+  }
+
+  const STATS = [
+    { label: 'Tổng khóa học', value: '1,284', icon: 'school',      iconBg: 'bg-blue-50',    iconColor: 'text-blue-700',    trend: '+12%', up: true },
+    { label: 'Đang hoạt động', value: '986',  icon: 'check_circle', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-700', trend: '+6%',  up: true },
+    { label: 'Tổng học viên', value: '62.4K', icon: 'group',        iconBg: 'bg-amber-50',  iconColor: 'text-amber-700',   trend: '+18%', up: true },
+    { label: 'Doanh thu',     value: '3.2 tỷ', icon: 'payments',    iconBg: 'bg-violet-50',  iconColor: 'text-violet-700',  trend: '+22%', up: true },
+  ]
+
+  const SortHead = ({ label, k, align = 'left' }) => (
+    <th className={`py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase whitespace-nowrap ${align === 'right' ? 'text-right' : ''}`}>
+      <button onClick={() => toggleSort(k)} className={`inline-flex items-center gap-1 hover:text-primary transition-colors ${align === 'right' ? 'flex-row-reverse' : ''}`}>
+        {label}
+        <span className="material-symbols-outlined text-[15px]">{sort.key === k ? (sort.dir === 'asc' ? 'arrow_upward' : 'arrow_downward') : 'unfold_more'}</span>
+      </button>
+    </th>
+  )
+
+  return (
+    <div className="p-6 lg:p-10 max-w-[1600px] mx-auto w-full">
+      {/* Header */}
+      <div className="flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4 mb-8">
+        <div>
+          <h2 className="text-3xl font-bold text-on-background">Quản lý khóa học</h2>
+          <p className="text-sm text-on-surface-variant mt-1">Theo dõi, kiểm duyệt và quản lý toàn bộ khóa học trên hệ thống EduX.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={exportExcel} className="px-4 py-2.5 bg-white border border-outline-variant text-on-surface rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-gray-50 transition-colors shadow-sm">
+            <span className="material-symbols-outlined text-[18px] text-emerald-600">file_download</span> Xuất Excel
+          </button>
+          <button onClick={() => showToast('Mở trình tạo khóa học mới.')} className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-primary/90 transition-colors shadow-sm">
+            <span className="material-symbols-outlined text-[18px]">add</span> Tạo khóa học
+          </button>
+        </div>
       </div>
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
+        {STATS.map((s, i) => (
+          <div key={i} className="bg-white rounded-xl p-5 shadow-sm border border-outline-variant hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-start mb-4">
+              <div className={`w-10 h-10 rounded-lg ${s.iconBg} flex items-center justify-center ${s.iconColor}`}>
+                <span className="material-symbols-outlined">{s.icon}</span>
+              </div>
+              <span className={`flex items-center text-xs font-semibold ${s.up ? 'text-emerald-600' : 'text-amber-600'}`}>
+                <span className="material-symbols-outlined text-[15px]">{s.up ? 'trending_up' : 'trending_up'}</span>{s.trend}
+              </span>
+            </div>
+            <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider mb-1">{s.label}</p>
+            <h4 className="text-2xl font-bold text-on-background">{s.value}</h4>
+          </div>
+        ))}
+      </div>
+
+      {/* Table card */}
+      <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden mb-6">
+        {/* Toolbar / bulk bar */}
+        {selected.size > 0 ? (
+          <div className="flex items-center gap-3 px-6 py-3 border-b border-outline-variant bg-primary/5">
+            <span className="text-sm font-semibold text-primary">{selected.size} đã chọn</span>
+            <div className="h-5 w-px bg-outline-variant" />
+            <button onClick={() => doArchive([...selected])} className="px-3 py-1.5 rounded-lg text-sm font-semibold text-on-surface-variant hover:bg-gray-100 flex items-center gap-1.5 transition-colors">
+              <span className="material-symbols-outlined text-[18px]">inventory_2</span> Lưu trữ
+            </button>
+            <button onClick={() => doDelete([...selected])} className="px-3 py-1.5 rounded-lg text-sm font-semibold text-red-600 hover:bg-red-50 flex items-center gap-1.5 transition-colors">
+              <span className="material-symbols-outlined text-[18px]">delete</span> Xóa
+            </button>
+            <button onClick={clearSelection} className="ml-auto px-3 py-1.5 rounded-lg text-sm font-semibold text-on-surface-variant hover:bg-gray-100 transition-colors">Bỏ chọn</button>
+          </div>
+        ) : (
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3 px-6 py-4 border-b border-outline-variant">
+            <div className="flex items-center gap-2 flex-wrap">
+              {C_CHIPS.map(c => {
+                const count = c.match ? courses.filter(c.match).length : courses.length
+                const active = statusFilter === c.key
+                return (
+                  <button key={c.key} onClick={() => setStatusFilter(c.key)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5 ${active ? 'bg-primary text-white' : 'bg-gray-100 text-on-surface-variant hover:bg-gray-200'}`}>
+                    {c.key}
+                    <span className={`text-[11px] px-1.5 rounded-full ${active ? 'bg-white/20' : 'bg-white'}`}>{count}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="lg:ml-auto relative w-full lg:w-72 shrink-0">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all"
+                placeholder="Tìm theo tên khóa học, ID hoặc gia sư..." />
+            </div>
+          </div>
+        )}
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left min-w-[1180px]">
+            <thead className="bg-gray-50 border-b border-outline-variant">
+              <tr>
+                <th className="py-3 pl-6 pr-2 w-10">
+                  <input type="checkbox" checked={allPageSelected} ref={el => { if (el) el.indeterminate = !allPageSelected && somePageSelected }} onChange={togglePageAll}
+                    className="rounded border-outline-variant text-primary focus:ring-primary/30 cursor-pointer" />
+                </th>
+                <th className="py-3 px-2 text-xs font-semibold text-on-surface-variant uppercase">Ảnh</th>
+                <SortHead label="Khóa học" k="title" />
+                <SortHead label="Gia sư" k="tutor" />
+                <th className="py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase">Môn học</th>
+                <SortHead label="Học viên" k="students" />
+                <SortHead label="Số bài" k="lessons" />
+                <SortHead label="Đánh giá" k="rating" />
+                <SortHead label="Giá" k="price" />
+                <th className="py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase">Trạng thái</th>
+                <SortHead label="Cập nhật" k="updated" />
+                <SortHead label="Doanh thu" k="revenue" align="right" />
+                <th className="py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase text-right">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-outline-variant">
+              {loading && Array.from({ length: 6 }).map((_, i) => (
+                <tr key={`sk-${i}`}>
+                  <td className="py-4 pl-6 pr-2"><div className="w-4 h-4 rounded bg-gray-100 shimmer" /></td>
+                  <td className="py-4 px-2"><div className="w-14 h-10 rounded-lg bg-gray-100 shimmer" /></td>
+                  <td className="py-4 px-4"><div className="h-3 w-44 rounded bg-gray-100 shimmer mb-2" /><div className="h-2.5 w-16 rounded bg-gray-100 shimmer" /></td>
+                  {Array.from({ length: 9 }).map((__, j) => <td key={j} className="py-4 px-4"><div className="h-3 w-16 rounded bg-gray-100 shimmer" /></td>)}
+                </tr>
+              ))}
+
+              {!loading && pageRows.map((c, idx) => {
+                const m = subjMeta(c.subject)
+                const st = cStatusMeta(c.status)
+                const isSel = selected.has(c.id)
+                return (
+                  <tr key={c.id} onClick={() => openDrawer(c)}
+                    className={`group cursor-pointer transition-colors ${isSel ? 'bg-primary/5' : 'hover:bg-gray-50'}`}>
+                    <td className="py-3 pl-6 pr-2" onClick={e => e.stopPropagation()}>
+                      <input type="checkbox" checked={isSel} onChange={() => toggleOne(c.id)}
+                        className="rounded border-outline-variant text-primary focus:ring-primary/30 cursor-pointer" />
+                    </td>
+                    <td className="py-3 px-2"><CourseThumb course={c} /></td>
+                    <td className="py-3 px-4 max-w-[280px]">
+                      <p className="text-sm font-semibold text-on-surface truncate flex items-center gap-1.5">
+                        {c.title}
+                        {c.premium && <span className="material-symbols-outlined text-[15px] text-amber-500" title="Premium">workspace_premium</span>}
+                      </p>
+                      <p className="text-xs text-on-surface-variant font-mono">#{c.id}</p>
+                    </td>
+                    <td className="py-3 px-4"><TutorBadge name={c.tutor} idx={idx} /></td>
+                    <td className="py-3 px-4"><span className={`px-2.5 py-1 rounded text-xs font-semibold whitespace-nowrap ${m.tag}`}>{c.subject}</span></td>
+                    <td className="py-3 px-4 text-sm text-on-surface font-medium">{fmtInt(c.students)}</td>
+                    <td className="py-3 px-4 text-sm text-on-surface-variant whitespace-nowrap">{c.lessons} bài</td>
+                    <td className="py-3 px-4 text-sm whitespace-nowrap">{c.rating ? <span className="font-semibold text-on-surface">⭐ {c.rating}</span> : <span className="text-on-surface-variant">—</span>}</td>
+                    <td className="py-3 px-4 text-sm whitespace-nowrap">{c.price === 0 ? <span className="font-semibold text-emerald-600">Miễn phí</span> : <span className="font-semibold text-on-surface">{fmtVND(c.price)}</span>}</td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 whitespace-nowrap ${st.badge}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />{c.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-sm text-on-surface-variant whitespace-nowrap">{fmtDMY(c.updated)}</td>
+                    <td className="py-3 px-4 text-sm text-on-surface font-semibold text-right whitespace-nowrap">{fmtCompactVND(c.revenue)}</td>
+                    <td className="py-3 px-4" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-0.5">
+                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                          <button onClick={() => openDrawer(c)} title="Xem" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-blue-50 hover:text-primary transition-colors"><span className="material-symbols-outlined text-[18px]">visibility</span></button>
+                          <button onClick={() => showToast(`Chỉnh sửa ${c.id}`)} title="Chỉnh sửa" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-amber-50 hover:text-amber-600 transition-colors"><span className="material-symbols-outlined text-[18px]">edit</span></button>
+                          <button onClick={() => { openDrawer(c); setDrawerTab('stats') }} title="Thống kê" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-violet-50 hover:text-violet-600 transition-colors"><span className="material-symbols-outlined text-[18px]">bar_chart</span></button>
+                          <button onClick={() => showToast(`${fmtInt(c.students)} học viên trong ${c.id}`)} title="Học viên" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-emerald-50 hover:text-emerald-600 transition-colors"><span className="material-symbols-outlined text-[18px]">group</span></button>
+                          <button onClick={() => doArchive([c.id])} title="Lưu trữ" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-slate-100 hover:text-slate-600 transition-colors"><span className="material-symbols-outlined text-[18px]">inventory_2</span></button>
+                        </div>
+                        <button onClick={e => openMenu(e, c.id)} title="Thêm" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-gray-100 transition-colors"><span className="material-symbols-outlined text-[18px]">more_vert</span></button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Empty state */}
+        {!loading && sorted.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-gray-50 flex items-center justify-center mb-4">
+              <span className="material-symbols-outlined text-[36px] text-gray-300">search_off</span>
+            </div>
+            <h3 className="text-base font-bold text-on-surface">Không tìm thấy khóa học</h3>
+            <p className="text-sm text-on-surface-variant mt-1 max-w-sm">Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm để xem thêm kết quả.</p>
+            <button onClick={() => { setStatusFilter('Tất cả'); setSearch('') }} className="mt-4 px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors">Xóa bộ lọc</button>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {!loading && sorted.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-t border-outline-variant">
+            <p className="text-sm text-on-surface-variant">
+              Hiển thị <span className="font-semibold text-on-surface">{(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, sorted.length)}</span> trong <span className="font-semibold text-on-surface">{sorted.length}</span> khóa học
+            </p>
+            <div className="flex items-center gap-1">
+              <button disabled={safePage === 1} onClick={() => setPage(p => Math.max(1, p - 1))}
+                className="px-3 py-1.5 rounded-lg text-sm font-semibold text-on-surface-variant hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-1">
+                <span className="material-symbols-outlined text-[18px]">chevron_left</span> Trước
+              </button>
+              {Array.from({ length: totalPages }).map((_, i) => (
+                <button key={i} onClick={() => setPage(i + 1)}
+                  className={`w-9 h-9 rounded-lg text-sm font-semibold transition-colors ${safePage === i + 1 ? 'bg-primary text-white' : 'text-on-surface-variant hover:bg-gray-100'}`}>{i + 1}</button>
+              ))}
+              <button disabled={safePage === totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                className="px-3 py-1.5 rounded-lg text-sm font-semibold text-on-surface-variant hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-1">
+                Sau <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* AI Insights */}
+      <AICourseInsightsCard />
+
+      {/* Drawer */}
+      <CourseDrawer course={drawer} show={drawerShow} tab={drawerTab} onTab={setDrawerTab} onClose={closeDrawer} />
+
+      {/* Row context menu */}
+      {menu && (() => {
+        const c = courses.find(x => x.id === menu.id)
+        if (!c) return null
+        const items = [
+          { label: 'Xem chi tiết', icon: 'visibility', color: 'text-primary', show: true, fn: () => openDrawer(c) },
+          { label: 'Ẩn khóa học', icon: 'visibility_off', color: 'text-on-surface', show: true, fn: () => doHide([c.id]) },
+          { label: 'Lưu trữ', icon: 'inventory_2', color: 'text-on-surface', show: c.status !== 'Đã lưu trữ', fn: () => doArchive([c.id]) },
+          { label: 'Xóa', icon: 'delete', color: 'text-red-600', show: true, danger: true, fn: () => doDelete([c.id]) },
+        ].filter(i => i.show)
+        return (
+          <>
+            <div className="fixed inset-0 z-[85]" onClick={() => setMenu(null)} />
+            <div className="fixed z-[86] w-44 bg-white rounded-xl shadow-2xl border border-outline-variant py-1.5 animate-pop"
+              style={{ top: menu.y + 6, left: Math.max(8, menu.x - 176) }}>
+              {items.map((it, i) => (
+                <button key={i} onClick={() => { setMenu(null); it.fn() }}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium hover:bg-gray-50 transition-colors ${it.color} ${it.danger ? 'border-t border-outline-variant mt-1' : ''}`}>
+                  <span className="material-symbols-outlined text-[18px]">{it.icon}</span>{it.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )
+      })()}
+
+      {/* Confirmation modal */}
+      {confirm && (
+        <ModalOverlay onClose={() => setConfirm(null)}>
+          <div className="w-full max-w-md p-7 rounded-2xl shadow-2xl bg-white" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className={`p-3 rounded-full ${confirm.danger ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
+                <span className="material-symbols-outlined text-3xl">{confirm.danger ? 'warning' : 'help'}</span>
+              </div>
+              <h3 className="text-xl font-bold text-on-surface">{confirm.title}</h3>
+            </div>
+            <p className="text-sm text-on-surface-variant mb-6 leading-relaxed">{confirm.message}</p>
+            <div className="flex gap-3">
+              <button onClick={() => { const fn = confirm.onConfirm; setConfirm(null); fn && fn() }}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90 ${confirm.danger ? 'bg-error' : 'bg-primary'}`}>
+                {confirm.confirmLabel || 'Xác nhận'}
+              </button>
+              <button onClick={() => setConfirm(null)} className="flex-1 py-2.5 bg-gray-100 text-on-surface-variant rounded-xl text-sm font-bold hover:bg-gray-200 transition-colors">Hủy</button>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[999] flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-semibold animate-pop ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
+          <span className="material-symbols-outlined text-[18px]">{toast.type === 'success' ? 'check_circle' : 'error'}</span>
+          {toast.msg}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+        .shimmer { background-image: linear-gradient(90deg, #f3f4f6 0px, #e9eaee 200px, #f3f4f6 400px); background-size: 800px 100%; animation: shimmer 1.4s infinite linear; }
+        @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        .animate-pop { animation: pop 0.16s ease-out; }
+      `}</style>
     </div>
   )
 }

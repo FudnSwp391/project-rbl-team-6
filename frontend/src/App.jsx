@@ -19,6 +19,9 @@ import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
 import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
+import THPTSubjectsPage from './THPTSubjectsPage'
+import TieuHocSubjectsPage from './TieuHocSubjectsPage'
+import THCSSubjectsPage from './THCSSubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
 import FindTutorRequest from './pages/FindTutorRequest'
@@ -124,6 +127,9 @@ const getRouteFromHash = () => {
   if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
   if (normalized === '/subjects')  return { name: 'subjects' }
+  if (normalized === '/subjects/thpt') return { name: 'thpt-subjects' }
+  if (normalized === '/subjects/tieu-hoc') return { name: 'tieu-hoc-subjects' }
+  if (normalized === '/subjects/thcs') return { name: 'thcs-subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
   if (normalized === '/tutor-request') return { name: 'tutor-request' }
@@ -834,6 +840,15 @@ function App() {
   }
   if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'thpt-subjects') {
+    return <THPTSubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'tieu-hoc-subjects') {
+    return <TieuHocSubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'thcs-subjects') {
+    return <THCSSubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
   if (routeName === 'become-tutor') {
     return <BecomeTutorPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
