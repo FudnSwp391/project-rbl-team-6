@@ -1659,24 +1659,289 @@ app.get("/api/admin/analytics/dashboard/growth", verifyToken, requireAdmin, asyn
 })
 
 // ── GET /api/admin/transactions ───────────────────────────────────────────────
-// CAP-3.1: Returns the latest 100 transactions across all wallets for admin.
+// CAP-3.1 / CAP-3.8: Admin transaction list. Supports optional query params:
+//   ?status=SUCCESS|FAILED|PENDING|HELD_IN_ESCROW|REFUNDED|RELEASED|CANCELLED
+//   ?type=DEPOSIT|PAYMENT|WITHDRAWAL|REFUND
+//   ?limit=1..200  (default 100)
+const ALLOWED_TX_STATUSES = new Set(['SUCCESS','FAILED','PENDING','HELD_IN_ESCROW','REFUNDED','RELEASED','CANCELLED']);
+const ALLOWED_TX_TYPES    = new Set(['DEPOSIT','PAYMENT','WITHDRAWAL','REFUND']);
+
 app.get("/api/admin/transactions", verifyToken, requireAdmin, async (req, res) => {
+  const { status, type } = req.query;
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = isNaN(rawLimit) ? 100 : Math.min(Math.max(rawLimit, 1), 200);
+
+  if (status && !ALLOWED_TX_STATUSES.has(status.toUpperCase())) {
+    return res.status(400).json({ message: `Trạng thái không hợp lệ. Giá trị cho phép: ${[...ALLOWED_TX_STATUSES].join(', ')}.` });
+  }
+  if (type && !ALLOWED_TX_TYPES.has(type.toUpperCase())) {
+    return res.status(400).json({ message: `Loại giao dịch không hợp lệ. Giá trị cho phép: ${[...ALLOWED_TX_TYPES].join(', ')}.` });
+  }
+
+  const conds = [];
+  const vals  = [];
+  if (status) { conds.push(`t.status = $${vals.length + 1}`); vals.push(status.toUpperCase()); }
+  if (type)   { conds.push(`t.type   = $${vals.length + 1}`); vals.push(type.toUpperCase()); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
   try {
-    const result = await pool.query(`
-      SELECT t.id, t.amount, t.type, t.status, t.gateway, t.description, t.created_at,
-             u.full_name AS user_name, u.email AS user_email, u.role AS user_role,
-             b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date
-      FROM transactions t
-      JOIN wallets w   ON w.id  = t.wallet_id
-      JOIN users   u   ON u.id  = w.user_id
-      LEFT JOIN bookings b ON b.id = t.reference_id
-      ORDER BY t.created_at DESC
-      LIMIT 100
-    `);
+    const result = await pool.query(
+      `SELECT t.id, t.amount, t.type, t.status, t.gateway, t.description, t.created_at,
+              u.full_name AS user_name, u.email AS user_email, u.role AS user_role,
+              b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date
+       FROM transactions t
+       JOIN wallets w   ON w.id  = t.wallet_id
+       JOIN users   u   ON u.id  = w.user_id
+       LEFT JOIN bookings b ON b.id = t.reference_id
+       ${where}
+       ORDER BY t.created_at DESC
+       LIMIT $${vals.length + 1}`,
+      [...vals, limit]
+    );
     return res.json(result.rows);
   } catch (err) {
     console.error("GET /api/admin/transactions error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy danh sách giao dịch." });
+  }
+});
+
+// ── GET /api/admin/subjects ────────────────────────────────────────────────────
+// CAP-2.1: Canonical Vietnamese tutoring subjects for Grade 1–12.
+// Raw DB values are normalised to Vietnamese names; counts aggregated from
+// quizzes, tutor_profiles, and courses. All 10 canonical subjects are always
+// returned (count=0 allowed) so the management screen stays complete.
+const CANONICAL_SUBJECTS = [
+  "Toán", "Tiếng Việt", "Ngữ văn", "Tiếng Anh",
+  "Vật lý", "Hóa học", "Sinh học", "Lịch sử", "Địa lý", "Tin học",
+];
+
+// Normalisation map: raw DB value (lowercase, trimmed) → canonical Vietnamese name.
+// "Science" is intentionally absent — too generic to map safely.
+const SUBJECT_NORM_MAP = {
+  // Toán
+  "toán": "Toán", "toan": "Toán", "toán học": "Toán",
+  "math": "Toán", "maths": "Toán", "mathematics": "Toán",
+  // Tiếng Việt
+  "tiếng việt": "Tiếng Việt", "tieng viet": "Tiếng Việt",
+  "vietnamese": "Tiếng Việt",
+  // Ngữ văn
+  "ngữ văn": "Ngữ văn", "ngu van": "Ngữ văn", "văn": "Ngữ văn",
+  "van": "Ngữ văn", "literature": "Ngữ văn",
+  "vietnamese literature": "Ngữ văn",
+  // Tiếng Anh
+  "tiếng anh": "Tiếng Anh", "tieng anh": "Tiếng Anh",
+  "anh văn": "Tiếng Anh", "anh": "Tiếng Anh",
+  "english": "Tiếng Anh", "english language": "Tiếng Anh",
+  // Vật lý
+  "vật lý": "Vật lý", "vat ly": "Vật lý", "lý": "Vật lý", "ly": "Vật lý",
+  "physics": "Vật lý",
+  // Hóa học
+  "hóa học": "Hóa học", "hoa hoc": "Hóa học", "hóa": "Hóa học",
+  "hoa": "Hóa học", "chemistry": "Hóa học",
+  // Sinh học
+  "sinh học": "Sinh học", "sinh hoc": "Sinh học", "sinh": "Sinh học",
+  "biology": "Sinh học",
+  // Lịch sử
+  "lịch sử": "Lịch sử", "lich su": "Lịch sử", "sử": "Lịch sử",
+  "su": "Lịch sử", "history": "Lịch sử",
+  // Địa lý
+  "địa lý": "Địa lý", "dia ly": "Địa lý", "địa": "Địa lý",
+  "dia": "Địa lý", "geography": "Địa lý",
+  // Tin học
+  "tin học": "Tin học", "tin hoc": "Tin học",
+  "computer science": "Tin học", "informatics": "Tin học",
+  "lập trình": "Tin học", "lap trinh": "Tin học",
+};
+
+function normaliseSubject(raw) {
+  if (!raw) return null;
+  const key = raw.trim().toLowerCase();
+  return SUBJECT_NORM_MAP[key] || null;
+}
+
+app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [quizRes, tutorRes, courseRes] = await Promise.all([
+      pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`SELECT subjects FROM tutor_profiles WHERE subjects IS NOT NULL AND subjects <> '' AND status = 'approved'`),
+      pool.query(`SELECT subject FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+    ]);
+
+    // Initialise counters for every canonical subject
+    const quizCount   = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
+    const tutorCount  = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
+    const courseCount = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
+
+    // Aggregate quiz counts
+    for (const row of quizRes.rows) {
+      const canon = normaliseSubject(row.subject);
+      if (canon) quizCount[canon] = (quizCount[canon] || 0) + 1;
+    }
+
+    // Aggregate tutor counts (subjects field may be CSV or JSON array)
+    const countedTutors = new Map(); // canonical → Set of tutor_profiles seen
+    for (const row of tutorRes.rows) {
+      let parts = [];
+      try {
+        const parsed = JSON.parse(row.subjects);
+        parts = Array.isArray(parsed) ? parsed : [row.subjects];
+      } catch {
+        parts = row.subjects.split(/[,;|]+/);
+      }
+      const seen = new Set();
+      for (const part of parts) {
+        const canon = normaliseSubject(part);
+        if (canon && !seen.has(canon)) {
+          seen.add(canon);
+          tutorCount[canon] = (tutorCount[canon] || 0) + 1;
+        }
+      }
+    }
+
+    // Aggregate course counts
+    for (const row of courseRes.rows) {
+      const canon = normaliseSubject(row.subject);
+      if (canon) courseCount[canon] = (courseCount[canon] || 0) + 1;
+    }
+
+    const subjects = CANONICAL_SUBJECTS.map(name => ({
+      name,
+      quiz_count:   quizCount[name]   || 0,
+      tutor_count:  tutorCount[name]  || 0,
+      course_count: courseCount[name] || 0,
+    }));
+
+    return res.json({ subjects });
+  } catch (err) {
+    console.error("GET /api/admin/subjects error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách môn học." });
+  }
+});
+
+// ── GET /api/admin/reviews ────────────────────────────────────────────────────
+// CAP-4.1: Latest 100 reviews for admin (read-only).
+// Mirrors /api/reviews/featured column access pattern (JOIN for reviewer info,
+// r.comment alias for content) which is confirmed working against the live DB.
+app.get("/api/admin/reviews", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT r.id,
+             COALESCE(u.full_name, '') AS reviewer_name,
+             COALESCE(u.role, 'student') AS reviewer_role,
+             r.rating,
+             r.comment AS content,
+             r.created_at
+      FROM reviews r
+      LEFT JOIN users u ON u.id = r.user_id
+      ORDER BY r.created_at DESC
+      LIMIT 100
+    `);
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/admin/reviews error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách đánh giá." });
+  }
+});
+
+// ── GET /api/admin/courses ────────────────────────────────────────────────────
+// CAP-2.2: All courses with tutor name, lesson count, review count (read-only).
+app.get("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
+  const STATUS_VI = {
+    published:      'Hoạt động',
+    approved:       'Hoạt động',
+    active:         'Hoạt động',
+    draft:          'Bản nháp',
+    pending_review: 'Bản nháp',
+    archived:       'Đã lưu trữ',
+    reported:       'Bị báo cáo',
+    rejected:       'Bị báo cáo',
+  };
+  try {
+    const result = await pool.query(`
+      SELECT
+        c.id::text                        AS id,
+        COALESCE(c.title, '')             AS title,
+        COALESCE(u.full_name, '')         AS tutor,
+        COALESCE(c.subject, '')           AS subject,
+        COALESCE(c.price, 0)             AS price,
+        COALESCE(c.status, 'draft')       AS status,
+        COALESCE(c.description, '')       AS desc,
+        COALESCE(c.avg_rating, 0)        AS rating,
+        COALESCE(c.enrollment_count, 0)  AS students,
+        c.created_at,
+        c.updated_at,
+        COUNT(DISTINCT cl.id)::int        AS lessons,
+        COUNT(DISTINCT r.id)::int         AS reviews
+      FROM courses c
+      LEFT JOIN users u           ON u.id         = c.tutor_id
+      LEFT JOIN course_lessons cl ON cl.course_id = c.id
+      LEFT JOIN reviews r         ON r.course_id  = c.id
+      GROUP BY c.id, u.full_name
+      ORDER BY c.updated_at DESC NULLS LAST
+      LIMIT 200
+    `);
+    const courses = result.rows.map(row => ({
+      id:         row.id,
+      title:      row.title,
+      tutor:      row.tutor,
+      subject:    row.subject,
+      price:      parseInt(row.price) || 0,
+      premium:    (parseInt(row.price) || 0) > 0,
+      status:     STATUS_VI[row.status] || 'Bản nháp',
+      desc:       row.desc,
+      rating:     row.rating ? parseFloat(row.rating) : 0,
+      students:   parseInt(row.students) || 0,
+      lessons:    parseInt(row.lessons) || 0,
+      reviews:    parseInt(row.reviews) || 0,
+      revenue:    0,
+      completion: 0,
+      created:    row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : '',
+      updated:    row.updated_at ? new Date(row.updated_at).toISOString().slice(0, 10) : '',
+    }));
+    return res.json({ courses });
+  } catch (err) {
+    console.error("GET /api/admin/courses error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách khóa học." });
+  }
+});
+
+// ── GET /api/admin/transactions/failed ────────────────────────────────────────
+// CAP-3.8: Transactions with non-standard statuses (failed / unknown).
+app.get("/api/admin/transactions/failed", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.id::text                                   AS id,
+             t.amount,
+             COALESCE(t.gateway, 'Internal Wallet')       AS gateway,
+             COALESCE(t.description, 'Giao dịch thất bại') AS description,
+             t.status,
+             t.created_at,
+             COALESCE(u.full_name, '')                    AS user_name,
+             COALESCE(u.email, '')                        AS user_email
+      FROM transactions t
+      JOIN wallets w ON w.id = t.wallet_id
+      JOIN users   u ON u.id = w.user_id
+      WHERE t.status NOT IN ('SUCCESS', 'HELD_IN_ESCROW', 'REFUNDED', 'RELEASED')
+      ORDER BY t.created_at DESC
+      LIMIT 100
+    `);
+    const rows = result.rows.map(r => ({
+      id:           r.id,
+      amount:       parseInt(r.amount) || 0,
+      gateway:      r.gateway,
+      errorCode:    r.status || 'ERR_UNKNOWN',
+      errorMessage: r.description,
+      createdAt:    r.created_at,
+      user: {
+        name:   r.user_name,
+        email:  r.user_email,
+        avatar: null,
+      },
+    }));
+    return res.json(rows);
+  } catch (err) {
+    console.error("GET /api/admin/transactions/failed error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy giao dịch thất bại." });
   }
 });
 

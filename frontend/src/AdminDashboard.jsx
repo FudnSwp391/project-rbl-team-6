@@ -453,8 +453,8 @@ export default function AdminDashboard() {
             />
           )}
           {activeView === 'user-management' && <UserManagementView />}
-          {activeView === 'subjects'         && <SubjectsView />}
-          {activeView === 'lessons'          && <CourseManagementView />}
+          {activeView === 'subjects'         && <SubjectsView token={token} />}
+          {activeView === 'lessons'          && <CourseManagementView token={token} />}
           {activeView === 'transactions'     && <TransactionsView token={token} />}
           {/* ── Transaction Management Module ── */}
           {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} />}
@@ -463,7 +463,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-withdrawals'   && <TutorWithdrawals />}
           {activeView === 'tx-refunds'       && <RefundManagement />}
           {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
-          {activeView === 'tx-failed'        && <FailedTransactions />}
+          {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
           {activeView === 'tx-gateways'      && <PaymentGateways />}
           {activeView === 'tx-commissions'   && <CommissionManagement />}
           {activeView === 'tx-platform-revenue' && <PlatformRevenue />}
@@ -477,7 +477,7 @@ export default function AdminDashboard() {
           
           {/* ── Service Management Module ── */}
           {activeView === 'sm-complaints'    && <ComplaintsView token={token} />}
-          {activeView === 'sm-reviews'       && <Reviews reviews={globalReviews} />}
+          {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
           {activeView === 'sm-violations'    && <Violations violations={globalViolations} />}
           {activeView === 'sm-moderation'    && (
             <div className="p-8 max-w-[1400px] mx-auto text-center mt-20">
@@ -1897,35 +1897,52 @@ function UserManagementView() {
 }
 
 // ─── Subjects View ────────────────────────────────────────────────────────────
-const MOCK_SUBJECTS = [
-  { id: 1, name: 'Mathematics',     tutors: 142, students: 1840, icon: 'calculate',       color: 'bg-blue-100 text-blue-700' },
-  { id: 2, name: 'Physics',         tutors: 98,  students: 1210, icon: 'science',          color: 'bg-indigo-100 text-indigo-700' },
-  { id: 3, name: 'Chemistry',       tutors: 76,  students: 980,  icon: 'biotech',          color: 'bg-purple-100 text-purple-700' },
-  { id: 4, name: 'English',         tutors: 220, students: 3400, icon: 'translate',        color: 'bg-green-100 text-green-700' },
-  { id: 5, name: 'Computer Science',tutors: 185, students: 2750, icon: 'code',             color: 'bg-cyan-100 text-cyan-700' },
-  { id: 6, name: 'History',         tutors: 54,  students: 720,  icon: 'history_edu',      color: 'bg-amber-100 text-amber-700' },
-  { id: 7, name: 'Biology',         tutors: 67,  students: 890,  icon: 'grass',            color: 'bg-emerald-100 text-emerald-700' },
-  { id: 8, name: 'Literature',      tutors: 88,  students: 1100, icon: 'auto_stories',     color: 'bg-rose-100 text-rose-700' },
-  { id: 9, name: 'Economics',       tutors: 61,  students: 810,  icon: 'bar_chart',        color: 'bg-orange-100 text-orange-700' },
-]
+// Canonical Vietnamese tutoring subjects for Grade 1–12.
+// Icons and colors keyed to exact canonical names returned by the backend.
+const SUBJECT_META_MAP = {
+  'Toán':       { icon: 'calculate',    color: 'bg-blue-100 text-blue-700'     },
+  'Tiếng Việt': { icon: 'menu_book',    color: 'bg-rose-100 text-rose-700'     },
+  'Ngữ văn':    { icon: 'auto_stories', color: 'bg-pink-100 text-pink-700'     },
+  'Tiếng Anh':  { icon: 'translate',    color: 'bg-green-100 text-green-700'   },
+  'Vật lý':     { icon: 'bolt',         color: 'bg-cyan-100 text-cyan-700'     },
+  'Hóa học':    { icon: 'biotech',      color: 'bg-purple-100 text-purple-700' },
+  'Sinh học':   { icon: 'grass',        color: 'bg-emerald-100 text-emerald-700'},
+  'Lịch sử':    { icon: 'history_edu',  color: 'bg-amber-100 text-amber-700'   },
+  'Địa lý':     { icon: 'public',       color: 'bg-teal-100 text-teal-700'     },
+  'Tin học':    { icon: 'code',         color: 'bg-indigo-100 text-indigo-700' },
+}
+const SUBJECT_DEFAULT = { icon: 'school', color: 'bg-gray-100 text-gray-600' }
 
-function SubjectsView() {
-  const [search, setSearch] = useState('')
-  const [showAdd, setShowAdd] = useState(false)
-  const [newName, setNewName] = useState('')
+function SubjectsView({ token }) {
+  const [subjects, setSubjects] = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState(null)
+  const [search,   setSearch]   = useState('')
+  const [tick,     setTick]     = useState(0)
 
-  const filtered = MOCK_SUBJECTS.filter(s => s.name.toLowerCase().includes(search.toLowerCase()))
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    authFetch(`${API}/api/admin/subjects`, token)
+      .then(data => { setSubjects(data.subjects || []); setLoading(false) })
+      .catch(err  => { setError(err.message); setLoading(false) })
+  }, [token, tick])
+
+  const filtered = subjects.filter(s =>
+    s.name.toLowerCase().includes(search.toLowerCase())
+  )
 
   return (
     <div className="p-10 max-w-[1280px] mx-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
           <h2 className="text-3xl font-bold text-on-background">Môn học</h2>
-          <p className="text-sm text-on-surface-variant mt-1">Quản lý các môn học trên nền tảng.</p>
+          <p className="text-sm text-on-surface-variant mt-1">Quản lý các môn học phổ biến từ cấp 1 đến cấp 3.</p>
         </div>
         <button
-          onClick={() => setShowAdd(true)}
-          className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-primary/90 transition-colors"
+          disabled
+          className="px-4 py-2 bg-gray-200 text-gray-400 rounded-lg text-sm font-semibold flex items-center gap-2 cursor-not-allowed"
+          title="Thêm môn học — chưa khả dụng"
         >
           <span className="material-symbols-outlined text-[18px]">add</span> Thêm môn học
         </button>
@@ -1943,65 +1960,61 @@ function SubjectsView() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        {filtered.map(s => (
-          <div key={s.id} className="bg-white rounded-xl p-6 shadow-sm border border-outline-variant hover:shadow-md transition-shadow group">
-            <div className="flex items-start justify-between mb-4">
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${s.color}`}>
-                <span className="material-symbols-outlined text-[24px]">{s.icon}</span>
+      {loading && (
+        <div className="flex items-center justify-center h-48 text-on-surface-variant">
+          <span className="material-symbols-outlined text-[32px] mr-3" style={{ animation: 'spin 1s linear infinite' }}>progress_activity</span>
+          Đang tải...
+        </div>
+      )}
+      {error && !loading && (
+        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+          <span className="material-symbols-outlined">error</span>
+          {error}
+          <button onClick={() => setTick(t => t + 1)} className="ml-auto text-xs underline">Thử lại</button>
+        </div>
+      )}
+      {!loading && !error && filtered.length === 0 && (
+        <div className="text-center py-16 text-on-surface-variant">
+          <span className="material-symbols-outlined text-[48px] mb-3 block">school</span>
+          Chưa có môn học phù hợp
+        </div>
+      )}
+      {!loading && !error && filtered.length > 0 && (
+        <div className="grid grid-cols-3 gap-6">
+          {filtered.map(s => {
+            const meta = SUBJECT_META_MAP[s.name] || SUBJECT_DEFAULT
+            return (
+              <div key={s.name} className="bg-white rounded-xl p-6 shadow-sm border border-outline-variant hover:shadow-md transition-shadow">
+                <div className="flex items-start mb-4">
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${meta.color}`}>
+                    <span className="material-symbols-outlined text-[24px]">{meta.icon}</span>
+                  </div>
+                </div>
+                <h3 className="text-base font-bold text-on-surface mb-3">{s.name}</h3>
+                <div className="flex gap-4">
+                  <div>
+                    <p className="text-2xl font-bold text-primary">{s.tutor_count}</p>
+                    <p className="text-xs text-on-surface-variant">Gia sư</p>
+                  </div>
+                  <div className="w-px bg-outline-variant" />
+                  <div>
+                    <p className="text-2xl font-bold text-on-surface">{s.quiz_count}</p>
+                    <p className="text-xs text-on-surface-variant">Bài kiểm tra</p>
+                  </div>
+                  {s.course_count > 0 && (
+                    <>
+                      <div className="w-px bg-outline-variant" />
+                      <div>
+                        <p className="text-2xl font-bold text-on-surface">{s.course_count}</p>
+                        <p className="text-xs text-on-surface-variant">Khóa học</p>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button className="p-1.5 hover:bg-amber-50 rounded-lg text-amber-600 transition-colors">
-                  <span className="material-symbols-outlined text-[18px]">edit</span>
-                </button>
-                <button className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 transition-colors">
-                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                </button>
-              </div>
-            </div>
-            <h3 className="text-base font-bold text-on-surface mb-3">{s.name}</h3>
-            <div className="flex gap-4">
-              <div>
-                <p className="text-2xl font-bold text-primary">{s.tutors}</p>
-                <p className="text-xs text-on-surface-variant">Gia sư</p>
-              </div>
-              <div className="w-px bg-outline-variant" />
-              <div>
-                <p className="text-2xl font-bold text-on-surface">{s.students.toLocaleString()}</p>
-                <p className="text-xs text-on-surface-variant">Học sinh</p>
-              </div>
-            </div>
-            <div className="mt-4 pt-4 border-t border-outline-variant">
-              <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-primary h-full rounded-full" style={{ width: `${Math.min(100, (s.tutors / 250) * 100)}%` }} />
-              </div>
-              <p className="text-xs text-on-surface-variant mt-1">{Math.round((s.tutors / 250) * 100)}% công suất gia sư</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {showAdd && (
-        <ModalOverlay onClose={() => setShowAdd(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md" onClick={e => e.stopPropagation()}>
-            <h3 className="text-xl font-bold text-on-surface mb-4">Thêm môn học mới</h3>
-            <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Tên môn học</label>
-            <input
-              className="w-full px-4 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary mb-6"
-              placeholder="Ví dụ: Vật lý nâng cao"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-            />
-            <div className="flex gap-3">
-              <button onClick={() => setShowAdd(false)} className="flex-1 py-2.5 bg-primary text-white rounded-lg text-sm font-bold hover:opacity-90 transition-opacity">
-                Thêm môn học
-              </button>
-              <button onClick={() => setShowAdd(false)} className="flex-1 py-2.5 bg-gray-100 text-on-surface-variant rounded-lg text-sm font-bold hover:bg-gray-200 transition-colors">
-                Hủy
-              </button>
-            </div>
-          </div>
-        </ModalOverlay>
+            )
+          })}
+        </div>
       )}
     </div>
   )
@@ -2335,9 +2348,11 @@ function CourseDrawer({ course, show, tab, onTab, onClose }) {
   )
 }
 
-function CourseManagementView() {
-  const [courses, setCourses]         = useState(MOCK_COURSES)
+function CourseManagementView({ token }) {
+  const [courses, setCourses]         = useState([])
   const [loading, setLoading]         = useState(true)
+  const [error, setError]             = useState(null)
+  const [tick, setTick]               = useState(0)
   const [statusFilter, setStatusFilter] = useState('Tất cả')
   const [search, setSearch]           = useState('')
   const [sort, setSort]               = useState({ key: 'updated', dir: 'desc' })
@@ -2351,7 +2366,13 @@ function CourseManagementView() {
   const [confirm, setConfirm]         = useState(null)   // { title, message, danger, confirmLabel, onConfirm }
   const [toast, setToast]             = useState(null)
 
-  useEffect(() => { const t = setTimeout(() => setLoading(false), 650); return () => clearTimeout(t) }, [])
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    authFetch(`${API}/api/admin/courses`, token)
+      .then(data => { setCourses(data.courses || []); setLoading(false) })
+      .catch(err  => { setError(err.message); setLoading(false) })
+  }, [token, tick])
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t) }, [toast])
   useEffect(() => { setPage(1) }, [statusFilter, search])
 
@@ -2391,19 +2412,10 @@ function CourseManagementView() {
   const toggleOne = id => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const clearSelection = () => setSelected(new Set())
 
-  // ── Mutations ──
-  const setStatus = (ids, status, msg) => {
-    setCourses(prev => prev.map(c => ids.includes(c.id) ? { ...c, status, updated: new Date().toISOString().slice(0, 10) } : c))
-    showToast(msg)
-  }
-  const removeCourses = (ids, msg) => { setCourses(prev => prev.filter(c => !ids.includes(c.id))); showToast(msg) }
-
-  const askConfirm = cfg => setConfirm(cfg)
-  const idsLabel = ids => ids.length === 1 ? `khóa học #${ids[0]}` : `${ids.length} khóa học`
-
-  const doArchive  = ids => askConfirm({ title: 'Lưu trữ khóa học', message: `Lưu trữ ${idsLabel(ids)}? Khóa học sẽ ẩn khỏi trang chủ nhưng dữ liệu được giữ lại.`, confirmLabel: 'Lưu trữ', danger: false, onConfirm: () => { setStatus(ids, 'Đã lưu trữ', `Đã lưu trữ ${idsLabel(ids)}.`); clearSelection() } })
-  const doHide     = ids => askConfirm({ title: 'Ẩn khóa học', message: `Ẩn ${idsLabel(ids)} khỏi kết quả tìm kiếm công khai?`, confirmLabel: 'Ẩn', danger: false, onConfirm: () => { showToast(`Đã ẩn ${idsLabel(ids)}.`); clearSelection() } })
-  const doDelete   = ids => askConfirm({ title: 'Xóa khóa học', message: `Hành động này không thể hoàn tác. Xóa vĩnh viễn ${idsLabel(ids)}?`, confirmLabel: 'Xóa vĩnh viễn', danger: true, onConfirm: () => { removeCourses(ids, `Đã xóa ${idsLabel(ids)}.`); clearSelection() } })
+  // ── Mutations (disabled — read-only view) ──
+  const doArchive  = _ids => showToast('Chức năng quản lý khóa học đang được phát triển.', 'error')
+  const doHide     = _ids => showToast('Chức năng quản lý khóa học đang được phát triển.', 'error')
+  const doDelete   = _ids => showToast('Chức năng quản lý khóa học đang được phát triển.', 'error')
 
   const openMenu = (e, id) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu(menu && menu.id === id ? null : { id, x: r.right, y: r.bottom }) }
   const openDrawer = c => { setDrawer(c); setDrawerTab('info'); requestAnimationFrame(() => setDrawerShow(true)) }
@@ -2473,6 +2485,15 @@ function CourseManagementView() {
           </div>
         ))}
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">
+          <span className="material-symbols-outlined text-[20px]">error</span>
+          {error}
+          <button onClick={() => setTick(t => t + 1)} className="ml-auto px-3 py-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 text-xs font-semibold transition-colors">Thử lại</button>
+        </div>
+      )}
 
       {/* Table card */}
       <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden mb-6">
@@ -3068,14 +3089,6 @@ function ComplaintsView({ token }) {
 
 
 // ─── Reviews View ─────────────────────────────────────────────────────────────
-const MOCK_REVIEWS = [
-  { id: 1, student: 'Nguyễn Văn An',   tutor: 'Trần Thị Bích',   rating: 5, comment: 'Gia sư xuất sắc! Rất kiên nhẫn và am hiểu.',            date: '2024-06-09', flag: false },
-  { id: 2, student: 'Đỗ Thanh Long',   tutor: 'Phạm Quỳnh Anh',  rating: 4, comment: 'Buổi học tốt, cần cải thiện thêm về quản lý thời gian.', date: '2024-06-08', flag: false },
-  { id: 3, student: 'Hoàng Đức Mạnh',  tutor: 'Bùi Phương Thảo', rating: 2, comment: 'Gia sư chưa chuẩn bị. Lãng phí thời gian của tôi.',     date: '2024-06-07', flag: true  },
-  { id: 4, student: 'Lê Minh Cường',   tutor: 'Trần Thị Bích',   rating: 5, comment: 'Giúp tôi vượt qua kỳ thi! Rất khuyến khích.',          date: '2024-06-06', flag: false },
-  { id: 5, student: 'Nguyễn Văn An',   tutor: 'Bùi Phương Thảo', rating: 1, comment: 'Hành vi hoàn toàn không phù hợp. Đã gửi báo cáo.',     date: '2024-06-05', flag: true  },
-]
-
 const Stars = ({ n }) => (
   <div className="flex gap-0.5">
     {[1,2,3,4,5].map(i => (
@@ -3085,108 +3098,130 @@ const Stars = ({ n }) => (
   </div>
 )
 
-function ReviewsView() {
-  const avg = (MOCK_REVIEWS.reduce((a, r) => a + r.rating, 0) / MOCK_REVIEWS.length).toFixed(1)
-  const dist = [5,4,3,2,1].map(s => ({ star: s, count: MOCK_REVIEWS.filter(r => r.rating === s).length }))
+function ReviewsView({ token }) {
+  const [reviews, setReviews] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState(null)
+  const [tick,    setTick]    = useState(0)
+
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    authFetch(`${API}/api/admin/reviews`, token)
+      .then(data => { setReviews(data); setLoading(false) })
+      .catch(err  => { setError(err.message); setLoading(false) })
+  }, [token, tick])
+
+  const avg = reviews.length
+    ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
+    : '0.0'
+  const dist = [5,4,3,2,1].map(s => ({ star: s, count: reviews.filter(r => r.rating === s).length }))
 
   return (
     <div className="p-10 max-w-[1280px] mx-auto">
-      <div className="mb-8">
-        <h2 className="text-3xl font-bold text-on-background">Đánh giá</h2>
-        <p className="text-sm text-on-surface-variant mt-1">Theo dõi xếp hạng gia sư và phản hồi của học sinh.</p>
+      <div className="flex justify-between items-end mb-8">
+        <div>
+          <h2 className="text-3xl font-bold text-on-background">Đánh giá</h2>
+          <p className="text-sm text-on-surface-variant mt-1">Theo dõi phản hồi và xếp hạng từ người dùng.</p>
+        </div>
+        <button onClick={() => setTick(t => t + 1)} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-outline-variant rounded-lg text-sm text-on-surface-variant hover:text-primary transition-colors shadow-sm">
+          <span className="material-symbols-outlined text-[18px]">refresh</span> Làm mới
+        </button>
       </div>
 
-      <div className="grid grid-cols-12 gap-6 mb-8">
-        {/* Rating overview */}
-        <div className="col-span-4 bg-white rounded-xl p-6 shadow-sm border border-outline-variant text-center">
-          <p className="text-6xl font-bold text-primary mb-1">{avg}</p>
-          <div className="flex justify-center mb-2">
-            <Stars n={Math.round(Number(avg))} />
-          </div>
-          <p className="text-sm text-on-surface-variant">{MOCK_REVIEWS.length} đánh giá</p>
-          <div className="mt-4 space-y-2">
-            {dist.map(d => (
-              <div key={d.star} className="flex items-center gap-2">
-                <span className="text-xs text-on-surface-variant w-4 text-right">{d.star}</span>
-                <span className="material-symbols-outlined text-amber-400 text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
-                <div className="flex-1 bg-gray-100 h-2 rounded-full overflow-hidden">
-                  <div className="bg-amber-400 h-full rounded-full" style={{ width: `${(d.count / MOCK_REVIEWS.length) * 100}%` }} />
-                </div>
-                <span className="text-xs text-on-surface-variant w-4">{d.count}</span>
-              </div>
-            ))}
-          </div>
+      {loading && (
+        <div className="flex items-center justify-center h-48 text-on-surface-variant">
+          <span className="material-symbols-outlined text-[32px] mr-3" style={{ animation: 'spin 1s linear infinite' }}>progress_activity</span>
+          Đang tải...
         </div>
+      )}
+      {error && !loading && (
+        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm mb-6">
+          <span className="material-symbols-outlined">error</span>
+          {error}
+          <button onClick={() => setTick(t => t + 1)} className="ml-auto text-xs underline">Thử lại</button>
+        </div>
+      )}
 
-        {/* Flagged notice */}
-        <div className="col-span-8 flex flex-col gap-4">
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
-            <span className="material-symbols-outlined text-red-600 mt-0.5">flag</span>
-            <div>
-              <p className="text-sm font-bold text-red-900">{MOCK_REVIEWS.filter(r => r.flag).length} đánh giá bị gắn cờ cần xử lý</p>
-              <p className="text-xs text-red-700 mt-0.5">Các đánh giá này có thể chứa nội dung xúc phạm hoặc sai sự thật.</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-4 flex-1">
-            {[
-              { label: 'Đánh giá 5 sao', value: MOCK_REVIEWS.filter(r=>r.rating===5).length, icon: 'star', color: 'text-amber-500', bg: 'bg-amber-50' },
-              { label: 'Bị gắn cờ',     value: MOCK_REVIEWS.filter(r=>r.flag).length,        icon: 'flag', color: 'text-red-600',   bg: 'bg-red-50' },
-              { label: 'Tuần này',       value: MOCK_REVIEWS.length,                          icon: 'calendar_today', color: 'text-indigo-600', bg: 'bg-indigo-50' },
-            ].map(c => (
-              <div key={c.label} className="bg-white rounded-xl p-4 shadow-sm">
-                <div className={`w-9 h-9 rounded-lg ${c.bg} flex items-center justify-center ${c.color} mb-3`}>
-                  <span className="material-symbols-outlined text-[18px]">{c.icon}</span>
-                </div>
-                <p className="text-xs text-on-surface-variant">{c.label}</p>
-                <p className="text-2xl font-bold text-on-background">{c.value}</p>
+      {!loading && (
+        <>
+          <div className="grid grid-cols-12 gap-6 mb-8">
+            <div className="col-span-4 bg-white rounded-xl p-6 shadow-sm border border-outline-variant text-center">
+              <p className="text-6xl font-bold text-primary mb-1">{avg}</p>
+              <div className="flex justify-center mb-2">
+                <Stars n={Math.round(Number(avg))} />
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
-        <div className="px-6 py-4 border-b border-outline-variant flex items-center justify-between">
-          <h3 className="text-base font-semibold text-on-surface">Tất cả đánh giá</h3>
-          <button className="flex items-center gap-1 text-sm text-on-surface-variant hover:text-primary transition-colors">
-            <span className="material-symbols-outlined text-[18px]">filter_list</span> Lọc
-          </button>
-        </div>
-        <div className="divide-y divide-outline-variant">
-          {MOCK_REVIEWS.map(r => (
-            <div key={r.id} className={`p-6 hover:bg-gray-50 transition-colors ${r.flag ? 'bg-red-50/30' : ''}`}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-3 flex-1 min-w-0">
-                  <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                    {r.student.charAt(0)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <p className="text-sm font-semibold text-on-surface">{r.student}</p>
-                      <span className="text-xs text-on-surface-variant">→</span>
-                      <p className="text-sm text-primary font-semibold">{r.tutor}</p>
-                      {r.flag && <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">Gắn cờ</span>}
+              <p className="text-sm text-on-surface-variant">{reviews.length} đánh giá</p>
+              <div className="mt-4 space-y-2">
+                {dist.map(d => (
+                  <div key={d.star} className="flex items-center gap-2">
+                    <span className="text-xs text-on-surface-variant w-4 text-right">{d.star}</span>
+                    <span className="material-symbols-outlined text-amber-400 text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                    <div className="flex-1 bg-gray-100 h-2 rounded-full overflow-hidden">
+                      <div className="bg-amber-400 h-full rounded-full" style={{ width: reviews.length ? `${(d.count / reviews.length) * 100}%` : '0%' }} />
                     </div>
-                    <Stars n={r.rating} />
-                    <p className="text-sm text-on-surface-variant mt-1">{r.comment}</p>
-                    <p className="text-xs text-on-surface-variant mt-1">{fmtDate(r.date)}</p>
+                    <span className="text-xs text-on-surface-variant w-4">{d.count}</span>
                   </div>
-                </div>
-                <div className="flex gap-1 flex-shrink-0">
-                  {r.flag && (
-                    <button className="p-1.5 hover:bg-green-50 rounded-lg text-green-600 transition-colors" title="Approve">
-                      <span className="material-symbols-outlined text-[18px]">check</span>
-                    </button>
-                  )}
-                  <button className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 transition-colors" title="Remove">
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
-                </div>
+                ))}
               </div>
             </div>
-          ))}
-        </div>
-      </div>
+
+            <div className="col-span-8 grid grid-cols-3 gap-4 content-start">
+              {[
+                { label: 'Đánh giá 5 sao', value: reviews.filter(r => r.rating === 5).length, icon: 'star',          color: 'text-amber-500',  bg: 'bg-amber-50'  },
+                { label: 'Đánh giá 1–2 sao', value: reviews.filter(r => r.rating <= 2).length, icon: 'thumb_down',   color: 'text-red-600',    bg: 'bg-red-50'    },
+                { label: 'Tổng cộng',        value: reviews.length,                             icon: 'reviews',      color: 'text-indigo-600', bg: 'bg-indigo-50' },
+              ].map(c => (
+                <div key={c.label} className="bg-white rounded-xl p-4 shadow-sm border border-outline-variant">
+                  <div className={`w-9 h-9 rounded-lg ${c.bg} flex items-center justify-center ${c.color} mb-3`}>
+                    <span className="material-symbols-outlined text-[18px]">{c.icon}</span>
+                  </div>
+                  <p className="text-xs text-on-surface-variant">{c.label}</p>
+                  <p className="text-2xl font-bold text-on-background">{c.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
+            <div className="px-6 py-4 border-b border-outline-variant">
+              <h3 className="text-base font-semibold text-on-surface">Tất cả đánh giá</h3>
+            </div>
+            {reviews.length === 0 ? (
+              <div className="text-center py-16 text-on-surface-variant">
+                <span className="material-symbols-outlined text-[48px] mb-3 block">reviews</span>
+                Chưa có đánh giá nào.
+              </div>
+            ) : (
+              <div className="divide-y divide-outline-variant">
+                {reviews.map(r => (
+                  <div key={r.id} className="p-6 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
+                        {(r.reviewer_name || '?').charAt(0)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <p className="text-sm font-semibold text-on-surface">{r.reviewer_name}</p>
+                          {r.reviewer_role && (
+                            <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">{r.reviewer_role}</span>
+                          )}
+                          {r.subject && (
+                            <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-medium rounded-full">{r.subject}</span>
+                          )}
+                        </div>
+                        <Stars n={r.rating} />
+                        <p className="text-sm text-on-surface-variant mt-1">{r.content}</p>
+                        <p className="text-xs text-on-surface-variant mt-1">{fmtDate(r.created_at)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }
