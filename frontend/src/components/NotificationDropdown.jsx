@@ -93,7 +93,7 @@ export default function NotificationDropdown({ token }) {
       const payload = parseJwt(token);
       const userId = payload?.userId;
       
-      if (userId) {
+      if (userId && supabase) {
         const channel = supabase
           .channel(`notifications:${userId}`)
           .on('postgres_changes', {

@@ -39,7 +39,7 @@ export default function Messages({ initialConvId = null }) {
   useEffect(() => { loadConversations() }, [loadConversations])
 
   useEffect(() => {
-    if (!user?.id) return
+    if (!user?.id || !supabase) return
 
     const refreshIfMine = (payload) => {
       const row = payload.new || payload.old || {}
@@ -94,7 +94,7 @@ export default function Messages({ initialConvId = null }) {
 
   // ── Supabase Realtime ──
   useEffect(() => {
-    if (!activeConvId) return
+    if (!activeConvId || !supabase) return
 
     // Huỷ subscription cũ
     if (realtimeRef.current) {
