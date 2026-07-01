@@ -1658,6 +1658,28 @@ app.get("/api/admin/analytics/dashboard/growth", verifyToken, requireAdmin, asyn
   }
 })
 
+// ── GET /api/admin/transactions ───────────────────────────────────────────────
+// CAP-3.1: Returns the latest 100 transactions across all wallets for admin.
+app.get("/api/admin/transactions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.id, t.amount, t.type, t.status, t.gateway, t.description, t.created_at,
+             u.full_name AS user_name, u.email AS user_email, u.role AS user_role,
+             b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date
+      FROM transactions t
+      JOIN wallets w   ON w.id  = t.wallet_id
+      JOIN users   u   ON u.id  = w.user_id
+      LEFT JOIN bookings b ON b.id = t.reference_id
+      ORDER BY t.created_at DESC
+      LIMIT 100
+    `);
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/admin/transactions error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách giao dịch." });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  QUIZ APIs
 // ══════════════════════════════════════════════════════════════════════════════

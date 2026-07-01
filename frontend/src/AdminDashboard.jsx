@@ -462,7 +462,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-courses'       && <CourseTransactions />}
           {activeView === 'tx-withdrawals'   && <TutorWithdrawals />}
           {activeView === 'tx-refunds'       && <RefundManagement />}
-          {activeView === 'tx-disputes'      && <DisputeManagement disputes={globalDisputes} onUpdateDispute={handleUpdateDispute} />}
+          {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions />}
           {activeView === 'tx-gateways'      && <PaymentGateways />}
           {activeView === 'tx-commissions'   && <CommissionManagement />}
