@@ -2130,6 +2130,121 @@ app.get("/api/admin/system-wallet", verifyToken, requireAdmin, async (req, res) 
   }
 });
 
+// ── GET /api/admin/audit-logs ────────────────────────────────────────────────
+// CAP-4.1: Auth audit trail from login_logs (174+ rows, is_suspicious flag).
+// No dedicated admin audit table exists; login_logs is the closest real source.
+// is_suspicious=true rows are surfaced as SUSPICIOUS_LOGIN / ALERT.
+app.get("/api/admin/audit-logs", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT ll.id::text,
+              ll.ip_address,
+              LEFT(ll.user_agent, 120)          AS user_agent,
+              ll.is_suspicious,
+              ll.created_at,
+              COALESCE(u.full_name, 'Unknown')  AS actor_name,
+              COALESCE(u.email,    '')           AS actor_email,
+              COALESCE(u.role,     '')           AS actor_role
+       FROM   login_logs ll
+       LEFT   JOIN users u ON u.id = ll.user_id
+       ORDER  BY ll.created_at DESC
+       LIMIT  200`
+    );
+    const logs = result.rows.map(r => ({
+      id:          r.id,
+      actor_name:  r.actor_name,
+      actor_email: r.actor_email,
+      actor_role:  r.actor_role,
+      action:      r.is_suspicious ? 'SUSPICIOUS_LOGIN' : 'LOGIN',
+      target:      r.user_agent || 'Unknown agent',
+      result:      r.is_suspicious ? 'ALERT' : 'SUCCESS',
+      ip_address:  r.ip_address || '',
+      created_at:  r.created_at,
+    }));
+    return res.json({ logs });
+  } catch (err) {
+    console.error("GET /api/admin/audit-logs error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nhật ký kiểm toán." });
+  }
+});
+
+// ── GET /api/admin/fraud-alerts ───────────────────────────────────────────────
+// CAP-4.2: Read-only risk signals derived from disputes + transactions.
+// Signal 1 (REFUND_ABUSE / UNUSUAL_ACTIVITY): users with dispute/refund patterns.
+// Signal 2 (LARGE_DEPOSIT): deposits above 3,000,000 VND.
+// No mutations — status is always 'open' (no write-back to DB).
+app.get("/api/admin/fraud-alerts", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [disputeRes, largeDepRes] = await Promise.all([
+      pool.query(
+        `SELECT u.id::text                                                       AS user_id,
+                COALESCE(u.full_name, '')                                        AS user_name,
+                COALESCE(u.email,     '')                                        AS user_email,
+                u.role,
+                COUNT(d.id)::int                                                 AS dispute_count,
+                SUM(CASE WHEN d.status='RESOLVED_REFUND' THEN 1 ELSE 0 END)::int AS refund_count,
+                MAX(d.created_at)                                                AS last_at
+         FROM   disputes d
+         JOIN   users u ON u.id = d.raised_by
+         GROUP  BY u.id, u.full_name, u.email, u.role
+         ORDER  BY dispute_count DESC, refund_count DESC`
+      ),
+      pool.query(
+        `SELECT t.id::text, t.amount::numeric, t.created_at,
+                COALESCE(u.full_name,'') AS user_name,
+                COALESCE(u.email,'')     AS user_email
+         FROM   transactions t
+         JOIN   wallets w ON w.id = t.wallet_id
+         JOIN   users   u ON u.id = w.user_id
+         WHERE  t.type='DEPOSIT' AND t.amount > 3000000 AND t.status='SUCCESS'
+         ORDER  BY t.amount DESC
+         LIMIT  20`
+      ),
+    ]);
+
+    const SEV_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+    const alerts = [];
+
+    for (const r of disputeRes.rows) {
+      const severity = r.dispute_count >= 2 ? 'HIGH' : 'MEDIUM';
+      const type     = r.refund_count >= 1  ? 'REFUND_ABUSE' : 'UNUSUAL_ACTIVITY';
+      alerts.push({
+        id:          `disp-${r.user_id}`,
+        severity,
+        type,
+        title:       type === 'REFUND_ABUSE' ? 'Lạm dụng hoàn tiền' : 'Hoạt động tranh chấp bất thường',
+        description: `${r.user_name || r.user_email} có ${r.dispute_count} tranh chấp, ${r.refund_count} lần hoàn tiền`,
+        user_name:   r.user_name,
+        user_email:  r.user_email,
+        risk_score:  Math.min(100, r.dispute_count * 30 + r.refund_count * 25),
+        status:      'open',
+        created_at:  r.last_at,
+      });
+    }
+
+    for (const r of largeDepRes.rows) {
+      alerts.push({
+        id:          `dep-${r.id}`,
+        severity:    'LOW',
+        type:        'LARGE_DEPOSIT',
+        title:       'Nạp tiền giá trị lớn',
+        description: `Giao dịch nạp ${Number(r.amount).toLocaleString('vi-VN')}đ`,
+        user_name:   r.user_name,
+        user_email:  r.user_email,
+        risk_score:  20,
+        status:      'open',
+        created_at:  r.created_at,
+      });
+    }
+
+    alerts.sort((a, b) => (SEV_ORDER[a.severity] ?? 3) - (SEV_ORDER[b.severity] ?? 3));
+    return res.json({ alerts });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy cảnh báo gian lận." });
+  }
+});
+
 // ── GET /api/admin/transactions/withdrawals ───────────────────────────────────
 // CAP-3.5: Tutor withdrawal requests from withdraw_requests table (read-only).
 // account_details is JSONB — bank_name and account_number extracted if present;

@@ -471,9 +471,9 @@ export default function AdminDashboard() {
           {activeView === 'tx-promotions'    && <PromotionTransactions />}
           {activeView === 'tx-reports'       && <FinancialReports />}
           {activeView === 'tx-reconciliation' && <Reconciliation />}
-          {activeView === 'tx-fraud'         && <FraudAlerts />}
+          {activeView === 'tx-fraud'         && <FraudAlerts token={token} />}
           {activeView === 'tx-notifications' && <NotificationCenter />}
-          {activeView === 'tx-audit'         && <AuditLogs />}
+          {activeView === 'tx-audit'         && <AuditLogs token={token} />}
           
           {/* ── Service Management Module ── */}
           {activeView === 'sm-complaints'    && <ComplaintsView token={token} />}

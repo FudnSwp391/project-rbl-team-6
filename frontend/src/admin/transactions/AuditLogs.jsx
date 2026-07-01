@@ -1,47 +1,94 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { StatusBadge, PageHeader, DataTable, SearchFilterBar, Pagination, ExportButton, EmptyState, usePagination, useSearch } from './components'
-import { AUDIT_LOGS, fmtDateTime } from './mockData'
+import { fmtDateTime } from './mockData'
 
-const ACTION_TYPES = ['Tất cả', 'APPROVE_WITHDRAWAL', 'REJECT_WITHDRAWAL', 'RESOLVE_DISPUTE', 'RELEASE_ESCROW', 'UPDATE_COMMISSION', 'FRAUD_DETECTION', 'APPROVE_REFUND', 'REJECT_REFUND']
+const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
-export default function AuditLogs() {
+const ACTION_TYPES = ['Tất cả', 'LOGIN', 'SUSPICIOUS_LOGIN']
+
+const ACTION_ICONS = {
+  LOGIN:            'login',
+  SUSPICIOUS_LOGIN: 'warning',
+  PAYMENT_FAILED:   'error',
+  VIEW_WITHDRAWAL:  'visibility',
+}
+
+const ROLE_LABEL = {
+  admin:   'Quản trị',
+  tutor:   'Gia sư',
+  student: 'Học sinh',
+  parent:  'Phụ huynh',
+}
+
+export default function AuditLogs({ token }) {
+  const [logs,         setLogs]         = useState([])
+  const [loading,      setLoading]      = useState(true)
+  const [error,        setError]        = useState(null)
   const [actionFilter, setActionFilter] = useState('Tất cả')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
-  const { search, setSearch, filtered: searched } = useSearch(AUDIT_LOGS, ['id', 'actor', 'action', 'target', 'ipAddress'])
+  const [dateFrom,     setDateFrom]     = useState('')
+  const [dateTo,       setDateTo]       = useState('')
+
+  useEffect(() => {
+    if (!token) return
+    setLoading(true)
+    setError(null)
+    fetch(`${API}/api/admin/audit-logs`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(data => { setLogs(data.logs || []); setLoading(false) })
+      .catch(err => { setError(err.message); setLoading(false) })
+  }, [token])
+
+  const { search, setSearch, filtered: searched } = useSearch(logs, ['id', 'actor_name', 'actor_email', 'action', 'target', 'ip_address'])
 
   const filtered = searched
     .filter(l => actionFilter === 'Tất cả' || l.action === actionFilter)
-    .filter(l => !dateFrom || new Date(l.timestamp) >= new Date(dateFrom))
-    .filter(l => !dateTo || new Date(l.timestamp) <= new Date(dateTo + 'T23:59:59'))
+    .filter(l => !dateFrom || new Date(l.created_at) >= new Date(dateFrom))
+    .filter(l => !dateTo   || new Date(l.created_at) <= new Date(dateTo + 'T23:59:59'))
 
   const { page, setPage, totalPages, paginated } = usePagination(filtered, 10)
 
-  const ACTION_ICONS = {
-    APPROVE_WITHDRAWAL: 'check_circle',
-    REJECT_WITHDRAWAL: 'cancel',
-    RESOLVE_DISPUTE: 'gavel',
-    RELEASE_ESCROW: 'payments',
-    UPDATE_COMMISSION: 'percent',
-    FRAUD_DETECTION: 'warning',
-    APPROVE_REFUND: 'undo',
-    REJECT_REFUND: 'block',
-    PAYMENT_FAILED: 'error',
-    VIEW_WITHDRAWAL: 'visibility',
-  }
+  const suspiciousCount = logs.filter(l => l.action === 'SUSPICIOUS_LOGIN').length
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Nhật Ký Admin" subtitle="Nhật ký toàn bộ hoạt động quản trị trên hệ thống">
+      <PageHeader title="Nhật Ký Admin" subtitle="Lịch sử đăng nhập và hoạt động xác thực hệ thống">
         <ExportButton label="Xuất Log" />
       </PageHeader>
+
+      {error && (
+        <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">
+          <span className="material-symbols-outlined text-[20px]">error</span>
+          {error}
+        </div>
+      )}
+
+      {/* Summary chips */}
+      {!loading && (
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          {[
+            { label: 'Tổng lượt đăng nhập', value: logs.length,         icon: 'history',  color: 'bg-blue-50 text-blue-600' },
+            { label: 'Nghi ngờ',            value: suspiciousCount,      icon: 'warning',  color: 'bg-red-50 text-red-600' },
+            { label: 'Bình thường',          value: logs.length - suspiciousCount, icon: 'check_circle', color: 'bg-emerald-50 text-emerald-600' },
+          ].map(c => (
+            <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+              <div className={`w-9 h-9 rounded-lg ${c.color} flex items-center justify-center mb-3`}>
+                <span className="material-symbols-outlined text-[18px]">{c.icon}</span>
+              </div>
+              <p className="text-xs font-semibold text-gray-400 uppercase mb-1">{c.label}</p>
+              <p className="text-xl font-bold text-gray-900">{c.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex items-center gap-4 mb-5 flex-wrap">
         <div>
-          <label className="block text-xs font-semibold text-gray-500 mb-1">Loại Hành Động</label>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Loại Hoạt Động</label>
           <select value={actionFilter} onChange={e => { setActionFilter(e.target.value); setPage(1) }}
-            className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none bg-white min-w-[200px]">
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none bg-white min-w-[180px]">
             {ACTION_TYPES.map(a => <option key={a}>{a}</option>)}
           </select>
         </div>
@@ -56,35 +103,53 @@ export default function AuditLogs() {
             className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none" />
         </div>
         <div className="flex-1 pt-5">
-          <SearchFilterBar search={search} onSearch={v => { setSearch(v); setPage(1) }} placeholder="Tìm actor, action, target, IP..." />
+          <SearchFilterBar search={search} onSearch={v => { setSearch(v); setPage(1) }} placeholder="Tìm tên, email, IP..." />
         </div>
       </div>
 
       <DataTable
-        headers={['Timestamp', 'Actor', 'Hành Động', 'Mục Tiêu', 'Địa Chỉ IP', 'Kết Quả']}
-        loading={false}
-        empty={filtered.length === 0 && <EmptyState icon="history" title="Không có nhật ký" description="Không tìm thấy nhật ký phù hợp." />}
+        headers={['Timestamp', 'Actor', 'Vai Trò', 'Hành Động', 'User Agent', 'Địa Chỉ IP', 'Kết Quả']}
+        loading={loading}
+        empty={!loading && filtered.length === 0 && (
+          <EmptyState icon="history" title="Không có nhật ký" description="Không tìm thấy nhật ký phù hợp." />
+        )}
       >
         {paginated.map(log => (
-          <tr key={log.id} className="hover:bg-gray-50 transition-colors">
-            <td className="py-3.5 px-5"><span className="text-xs text-gray-500 font-mono">{fmtDateTime(log.timestamp)}</span></td>
+          <tr key={log.id} className={`hover:bg-gray-50 transition-colors ${log.action === 'SUSPICIOUS_LOGIN' ? 'bg-red-50/30' : ''}`}>
+            <td className="py-3.5 px-5"><span className="text-xs text-gray-500 font-mono whitespace-nowrap">{fmtDateTime(log.created_at)}</span></td>
             <td className="py-3.5 px-5">
               <div className="flex items-center gap-2">
-                <div className={`w-7 h-7 rounded-full ${log.actor === 'System' ? 'bg-purple-100' : 'bg-blue-100'} flex items-center justify-center`}>
-                  <span className={`material-symbols-outlined text-[14px] ${log.actor === 'System' ? 'text-purple-600' : 'text-blue-600'}`}>{log.actor === 'System' ? 'computer' : 'person'}</span>
+                <div className={`w-7 h-7 rounded-full ${log.actor_role === 'admin' ? 'bg-purple-100' : 'bg-blue-100'} flex items-center justify-center flex-shrink-0`}>
+                  <span className={`material-symbols-outlined text-[14px] ${log.actor_role === 'admin' ? 'text-purple-600' : 'text-blue-600'}`}>
+                    {log.actor_role === 'admin' ? 'shield_person' : 'person'}
+                  </span>
                 </div>
-                <span className="text-sm font-semibold text-gray-800">{log.actor}</span>
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 leading-tight">{log.actor_name}</p>
+                  <p className="text-xs text-gray-400">{log.actor_email}</p>
+                </div>
               </div>
             </td>
             <td className="py-3.5 px-5">
+              <span className="text-xs text-gray-500 capitalize">{ROLE_LABEL[log.actor_role] || log.actor_role}</span>
+            </td>
+            <td className="py-3.5 px-5">
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-[16px] text-gray-400">{ACTION_ICONS[log.action] || 'history'}</span>
-                <code className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded font-mono">{log.action}</code>
+                <span className={`material-symbols-outlined text-[16px] ${log.action === 'SUSPICIOUS_LOGIN' ? 'text-red-400' : 'text-gray-400'}`}>
+                  {ACTION_ICONS[log.action] || 'history'}
+                </span>
+                <code className={`text-xs px-2 py-0.5 rounded font-mono ${log.action === 'SUSPICIOUS_LOGIN' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}`}>
+                  {log.action}
+                </code>
               </div>
             </td>
-            <td className="py-3.5 px-5 max-w-[200px]"><span className="text-sm text-gray-600 truncate block">{log.target}</span></td>
-            <td className="py-3.5 px-5"><code className="text-xs text-gray-500 font-mono">{log.ipAddress}</code></td>
-            <td className="py-3.5 px-5"><StatusBadge status={log.result === 'SUCCESS' ? 'SUCCESS' : log.result === 'FAILED' ? 'FAILED' : 'ALERT_CREATED'} /></td>
+            <td className="py-3.5 px-5 max-w-[240px]">
+              <span className="text-xs text-gray-500 truncate block" title={log.target}>{log.target}</span>
+            </td>
+            <td className="py-3.5 px-5"><code className="text-xs text-gray-500 font-mono">{log.ip_address || '—'}</code></td>
+            <td className="py-3.5 px-5">
+              <StatusBadge status={log.result === 'SUCCESS' ? 'SUCCESS' : log.result === 'ALERT' ? 'ALERT_CREATED' : 'FAILED'} />
+            </td>
           </tr>
         ))}
       </DataTable>
