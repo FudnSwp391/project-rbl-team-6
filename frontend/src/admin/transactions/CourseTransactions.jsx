@@ -12,15 +12,16 @@ const STATUS_TABS = [
   { value: 'ALL',       label: 'Tất cả' },
   { value: 'COMPLETED', label: 'Hoàn thành' },
   { value: 'PENDING',   label: 'Chờ xử lý' },
-  { value: 'REFUNDED',  label: 'Hoàn tiền' },
+  { value: 'CANCELLED', label: 'Đã hủy' },
 ]
 
 function mapEnrollmentStatus(s) {
   if (!s) return 'PENDING'
   const lower = s.toLowerCase()
   if (lower === 'active')    return 'COMPLETED'
-  if (lower === 'cancelled') return 'REFUNDED'
-  return 'PENDING'
+  if (lower === 'cancelled') return 'CANCELLED'
+  if (lower === 'pending')   return 'PENDING'
+  return s.toUpperCase()
 }
 
 function mapRow(r) {
