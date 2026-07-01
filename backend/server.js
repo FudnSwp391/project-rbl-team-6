@@ -1945,6 +1945,183 @@ app.get("/api/admin/transactions/failed", verifyToken, requireAdmin, async (req,
   }
 });
 
+// ── GET /api/admin/financial/overview ────────────────────────────────────────
+// CAP-3.2: Real-time financial summary from transactions table (read-only).
+// Platform fees and released-to-tutors are best-effort approximations only;
+// commission per transaction is not stored, so both default to 0 where unsafe.
+app.get("/api/admin/financial/overview", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [
+      totalPayRes,
+      monthlyPayRes,
+      totalDepRes,
+      escrowRes,
+      successCountRes,
+      failedCountRes,
+      disputeRes,
+      releasedRes,
+    ] = await Promise.all([
+      // All-time student payment volume
+      pool.query(`
+        SELECT COALESCE(SUM(ABS(amount)), 0) AS total
+        FROM transactions
+        WHERE type = 'PAYMENT' AND status = 'SUCCESS' AND amount < 0
+      `),
+      // Current-month student payment volume (VN timezone, matching dashboard/stats)
+      pool.query(`
+        SELECT COALESCE(SUM(ABS(amount)), 0) AS total
+        FROM transactions
+        WHERE type = 'PAYMENT' AND status = 'SUCCESS' AND amount < 0
+          AND created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                            AT TIME ZONE 'Asia/Ho_Chi_Minh'
+      `),
+      // Total deposit volume (student top-ups + any internal credits)
+      pool.query(`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM transactions
+        WHERE type = 'DEPOSIT' AND status = 'SUCCESS' AND amount > 0
+      `),
+      // Current escrow balance
+      pool.query(`
+        SELECT COALESCE(SUM(ABS(amount)), 0) AS total
+        FROM transactions
+        WHERE status = 'HELD_IN_ESCROW'
+      `),
+      pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'SUCCESS'`),
+      pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'FAILED'`),
+      pool.query(`SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'`),
+      // Internal deposits (no external gateway) ≈ tutor earnings released
+      pool.query(`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM transactions
+        WHERE type = 'DEPOSIT' AND status = 'SUCCESS' AND amount > 0
+          AND (gateway IS NULL OR gateway = 'SYSTEM')
+      `),
+    ]);
+
+    return res.json({
+      total_revenue:            Math.round(Number(totalPayRes.rows[0].total)),
+      monthly_revenue:          Math.round(Number(monthlyPayRes.rows[0].total)),
+      total_payments:           Math.round(Number(totalPayRes.rows[0].total)),
+      total_deposits:           Math.round(Number(totalDepRes.rows[0].total)),
+      escrow_held:              Math.round(Number(escrowRes.rows[0].total)),
+      released_to_tutors:       Math.round(Number(releasedRes.rows[0].total)),
+      platform_fees:            0,
+      total_refunds:            0,
+      successful_transactions:  parseInt(successCountRes.rows[0].count, 10),
+      failed_transactions:      parseInt(failedCountRes.rows[0].count, 10),
+      open_disputes:            parseInt(disputeRes.rows[0].count, 10),
+      generated_at:             new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/financial/overview error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy tổng quan tài chính." });
+  }
+});
+
+// ── GET /api/admin/financial/revenue-series ───────────────────────────────────
+// CAP-3.11: Monthly revenue series + subject breakdown (read-only).
+// ?range=6m (default) | 12m | ytd
+const VALID_RANGES = new Set(['6m', '12m', 'ytd']);
+
+app.get("/api/admin/financial/revenue-series", verifyToken, requireAdmin, async (req, res) => {
+  const range = (req.query.range || '6m').toLowerCase();
+  if (!VALID_RANGES.has(range)) {
+    return res.status(400).json({ message: "Range không hợp lệ. Dùng: 6m, 12m, ytd." });
+  }
+
+  // Compute start date
+  const now = new Date();
+  let startDate;
+  if (range === 'ytd') {
+    startDate = new Date(now.getFullYear(), 0, 1);
+  } else {
+    const months = range === '12m' ? 11 : 5;
+    startDate = new Date(now.getFullYear(), now.getMonth() - months, 1);
+  }
+
+  // Build ordered list of YYYY-MM strings in range
+  const months = [];
+  const cur = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  while (cur <= now) {
+    months.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`);
+    cur.setMonth(cur.getMonth() + 1);
+  }
+
+  try {
+    const [seriesRes, subjectRes] = await Promise.all([
+      // Monthly revenue + deposits grouped by month (VN timezone)
+      pool.query(`
+        SELECT
+          TO_CHAR(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM') AS ym,
+          SUM(CASE WHEN type = 'PAYMENT' AND status = 'SUCCESS' AND amount < 0
+                   THEN ABS(amount) ELSE 0 END)                           AS revenue,
+          SUM(CASE WHEN status = 'REFUNDED' AND amount < 0
+                   THEN ABS(amount) ELSE 0 END)                           AS refunds,
+          SUM(CASE WHEN type = 'DEPOSIT' AND status = 'SUCCESS' AND amount > 0
+                   THEN amount    ELSE 0 END)                             AS deposits
+        FROM transactions
+        WHERE created_at >= $1
+        GROUP BY ym
+        ORDER BY ym
+      `, [startDate.toISOString()]),
+
+      // Subject revenue via booking join (lesson payments only)
+      pool.query(`
+        SELECT
+          b.subject,
+          SUM(ABS(t.amount)) AS revenue,
+          COUNT(*)::int       AS tx_count
+        FROM transactions t
+        JOIN bookings b ON b.id = t.reference_id
+        WHERE t.type = 'PAYMENT' AND t.status = 'SUCCESS' AND t.amount < 0
+          AND b.subject IS NOT NULL AND b.subject <> ''
+          AND t.created_at >= $1
+        GROUP BY b.subject
+        ORDER BY revenue DESC
+        LIMIT 20
+      `, [startDate.toISOString()]),
+    ]);
+
+    // Build lookup from DB rows
+    const byYM = {};
+    for (const row of seriesRes.rows) {
+      byYM[row.ym] = row;
+    }
+
+    // Fill all months (including zeros for missing months)
+    const series = months.map(ym => {
+      const [y, m] = ym.split('-');
+      const row = byYM[ym] || {};
+      const revenue = Math.round(Number(row.revenue || 0));
+      const refunds = Math.round(Number(row.refunds || 0));
+      return {
+        label:    `T${parseInt(m, 10)}/${y}`,
+        revenue,
+        refunds,
+        net:      revenue - refunds,
+        deposits: Math.round(Number(row.deposits || 0)),
+      };
+    });
+
+    const bySubject = subjectRes.rows.map(r => ({
+      subject:  r.subject,
+      revenue:  Math.round(Number(r.revenue)),
+      txCount:  r.tx_count,
+    }));
+
+    return res.json({
+      range,
+      series,
+      by_subject: bySubject,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/financial/revenue-series error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu doanh thu." });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  QUIZ APIs
 // ══════════════════════════════════════════════════════════════════════════════

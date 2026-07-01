@@ -457,7 +457,7 @@ export default function AdminDashboard() {
           {activeView === 'lessons'          && <CourseManagementView token={token} />}
           {activeView === 'transactions'     && <TransactionsView token={token} />}
           {/* ── Transaction Management Module ── */}
-          {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} />}
+          {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} token={token} />}
           {activeView === 'tx-lessons'       && <LessonPayments />}
           {activeView === 'tx-courses'       && <CourseTransactions />}
           {activeView === 'tx-withdrawals'   && <TutorWithdrawals />}
@@ -466,7 +466,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
           {activeView === 'tx-gateways'      && <PaymentGateways />}
           {activeView === 'tx-commissions'   && <CommissionManagement />}
-          {activeView === 'tx-platform-revenue' && <PlatformRevenue />}
+          {activeView === 'tx-platform-revenue' && <PlatformRevenue token={token} />}
           {activeView === 'tx-system-wallet' && <SystemWallet />}
           {activeView === 'tx-promotions'    && <PromotionTransactions />}
           {activeView === 'tx-reports'       && <FinancialReports />}
