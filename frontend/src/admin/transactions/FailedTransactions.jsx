@@ -1,0 +1,103 @@
+import { useState } from 'react'
+import {
+  StatusBadge, PageHeader, DataTable, SearchFilterBar,
+  Pagination, AvatarCell, ExportButton, EmptyState,
+  usePagination, useSearch
+} from './components'
+import { FAILED_TRANSACTIONS, fmtMoney, fmtDateTime } from './mockData'
+
+const GATEWAYS = ['Tất cả', 'MoMo', 'VNPay', 'Bank Transfer', 'Internal Wallet']
+const ERROR_CODES = ['Tất cả', 'ERR_INSUFFICIENT_FUNDS', 'ERR_TIMEOUT', 'ERR_INVALID_ACCOUNT', 'ERR_CARD_DECLINED', 'ERR_DUPLICATE', 'ERR_LIMIT_EXCEEDED', 'ERR_WALLET_FROZEN']
+
+const GW_COLORS = {
+  MoMo: 'bg-pink-50 text-pink-600',
+  VNPay: 'bg-blue-50 text-blue-600',
+  'Bank Transfer': 'bg-purple-50 text-purple-600',
+  'Internal Wallet': 'bg-emerald-50 text-emerald-600',
+}
+
+export default function FailedTransactions() {
+  const [gateway, setGateway] = useState('Tất cả')
+  const [errorCode, setErrorCode] = useState('Tất cả')
+  const { search, setSearch, filtered: searched } = useSearch(FAILED_TRANSACTIONS, ['id', 'user.name', 'errorCode', 'errorMessage', 'gateway'])
+
+  const filtered = searched
+    .filter(t => gateway === 'Tất cả' || t.gateway === gateway)
+    .filter(t => errorCode === 'Tất cả' || t.errorCode === errorCode)
+
+  const { page, setPage, totalPages, paginated } = usePagination(filtered, 8)
+
+  return (
+    <div className="p-8 max-w-[1400px] mx-auto">
+      <PageHeader title="Giao Dịch Thất Bại" subtitle="Theo dõi và phân tích các giao dịch thất bại">
+        <ExportButton />
+      </PageHeader>
+
+      <div className="grid grid-cols-4 gap-4 mb-6">
+        {[
+          { label: 'Tổng thất bại', value: FAILED_TRANSACTIONS.length, icon: 'error', color: 'bg-red-50 text-red-600' },
+          { label: 'Hôm nay', value: 2, icon: 'today', color: 'bg-amber-50 text-amber-600' },
+          { label: 'Timeout', value: FAILED_TRANSACTIONS.filter(t => t.errorCode === 'ERR_TIMEOUT').length, icon: 'timer_off', color: 'bg-orange-50 text-orange-600' },
+          { label: 'Gian lận tiềm năng', value: FAILED_TRANSACTIONS.filter(t => ['ERR_DUPLICATE', 'ERR_WALLET_FROZEN'].includes(t.errorCode)).length, icon: 'warning', color: 'bg-purple-50 text-purple-600' },
+        ].map(c => (
+          <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+            <div className={`w-9 h-9 rounded-lg ${c.color} flex items-center justify-center mb-3`}>
+              <span className="material-symbols-outlined text-[18px]">{c.icon}</span>
+            </div>
+            <p className="text-xs font-semibold text-gray-400 uppercase mb-1">{c.label}</p>
+            <p className="text-xl font-bold text-gray-900">{c.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-4 mb-5 flex-wrap">
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Cổng Thanh Toán</label>
+          <select value={gateway} onChange={e => { setGateway(e.target.value); setPage(1) }}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-blue-500 bg-white">
+            {GATEWAYS.map(g => <option key={g}>{g}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Mã Lỗi</label>
+          <select value={errorCode} onChange={e => { setErrorCode(e.target.value); setPage(1) }}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-blue-500 bg-white min-w-[200px]">
+            {ERROR_CODES.map(e => <option key={e}>{e}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <SearchFilterBar search={search} onSearch={v => { setSearch(v); setPage(1) }} placeholder="Tìm mã GD, người dùng, lỗi..." />
+
+      <DataTable
+        headers={['Mã GD', 'Người Dùng', 'Số Tiền', 'Cổng TT', 'Mã Lỗi', 'Thông Báo Lỗi', 'Thời Gian']}
+        loading={false}
+        empty={filtered.length === 0 && <EmptyState icon="check_circle" title="Không có giao dịch thất bại" description="Tuyệt vời! Không tìm thấy giao dịch lỗi." />}
+      >
+        {paginated.map(t => (
+          <tr key={t.id} className="hover:bg-gray-50 transition-colors">
+            <td className="py-3.5 px-5"><span className="text-xs font-mono font-bold text-red-600">{t.id}</span></td>
+            <td className="py-3.5 px-5"><AvatarCell name={t.user.name} avatar={t.user.avatar} email={t.user.email} /></td>
+            <td className="py-3.5 px-5"><span className="text-sm font-bold text-gray-900">{fmtMoney(t.amount)}</span></td>
+            <td className="py-3.5 px-5">
+              <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold ${GW_COLORS[t.gateway] || 'bg-gray-100 text-gray-600'}`}>
+                {t.gateway}
+              </span>
+            </td>
+            <td className="py-3.5 px-5">
+              <code className="text-xs bg-red-50 text-red-700 px-2 py-1 rounded font-mono">{t.errorCode}</code>
+            </td>
+            <td className="py-3.5 px-5 max-w-[250px]">
+              <span className="text-sm text-gray-600">{t.errorMessage}</span>
+            </td>
+            <td className="py-3.5 px-5"><span className="text-xs text-gray-400">{fmtDateTime(t.createdAt)}</span></td>
+          </tr>
+        ))}
+      </DataTable>
+
+      <div className="bg-white rounded-b-xl border border-t-0 border-gray-100">
+        <Pagination page={page} totalPages={totalPages} onPage={setPage} />
+      </div>
+    </div>
+  )
+}
