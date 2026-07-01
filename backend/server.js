@@ -2346,6 +2346,169 @@ app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) =>
   }
 });
 
+// ── GET /api/admin/commissions ───────────────────────────────────────────────
+// CAP-7.1: Read-only commission/revenue breakdown from PAYMENT transactions.
+// No commission table exists; uses a fixed 10% estimated rate (clearly labelled).
+// No tutor link available (reference_id mostly null). Course title from description.
+const COMMISSION_RATE = 10; // estimated fixed rate, no DB commission table
+
+function extractCourseTitle(desc) {
+  if (!desc) return null;
+  const m = desc.match(/khóa học[:\s]+(.+)$/i);
+  return m ? m[1].trim() : null;
+}
+
+function paymentSource(desc) {
+  if (!desc) return 'payment';
+  if (/đặt lịch/i.test(desc)) return 'lesson';
+  if (/khóa học/i.test(desc)) return 'course';
+  return 'payment';
+}
+
+app.get("/api/admin/commissions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.id::text            AS id,
+             t.id::text            AS transaction_id,
+             ABS(t.amount)::numeric AS gross_amount,
+             t.status,
+             t.description,
+             t.created_at,
+             u.full_name           AS student_name,
+             u.email               AS student_email
+      FROM transactions t
+      JOIN wallets w ON w.id = t.wallet_id
+      JOIN users u   ON u.id = w.user_id
+      WHERE t.type = 'PAYMENT'
+      ORDER BY t.created_at DESC
+      LIMIT 100
+    `);
+
+    const rows = result.rows;
+    let totalGross = 0;
+    const commissions = rows.map(r => {
+      const gross = Number(r.gross_amount);
+      totalGross += gross;
+      const commission = Math.round(gross * COMMISSION_RATE / 100);
+      return {
+        id:                  r.id,
+        transaction_id:      r.transaction_id,
+        source:              paymentSource(r.description),
+        student_name:        r.student_name,
+        student_email:       r.student_email,
+        tutor_name:          null,
+        tutor_email:         null,
+        course_title:        extractCourseTitle(r.description) || r.description || null,
+        gross_amount:        gross,
+        platform_commission: commission,
+        tutor_earning:       gross - commission,
+        commission_rate:     COMMISSION_RATE,
+        status:              r.status,
+        created_at:          r.created_at,
+      };
+    });
+
+    return res.json({
+      summary: {
+        total_gross_revenue:            totalGross,
+        estimated_platform_commission:  Math.round(totalGross * COMMISSION_RATE / 100),
+        estimated_tutor_earnings:       Math.round(totalGross * (100 - COMMISSION_RATE) / 100),
+        commission_rate:                COMMISSION_RATE,
+        total_payment_count:            rows.length,
+        generated_at:                   new Date().toISOString(),
+      },
+      commissions,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/commissions error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu hoa hồng." });
+  }
+});
+
+// ── GET /api/admin/promotion-transactions ─────────────────────────────────────
+// CAP-7.2: Read-only promotion/coupon data.
+// coupons table has 4 active coupons; no usage table exists.
+// Discount usage is inferred from transaction descriptions containing "giảm".
+function extractDiscountFromDesc(desc) {
+  if (!desc) return 0;
+  const m = desc.match(/giảm\s+([\d,]+)/i);
+  if (!m) return 0;
+  return parseInt(m[1].replace(/,/g, ''), 10) || 0;
+}
+
+app.get("/api/admin/promotion-transactions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [couponRes, discountTxRes] = await Promise.all([
+      pool.query(`
+        SELECT id::text, code, description AS name, discount_type AS type,
+               discount_value::numeric AS value, max_discount::numeric,
+               min_order::numeric, active, expires_at, created_at
+        FROM coupons
+        ORDER BY created_at
+      `),
+      pool.query(`
+        SELECT t.id::text, t.amount::numeric, t.description, t.status, t.created_at,
+               u.full_name AS user_name, u.email AS user_email
+        FROM transactions t
+        JOIN wallets w ON w.id = t.wallet_id
+        JOIN users u   ON u.id = w.user_id
+        WHERE t.type = 'PAYMENT'
+          AND t.description ILIKE '%giảm%'
+        ORDER BY t.created_at DESC
+      `),
+    ]);
+
+    const promotions = couponRes.rows.map(c => ({
+      id:          c.id,
+      code:        c.code,
+      name:        c.name,
+      type:        c.type,
+      value:       Number(c.value),
+      max_discount: c.max_discount ? Number(c.max_discount) : null,
+      min_order:   c.min_order ? Number(c.min_order) : 0,
+      usage_count: 0,
+      active:      c.active,
+      expires_at:  c.expires_at,
+    }));
+
+    let totalDiscount = 0;
+    const transactions = discountTxRes.rows.map(r => {
+      const discount = extractDiscountFromDesc(r.description);
+      const final    = Math.abs(Number(r.amount));
+      const original = final + discount;
+      totalDiscount += discount;
+      return {
+        id:               r.id,
+        promotion_code:   null,
+        promotion_name:   r.description || 'Khuyến mãi',
+        user_name:        r.user_name,
+        user_email:       r.user_email,
+        transaction_id:   r.id,
+        original_amount:  original,
+        discount_amount:  discount,
+        final_amount:     final,
+        status:           r.status,
+        used_at:          r.created_at,
+      };
+    });
+
+    return res.json({
+      summary: {
+        total_promotions:     promotions.length,
+        total_usage:          transactions.length,
+        total_discount_amount: totalDiscount,
+        active_promotions:    promotions.filter(p => p.active).length,
+        generated_at:         new Date().toISOString(),
+      },
+      transactions,
+      promotions,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/promotion-transactions error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu khuyến mãi." });
+  }
+});
+
 // ── GET /api/admin/violations ────────────────────────────────────────────────
 // CAP-6.1: Read-only list of disputes as violation reports.
 // Source: disputes JOIN users (raised_by=reporter, tutor_id=accused). No mutations.
