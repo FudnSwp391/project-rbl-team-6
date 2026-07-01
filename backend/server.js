@@ -2011,6 +2011,194 @@ app.get("/api/admin/transactions/course-transactions", verifyToken, requireAdmin
   }
 });
 
+// ── GET /api/admin/payment-gateways ──────────────────────────────────────────
+// CAP-3.9: Payment gateway stats derived from transactions table (read-only).
+// No dedicated gateway config table exists — grouped by COALESCE(gateway,'Internal Wallet').
+// Gateway secrets are not stored in transactions; nothing sensitive is exposed.
+app.get("/api/admin/payment-gateways", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         COALESCE(gateway, 'Internal Wallet')           AS name,
+         COUNT(*)::int                                   AS transaction_count,
+         COUNT(*) FILTER (WHERE status = 'SUCCESS')::int AS success_count,
+         COUNT(*) FILTER (
+           WHERE status NOT IN ('SUCCESS','HELD_IN_ESCROW')
+         )::int                                          AS failed_count,
+         COALESCE(SUM(ABS(amount)),0)::numeric           AS total_volume,
+         MAX(created_at)                                 AS last_transaction_at
+       FROM transactions
+       GROUP BY COALESCE(gateway, 'Internal Wallet')
+       ORDER BY total_volume DESC`
+    );
+    const gateways = result.rows.map(r => ({
+      name:               r.name,
+      transaction_count:  r.transaction_count,
+      success_count:      r.success_count,
+      failed_count:       r.failed_count,
+      success_rate:       r.transaction_count > 0
+                            ? +(( r.success_count / r.transaction_count) * 100).toFixed(1)
+                            : 0,
+      failed_rate:        r.transaction_count > 0
+                            ? +((r.failed_count / r.transaction_count) * 100).toFixed(1)
+                            : 0,
+      total_volume:       Math.round(Number(r.total_volume)),
+      last_transaction_at: r.last_transaction_at,
+      status:             'ACTIVE',
+    }));
+    return res.json({ gateways });
+  } catch (err) {
+    console.error("GET /api/admin/payment-gateways error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy thông tin cổng thanh toán." });
+  }
+});
+
+// ── GET /api/admin/system-wallet ──────────────────────────────────────────────
+// CAP-3.10: System wallet overview aggregated from wallets + transactions (read-only).
+// wallet.held_balance stores escrow funds per wallet; augmented by transaction aggregates.
+app.get("/api/admin/system-wallet", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [walletSummary, txSummary, recentTx] = await Promise.all([
+      pool.query(
+        `SELECT
+           u.role,
+           COUNT(w.id)::int          AS wallet_count,
+           COALESCE(SUM(w.balance),0)::numeric      AS total_balance,
+           COALESCE(SUM(w.held_balance),0)::numeric AS held_balance
+         FROM wallets w
+         JOIN users u ON u.id = w.user_id
+         GROUP BY u.role
+         ORDER BY u.role`
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(SUM(amount) FILTER (WHERE type='DEPOSIT' AND status='SUCCESS' AND amount>0),0)::numeric        AS total_deposits,
+           COALESCE(SUM(ABS(amount)) FILTER (WHERE type='PAYMENT' AND status='SUCCESS' AND amount<0),0)::numeric   AS total_payments,
+           COALESCE(SUM(ABS(amount)) FILTER (WHERE status='HELD_IN_ESCROW'),0)::numeric                            AS escrow_held,
+           COUNT(*) FILTER (WHERE type='DEPOSIT'  AND status='SUCCESS')::int                                       AS deposit_count,
+           COUNT(*) FILTER (WHERE type='PAYMENT'  AND status='SUCCESS')::int                                       AS payment_count,
+           COUNT(*)::int                                                                                            AS total_tx_count
+         FROM transactions`
+      ),
+      pool.query(
+        `SELECT t.id, t.amount, t.type, t.status, COALESCE(t.gateway,'Internal Wallet') AS gateway,
+                t.description, t.created_at,
+                COALESCE(u.full_name,'') AS user_name, COALESCE(u.role,'') AS user_role
+         FROM transactions t
+         JOIN wallets w ON w.id = t.wallet_id
+         JOIN users  u ON u.id = w.user_id
+         ORDER BY t.created_at DESC
+         LIMIT 15`
+      ),
+    ]);
+
+    const byRole = {};
+    for (const r of walletSummary.rows) {
+      byRole[r.role] = {
+        wallet_count:   r.wallet_count,
+        total_balance:  Math.round(Number(r.total_balance)),
+        held_balance:   Math.round(Number(r.held_balance)),
+      };
+    }
+    const tx = txSummary.rows[0];
+    const totalWalletBalance = walletSummary.rows.reduce(
+      (s, r) => s + Math.round(Number(r.total_balance)), 0
+    );
+
+    return res.json({
+      total_wallet_balance:   totalWalletBalance,
+      student_wallet_balance: byRole.student?.total_balance  ?? 0,
+      tutor_wallet_balance:   byRole.tutor?.total_balance    ?? 0,
+      admin_wallet_balance:   byRole.admin?.total_balance    ?? 0,
+      escrow_held:            Math.round(Number(tx.escrow_held)),
+      total_deposits:         Math.round(Number(tx.total_deposits)),
+      total_payments:         Math.round(Number(tx.total_payments)),
+      wallet_count:           walletSummary.rows.reduce((s, r) => s + r.wallet_count, 0),
+      deposit_count:          tx.deposit_count,
+      payment_count:          tx.payment_count,
+      total_tx_count:         tx.total_tx_count,
+      by_role:                byRole,
+      recent_transactions:    recentTx.rows.map(r => ({
+        ...r,
+        amount: Math.round(Number(r.amount)),
+      })),
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/system-wallet error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy thông tin ví hệ thống." });
+  }
+});
+
+// ── GET /api/admin/transactions/withdrawals ───────────────────────────────────
+// CAP-3.5: Tutor withdrawal requests from withdraw_requests table (read-only).
+// account_details is JSONB — bank_name and account_number extracted if present;
+// account number is masked to show only last 4 digits.
+app.get("/api/admin/transactions/withdrawals", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT wr.id::text,
+              wr.amount::numeric,
+              wr.method,
+              wr.status,
+              COALESCE(wr.admin_note, '')                              AS admin_note,
+              wr.created_at,
+              wr.updated_at,
+              COALESCE(wr.account_details->>'bank_name',  wr.method, '') AS bank_name,
+              CASE
+                WHEN wr.account_details->>'account_number' IS NOT NULL
+                THEN '****' || RIGHT(wr.account_details->>'account_number', 4)
+                ELSE ''
+              END                                                       AS bank_account_masked,
+              COALESCE(u.full_name, '')                                AS tutor_name,
+              COALESCE(u.email,     '')                                AS tutor_email
+       FROM   withdraw_requests wr
+       JOIN   wallets w ON w.id  = wr.wallet_id
+       JOIN   users   u ON u.id  = w.user_id
+       ORDER  BY wr.created_at DESC
+       LIMIT  200`
+    );
+    return res.json({ withdrawals: result.rows });
+  } catch (err) {
+    console.error("GET /api/admin/transactions/withdrawals error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách yêu cầu rút tiền." });
+  }
+});
+
+// ── GET /api/admin/transactions/refunds ───────────────────────────────────────
+// CAP-3.6: Refund records from disputes table (read-only).
+// No dedicated refund_requests table exists. Source: disputes WHERE
+// status='RESOLVED_REFUND'. Amount approximated from courses.price (the actual
+// refunded amount is not stored separately in the disputes table).
+app.get("/api/admin/transactions/refunds", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT d.id::text,
+              d.reason,
+              d.status,
+              COALESCE(d.admin_note, '')              AS admin_note,
+              d.created_at,
+              d.resolved_at,
+              d.target_type,
+              d.evidence_url,
+              COALESCE(u.full_name, '')               AS user_name,
+              COALESCE(u.email,     '')               AS user_email,
+              COALESCE(c.title,     '')               AS course_title,
+              COALESCE(c.price,     0)::numeric       AS amount
+       FROM   disputes d
+       LEFT   JOIN users   u ON u.id = d.raised_by
+       LEFT   JOIN courses c ON c.id = d.course_id
+       WHERE  d.status = 'RESOLVED_REFUND'
+       ORDER  BY d.created_at DESC
+       LIMIT  200`
+    );
+    return res.json({ refunds: result.rows });
+  } catch (err) {
+    console.error("GET /api/admin/transactions/refunds error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách hoàn tiền." });
+  }
+});
+
 // ── GET /api/admin/financial/overview ────────────────────────────────────────
 // CAP-3.2: Real-time financial summary from transactions table (read-only).
 // Platform fees and released-to-tutors are best-effort approximations only;

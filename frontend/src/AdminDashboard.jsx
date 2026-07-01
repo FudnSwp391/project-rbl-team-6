@@ -460,14 +460,14 @@ export default function AdminDashboard() {
           {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} token={token} />}
           {activeView === 'tx-lessons'       && <LessonPayments token={token} />}
           {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
-          {activeView === 'tx-withdrawals'   && <TutorWithdrawals />}
-          {activeView === 'tx-refunds'       && <RefundManagement />}
+          {activeView === 'tx-withdrawals'   && <TutorWithdrawals token={token} />}
+          {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
           {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
-          {activeView === 'tx-gateways'      && <PaymentGateways />}
+          {activeView === 'tx-gateways'      && <PaymentGateways token={token} />}
           {activeView === 'tx-commissions'   && <CommissionManagement />}
           {activeView === 'tx-platform-revenue' && <PlatformRevenue token={token} />}
-          {activeView === 'tx-system-wallet' && <SystemWallet />}
+          {activeView === 'tx-system-wallet' && <SystemWallet token={token} />}
           {activeView === 'tx-promotions'    && <PromotionTransactions />}
           {activeView === 'tx-reports'       && <FinancialReports />}
           {activeView === 'tx-reconciliation' && <Reconciliation />}

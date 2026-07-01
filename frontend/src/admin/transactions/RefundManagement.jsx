@@ -1,44 +1,89 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   StatusBadge, PageHeader, DataTable, SearchFilterBar, FilterTabs,
   Pagination, AvatarCell, ExportButton, EmptyState,
   usePagination, useSearch
 } from './components'
-import { REFUNDS, fmtMoney, fmtDateTime } from './mockData'
+import { fmtMoney, fmtDateTime } from './mockData'
+
+const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
 const STATUS_TABS = [
-  { value: 'ALL', label: 'Tất cả' },
-  { value: 'PENDING', label: 'Chờ duyệt' },
-  { value: 'APPROVED', label: 'Đã duyệt' },
+  { value: 'ALL',      label: 'Tất cả' },
+  { value: 'APPROVED', label: 'Đã hoàn tiền' },
+  { value: 'PENDING',  label: 'Chờ xử lý' },
   { value: 'REJECTED', label: 'Từ chối' },
 ]
 
-export default function RefundManagement() {
+function mapStatus(s) {
+  if (!s) return 'PENDING'
+  if (s === 'RESOLVED_REFUND') return 'APPROVED'
+  return s.toUpperCase()
+}
+
+function mapRow(r) {
+  return {
+    id:          r.id,
+    user:        { name: r.user_name || 'Người dùng', email: r.user_email || '', avatar: null },
+    courseTitle: r.course_title || '—',
+    reason:      r.reason       || '—',
+    amount:      parseFloat(r.amount) || 0,
+    status:      mapStatus(r.status),
+    adminNote:   r.admin_note   || '',
+    requestDate: r.created_at,
+    resolvedAt:  r.resolved_at,
+    evidenceUrl: r.evidence_url || null,
+    source:      'dispute',
+  }
+}
+
+export default function RefundManagement({ token }) {
+  const [refunds,      setRefunds]      = useState([])
+  const [loading,      setLoading]      = useState(true)
+  const [error,        setError]        = useState(null)
   const [statusFilter, setStatusFilter] = useState('ALL')
-  const [data, setData] = useState(REFUNDS)
-  const { search, setSearch, filtered: searched } = useSearch(data, ['id', 'student.name', 'tutor.name', 'reason'])
+
+  useEffect(() => {
+    if (!token) return
+    setLoading(true)
+    setError(null)
+    fetch(`${API}/api/admin/transactions/refunds`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(data => {
+        setRefunds((data.refunds || []).map(mapRow))
+        setLoading(false)
+      })
+      .catch(err => { setError(err.message); setLoading(false) })
+  }, [token])
+
+  const { search, setSearch, filtered: searched } = useSearch(refunds, ['id', 'user.name', 'courseTitle', 'reason'])
   const filtered = statusFilter === 'ALL' ? searched : searched.filter(r => r.status === statusFilter)
   const { page, setPage, totalPages, paginated } = usePagination(filtered, 8)
 
-  const totalPending = data.filter(r => r.status === 'PENDING').reduce((s, r) => s + r.amount, 0)
-  const totalApproved = data.filter(r => r.status === 'APPROVED').reduce((s, r) => s + r.amount, 0)
-
-  const handleAction = (id, newStatus) => {
-    setData(prev => prev.map(r => r.id === id ? { ...r, status: newStatus, processedBy: 'Admin EduX' } : r))
-  }
+  const totalApproved = refunds.filter(r => r.status === 'APPROVED').reduce((s, r) => s + r.amount, 0)
+  const totalPending  = refunds.filter(r => r.status === 'PENDING').reduce((s, r)  => s + r.amount, 0)
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Quản Lý Hoàn Tiền" subtitle="Xử lý các yêu cầu hoàn tiền từ học sinh">
+      <PageHeader title="Quản Lý Hoàn Tiền" subtitle="Danh sách hoàn tiền từ tranh chấp khóa học (chỉ xem)">
         <ExportButton />
       </PageHeader>
 
+      {error && (
+        <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">
+          <span className="material-symbols-outlined text-[20px]">error</span>
+          {error}
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-4 mb-6">
         {[
-          { label: 'Tổng yêu cầu', value: data.length, icon: 'undo', color: 'bg-blue-50 text-blue-600' },
-          { label: 'Chờ duyệt', value: data.filter(r => r.status === 'PENDING').length, icon: 'schedule', color: 'bg-amber-50 text-amber-600' },
-          { label: 'Đã hoàn tiền', value: fmtMoney(totalApproved), icon: 'check_circle', color: 'bg-emerald-50 text-emerald-600' },
-          { label: 'Đang xử lý', value: fmtMoney(totalPending), icon: 'hourglass', color: 'bg-purple-50 text-purple-600' },
+          { label: 'Tổng yêu cầu',   value: loading ? '—' : refunds.length,                                                    icon: 'undo',        color: 'bg-blue-50 text-blue-600' },
+          { label: 'Chờ xử lý',      value: loading ? '—' : refunds.filter(r => r.status === 'PENDING').length,                icon: 'schedule',    color: 'bg-amber-50 text-amber-600' },
+          { label: 'Đã hoàn tiền',   value: loading ? '—' : fmtMoney(totalApproved),                                           icon: 'check_circle', color: 'bg-emerald-50 text-emerald-600' },
+          { label: 'Đang xử lý',     value: loading ? '—' : fmtMoney(totalPending),                                            icon: 'hourglass',   color: 'bg-purple-50 text-purple-600' },
         ].map(c => (
           <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
             <div className={`w-9 h-9 rounded-lg ${c.color} flex items-center justify-center mb-3`}>
@@ -50,54 +95,52 @@ export default function RefundManagement() {
         ))}
       </div>
 
-      <FilterTabs tabs={STATUS_TABS.map(t => ({ ...t, count: t.value === 'ALL' ? data.length : data.filter(r => r.status === t.value).length }))} active={statusFilter} onChange={v => { setStatusFilter(v); setPage(1) }} />
-      <SearchFilterBar search={search} onSearch={v => { setSearch(v); setPage(1) }} placeholder="Tìm mã, học sinh, gia sư, lý do..." />
+      <FilterTabs
+        tabs={STATUS_TABS.map(t => ({ ...t, count: t.value === 'ALL' ? refunds.length : refunds.filter(r => r.status === t.value).length }))}
+        active={statusFilter}
+        onChange={v => { setStatusFilter(v); setPage(1) }}
+      />
+      <SearchFilterBar
+        search={search}
+        onSearch={v => { setSearch(v); setPage(1) }}
+        placeholder="Tìm mã, người dùng, khóa học, lý do..."
+      />
 
       <DataTable
-        headers={['Mã YC', 'Học Sinh', 'Gia Sư', 'Lý Do', 'Số Tiền', 'Ngày YC', 'Xử Lý Bởi', 'Trạng Thái', 'Bằng Chứng', 'Thao Tác']}
-        loading={false}
-        empty={filtered.length === 0 && <EmptyState icon="undo" title="Không có yêu cầu hoàn tiền" description="Không tìm thấy yêu cầu phù hợp." />}
+        headers={['Mã', 'Người Dùng', 'Khóa Học', 'Lý Do', 'Số Tiền', 'Ngày YC', 'Ghi Chú Admin', 'Trạng Thái', 'Bằng Chứng']}
+        loading={loading}
+        empty={!loading && filtered.length === 0 && (
+          <EmptyState icon="undo" title="Không có yêu cầu hoàn tiền" description="Không tìm thấy yêu cầu phù hợp." />
+        )}
       >
         {paginated.map(r => (
           <tr key={r.id} className="hover:bg-gray-50 transition-colors">
             <td className="py-3.5 px-5"><span className="text-xs font-mono font-bold text-blue-600">{r.id}</span></td>
-            <td className="py-3.5 px-5"><AvatarCell name={r.student.name} avatar={r.student.avatar} sub={r.student.grade} /></td>
-            <td className="py-3.5 px-5"><AvatarCell name={r.tutor.name} avatar={r.tutor.avatar} sub={r.tutor.subject} /></td>
-            <td className="py-3.5 px-5 max-w-[200px]"><span className="text-sm text-gray-700 line-clamp-2">{r.reason}</span></td>
-            <td className="py-3.5 px-5"><span className="text-sm font-bold text-red-600">-{fmtMoney(r.amount)}</span></td>
-            <td className="py-3.5 px-5"><span className="text-xs text-gray-400">{fmtDateTime(r.requestDate)}</span></td>
+            <td className="py-3.5 px-5"><AvatarCell name={r.user.name} email={r.user.email} avatar={r.user.avatar} /></td>
             <td className="py-3.5 px-5">
-              {r.processedBy
-                ? <span className="text-xs text-gray-600">{r.processedBy}</span>
-                : <span className="text-xs text-amber-500 font-semibold">Chờ xử lý</span>
+              <span className="text-sm font-semibold text-gray-800 max-w-[180px] truncate block">{r.courseTitle}</span>
+            </td>
+            <td className="py-3.5 px-5 max-w-[200px]">
+              <span className="text-sm text-gray-700 line-clamp-2">{r.reason}</span>
+            </td>
+            <td className="py-3.5 px-5">
+              <span className="text-sm font-bold text-red-600">-{fmtMoney(r.amount)}</span>
+            </td>
+            <td className="py-3.5 px-5"><span className="text-xs text-gray-400">{fmtDateTime(r.requestDate)}</span></td>
+            <td className="py-3.5 px-5 max-w-[200px]">
+              {r.adminNote
+                ? <span className="text-xs text-gray-500 italic line-clamp-2">{r.adminNote}</span>
+                : <span className="text-gray-300">—</span>
               }
             </td>
             <td className="py-3.5 px-5"><StatusBadge status={r.status} /></td>
             <td className="py-3.5 px-5">
               {r.evidenceUrl
-                ? <a href={r.evidenceUrl} className="text-xs text-blue-600 hover:underline flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">attach_file</span> Xem</a>
+                ? <a href={r.evidenceUrl} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">attach_file</span> Xem
+                  </a>
                 : <span className="text-gray-300">—</span>
               }
-            </td>
-            <td className="py-3.5 px-5">
-              {r.status === 'PENDING' ? (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleAction(r.id, 'APPROVED')}
-                    className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors"
-                  >
-                    Duyệt
-                  </button>
-                  <button
-                    onClick={() => handleAction(r.id, 'REJECTED')}
-                    className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-bold hover:bg-red-100 transition-colors"
-                  >
-                    Từ chối
-                  </button>
-                </div>
-              ) : (
-                <span className="text-xs text-gray-400">Đã xử lý</span>
-              )}
             </td>
           </tr>
         ))}
