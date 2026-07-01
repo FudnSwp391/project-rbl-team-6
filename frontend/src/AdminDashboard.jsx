@@ -22,10 +22,11 @@ import NotificationCenter    from './admin/transactions/NotificationCenter'
 import AuditLogs             from './admin/transactions/AuditLogs'
 
 import { DISPUTES } from './admin/transactions/mockData'
-import { COMPLAINTS, REPORTED_REVIEWS, VIOLATIONS } from './admin/services/mockData'
+import { COMPLAINTS, REPORTED_REVIEWS } from './admin/services/mockData'
 import Complaints from './admin/services/Complaints'
 import Reviews from './admin/services/Reviews'
 import Violations from './admin/services/Violations'
+import Moderation from './admin/services/Moderation'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -104,7 +105,6 @@ export default function AdminDashboard() {
   const [globalDisputes, setGlobalDisputes] = useState(DISPUTES)
   const [globalComplaints, setGlobalComplaints] = useState(COMPLAINTS)
   const [globalReviews, setGlobalReviews] = useState(REPORTED_REVIEWS)
-  const [globalViolations, setGlobalViolations] = useState(VIOLATIONS)
 
   const handleAddDispute = (dispute) => setGlobalDisputes(prev => [dispute, ...prev])
   const handleUpdateComplaint = (id, updates) => setGlobalComplaints(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c))
@@ -465,10 +465,10 @@ export default function AdminDashboard() {
           {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
           {activeView === 'tx-gateways'      && <PaymentGateways token={token} />}
-          {activeView === 'tx-commissions'   && <CommissionManagement />}
+          {activeView === 'tx-commissions'   && <CommissionManagement token={token} />}
           {activeView === 'tx-platform-revenue' && <PlatformRevenue token={token} />}
           {activeView === 'tx-system-wallet' && <SystemWallet token={token} />}
-          {activeView === 'tx-promotions'    && <PromotionTransactions />}
+          {activeView === 'tx-promotions'    && <PromotionTransactions token={token} />}
           {activeView === 'tx-reports'       && <FinancialReports />}
           {activeView === 'tx-reconciliation' && <Reconciliation />}
           {activeView === 'tx-fraud'         && <FraudAlerts token={token} />}
@@ -478,17 +478,11 @@ export default function AdminDashboard() {
           {/* ── Service Management Module ── */}
           {activeView === 'sm-complaints'    && <ComplaintsView token={token} />}
           {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
-          {activeView === 'sm-violations'    && <Violations violations={globalViolations} />}
-          {activeView === 'sm-moderation'    && (
-            <div className="p-8 max-w-[1400px] mx-auto text-center mt-20">
-              <span className="material-symbols-outlined text-gray-300" style={{fontSize: '80px'}}>policy</span>
-              <h2 className="text-2xl font-bold text-gray-900 mt-4">Kiểm duyệt nội dung</h2>
-              <p className="text-gray-500 mt-2">Tính năng đang trong quá trình phát triển.</p>
-            </div>
-          )}
+          {activeView === 'sm-violations'    && <Violations token={token} />}
+          {activeView === 'sm-moderation'    && <Moderation token={token} />}
 
           {activeView === 'reports'          && <ReportsView />}
-          {activeView === 'ai-insights'      && <AIInsightsView />}
+          {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
           {activeView === 'audit-logs'       && <AuditLogsView />}
           {activeView === 'settings'         && <SettingsView />}
         </div>
@@ -3304,124 +3298,151 @@ function ReportsView() {
 }
 
 // ─── AI Insights View ─────────────────────────────────────────────────────────
-const AI_FLAGS = [
-  { type: 'Giao dịch đáng ngờ',    detail: 'TXN-4816: yêu cầu hoàn tiền lớn bất thường trong vòng 1 giờ sau khi thanh toán.', level: 'Cao',       icon: 'payments',       color: 'text-red-600',    bg: 'bg-red-50',    border: 'border-red-200' },
-  { type: 'Tài liệu không khớp',   detail: '3 ứng viên đang chờ có ảnh CCCD không khớp với ảnh hồ sơ.',               level: 'Cao',       icon: 'badge',          color: 'text-red-600',    bg: 'bg-red-50',    border: 'border-red-200' },
-  { type: 'Đăng nhập bất thường',  detail: 'Tài khoản vu.thi.lan@email.com đăng nhập từ 4 quốc gia khác nhau trong 24 giờ.', level: 'Trung bình', icon: 'travel_explore', color: 'text-amber-600', bg: 'bg-amber-50',  border: 'border-amber-200' },
-  { type: 'Phát hiện đánh giá rác', detail: '8 đánh giá từ cùng một địa chỉ IP nhắm vào một gia sư.',                 level: 'Trung bình', icon: 'reviews',        color: 'text-amber-600', bg: 'bg-amber-50',  border: 'border-amber-200' },
-  { type: 'Giảm tương tác',        detail: 'Tương tác của học sinh giảm 31% trong danh mục Vật lý tuần này.',         level: 'Thấp',      icon: 'trending_down',  color: 'text-blue-600',  bg: 'bg-blue-50',   border: 'border-blue-200' },
-]
+function AIInsightsView({ token }) {
+  const [data,    setData]    = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState(null)
 
-const AI_TRENDS = [
-  { subject: 'Computer Science', growth: '+28%', icon: 'code',      color: 'text-cyan-700',   bg: 'bg-cyan-50' },
-  { subject: 'English',          growth: '+19%', icon: 'translate', color: 'text-green-700',  bg: 'bg-green-50' },
-  { subject: 'Mathematics',      growth: '+12%', icon: 'calculate', color: 'text-blue-700',   bg: 'bg-blue-50' },
-  { subject: 'History',          growth: '-8%',  icon: 'history_edu', color: 'text-red-600',  bg: 'bg-red-50' },
-]
+  useEffect(() => {
+    if (!token) return
+    setLoading(true)
+    setError(null)
+    fetch(`${API}/api/admin/ai-insights`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(d  => { setData(d); setLoading(false) })
+      .catch(e => { setError(e.message); setLoading(false) })
+  }, [token])
 
-function AIInsightsView() {
+  const flags      = data?.flags          || []
+  const trends     = data?.subject_trends || []
+  const preds      = data?.predictions    || []
+  const summary    = data?.summary        || { high_count: 0, medium_count: 0, low_count: 0 }
+
   return (
     <div className="p-10 max-w-[1280px] mx-auto">
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-on-background">AI Insights</h2>
-        <p className="text-sm text-on-surface-variant mt-1">Phát hiện bất thường tự động, phân tích xu hướng và thông minh nền tảng.</p>
+        <p className="text-sm text-on-surface-variant mt-1">Phát hiện bất thường tự động, phân tích xu hướng và thông minh nền tảng — dựa trên dữ liệu thực.</p>
       </div>
 
-      {/* Anomaly Alert Banner */}
-      <div className="bg-white rounded-xl p-5 border-l-4 border-red-500 shadow-sm mb-8 flex items-start gap-4">
-        <div className="w-11 h-11 rounded-full bg-red-100 flex items-center justify-center text-red-600 shrink-0">
-          <span className="material-symbols-outlined text-[24px]">warning</span>
-        </div>
-        <div className="flex-1">
-          <h3 className="text-base font-bold text-on-surface mb-1">AI phát hiện 2 bất thường ưu tiên cao cần xử lý ngay</h3>
-          <p className="text-sm text-on-surface-variant">Phát hiện giao dịch đáng ngờ và tài liệu không khớp. Xem bên dưới.</p>
-        </div>
-        <button className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-opacity shrink-0">
-          Xem tất cả cảnh báo
-        </button>
-      </div>
+      {loading && <div className="h-64 bg-gray-50 rounded-xl animate-pulse" />}
 
-      <div className="grid grid-cols-12 gap-6">
-        {/* Anomaly feed */}
-        <div className="col-span-7 flex flex-col gap-4">
-          <h3 className="text-base font-bold text-on-surface flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary text-[20px]">psychology</span>
-            Bất thường phát hiện
-          </h3>
-          {AI_FLAGS.map((f, i) => (
-            <div key={i} className={`bg-white rounded-xl p-5 border ${f.border} shadow-sm flex items-start gap-4`}>
-              <div className={`w-10 h-10 rounded-lg ${f.bg} flex items-center justify-center ${f.color} shrink-0`}>
-                <span className="material-symbols-outlined text-[20px]">{f.icon}</span>
+      {error && (
+        <div className="flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium mb-6">
+          <span className="material-symbols-outlined text-[20px]">error</span>
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && (
+        <>
+          {/* Anomaly Alert Banner */}
+          {summary.high_count > 0 && (
+            <div className="bg-white rounded-xl p-5 border-l-4 border-red-500 shadow-sm mb-8 flex items-start gap-4">
+              <div className="w-11 h-11 rounded-full bg-red-100 flex items-center justify-center text-red-600 shrink-0">
+                <span className="material-symbols-outlined text-[24px]">warning</span>
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <p className="text-sm font-bold text-on-surface">{f.type}</p>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${f.level === 'Cao' ? 'bg-red-100 text-red-700' : f.level === 'Trung bình' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
-                    {f.level}
-                  </span>
-                </div>
-                <p className="text-xs text-on-surface-variant">{f.detail}</p>
+              <div className="flex-1">
+                <h3 className="text-base font-bold text-on-surface mb-1">
+                  Phát hiện {summary.high_count} bất thường ưu tiên cao cần xử lý ngay
+                </h3>
+                <p className="text-sm text-on-surface-variant">
+                  {summary.medium_count} tín hiệu trung bình, {summary.low_count} tín hiệu thấp. Xem chi tiết bên dưới.
+                </p>
               </div>
-              <button className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 shrink-0">
-                Điều tra
-              </button>
             </div>
-          ))}
-        </div>
+          )}
 
-        {/* Right panel */}
-        <div className="col-span-5 flex flex-col gap-6">
-          {/* Trending subjects */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-outline-variant">
-            <h3 className="text-base font-bold text-on-surface mb-4 flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary text-[20px]">trending_up</span>
-              Xu hướng nhu cầu môn học
-            </h3>
-            <div className="space-y-3">
-              {AI_TRENDS.map(t => (
-                <div key={t.subject} className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-lg ${t.bg} flex items-center justify-center ${t.color}`}>
-                    <span className="material-symbols-outlined text-[18px]">{t.icon}</span>
+          <div className="grid grid-cols-12 gap-6">
+            {/* Anomaly feed */}
+            <div className="col-span-7 flex flex-col gap-4">
+              <h3 className="text-base font-bold text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-[20px]">psychology</span>
+                Bất thường phát hiện ({flags.length})
+              </h3>
+              {flags.length === 0 ? (
+                <div className="bg-white rounded-xl p-8 border border-outline-variant text-center">
+                  <span className="material-symbols-outlined text-[40px] text-emerald-500">check_circle</span>
+                  <p className="text-sm font-semibold text-gray-600 mt-2">Không phát hiện bất thường</p>
+                  <p className="text-xs text-gray-400 mt-1">Hệ thống hoạt động bình thường</p>
+                </div>
+              ) : flags.map((f, i) => (
+                <div key={i} className={`bg-white rounded-xl p-5 border ${f.border} shadow-sm flex items-start gap-4`}>
+                  <div className={`w-10 h-10 rounded-lg ${f.bg} flex items-center justify-center ${f.color} shrink-0`}>
+                    <span className="material-symbols-outlined text-[20px]">{f.icon}</span>
                   </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-on-surface">{t.subject}</p>
-                    <div className="w-full bg-gray-100 h-1.5 rounded-full mt-1 overflow-hidden">
-                      <div className={`h-full rounded-full ${t.growth.startsWith('+') ? 'bg-green-400' : 'bg-red-400'}`}
-                        style={{ width: `${Math.abs(parseInt(t.growth))}%` }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-sm font-bold text-on-surface">{f.type}</p>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${f.level === 'Cao' ? 'bg-red-100 text-red-700' : f.level === 'Trung bình' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {f.level}
+                      </span>
                     </div>
+                    <p className="text-xs text-on-surface-variant">{f.detail}</p>
                   </div>
-                  <span className={`text-sm font-bold ${t.growth.startsWith('+') ? 'text-green-600' : 'text-red-500'}`}>{t.growth}</span>
                 </div>
               ))}
             </div>
-          </div>
 
-          {/* Predictions */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-outline-variant">
-            <h3 className="text-base font-bold text-on-surface mb-4 flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary text-[20px]">auto_awesome</span>
-              Dự báo AI
-            </h3>
-            <div className="space-y-3">
-              {[
-                { text: 'Doanh thu dự kiến đạt $150k tháng tới', confidence: '87%', up: true },
-                { text: 'Thiếu gia sư CNTT dự kiến trong 3 tuần', confidence: '73%', up: false },
-                { text: 'Dự kiến 420 học sinh đăng ký mới tuần này', confidence: '91%', up: true },
-              ].map((p, i) => (
-                <div key={i} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-outline-variant">
-                  <span className={`material-symbols-outlined text-[18px] mt-0.5 ${p.up ? 'text-green-600' : 'text-amber-600'}`}>
-                    {p.up ? 'arrow_upward' : 'arrow_downward'}
-                  </span>
-                  <div className="flex-1">
-                    <p className="text-xs text-on-surface">{p.text}</p>
-                    <p className="text-xs text-on-surface-variant mt-0.5">Độ tin cậy: <strong className="text-primary">{p.confidence}</strong></p>
+            {/* Right panel */}
+            <div className="col-span-5 flex flex-col gap-6">
+              {/* Trending subjects */}
+              <div className="bg-white rounded-xl p-6 shadow-sm border border-outline-variant">
+                <h3 className="text-base font-bold text-on-surface mb-4 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-[20px]">trending_up</span>
+                  Xu hướng nhu cầu môn học
+                </h3>
+                {trends.length === 0 ? (
+                  <p className="text-xs text-gray-400">Chưa đủ dữ liệu xu hướng.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {trends.map(t => (
+                      <div key={t.subject} className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-lg ${t.bg} flex items-center justify-center ${t.color}`}>
+                          <span className="material-symbols-outlined text-[18px]">{t.icon}</span>
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-on-surface">{t.subject}</p>
+                          <div className="w-full bg-gray-100 h-1.5 rounded-full mt-1 overflow-hidden">
+                            <div className={`h-full rounded-full ${t.growth_pct >= 0 ? 'bg-green-400' : 'bg-red-400'}`}
+                              style={{ width: `${Math.min(100, Math.abs(t.growth_pct))}%` }} />
+                          </div>
+                        </div>
+                        <span className={`text-sm font-bold ${t.growth_pct >= 0 ? 'text-green-600' : 'text-red-500'}`}>{t.growth_label}</span>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              ))}
+                )}
+              </div>
+
+              {/* Predictions */}
+              <div className="bg-white rounded-xl p-6 shadow-sm border border-outline-variant">
+                <h3 className="text-base font-bold text-on-surface mb-4 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-[20px]">auto_awesome</span>
+                  Dự báo dựa trên dữ liệu
+                </h3>
+                {preds.length === 0 ? (
+                  <p className="text-xs text-gray-400">Chưa đủ dữ liệu dự báo.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {preds.map((p, i) => (
+                      <div key={i} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-outline-variant">
+                        <span className={`material-symbols-outlined text-[18px] mt-0.5 ${p.up ? 'text-green-600' : 'text-amber-600'}`}>
+                          {p.up ? 'arrow_upward' : 'arrow_downward'}
+                        </span>
+                        <div className="flex-1">
+                          <p className="text-xs text-on-surface">{p.text}</p>
+                          <p className="text-xs text-on-surface-variant mt-0.5">Độ tin cậy: <strong className="text-primary">{p.confidence}</strong></p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   )
 }

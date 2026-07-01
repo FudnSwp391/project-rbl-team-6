@@ -2130,6 +2130,476 @@ app.get("/api/admin/system-wallet", verifyToken, requireAdmin, async (req, res) 
   }
 });
 
+// ── GET /api/admin/ai-insights ───────────────────────────────────────────────
+// CAP-5.1: Rule-based insight cards — no external AI API.
+// Signals from: disputes, login_logs, transactions, tutor_profiles,
+// course_enrollments, courses, bookings, reviews.
+app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const SUBJ_META = {
+      'Toán học':  { icon: 'calculate',   color: 'text-blue-700',   bg: 'bg-blue-50' },
+      'Sinh học':  { icon: 'biotech',     color: 'text-green-700',  bg: 'bg-green-50' },
+      'Ngữ văn':   { icon: 'edit_note',   color: 'text-purple-700', bg: 'bg-purple-50' },
+      'Vật lí':    { icon: 'bolt',        color: 'text-amber-700',  bg: 'bg-amber-50' },
+      'Vật lý':    { icon: 'bolt',        color: 'text-amber-700',  bg: 'bg-amber-50' },
+      'Tiếng Anh': { icon: 'translate',   color: 'text-cyan-700',   bg: 'bg-cyan-50' },
+      'Hóa học':   { icon: 'science',     color: 'text-violet-700', bg: 'bg-violet-50' },
+      'Lịch sử':   { icon: 'history_edu', color: 'text-rose-700',   bg: 'bg-rose-50' },
+      'Địa lý':    { icon: 'public',      color: 'text-teal-700',   bg: 'bg-teal-50' },
+      'Tin học':   { icon: 'code',        color: 'text-cyan-700',   bg: 'bg-cyan-50' },
+      'General':   { icon: 'school',      color: 'text-gray-700',   bg: 'bg-gray-50' },
+      'Math':      { icon: 'calculate',   color: 'text-blue-700',   bg: 'bg-blue-50' },
+      'Toán':      { icon: 'calculate',   color: 'text-blue-700',   bg: 'bg-blue-50' },
+    };
+    const DEFAULT_SUBJ = { icon: 'school', color: 'text-gray-700', bg: 'bg-gray-50' };
+
+    const [revRes, dispStudentRes, dispTutorRes, pendingRes, zeroRes,
+           subjEnrollRes, bookSubjRes, enrollRes] = await Promise.all([
+      // Revenue this month vs last month
+      pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE created_at >= DATE_TRUNC('month',NOW())
+            AND type='DEPOSIT' AND status='SUCCESS'), 0)::numeric AS this_month,
+          COALESCE(SUM(amount) FILTER (WHERE created_at >= DATE_TRUNC('month',NOW()) - INTERVAL '1 month'
+            AND created_at < DATE_TRUNC('month',NOW()) AND type='DEPOSIT' AND status='SUCCESS'), 0)::numeric AS last_month
+        FROM transactions`),
+      // Students with 2+ disputes
+      pool.query(`
+        SELECT u.full_name, u.email, COUNT(d.id)::int AS n
+        FROM disputes d JOIN users u ON u.id = d.raised_by
+        GROUP BY u.id, u.full_name, u.email HAVING COUNT(d.id) >= 2`),
+      // Tutors with disputes
+      pool.query(`
+        SELECT u.full_name, u.email, COUNT(d.id)::int AS n
+        FROM disputes d JOIN users u ON u.id = d.tutor_id
+        WHERE d.tutor_id IS NOT NULL
+        GROUP BY u.id, u.full_name, u.email ORDER BY n DESC LIMIT 3`),
+      // Pending tutor applications
+      pool.query(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status = 'pending'`),
+      // Courses with 0 enrollments
+      pool.query(`
+        SELECT c.title, c.subject FROM courses c
+        WHERE NOT EXISTS (SELECT 1 FROM course_enrollments ce WHERE ce.course_id = c.id)
+        LIMIT 5`),
+      // Subject enrollment trends (this month vs last)
+      pool.query(`
+        SELECT * FROM (
+          SELECT c.subject,
+            COUNT(*) FILTER (WHERE ce.created_at >= DATE_TRUNC('month',NOW()))::int AS this_month,
+            COUNT(*) FILTER (WHERE ce.created_at >= DATE_TRUNC('month',NOW()) - INTERVAL '1 month'
+              AND ce.created_at < DATE_TRUNC('month',NOW()))::int AS last_month,
+            COUNT(*)::int AS total
+          FROM course_enrollments ce JOIN courses c ON c.id = ce.course_id
+          WHERE c.subject IS NOT NULL AND c.subject <> ''
+          GROUP BY c.subject
+        ) sub ORDER BY total DESC LIMIT 8`),
+      // Booking subject trends
+      pool.query(`
+        SELECT * FROM (
+          SELECT subject,
+            COUNT(*) FILTER (WHERE created_at >= DATE_TRUNC('month',NOW()))::int AS this_month,
+            COUNT(*) FILTER (WHERE created_at >= DATE_TRUNC('month',NOW()) - INTERVAL '1 month'
+              AND created_at < DATE_TRUNC('month',NOW()))::int AS last_month,
+            COUNT(*)::int AS total
+          FROM bookings WHERE subject IS NOT NULL AND subject <> ''
+          GROUP BY subject
+        ) sub ORDER BY total DESC LIMIT 8`),
+      // Enrollment trend this week vs last
+      pool.query(`
+        SELECT COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS this_week,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '14 days'
+            AND created_at < NOW() - INTERVAL '7 days')::int AS last_week
+        FROM course_enrollments`),
+    ]);
+
+    // ── Anomaly flags ──
+    const flags = [];
+    const thisRev = Math.round(Number(revRes.rows[0].this_month));
+    const lastRev = Math.round(Number(revRes.rows[0].last_month));
+
+    if (lastRev > 0 && thisRev < lastRev * 0.5) {
+      const pct = Math.round(((thisRev - lastRev) / lastRev) * 100);
+      flags.push({
+        type: 'Doanh thu giảm mạnh',
+        detail: `Doanh thu tháng này ${thisRev.toLocaleString('vi-VN')}đ, giảm ${Math.abs(pct)}% so với tháng trước (${lastRev.toLocaleString('vi-VN')}đ).`,
+        level: 'Cao', icon: 'trending_down',
+        color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200',
+      });
+    }
+
+    if (dispStudentRes.rows.length > 0) {
+      const names = dispStudentRes.rows.map(r => `${r.full_name || r.email} (${r.n} tranh chấp)`).join(', ');
+      flags.push({
+        type: 'Học sinh nhiều tranh chấp',
+        detail: `Phát hiện ${dispStudentRes.rows.length} học sinh có từ 2 tranh chấp: ${names}.`,
+        level: 'Cao', icon: 'report_problem',
+        color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200',
+      });
+    }
+
+    if (dispTutorRes.rows.length > 0) {
+      const r = dispTutorRes.rows[0];
+      flags.push({
+        type: 'Gia sư có khiếu nại',
+        detail: `${dispTutorRes.rows.length} gia sư bị khiếu nại. Cao nhất: ${r.full_name || r.email} (${r.n} tranh chấp).`,
+        level: 'Trung bình', icon: 'person_alert',
+        color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200',
+      });
+    }
+
+    const pendingN = pendingRes.rows[0].n;
+    if (pendingN >= 5) {
+      flags.push({
+        type: 'Hồ sơ gia sư chờ duyệt',
+        detail: `${pendingN} hồ sơ gia sư đang chờ xét duyệt. Xử lý để tránh tồn đọng.`,
+        level: 'Trung bình', icon: 'pending_actions',
+        color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200',
+      });
+    }
+
+    if (zeroRes.rows.length > 0) {
+      const titles = zeroRes.rows.slice(0, 3).map(r => r.title).join(', ');
+      flags.push({
+        type: 'Khóa học chưa có học viên',
+        detail: `${zeroRes.rows.length} khóa học chưa có lượt đăng ký: ${titles}…`,
+        level: 'Thấp', icon: 'school',
+        color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200',
+      });
+    }
+
+    // ── Subject trends ──
+    const subjMap = {};
+    for (const r of subjEnrollRes.rows) {
+      subjMap[r.subject] = { this_month: r.this_month, last_month: r.last_month, total: r.total };
+    }
+    for (const r of bookSubjRes.rows) {
+      if (subjMap[r.subject]) {
+        subjMap[r.subject].this_month += r.this_month;
+        subjMap[r.subject].last_month += r.last_month;
+        subjMap[r.subject].total      += r.total;
+      } else {
+        subjMap[r.subject] = { this_month: r.this_month, last_month: r.last_month, total: r.total };
+      }
+    }
+
+    const subject_trends = Object.entries(subjMap)
+      .map(([subject, d]) => {
+        let growth_pct, growth_label;
+        if (d.last_month === 0 && d.this_month > 0) {
+          growth_pct = 100; growth_label = 'Mới';
+        } else if (d.last_month > 0) {
+          growth_pct = Math.round(((d.this_month - d.last_month) / d.last_month) * 100);
+          growth_label = (growth_pct >= 0 ? '+' : '') + growth_pct + '%';
+        } else {
+          growth_pct = 0; growth_label = 'Ổn định';
+        }
+        return { subject, growth_pct, growth_label, total: d.total, ...(SUBJ_META[subject] || DEFAULT_SUBJ) };
+      })
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 6);
+
+    // ── Predictions ──
+    const predictions = [];
+    const enrollThisWeek = enrollRes.rows[0].this_week;
+    const enrollLastWeek = enrollRes.rows[0].last_week;
+
+    if (lastRev > 0) {
+      const up = thisRev >= lastRev * 0.9;
+      predictions.push({
+        text: up
+          ? `Doanh thu tháng này đang tăng trưởng tốt (${thisRev.toLocaleString('vi-VN')}đ)`
+          : `Doanh thu tháng này thấp hơn tháng trước — cần theo dõi thêm`,
+        confidence: '78%', up,
+      });
+    }
+
+    if (enrollThisWeek > 0) {
+      const up = enrollThisWeek >= enrollLastWeek;
+      predictions.push({
+        text: enrollThisWeek > enrollLastWeek
+          ? `Đăng ký khóa học tăng ${enrollThisWeek - enrollLastWeek} lượt so với tuần trước`
+          : `${enrollThisWeek} đăng ký khóa học mới trong tuần này`,
+        confidence: '82%', up,
+      });
+    }
+
+    if (pendingN > 0) {
+      predictions.push({
+        text: `${pendingN} gia sư chờ phê duyệt — có thể tăng nguồn cung gia sư sớm`,
+        confidence: '95%', up: true,
+      });
+    }
+
+    const highCount   = flags.filter(f => f.level === 'Cao').length;
+    const mediumCount = flags.filter(f => f.level === 'Trung bình').length;
+    const lowCount    = flags.filter(f => f.level === 'Thấp').length;
+
+    return res.json({
+      flags, subject_trends, predictions,
+      summary: { high_count: highCount, medium_count: mediumCount, low_count: lowCount },
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/ai-insights error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo AI Insights." });
+  }
+});
+
+// ── GET /api/admin/commissions ───────────────────────────────────────────────
+// CAP-7.1: Read-only commission/revenue breakdown from PAYMENT transactions.
+// No commission table exists; uses a fixed 10% estimated rate (clearly labelled).
+// No tutor link available (reference_id mostly null). Course title from description.
+const COMMISSION_RATE = 10; // estimated fixed rate, no DB commission table
+
+function extractCourseTitle(desc) {
+  if (!desc) return null;
+  const m = desc.match(/khóa học[:\s]+(.+)$/i);
+  return m ? m[1].trim() : null;
+}
+
+function paymentSource(desc) {
+  if (!desc) return 'payment';
+  if (/đặt lịch/i.test(desc)) return 'lesson';
+  if (/khóa học/i.test(desc)) return 'course';
+  return 'payment';
+}
+
+app.get("/api/admin/commissions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.id::text            AS id,
+             t.id::text            AS transaction_id,
+             ABS(t.amount)::numeric AS gross_amount,
+             t.status,
+             t.description,
+             t.created_at,
+             u.full_name           AS student_name,
+             u.email               AS student_email
+      FROM transactions t
+      JOIN wallets w ON w.id = t.wallet_id
+      JOIN users u   ON u.id = w.user_id
+      WHERE t.type = 'PAYMENT'
+      ORDER BY t.created_at DESC
+      LIMIT 100
+    `);
+
+    const rows = result.rows;
+    let totalGross = 0;
+    const commissions = rows.map(r => {
+      const gross = Number(r.gross_amount);
+      totalGross += gross;
+      const commission = Math.round(gross * COMMISSION_RATE / 100);
+      return {
+        id:                  r.id,
+        transaction_id:      r.transaction_id,
+        source:              paymentSource(r.description),
+        student_name:        r.student_name,
+        student_email:       r.student_email,
+        tutor_name:          null,
+        tutor_email:         null,
+        course_title:        extractCourseTitle(r.description) || r.description || null,
+        gross_amount:        gross,
+        platform_commission: commission,
+        tutor_earning:       gross - commission,
+        commission_rate:     COMMISSION_RATE,
+        status:              r.status,
+        created_at:          r.created_at,
+      };
+    });
+
+    return res.json({
+      summary: {
+        total_gross_revenue:            totalGross,
+        estimated_platform_commission:  Math.round(totalGross * COMMISSION_RATE / 100),
+        estimated_tutor_earnings:       Math.round(totalGross * (100 - COMMISSION_RATE) / 100),
+        commission_rate:                COMMISSION_RATE,
+        total_payment_count:            rows.length,
+        generated_at:                   new Date().toISOString(),
+      },
+      commissions,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/commissions error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu hoa hồng." });
+  }
+});
+
+// ── GET /api/admin/promotion-transactions ─────────────────────────────────────
+// CAP-7.2: Read-only promotion/coupon data.
+// coupons table has 4 active coupons; no usage table exists.
+// Discount usage is inferred from transaction descriptions containing "giảm".
+function extractDiscountFromDesc(desc) {
+  if (!desc) return 0;
+  const m = desc.match(/giảm\s+([\d,]+)/i);
+  if (!m) return 0;
+  return parseInt(m[1].replace(/,/g, ''), 10) || 0;
+}
+
+app.get("/api/admin/promotion-transactions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [couponRes, discountTxRes] = await Promise.all([
+      pool.query(`
+        SELECT id::text, code, description AS name, discount_type AS type,
+               discount_value::numeric AS value, max_discount::numeric,
+               min_order::numeric, active, expires_at, created_at
+        FROM coupons
+        ORDER BY created_at
+      `),
+      pool.query(`
+        SELECT t.id::text, t.amount::numeric, t.description, t.status, t.created_at,
+               u.full_name AS user_name, u.email AS user_email
+        FROM transactions t
+        JOIN wallets w ON w.id = t.wallet_id
+        JOIN users u   ON u.id = w.user_id
+        WHERE t.type = 'PAYMENT'
+          AND t.description ILIKE '%giảm%'
+        ORDER BY t.created_at DESC
+      `),
+    ]);
+
+    const promotions = couponRes.rows.map(c => ({
+      id:          c.id,
+      code:        c.code,
+      name:        c.name,
+      type:        c.type,
+      value:       Number(c.value),
+      max_discount: c.max_discount ? Number(c.max_discount) : null,
+      min_order:   c.min_order ? Number(c.min_order) : 0,
+      usage_count: 0,
+      active:      c.active,
+      expires_at:  c.expires_at,
+    }));
+
+    let totalDiscount = 0;
+    const transactions = discountTxRes.rows.map(r => {
+      const discount = extractDiscountFromDesc(r.description);
+      const final    = Math.abs(Number(r.amount));
+      const original = final + discount;
+      totalDiscount += discount;
+      return {
+        id:               r.id,
+        promotion_code:   null,
+        promotion_name:   r.description || 'Khuyến mãi',
+        user_name:        r.user_name,
+        user_email:       r.user_email,
+        transaction_id:   r.id,
+        original_amount:  original,
+        discount_amount:  discount,
+        final_amount:     final,
+        status:           r.status,
+        used_at:          r.created_at,
+      };
+    });
+
+    return res.json({
+      summary: {
+        total_promotions:     promotions.length,
+        total_usage:          transactions.length,
+        total_discount_amount: totalDiscount,
+        active_promotions:    promotions.filter(p => p.active).length,
+        generated_at:         new Date().toISOString(),
+      },
+      transactions,
+      promotions,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/promotion-transactions error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu khuyến mãi." });
+  }
+});
+
+// ── GET /api/admin/violations ────────────────────────────────────────────────
+// CAP-6.1: Read-only list of disputes as violation reports.
+// Source: disputes JOIN users (raised_by=reporter, tutor_id=accused). No mutations.
+app.get("/api/admin/violations", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT d.id::text,
+             d.reason,
+             d.status,
+             d.severity,
+             d.target_type,
+             d.created_at,
+             d.admin_note,
+             reporter.full_name  AS reporter_name,
+             reporter.email      AS reporter_email,
+             accused.full_name   AS accused_name,
+             accused.email       AS accused_email
+      FROM disputes d
+      LEFT JOIN users reporter ON reporter.id = d.raised_by
+      LEFT JOIN users accused  ON accused.id  = d.tutor_id
+      ORDER BY d.created_at DESC
+    `);
+    const violations = result.rows;
+    const byStatus = {};
+    violations.forEach(v => { byStatus[v.status] = (byStatus[v.status] || 0) + 1; });
+    const bySeverity = {};
+    violations.forEach(v => { if (v.severity) bySeverity[v.severity] = (bySeverity[v.severity] || 0) + 1; });
+    return res.json({
+      violations,
+      total: violations.length,
+      by_status: byStatus,
+      by_severity: bySeverity,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/violations error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách vi phạm." });
+  }
+});
+
+// ── GET /api/admin/ai-moderation ─────────────────────────────────────────────
+// CAP-6.2: Rule-based content moderation signals — no external AI.
+// Sources: tutor_profiles (pending), courses (missing description), reviews (stats).
+app.get("/api/admin/ai-moderation", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [pendingRes, coursesRes, reviewRes] = await Promise.all([
+      pool.query(`
+        SELECT tp.id::text, u.full_name, u.email, tp.status,
+               tp.bio, tp.headline, tp.subjects, tp.avg_rating::numeric,
+               tp.review_count, tp.created_at
+        FROM tutor_profiles tp
+        JOIN users u ON u.id = tp.user_id
+        WHERE tp.status = 'pending'
+        ORDER BY tp.created_at DESC
+        LIMIT 20
+      `),
+      pool.query(`
+        SELECT c.id::text, c.title, c.subject, c.status, c.created_at,
+               u.full_name AS tutor_name, u.email AS tutor_email
+        FROM courses c
+        LEFT JOIN users u ON u.id = c.tutor_id
+        WHERE c.description IS NULL OR c.description = ''
+        ORDER BY c.created_at DESC
+        LIMIT 20
+      `),
+      pool.query(`
+        SELECT COUNT(*)::int                                          AS total,
+               ROUND(AVG(rating)::numeric, 2)                        AS avg_rating,
+               COUNT(*) FILTER (WHERE rating <= 2)::int              AS low_rating_count,
+               COUNT(*) FILTER (WHERE is_visible = false)::int       AS hidden_count
+        FROM reviews
+      `),
+    ]);
+    const pending_profiles  = pendingRes.rows;
+    const incomplete_courses = coursesRes.rows;
+    const review_stats      = reviewRes.rows[0];
+    return res.json({
+      pending_profiles,
+      incomplete_courses,
+      review_stats,
+      summary: {
+        items_needing_review:     pending_profiles.length + incomplete_courses.length,
+        pending_tutor_count:      pending_profiles.length,
+        incomplete_course_count:  incomplete_courses.length,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/ai-moderation error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu kiểm duyệt." });
+  }
+});
+
 // ── GET /api/admin/audit-logs ────────────────────────────────────────────────
 // CAP-4.1: Auth audit trail from login_logs (174+ rows, is_suspicious flag).
 // No dedicated admin audit table exists; login_logs is the closest real source.
