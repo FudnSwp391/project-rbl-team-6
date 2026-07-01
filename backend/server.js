@@ -2346,6 +2346,97 @@ app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) =>
   }
 });
 
+// ── GET /api/admin/violations ────────────────────────────────────────────────
+// CAP-6.1: Read-only list of disputes as violation reports.
+// Source: disputes JOIN users (raised_by=reporter, tutor_id=accused). No mutations.
+app.get("/api/admin/violations", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT d.id::text,
+             d.reason,
+             d.status,
+             d.severity,
+             d.target_type,
+             d.created_at,
+             d.admin_note,
+             reporter.full_name  AS reporter_name,
+             reporter.email      AS reporter_email,
+             accused.full_name   AS accused_name,
+             accused.email       AS accused_email
+      FROM disputes d
+      LEFT JOIN users reporter ON reporter.id = d.raised_by
+      LEFT JOIN users accused  ON accused.id  = d.tutor_id
+      ORDER BY d.created_at DESC
+    `);
+    const violations = result.rows;
+    const byStatus = {};
+    violations.forEach(v => { byStatus[v.status] = (byStatus[v.status] || 0) + 1; });
+    const bySeverity = {};
+    violations.forEach(v => { if (v.severity) bySeverity[v.severity] = (bySeverity[v.severity] || 0) + 1; });
+    return res.json({
+      violations,
+      total: violations.length,
+      by_status: byStatus,
+      by_severity: bySeverity,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/violations error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách vi phạm." });
+  }
+});
+
+// ── GET /api/admin/ai-moderation ─────────────────────────────────────────────
+// CAP-6.2: Rule-based content moderation signals — no external AI.
+// Sources: tutor_profiles (pending), courses (missing description), reviews (stats).
+app.get("/api/admin/ai-moderation", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [pendingRes, coursesRes, reviewRes] = await Promise.all([
+      pool.query(`
+        SELECT tp.id::text, u.full_name, u.email, tp.status,
+               tp.bio, tp.headline, tp.subjects, tp.avg_rating::numeric,
+               tp.review_count, tp.created_at
+        FROM tutor_profiles tp
+        JOIN users u ON u.id = tp.user_id
+        WHERE tp.status = 'pending'
+        ORDER BY tp.created_at DESC
+        LIMIT 20
+      `),
+      pool.query(`
+        SELECT c.id::text, c.title, c.subject, c.status, c.created_at,
+               u.full_name AS tutor_name, u.email AS tutor_email
+        FROM courses c
+        LEFT JOIN users u ON u.id = c.tutor_id
+        WHERE c.description IS NULL OR c.description = ''
+        ORDER BY c.created_at DESC
+        LIMIT 20
+      `),
+      pool.query(`
+        SELECT COUNT(*)::int                                          AS total,
+               ROUND(AVG(rating)::numeric, 2)                        AS avg_rating,
+               COUNT(*) FILTER (WHERE rating <= 2)::int              AS low_rating_count,
+               COUNT(*) FILTER (WHERE is_visible = false)::int       AS hidden_count
+        FROM reviews
+      `),
+    ]);
+    const pending_profiles  = pendingRes.rows;
+    const incomplete_courses = coursesRes.rows;
+    const review_stats      = reviewRes.rows[0];
+    return res.json({
+      pending_profiles,
+      incomplete_courses,
+      review_stats,
+      summary: {
+        items_needing_review:     pending_profiles.length + incomplete_courses.length,
+        pending_tutor_count:      pending_profiles.length,
+        incomplete_course_count:  incomplete_courses.length,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/ai-moderation error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu kiểm duyệt." });
+  }
+});
+
 // ── GET /api/admin/audit-logs ────────────────────────────────────────────────
 // CAP-4.1: Auth audit trail from login_logs (174+ rows, is_suspicious flag).
 // No dedicated admin audit table exists; login_logs is the closest real source.

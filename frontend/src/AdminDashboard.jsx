@@ -22,10 +22,11 @@ import NotificationCenter    from './admin/transactions/NotificationCenter'
 import AuditLogs             from './admin/transactions/AuditLogs'
 
 import { DISPUTES } from './admin/transactions/mockData'
-import { COMPLAINTS, REPORTED_REVIEWS, VIOLATIONS } from './admin/services/mockData'
+import { COMPLAINTS, REPORTED_REVIEWS } from './admin/services/mockData'
 import Complaints from './admin/services/Complaints'
 import Reviews from './admin/services/Reviews'
 import Violations from './admin/services/Violations'
+import Moderation from './admin/services/Moderation'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -104,7 +105,6 @@ export default function AdminDashboard() {
   const [globalDisputes, setGlobalDisputes] = useState(DISPUTES)
   const [globalComplaints, setGlobalComplaints] = useState(COMPLAINTS)
   const [globalReviews, setGlobalReviews] = useState(REPORTED_REVIEWS)
-  const [globalViolations, setGlobalViolations] = useState(VIOLATIONS)
 
   const handleAddDispute = (dispute) => setGlobalDisputes(prev => [dispute, ...prev])
   const handleUpdateComplaint = (id, updates) => setGlobalComplaints(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c))
@@ -478,14 +478,8 @@ export default function AdminDashboard() {
           {/* ── Service Management Module ── */}
           {activeView === 'sm-complaints'    && <ComplaintsView token={token} />}
           {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
-          {activeView === 'sm-violations'    && <Violations violations={globalViolations} />}
-          {activeView === 'sm-moderation'    && (
-            <div className="p-8 max-w-[1400px] mx-auto text-center mt-20">
-              <span className="material-symbols-outlined text-gray-300" style={{fontSize: '80px'}}>policy</span>
-              <h2 className="text-2xl font-bold text-gray-900 mt-4">Kiểm duyệt nội dung</h2>
-              <p className="text-gray-500 mt-2">Tính năng đang trong quá trình phát triển.</p>
-            </div>
-          )}
+          {activeView === 'sm-violations'    && <Violations token={token} />}
+          {activeView === 'sm-moderation'    && <Moderation token={token} />}
 
           {activeView === 'reports'          && <ReportsView />}
           {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
