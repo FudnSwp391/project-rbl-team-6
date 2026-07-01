@@ -1,0 +1,2165 @@
+t  }\n586\t\n587\t  // ── Route: Parent Dashboard ──\n588\t  if (routeName === 'parent') {\n589\t    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />\n590\t    return <ParentDashboard />\n591\t  }\n592\t\n593\t  // ── Route: Quiz Taking (formal quiz) ──\n594\t  if (routeName === 'quiz') {\n595\t    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />\n596\t    return <QuizTaking quizId={route.id} token={token} isPractice={false} />\n597\t  }\n598\t\n599\t  // ── Route: Practice Quiz Taking ──\n600\t  if (routeName === 'practice-quiz') {\n601\t    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />\n602\t    return <QuizTaking\n603\t      isPractice={true}\n604\t      practiceSessionId={route.id}\n605\t      token={token}\n606\t    />\n607\t  }\n608\t\n609\t  // ── Route: Quiz Result (formal) ──\n610\t  if (routeName === 'quiz-result') {\n611\t    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />\n612\t    return <QuizResult attemptId={route.id} token={token} isPractice={false} />\n613\t  }\n614\t\n615\t  // ── Route: Practice Result ──\n616\t  if (routeName === 'practice-result') {\n617\t    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />\n618\t    return <QuizResult isPractice={true} sessionId={route.id} token={token} />\n619\t  }\n620\t\n621\t  // ── Route: Exam Paper Taking ──\n622\t  if (routeName === 'exam-quiz') {\n623\t    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />\n624\t    return <QuizTaking\n625\t      isExamPaper={true}\n626\t      examPaperId={route.id}\n627\t      token={token}\n628\t    />\n629\t  }\n630\t\n631\t  // ── Route: Exam Paper Result ──\n632\t  if (routeName === 'exam-result') {\n633\t    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />\n634\t    return <QuizResult isExamPaper={true} attemptId={route.id} token={token} />\n635\t  }\n636\t\n637\t  // ── Route: Tutor Profile (protected) ──\n638\t  if (routeName === 'tutor-profile') {\n639\t    const hasPendingReg = !!sessionStorage.getItem('pendingTutorReg')\n640\t    // Cho phép truy cập nếu: đã đăng nhập (tutor cũ) HOẶC đang trong luồng đăng ký mới\n641\t    if (!user && !hasPendingReg) {\n642\t      return (\n643\t        <AccessDenied\n644\t          isLoggedIn={false}\n645\t          onGoSignIn={() => navigateTo('signin')}\n646\t        />\n647\t      )\n648\t    }\n649\t    return (\n650\t      <div className=\"bg-background min-h-screen flex flex-col\">\n651\t        <header className=\"bg-surface-container-lowest shadow-sm sticky top-0 z-50\">\n652\t          <div className=\"flex justify-between items-center w-full px-6 md:px-10 max-w-[1280px] mx-auto h-16\">\n653\t            <div className=\"font-bold text-2xl text-primary tracking-tight\">EduX</div>\n654\t            {user && !hasPendingReg && (\n655\t              <button\n656\t                onClick={() => window.location.hash = '/tutor'}\n657\t                className=\"text-on-surface-variant font-semibold text-sm hover:bg-surface-container px-3 py-2 rounded-lg transition-all duration-200\"\n658\t              >\n659\t                ← Quay Lại Bảng Điều Khiển\n660\t              </button>\n661\t            )}\n662\t          </div>\n663\t        </header>\n664\t        <TutorProfileForm />\n665\t        <footer className=\"bg-surface-container-lowest border-t border-outline-variant mt-auto\">\n666\t          <div className=\"w-full py-6 px-10 flex flex-col md:flex-row justify-between items-center max-w-[1280px] mx-auto gap-4\">\n667\t            <span className=\"text-xs text-on-secondary-container\">© 2024 EduX. Hỗ Trợ Học Thuật Chuyên Nghiệp.</span>\n668\t            <div className=\"flex gap-6\">\n669\t              <a className=\"text-xs text-on-secondary-container hover:text-primary transition-colors\" href=\"#\">Hỗ Trợ</a>\n670\t              <a className=\"text-xs text-on-secondary-container hover:text-primary transition-colors\" href=\"#\">Chính Sách Bảo Mật</a>\n671\t              <a className=\"text-xs text-on-secondary-container hover:text-primary transition-colors\" href=\"#\">Liên Hệ</a>\n672\t            </div>\n673\t          </div>\n674\t        </footer>\n675\t      </div>\n676\t    )\n677\t  }\n678\t\n679\t  // ── Route: Public Pages ──\n680\t  if (routeName === 'find-tutors') {\n681\t    return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />\n682\t  }\n683\t  if (routeName === 'subjects') {\n684\t    return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />\n685\t  }\n686\t  if (routeName === 'become-tutor') {\n687\t    return <BecomeTutorPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />\n688\t  }\n689\t\n690\t  // ── Route: Tutor Detail Page ──\n691\t  if (routeName === 'tutor-detail') {\n692\t    return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />\n693\t  }\n694\t\n695\t  // ── Route: My Courses (protected) ──\n696\t  if (routeName === 'mycourses') {\n697\t    if (!user) {\n698\t      return (\n699\t        <AccessDenied"
+    }
+  ]
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_013Gyi7vmAN4McUUTAvvCY6t",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "Now I have the full picture. The plan is:\n\n1. **Update `getRouteFromHash()`** in App.jsx to handle `/tutor/:id` → `{ name: 'tutor-view', id: ... }`\n2. **Create `frontend/src/pages/TutorProfile.jsx`** with the new rich UI\n3. **Update App.jsx** to import and render TutorProfile\n4. **Update FindTutorsPage.jsx** \"Xem Hồ Sơ\" button to navigate to `#/tutor/${tutor.id}`\n5. **Fix the route matching** - the current router only checks for exact `/tutor-detail` match, but when we pass an ID like `/tutor-detail/1`, it won't match. I need to update the route handler to extract the ID from the path pattern.\n\n6. **Create the TutorDetailPage component** - this will display the tutor information based on the ID extracted from the route.\n7. **Update FindTutors** to navigate using the new `/tutor/:id` pattern.\n8. **Register the route** in App.jsx and import the new component.\n\nNow I'm designing the TutorProfile component to match the EduX style with the specific color palette: light background, white cards with subtle shadows, primary blue accent color, and appropriate text colors for hierarchy.\n\nThe layout needs a header with back navigation, a horizontal hero profile card displaying the tutor's key info, a trust stats grid showing 5 metrics, then a two-column layout with the left side containing detailed sections like introduction, teaching methodology, student fit, subjects, teaching experience timeline, credentials, teaching formats, availability schedule, student reviews, policies, and profile reporting, while the right side has a sticky booking card for easy access.\n\nI'll set up a data file with extended mock tutor information that builds on the existing FindTutors structure, then create the TutorProfile component to fetch the tutor by ID from that mock data and handle the \"not found\" case if needed. The backend likely has a GET endpoint for individual tutor details that I can integrate with later.\n\nWriting the TutorProfile component... Finishing the error handling and then rendering the page with loading and not-found states, displaying the tutor profile with left and right columns once data loads. Now I'm thinking about what mock data structure I need to set up.\n\nFor the tutor profile page, I need to include metrics like completed lessons, on-time and response rates, student count, plus extended information like teaching methods, suitable subjects, experience timeline, degrees, certificates, teaching formats, availability schedule, student reviews, verified badges, and pricing details.\n\nI'm thinking through the backend structure—the existing `/api/tutors` endpoint returns basic data, but I'll need to decide whether to fetch extended profile data from a dedicated endpoint or supplement with mock data for now. Since the requirements allow example data, I'll create a mock data file with the full profile structure rather than relying on potentially incomplete API responses.\n\nNow I'm planning the component implementation with specific constraints: using inline Tailwind classes without CSS modules, matching the TutorDetailPage styling patterns, incorporating Vietnamese text, and implementing the glass-card effect with box-shadow and backdrop-blur. I'll structure the data first, then build the component with responsive design in mind. I'll use the same approach as TutorDetailPage with an inline style tag for the custom shadow and prefixed class names for consistency. Now I'm planning out the mock data structure and building the complete TutorProfile component. I'll use the Vietnamese sample data as a template for the first tutor and keep the others simpler. I'm noticing the mock data uses string IDs like '1', '2', etc., while the backend might return UUIDs, so I'll handle both cases. Now I'm setting up the data file structure...\n\nWriting tutor profiles... Now I'm mapping out the component structure with fifteen main sections, starting with a fixed header and back navigation, then the hero card displaying the tutor's profile with badges and subjects. I'll include trust statistics, detailed sections for teaching methods and suitable student types, experience timeline, credentials and verification, available schedules, and student reviews, plus a sticky sidebar on the right with pricing, ratings, location, and booking options.\n\nWriting the component code... Looking at the tutor's profile details including their location in Da Nang, 8 years of experience, hourly rate of 180,000, and strong metrics like a 4.8 rating from 128 reviews across 245 completed lessons. ích cách học tập linh hoạt, phù hợp với nhu cầu cụ thể của từng học sinh, từ những em mất gốc cho đến những em muốn chinh phục các kỳ thi quan trọng hay tham gia các cuộc thi Olympic.\n\nTôi đang liệt kê các bằng cấp và chứng chỉ của giáo viên, bao gồm bằng cử nhân sư phạm toán, chứng chỉ nghiệp vụ sư phạm, và chứng chỉ luyện thi THPT Quốc gia, cùng với các hình thức dạy học khác nhau như online qua Google Meet hoặc Zoom, và dạy trực tiếp tại nhà. Writing schedule and review data... Defining verified badges and policies... Setting up the component state and effect hook to fetch tutor data from the API, falling back to mock data if needed, then scrolling to the top of the page when the component loads. It looks like the API has a `/api/tutors` endpoint for listing tutors with query parameters, but there might not be a dedicated `/api/tutors/:id` endpoint for fetching individual tutor details. I'll attempt to fetch from `/api/tutors/${tutorId}` on the TutorProfile page, and if that fails, I'll fall back to mock data as a safety measure. Writing component styles... I'll set up the mock data file with extended tutor information, create the TutorProfile component with routing, update the App to handle the new route pattern, and modify FindTutorsPage to link to individual tutor profiles. Let me also check if there's already a backend endpoint for fetching individual tutor data so I can use real data if available.",
+      "signature": "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"
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 3046,
+    "cache_read_input_tokens": 119554,
+    "output_tokens": 7751,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3046,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 7751,
+        "cache_read_input_tokens": 119554,
+        "cache_creation_input_tokens": 3046,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3046
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_013Gyi7vmAN4McUUTAvvCY6t",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Let me check the backend for a single tutor endpoint, then look at how App.jsx renders TutorDetailPage."
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 3046,
+    "cache_read_input_tokens": 119554,
+    "output_tokens": 7751,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3046,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 7751,
+        "cache_read_input_tokens": 119554,
+        "cache_creation_input_tokens": 3046,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3046
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_013Gyi7vmAN4McUUTAvvCY6t",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01NJnVHfLhHRBTpHKVSjUrUX",
+      "name": "Read",
+      "input": {
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\backend\\server.js",
+        "offset": 1930,
+        "limit": 60
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 3046,
+    "cache_read_input_tokens": 119554,
+    "output_tokens": 7751,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3046,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 7751,
+        "cache_read_input_tokens": 119554,
+        "cache_creation_input_tokens": 3046,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3046
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_01NJnVHfLhHRBTpHKVSjUrUX",
+      "type": "tool_result",
+      "content": "1930\t    return res.status(500).json({ message: \"Server error.\" });\n1931\t  }\n1932\t});\n1933\t\n1934\t// GET /api/parent/tutors\n1935\t// Returns all approved tutors with detailed profile\n1936\tapp.get(\"/api/parent/tutors\", verifyToken, async (req, res) => {\n1937\t  try {\n1938\t    const res2 = await pool.query(`\n1939\t      SELECT\n1940\t        u.id,\n1941\t        u.full_name,\n1942\t        u.email,\n1943\t        u.picture,\n1944\t        tp.subjects,\n1945\t        tp.hourly_rate,\n1946\t        tp.headline,\n1947\t        tp.bio,\n1948\t        tp.experience_years,\n1949\t        tp.location,\n1950\t        tp.teaching_style,\n1951\t        tp.status,\n1952\t        tp.created_at\n1953\t      FROM tutor_profiles tp\n1954\t      JOIN users u ON tp.user_id = u.id\n1955\t      WHERE tp.status = 'approved'\n1956\t      ORDER BY tp.created_at DESC\n1957\t    `);\n1958\t    return res.json({ tutors: res2.rows });\n1959\t  } catch (error) {\n1960\t    console.error(\"Parent tutors error:\", error);\n1961\t    return res.status(500).json({ message: \"Server error.\" });\n1962\t  }\n1963\t});\n1964\t\n1965\t// GET /api/parent/activity\n1966\t// Returns all quiz + practice + exam activity across all students\n1967\tapp.get(\"/api/parent/activity\", verifyToken, async (req, res) => {\n1968\t  try {\n1969\t    const quizRes = await pool.query(`\n1970\t      SELECT\n1971\t        'quiz' AS type,\n1972\t        qa.id,\n1973\t        qa.score,\n1974\t        qa.submitted_at AS timestamp,\n1975\t        u.full_name  AS student_name,\n1976\t        u.picture    AS student_picture,\n1977\t        q.title      AS title,\n1978\t        q.subject    AS subject,\n1979\t        q.total_questions\n1980\t      FROM quiz_attempts qa\n1981\t      JOIN users u ON qa.student_id=u.id\n1982\t      JOIN quizzes q ON qa.quiz_id=q.id\n1983\t      WHERE qa.status='submitted'\n1984\t      ORDER BY qa.submitted_at DESC\n1985\t      LIMIT 50\n1986\t    `);\n1987\t\n1988\t    const practiceRes = await pool.query(`\n1989\t      SELECT"
+    }
+  ]
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_013Gyi7vmAN4McUUTAvvCY6t",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_017xoMkH9Puu4pnB4pMyxadt",
+      "name": "Read",
+      "input": {
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\App.jsx",
+        "offset": 688,
+        "limit": 40
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 3046,
+    "cache_read_input_tokens": 119554,
+    "output_tokens": 7751,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3046,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 7751,
+        "cache_read_input_tokens": 119554,
+        "cache_creation_input_tokens": 3046,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3046
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_017xoMkH9Puu4pnB4pMyxadt",
+      "type": "tool_result",
+      "content": "688\t  }\n689\t\n690\t  // ── Route: Tutor Detail Page ──\n691\t  if (routeName === 'tutor-detail') {\n692\t    return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />\n693\t  }\n694\t\n695\t  // ── Route: My Courses (protected) ──\n696\t  if (routeName === 'mycourses') {\n697\t    if (!user) {\n698\t      return (\n699\t        <AccessDenied\n700\t          isLoggedIn={false}\n701\t          onGoSignIn={() => navigateTo('signin')}\n702\t        />\n703\t      )\n704\t    }\n705\t    return <MyCourses />\n706\t  }\n707\t\n708\t  // ── Route: Course Detail (protected) ──\n709\t  if (routeName === 'coursedetail') {\n710\t    if (!user) {\n711\t      return (\n712\t        <AccessDenied\n713\t          isLoggedIn={false}\n714\t          onGoSignIn={() => navigateTo('signin')}\n715\t        />\n716\t      )\n717\t    }\n718\t    return <CourseDetail />\n719\t  }\n720\t\n721\t  // ── Route: Home ──\n722\t  return <HomePage onGoSignIn={() => navigateTo('signin')} />\n723\t}\n724\t\n725\texport default App\n726\t\n727\t"
+    }
+  ]
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_014kqqccs2Zp6LwddBrjymke",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "Now I have all the information I need. Let me now implement everything:\n\n1. Create `frontend/src/data/tutors.js` - extended mock data\n2. Create `frontend/src/pages/TutorProfile.jsx` - the new page component\n3. Update `frontend/src/App.jsx`:\n   - Add `import TutorProfile from './pages/TutorProfile'`\n   - Add route pattern for `/tutor/:id`\n   - Add route handler\n4. Update `frontend/src/FindTutorsPage.jsx`:\n   - Change \"Xem Hồ Sơ\" button to use `#/tutor/${tutor.id}`\n5. Check the backend for available endpoints - I see there's `/api/tutors` for the list and `/api/parent/tutors` for approved tutors, plus what looks like an admin endpoint for individual profiles. I'll use `/api/tutors/${tutorId}` and handle cases where it might not exist.\n\nLooking at how FindTutorsPage fetches data from `/api/tutors?page=1&limit=12&sort=rating&search=...`, I could potentially search for a single tutor by name or check if there's a direct endpoint to fetch individual tutor profiles. For now, I'll build the TutorProfile page with mock data and note where the actual API integration should go.\n\nI'm going to create the mock tutor data file and the TutorProfile component itself, using a try/fetch pattern that falls back to mock data. I'll follow the project's styling conventions with the light background color, white cards with rounded corners and subtle shadows, and a fixed header.\n\nWriting the component... Setting up the data fetching logic to pull tutor information from the API with a fallback to mock data, then handling loading and error states before rendering the profile...\n\nNow I'm defining a helper function to format pricing based on the amount, showing Vietnamese dong for larger values and dollars otherwise, with a fallback to \"Thỏa thuận\" if no price is set. Then building out the main profile layout with a navbar, back navigation, and a two-column grid structure for the content.\n\nI'm noticing the reference design uses custom Tailwind tokens like `bg-tertiary-fixed` and `text-on-surface-variant`, and I should check if the EduX project's Tailwind config includes these tokens before deciding whether to use them or stick with arbitrary color values. I need to decide whether to create a separate `tutors.js` data file or keep the mock data inline in the component. The instructions suggest creating `frontend/src/data/tutors.js` with extended tutor data, so I'll go that route and import it into TutorProfile, potentially sharing it with FindTutors later if needed.\n\nNow I'm ready to start implementing: I'll create the TutorProfile component with the full page layout including navbar, hero card, stats, content sections, and a sticky sidebar, then update App.jsx to add the route and modify FindTutors to link to the new profile page. Writing the component structure...",
+      "signature": "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"
+    }
+  ],
+  "stop_reason": null,
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 8877,
+    "cache_read_input_tokens": 122600,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 8877
+    },
+    "output_tokens": 37,
+    "service_tier": "standard",
+    "inference_geo": "not_available"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_014kqqccs2Zp6LwddBrjymke",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Now I have everything I need. The project uses hash routing (not React Router), hex-based Tailwind classes, and TutorDetailPage.jsx is the current target of \"Xem Hồ Sơ\". Let me implement everything cleanly."
+    }
+  ],
+  "stop_reason": null,
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 8877,
+    "cache_read_input_tokens": 122600,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 8877
+    },
+    "output_tokens": 37,
+    "service_tier": "standard",
+    "inference_geo": "not_available"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "id": "150e2a6f-6840-46aa-8aa3-151798ae763d",
+  "container": null,
+  "model": "<synthetic>",
+  "role": "assistant",
+  "stop_details": null,
+  "stop_reason": "stop_sequence",
+  "stop_sequence": "",
+  "type": "message",
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": null,
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": null,
+    "iterations": null,
+    "speed": null
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "API Error: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+    }
+  ],
+  "context_management": null
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "text",
+      "text": "vẫn chưa thấy sau khi ấn xem hồ sơ"
+    }
+  ]
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01F4m8nfFKoDyi14ujPCtgfT",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "The user says they still don't see anything after clicking \"Xem Hồ Sơ\". This means the TutorProfile page hasn't been implemented yet - the previous message was cut off before I could write any code. Let me check the current state of the codebase to understand what needs to be done.\n\nLet me look at what's currently happening when clicking \"Xem Hồ Sơ\":\n1. In FindTutorsPage.jsx, the button navigates to `window.location.hash = '/tutor-detail/${tutor.id}'`\n2. \n\nI'm seeing the routing issue now - the route definition in App.jsx maps `/tutor-detail` to `TutorDetailPage` without capturing the ID parameter, so when the navigation tries to go to `/tutor-detail/1`, it doesn't match properly. I need to fix the route to accept an ID parameter, create the TutorProfile component with the rich content from the reference, and update the navigation in FindTutorsPage to point to the correct route.\n\nBuilding the TutorProfile component...",
+      "signature": "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"
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 3094,
+    "cache_read_input_tokens": 131477,
+    "output_tokens": 759,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3094,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 759,
+        "cache_read_input_tokens": 131477,
+        "cache_creation_input_tokens": 3094,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3094
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01F4m8nfFKoDyi14ujPCtgfT",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Let me check the current state first."
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 3094,
+    "cache_read_input_tokens": 131477,
+    "output_tokens": 759,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3094,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 759,
+        "cache_read_input_tokens": 131477,
+        "cache_creation_input_tokens": 3094,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3094
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01F4m8nfFKoDyi14ujPCtgfT",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_0187886GWZdrgroHvHHxXUTx",
+      "name": "Read",
+      "input": {
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\App.jsx",
+        "offset": 97,
+        "limit": 40
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 3094,
+    "cache_read_input_tokens": 131477,
+    "output_tokens": 759,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3094,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 759,
+        "cache_read_input_tokens": 131477,
+        "cache_creation_input_tokens": 3094,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3094
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_0187886GWZdrgroHvHHxXUTx",
+      "type": "tool_result",
+      "content": "97\t// ─── Helper: parse the hash to get the current route ─────────────────────────\n98\tconst getRouteFromHash = () => {\n99\t\n100\t  let normalized = window.location.hash.replace(/^#/, '') || '/'\n101\t  normalized = normalized.split('?')[0]\n102\t  if (normalized === '/signin')    return { name: 'signin' }\n103\t  if (normalized === '/signup')    return { name: 'signup' }\n104\t  if (normalized === '/admin')     return { name: 'admin' }\n105\t  if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }\n106\t  if (normalized === '/tutor')     return { name: 'tutor' }\n107\t  if (normalized === '/tutor-profile') return { name: 'tutor-profile' }\n108\t  if (normalized === '/tutor-detail') return { name: 'tutor-detail' }\n109\t  if (normalized === '/parent')    return { name: 'parent' }\n110\t  if (normalized === '/find-tutors') return { name: 'find-tutors' }\n111\t  if (normalized === '/subjects')  return { name: 'subjects' }\n112\t  if (normalized === '/become-tutor') return { name: 'become-tutor' }\n113\t  if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }\n114\t  if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }\n115\t\n116\t  const quizMatch = normalized.match(/^\\/quiz\\/([^/]+)$/)\n117\t  if (quizMatch) return { name: 'quiz', id: quizMatch[1] }\n118\t\n119\t  const resultMatch = normalized.match(/^\\/quiz-result\\/([^/]+)$/)\n120\t  if (resultMatch) return { name: 'quiz-result', id: resultMatch[1] }\n121\t\n122\t  const practiceQuizMatch = normalized.match(/^\\/practice-quiz\\/([^/]+)$/)\n123\t  if (practiceQuizMatch) return { name: 'practice-quiz', id: practiceQuizMatch[1] }\n124\t\n125\t  const practiceResultMatch = normalized.match(/^\\/practice-result\\/([^/]+)$/)\n126\t  if (practiceResultMatch) return { name: 'practice-result', id: practiceResultMatch[1] }\n127\t\n128\t  const examMatch = normalized.match(/^\\/exam-quiz\\/([^/]+)$/)\n129\t  if (examMatch) return { name: 'exam-quiz', id: examMatch[1] }\n130\t\n131\t  const examResultMatch = normalized.match(/^\\/exam-result\\/([^/]+)$/)\n132\t  if (examResultMatch) return { name: 'exam-result', id: examResultMatch[1] }\n133\t\n134\t  return { name: 'home' }\n135\t}\n136\t"
+    }
+  ]
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01F4m8nfFKoDyi14ujPCtgfT",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01Fq3Wb6XkwHidJWUuyZTTWV",
+      "name": "Read",
+      "input": {
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\FindTutorsPage.jsx",
+        "offset": 110,
+        "limit": 15
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 3094,
+    "cache_read_input_tokens": 131477,
+    "output_tokens": 759,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3094,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 759,
+        "cache_read_input_tokens": 131477,
+        "cache_creation_input_tokens": 3094,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3094
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_01Fq3Wb6XkwHidJWUuyZTTWV",
+      "type": "tool_result",
+      "content": "110\t            {fmtPrice(tutor.hourly_rate)}\n111\t            <span className=\"text-xs font-normal text-[#5d5f5f]\">/giờ</span>\n112\t          </span>\n113\t          <button\n114\t            onClick={() => window.location.hash = `/tutor-detail/${tutor.id}`}\n115\t            className=\"px-5 py-2 border border-[#00288e] text-[#00288e] hover:bg-[#00288e] hover:text-white rounded-lg text-sm font-semibold transition-all\"\n116\t          >\n117\t            Xem Hồ Sơ\n118\t          </button>\n119\t        </div>\n120\t      </div>\n121\t    </div>\n122\t  );\n123\t}\n124\t"
+    }
+  ]
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01WdAT8hjXxi71ZtnUUzeidE",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "I can see the problem clearly now:\n\n1. In FindTutorsPage.jsx, clicking \"Xem Hồ Sơ\" sets `window.location.hash = '/tutor-detail/${tutor.id}'` → hash becomes `#/tutor-detail/1`\n2. In App.jsx, the router checks `if (normalized === '/tutor-detail')` - this requires EXACT match, but `/tutor-detail/1` != `/tutor-detail`\n3. So the router falls through to `return { name: 'home' }` → shows the home page\n\nThe fix is to:\n1. Update the router to handle the `/tutor/:id` pattern and extract the ID\n2. Create a new TutorProfile component based on the HTML reference\n3. Update FindTutorsPage to use the correct hash format\n4. Wire everything together in App.jsx\n\nLet me start implementing these changes now.",
+      "signature": "Ep4KCmUIDhgCKkChtWgK2jbEte/UYE5aV5ipVa+/0qrzskR5F21rlX6BVrKQj3uFuTP1qHGyNqQ1j1LaMv2B0PXkKDXc208A5RZIMhFjbGF1ZGUtc29ubmV0LTQtNjgAQgh0aGlua2luZxIMBs6HZ3mxfdiYJMksGgzEIDte+iHIwPfGolwiMPVCe3g/NPr90BpNQ4GSSmJ7R1lcMMHfopeE+CyXHvyjRpBo8Ncd7/GfApYcKKrTkyrmCF/8AscH/aOpQ44Cg+htgRsBdq+LHPU9PVDbKx0IyM0zqjT4q03ovWO9aXoSFicKgJyI+JLMA5+280pqZll6ETpm5NeZ63UVexadYjM52FaS/FOFmEwvQ49LTNyEIhdmQ44FDaWJ0ohId/1p12OiaNmn6XIEbmsFL9n3vZhu/oetNs3XGGYj1KctIPl2DXrPigP3MLBL+xqbwjK+9NxIQiu9P0ov5k3iVyz2OnrjIUrU6F6KfjXayvtF9LEXAGT0lEJBRIyzUx/1sBR9wnbQEhP33UG3xWr/zfZK02rOMPjT+0CrG+3YpFRQIVxAqYOthByoAU7YFfUA+YDryE9rx8SUihuKL43fZZZBYA/iRx7aVlOI10Z50rsSaJ9b0Qg/I+Izgq7plA4xmkJgxbZ+ijyhRyWuV5jJ2w+cXM7o4pEcSTqzESeKwhYIJxrYJLHeTOwA/AEPo4zLs8YWJz93n8eW2JjJHX0KQpMRYMsxHaesQ+tJQ8yrhkXnEXYucLCrcsI2CoXPIPUxb152FGviVAl+sTS4TPLHyhERdlp74/vcuNPCclxlaY/RhormwFeZt3/4SwEH7TVI28MMcsGCdV/cvrOkORtwnqemf0ZI5Psxqi+BTt77MFegeRhbbpQddcJ9SA7bft9M8V7KbOsqAMdjmJ5ZEur4nUjGxr85gBDWyuDRZIwNmcieEowSWQwh+0FD/PqH9TIMi6LMwseYeLksdT19bhVcuDOTiS/bDIDhbAZ2OXRB/SIjN8Chp6AnMRdl61wfeHdSAjoD8Uz8+mVMwN7lvwQmS1bVmV8bK8OGK3OG5dgJQjlgoFvUROueSoVXAUW23GUqYGAKI6QTRGszdyi3wF94XCAUR5skH+zqSRv+K0i/nywHo5chl7tGHHDIMp3fgkADZFJAxQrSN3LopSt79BWcl951e8uDNC8ljo7wzE2990qmqQ9zhNcuC0tYeQm5IMh8oV0YAnppylyErY0HxopDwlIYLmWcIpw1YIGfTVbty1naLqnnJaYh9KW0GlUuhEYy3C6eD3eKnwMWa2Mo5QO4bXQDprblMmYca5yMQieATNiUS6fNutQeTGfmdeMDVNouYzzrTumhM+C3qp9JK+//z07tSy6Ejpd+zbArBCt5GY5kg6cAGZWEOmS8xWm42IG3wULLXAkXAuZeV2vGNL7+9NjClgUlcjisZ7m4wlK5mE6gwKw6JXLr+YNHgCDPBpYo48Cvwibf2tGiBq53ygUi/Gbd/rU4SJkYqyOiUFL734lDucbZuVIjm/3hE2JZqjjmhRytqcOHSFiYZKNxUHK9UZ4WLVWhz+WAJrV8qbvH1FeA8PSj6E/jOoLhRzv15yiqf36bmeVluo7JvkKDmsCCUThdQY5hlPcxNcpsUOuEu3EGNgvS5zmhMTL8RCgo6ZMaueDVb/iIQ/pUUxCOq6Bn0Ja2Esahn3K0tSA+qGhcCYhyFH8xt3WG11LJm8R8qyf/yd1hKGd4DJehM+h0zKoYAQ=="
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 1879,
+    "cache_read_input_tokens": 134571,
+    "output_tokens": 10273,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1879,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 10273,
+        "cache_read_input_tokens": 134571,
+        "cache_creation_input_tokens": 1879,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1879
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01WdAT8hjXxi71ZtnUUzeidE",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Found the bug: the router checks exact `/tutor-detail` but the hash is `/tutor-detail/1` (with ID), so it falls to home page. I need to fix the router AND create the new page. Let me implement everything now."
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 1879,
+    "cache_read_input_tokens": 134571,
+    "output_tokens": 10273,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1879,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 10273,
+        "cache_read_input_tokens": 134571,
+        "cache_creation_input_tokens": 1879,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1879
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01WdAT8hjXxi71ZtnUUzeidE",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_016EaS1DnUiG9Ge4k2dxRgFt",
+      "name": "Write",
+      "input": {
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\pages\\TutorProfile.jsx",
+        "content": "import { useState, useEffect } from 'react'\n\nconst API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'\n\n// ─── Mock extended profiles ───────────────────────────────────────────────────\nconst BASE_PROFILE = {\n  full_name: 'Nguyễn Thị Hương',\n  title: 'Gia sư Toán - Luyện thi THPT Quốc gia',\n  picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCXSWk4apMr3IzYvtncJ0aXLJKYQHTWlrtSF2YL2ibUD-XC_mNTDoY7Z3m6oxnKVRA1HNZp_rDtYYIQpuAuQr4EcMcFNaoq5B8ApEsaoOChwewphyG4iSlU3dN8o7SWM2M3rii5R3sUEnVMGLeaL4yN_PD7KZqLGGvki4YDThYhOoMYkLyvxDdSE8URnYNkAuJbWmtakbS84ZdjH3LnvD0AFkv4cSMp3mRxYij_yHfqg55WITF2Mxqc_7hJdFxmmIJ-jlFYMkduVPA',\n  city: 'Đà Nẵng',\n  experience_years: 8,\n  hourly_rate: 180000,\n  avg_r: 4.8,\n  review_count: 128,\n  subjects: 'Toán học, Vật lý, Luyện thi THPT, Học sinh mất gốc',\n  completedLessons: 245,\n  onTimeRate: '98%',\n  responseRate: '96%',\n  studentsCount: 150,\n  teachingFormatShort: 'Online / Offline',\n  bio: 'Với hơn 8 năm kinh nghiệm giảng dạy Toán học cấp THPT và luyện thi Đại học, tôi luôn tâm niệm rằng mỗi học sinh đều có một cách tiếp thu riêng. Phương pháp của tôi tập trung vào việc khơi gợi sự hứng thú, xây dựng nền tảng vững chắc và rèn luyện tư duy logic thay vì học vẹt.',\n  teachingMethods: [\n    'Kiểm tra năng lực đầu vào để xác định điểm mạnh và điểm yếu của học sinh',\n    'Xây dựng lộ trình học riêng phù hợp với mục tiêu của từng học sinh',\n    'Giảng bài từ cơ bản đến nâng cao, đảm bảo học sinh nắm vững từng bước',\n    'Theo dõi và đánh giá tiến bộ định kỳ, điều chỉnh phương pháp khi cần',\n  ],\n  suitableFor: [\n    'Học sinh mất gốc môn Toán',\n    'Học sinh cần cải thiện điểm kiểm tra thường xuyên',\n    'Học sinh ôn thi THPT Quốc gia',\n    'Học sinh muốn học nâng cao, tham gia Olympic Toán',\n    'Học sinh cần người kèm sát tiến độ học tập',\n  ],\n  degrees: [\n    { title: 'Cử nhân Sư phạm Toán — Đại học Sư phạm Đà Nẵng', status: 'verified' },\n    { title: 'Chứng chỉ nghiệp vụ sư phạm', status: 'verified' },\n    { title: 'Chứng chỉ luyện thi THPT Quốc gia', status: 'pending' },\n    { title: 'Xác minh danh tính', status: 'verified' },\n  ],\n  teachingFormats: [\n    { icon: 'videocam', label: 'Online qua Google Meet / Zoom' },\n    { icon: 'home', label: 'Dạy trực tiếp tại nhà học sinh' },\n    { icon: 'apartment', label: 'Dạy trực tiếp tại nhà gia sư' },\n    { icon: 'store', label: 'Dạy tại địa điểm công cộng' },\n  ],\n  availableSchedule: [\n    { day: 'T2', slots: ['18:00–20:00', '20:00–22:00'] },\n    { day: 'T3', slots: ['19:00–21:00'] },\n    { day: 'T4', slots: ['18:00–20:00'] },\n    { day: 'T5', slots: ['20:00–22:00'] },\n    { day: 'T6', slots: ['18:00–20:00'] },\n    { day: 'T7', slots: ['08:00–10:00', '14:00–16:00'] },\n    { day: 'CN', slots: ['09:00–11:00'] },\n  ],\n  studentReviews: [\n    { id: 1, name: 'Minh Anh', subject: 'Toán lớp 12', lessonCount: 12, rating: 5.0, comment: 'Cô dạy rất dễ hiểu, có lộ trình rõ ràng. Sau vài buổi em đã tự tin hơn khi làm bài toán vận dụng.', initials: 'MA', bg: '#dde1ff', color: '#00288e' },\n    { id: 2, name: 'Quốc Bảo', subject: 'Toán lớp 9',  lessonCount: 8,  rating: 5.0, comment: 'Gia sư kiên nhẫn, đúng giờ và luôn chữa bài rất kỹ. Phù hợp với học sinh mất gốc.', initials: 'QB', bg: '#e2e2e2', color: '#444653' },\n    { id: 3, name: 'Hà My',    subject: 'Luyện thi THPT', lessonCount: 15, rating: 4.8, comment: 'Cách dạy dễ hiểu, có nhiều mẹo làm bài nhanh và bám sát đề thi.', initials: 'HM', bg: '#d4e3ff', color: '#003564' },\n  ],\n  verifiedBadges: [\n    { label: 'Đã xác minh', className: 'bg-green-100 text-green-800', icon: 'verified' },\n    { label: 'Bằng cấp đã kiểm tra', className: 'bg-blue-100 text-blue-800', icon: 'school' },\n    { label: 'EduX duyệt', className: 'bg-purple-100 text-purple-800', icon: 'workspace_premium' },\n  ],\n  policies: {\n    trial: 'Hỗ trợ buổi tư vấn ngắn 15–20 phút miễn phí để thầy/cô và học sinh hiểu nhau trước khi bắt đầu.',\n    cancellation: 'Hủy trước 24h: hoàn tiền 100%. Hủy trong 24h: hoàn 50%. Không báo trước: không hoàn tiền.',\n  },\n}\n\nfunction getMockProfile(id) {\n  return { ...BASE_PROFILE, id }\n}\n\n// ─── Helpers ──────────────────────────────────────────────────────────────────\nfunction fmtPrice(val) {\n  if (!val) return 'Thỏa thuận'\n  const n = Number(val)\n  if (n >= 1000) return new Intl.NumberFormat('vi-VN').format(n) + 'đ'\n  return `$${n}`\n}\n\nfunction StarRating({ value, size = 14 }) {\n  const rounded = Math.round(value * 2) / 2\n  return (\n    <span className=\"inline-flex items-center gap-0.5\">\n      {[1, 2, 3, 4, 5].map(i => (\n        <span key={i} className=\"material-symbols-outlined text-[#FFB800]\"\n          style={{ fontSize: size, fontVariationSettings: i <= rounded ? \"'FILL' 1\" : \"'FILL' 0\" }}>\n          star\n        </span>\n      ))}\n    </span>\n  )\n}\n\nfunction SectionCard({ icon, title, children }) {\n  return (\n    <section className=\"bg-white rounded-2xl p-6 tutor-profile-card\">\n      <h2 className=\"text-xl font-semibold text-[#191c1e] mb-4 flex items-center gap-2\">\n        <span className=\"material-symbols-outlined text-[#00288e]\" style={{ fontSize: 22 }}>{icon}</span>\n        {title}\n      </h2>\n      {children}\n    </section>\n  )\n}\n\n// ─── Loading / Not found ──────────────────────────────────────────────────────\nfunction LoadingScreen() {\n  return (\n    <div className=\"bg-[#f8f9fb] min-h-screen flex items-center justify-center\">\n      <div className=\"flex flex-col items-center gap-3 text-[#444653]\">\n        <span className=\"material-symbols-outlined text-5xl text-[#00288e] animate-spin\">progress_activity</span>\n        <p className=\"text-base font-medium\">Đang tải hồ sơ...</p>\n      </div>\n    </div>\n  )\n}\n\nfunction NotFoundScreen() {\n  return (\n    <div className=\"bg-[#f8f9fb] min-h-screen flex items-center justify-center px-6\">\n      <div className=\"text-center\">\n        <span className=\"material-symbols-outlined text-6xl text-[#c4c5d5]\">person_search</span>\n        <h1 className=\"text-2xl font-bold text-[#191c1e] mt-4\">Không tìm thấy gia sư</h1>\n        <p className=\"text-[#444653] mt-2\">Hồ sơ này không tồn tại hoặc đã bị xóa.</p>\n        <a href=\"#/find-tutors\"\n          className=\"inline-flex items-center gap-2 mt-6 bg-[#00288e] text-white px-6 py-3 rounded-xl font-semibold hover:bg-[#1e40af] transition-colors\">\n          <span className=\"material-symbols-outlined text-[18px]\">arrow_back</span>\n          Quay lại danh sách gia sư\n        </a>\n      </div>\n    </div>\n  )\n}\n\n// ─── Main Component ───────────────────────────────────────────────────────────\nexport default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) {\n  const [tutor, setTutor] = useState(null)\n  const [loading, setLoading] = useState(true)\n  const [notFound, setNotFound] = useState(false)\n\n  useEffect(() => {\n    window.scrollTo(0, 0)\n    setLoading(true)\n    setNotFound(false)\n    fetch(`${API_BASE}/api/tutors/${tutorId}`)\n      .then(r => r.ok ? r.json() : null)\n      .then(data => {\n        const mock = getMockProfile(tutorId)\n        setTutor(data ? { ...mock, ...data } : mock)\n        setLoading(false)\n      })\n      .catch(() => {\n        setTutor(getMockProfile(tutorId))\n        setLoading(false)\n      })\n  }, [tutorId])\n\n  if (loading) return <LoadingScreen />\n  if (notFound) return <NotFoundScreen />\n  if (!tutor) return <NotFoundScreen />\n\n  const subjectList = tutor.subjects\n    ? tutor.subjects.split(',').map(s => s.trim()).filter(Boolean)\n    : []\n\n  const priceDisplay = fmtPrice(tutor.hourly_rate)\n\n  return (\n    <div className=\"bg-[#f8f9fb] text-[#191c1e] min-h-screen font-sans\">\n      <style>{`\n        .tutor-profile-card {\n          box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05);\n        }\n      `}</style>\n\n      {/* ── Navbar ── */}\n      <header className=\"fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm\">\n        <div className=\"max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative\">\n          <a href=\"#/\" className=\"flex items-center gap-2 text-2xl font-bold text-[#00288e] hover:opacity-80 transition-opacity z-10\">\n            <span className=\"material-symbols-outlined text-[28px]\" style={{ fontVariationSettings: \"'FILL' 1\" }}>school</span>\n            EduX\n          </a>\n          <nav className=\"hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2\">\n            <a className=\"text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1\" href=\"#/find-tutors\">Tìm Gia Sư</a>\n            <a className=\"text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors\" href=\"#/become-tutor\">Trở Thành Gia Sư</a>\n            <a className=\"text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors\" href=\"#/subjects\">Môn Học</a>\n          </nav>\n          <div className=\"flex items-center gap-4 z-10\">\n            {user ? (\n              <button onClick={() => {\n                if (user.role === 'admin') window.location.hash = '/admin'\n                else if (user.role === 'tutor') window.location.hash = '/tutor'\n                else window.location.hash = '/dashboard'\n              }} className=\"hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm\">\n                Bảng Điều Khiển\n              </button>\n            ) : (\n              <>\n                <button onClick={onGoSignIn} className=\"hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm\">Đăng Nhập</button>\n                <button onClick={onGoSignUp} className=\"bg-[#00288e] text-white px-6 py-2.5 rounded-lg font-semibold text-sm hover:bg-[#1e40af] transition-all active:scale-95 shadow-sm\">\n                  Tham Gia Miễn Phí\n                </button>\n              </>\n            )}\n          </div>\n        </div>\n      </header>\n\n      <main className=\"pt-20 pb-16 max-w-[1280px] mx-auto px-4 md:px-6\">\n\n        {/* ── Back link ── */}\n        <div className=\"py-4\">\n          <a href=\"#/find-tutors\" className=\"inline-flex items-center gap-1 text-[#00288e] text-sm font-semibold hover:underline\">\n            <span className=\"material-symbols-outlined text-[18px]\">arrow_back</span>\n            Quay lại danh sách gia sư\n          </a>\n        </div>\n\n        {/* ── Two-column layout ── */}\n        <div className=\"grid grid-cols-1 lg:grid-cols-[1fr_370px] gap-6 items-start\">\n\n          {/* ════ LEFT COLUMN ════ */}\n          <div className=\"space-y-5 min-w-0\">\n\n            {/* Hero card */}\n            <section className=\"bg-white rounded-2xl p-6 tutor-profile-card flex flex-col md:flex-row items-center md:items-start gap-6\">\n              {/* Avatar */}\n              <div className=\"relative shrink-0\">\n                <div className=\"w-28 h-28 rounded-full overflow-hidden border-4 border-white shadow-md bg-[#dde1ff]\">\n                  {tutor.profile_photo_url || tutor.picture ? (\n                    <img src={tutor.profile_photo_url || tutor.picture} alt={tutor.full_name}\n                      className=\"w-full h-full object-cover\"\n                      onError={e => { e.target.style.display = 'none' }} />\n                  ) : (\n                    <div className=\"w-full h-full flex items-center justify-center\">\n                      <span className=\"material-symbols-outlined text-5xl text-[#00288e]/40\">person</span>\n                    </div>\n                  )}\n                </div>\n                <div className=\"absolute bottom-0 right-0 w-7 h-7 bg-[#10B981] rounded-full border-2 border-white flex items-center justify-center\">\n                  <span className=\"material-symbols-outlined text-white\" style={{ fontSize: 14, fontVariationSettings: \"'FILL' 1\" }}>check</span>\n                </div>\n              </div>\n\n              {/* Info */}\n              <div className=\"flex-1 text-center md:text-left space-y-3\">\n                <div className=\"flex flex-col md:flex-row md:items-start justify-between gap-2\">\n                  <div>\n                    <h1 className=\"text-2xl font-bold text-[#191c1e]\">{tutor.full_name}</h1>\n                    <p className=\"text-[#444653] text-base mt-0.5\">{tutor.title || tutor.bio?.slice(0, 60)}</p>\n                  </div>\n                  <div className=\"flex flex-wrap gap-2 justify-center md:justify-end shrink-0\">\n                    {(tutor.verifiedBadges || BASE_PROFILE.verifiedBadges).map((b, i) => (\n                      <span key={i} className={`${b.className} text-xs px-3 py-1 rounded-full flex items-center gap-1 font-medium`}>\n                        <span className=\"material-symbols-outlined\" style={{ fontSize: 13 }}>{b.icon}</span>\n                        {b.label}\n                      </span>\n                    ))}\n                  </div>\n                </div>\n\n                {/* Subject chips */}\n                <div className=\"flex flex-wrap gap-2 justify-center md:justify-start\">\n                  {subjectList.map(s => (\n                    <span key={s} className=\"bg-[#d4e3ff] text-[#00288e] text-xs px-3 py-1 rounded-lg font-medium\">{s}</span>\n                  ))}\n                </div>\n\n                {/* Meta row */}\n                <div className=\"flex flex-wrap gap-4 justify-center md:justify-start text-sm text-[#444653]\">\n                  {tutor.city && (\n                    <span className=\"flex items-center gap-1\">\n                      <span className=\"material-symbols-outlined text-[16px] text-[#00288e]\">location_on</span>\n                      {tutor.city}\n                    </span>\n                  )}\n                  {tutor.experience_years > 0 && (\n                    <span className=\"flex items-center gap-1\">\n                      <span className=\"material-symbols-outlined text-[16px] text-[#00288e]\">work_history</span>\n                      {tutor.experience_years} năm kinh nghiệm\n                    </span>\n                  )}\n                  <span className=\"flex items-center gap-1 font-semibold text-[#00288e]\">\n                    <span className=\"material-symbols-outlined text-[16px]\">payments</span>\n                    {priceDisplay}/giờ\n                  </span>\n                </div>\n              </div>\n            </section>\n\n            {/* Trust stats */}\n            <div className=\"grid grid-cols-2 sm:grid-cols-5 gap-3\">\n              {[\n                { value: tutor.completedLessons ?? 245, label: 'Buổi học', color: 'text-[#00288e]' },\n                { value: tutor.onTimeRate ?? '98%',     label: 'Đúng giờ',  color: 'text-green-600' },\n                { value: tutor.responseRate ?? '96%',   label: 'Phản hồi',  color: 'text-blue-600' },\n                { value: Number(tutor.avg_r || 4.8).toFixed(1), label: 'Đánh giá', color: 'text-[#FFB800]' },\n                { value: tutor.studentsCount ?? '150+', label: 'Học sinh',  color: 'text-indigo-800' },\n              ].map(stat => (\n                <div key={stat.label} className=\"bg-white rounded-xl p-3 tutor-profile-card flex flex-col items-center text-center\">\n                  <span className={`text-2xl font-bold ${stat.color}`}>{stat.value}</span>\n                  <span className=\"text-xs text-[#444653] mt-0.5\">{stat.label}</span>\n                </div>\n              ))}\n            </div>\n\n            {/* Giới thiệu */}\n            <SectionCard icon=\"person\" title=\"Giới thiệu\">\n              <p className=\"text-[#444653] leading-relaxed\">{tutor.bio}</p>\n            </SectionCard>\n\n            {/* Phương pháp */}\n            <SectionCard icon=\"lightbulb\" title=\"Phương pháp giảng dạy\">\n              <ol className=\"space-y-3\">\n                {(tutor.teachingMethods || BASE_PROFILE.teachingMethods).map((m, i) => (\n                  <li key={i} className=\"flex gap-3\">\n                    <span className=\"w-6 h-6 rounded-full bg-[#dde1ff] text-[#00288e] text-xs font-bold flex items-center justify-center shrink-0 mt-0.5\">{i + 1}</span>\n                    <span className=\"text-[#444653]\">{m}</span>\n                  </li>\n                ))}\n              </ol>\n            </SectionCard>\n\n            {/* Phù hợp với */}\n            <SectionCard icon=\"group\" title=\"Phù hợp với học sinh\">\n              <ul className=\"space-y-2\">\n                {(tutor.suitableFor || BASE_PROFILE.suitableFor).map((s, i) => (\n                  <li key={i} className=\"flex items-start gap-2 text-[#444653]\">\n                    <span className=\"material-symbols-outlined text-[#10B981] shrink-0 mt-0.5\" style={{ fontSize: 18, fontVariationSettings: \"'FILL' 1\" }}>check_circle</span>\n                    {s}\n                  </li>\n                ))}\n              </ul>\n            </SectionCard>\n\n            {/* Bằng cấp & xác minh */}\n            <SectionCard icon=\"verified_user\" title=\"Bằng cấp & xác minh\">\n              <div className=\"grid grid-cols-1 md:grid-cols-2 gap-3\">\n                {(tutor.degrees || BASE_PROFILE.degrees).map((d, i) => (\n                  <div key={i} className=\"flex items-center justify-between p-3 bg-[#f8f9fb] rounded-lg border border-[#e1e2e4]\">\n                    <span className=\"text-sm font-medium text-[#191c1e]\">{d.title}</span>\n                    {d.status === 'verified'\n                      ? <span className=\"material-symbols-outlined text-green-600 shrink-0 ml-2\" style={{ fontSize: 18, fontVariationSettings: \"'FILL' 1\" }}>verified</span>\n                      : <span className=\"material-symbols-outlined text-blue-500 shrink-0 ml-2\" style={{ fontSize: 18 }}>fact_check</span>\n                    }\n                  </div>\n                ))}\n              </div>\n            </SectionCard>\n\n            {/* Hình thức giảng dạy */}\n            <SectionCard icon=\"devices\" title=\"Hình thức giảng dạy\">\n              <div className=\"grid grid-cols-1 sm:grid-cols-2 gap-3\">\n                {(tutor.teachingFormats || BASE_PROFILE.teachingFormats).map((f, i) => (\n                  <div key={i} className=\"flex items-center gap-3 p-3 bg-[#f8f9fb] rounded-lg border border-[#e1e2e4]\">\n                    <span className=\"material-symbols-outlined text-[#00288e]\" style={{ fontSize: 20 }}>{f.icon}</span>\n                    <span className=\"text-sm text-[#444653]\">{f.label}</span>\n                  </div>\n                ))}\n              </div>\n            </SectionCard>\n\n            {/* Lịch dạy */}\n            <SectionCard icon=\"event_available\" title=\"Lịch dạy khả dụng\">\n              <div className=\"space-y-3\">\n                {(tutor.availableSchedule || BASE_PROFILE.availableSchedule).map((row, i) => (\n                  <div key={i} className=\"flex items-start gap-3\">\n                    <div className=\"w-8 text-sm font-semibold text-[#444653] shrink-0 pt-1\">{row.day}</div>\n                    <div className=\"flex flex-wrap gap-2\">\n                      {row.slots.map(slot => (\n                        <span key={slot} className=\"bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-1 rounded-full font-medium\">\n                          {slot}\n                        </span>\n                      ))}\n                    </div>\n                  </div>\n                ))}\n              </div>\n            </SectionCard>\n\n            {/* Đánh giá */}\n            <SectionCard icon=\"star\" title={`Đánh giá từ học sinh (${tutor.review_count || (tutor.studentReviews || BASE_PROFILE.studentReviews).length})`}>\n              <div className=\"flex items-center gap-4 mb-5 p-4 bg-[#f8f9fb] rounded-xl\">\n                <span className=\"text-5xl font-bold text-[#00288e]\">{Number(tutor.avg_r || 4.8).toFixed(1)}</span>\n                <div>\n                  <StarRating value={Number(tutor.avg_r || 4.8)} size={20} />\n                  <p className=\"text-sm text-[#444653] mt-1\">{tutor.review_count || 128} đánh giá</p>\n                </div>\n              </div>\n              <div className=\"space-y-4\">\n                {(tutor.studentReviews || BASE_PROFILE.studentReviews).map(r => (\n                  <div key={r.id} className=\"p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]\">\n                    <div className=\"flex items-start gap-3\">\n                      <div className=\"w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0\"\n                        style={{ background: r.bg, color: r.color }}>\n                        {r.initials}\n                      </div>\n                      <div className=\"flex-1 min-w-0\">\n                        <div className=\"flex items-center justify-between flex-wrap gap-1\">\n                          <span className=\"font-semibold text-[#191c1e] text-sm\">{r.name}</span>\n                          <StarRating value={r.rating} size={13} />\n                        </div>\n                        <p className=\"text-xs text-[#757684] mt-0.5\">{r.subject} · Đã học {r.lessonCount} buổi</p>\n                        <p className=\"text-sm text-[#444653] mt-2 leading-relaxed\">\"{r.comment}\"</p>\n                      </div>\n                    </div>\n                  </div>\n                ))}\n              </div>\n            </SectionCard>\n\n            {/* Chính sách */}\n            <SectionCard icon=\"policy\" title=\"Chính sách học thử & hủy lịch\">\n              <div className=\"grid grid-cols-1 md:grid-cols-2 gap-3\">\n                <div className=\"p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]\">\n                  <h4 className=\"font-semibold text-[#00288e] mb-1 text-sm\">Buổi học thử</h4>\n                  <p className=\"text-xs text-[#444653] leading-relaxed\">{(tutor.policies || BASE_PROFILE.policies).trial}</p>\n                </div>\n                <div className=\"p-4 bg-[#f8f9fb] rounded-xl border border-[#e1e2e4]\">\n                  <h4 className=\"font-semibold text-[#00288e] mb-1 text-sm\">Chính sách hủy lịch</h4>\n                  <p className=\"text-xs text-[#444653] leading-relaxed\">{(tutor.policies || BASE_PROFILE.policies).cancellation}</p>\n                </div>\n              </div>\n            </SectionCard>\n\n            {/* Report */}\n            <div className=\"flex justify-center py-4\">\n              <button\n                onClick={() => alert('Tính năng báo cáo sẽ được phát triển sau.')}\n                className=\"text-red-500 text-sm hover:underline flex items-center gap-1\"\n              >\n                <span className=\"material-symbols-outlined text-[16px]\">flag</span>\n                Báo cáo hồ sơ này\n              </button>\n            </div>\n          </div>\n\n          {/* ════ RIGHT COLUMN (sticky booking card) ════ */}\n          <aside className=\"hidden lg:block\">\n            <div className=\"sticky top-[88px] space-y-4\">\n              <div className=\"bg-white rounded-2xl p-6 tutor-profile-card border border-[#e1e2e4]\">\n                <p className=\"text-xs font-semibold text-[#757684] uppercase tracking-wide mb-4\">Thông tin đặt lịch</p>\n\n                {/* Price */}\n                <div className=\"flex items-baseline gap-1 mb-5\">\n                  <span className=\"text-3xl font-bold text-[#00288e]\">{priceDisplay}</span>\n                  <span className=\"text-[#444653] text-sm\">/giờ</span>\n                </div>\n\n                {/* Meta list */}\n                <div className=\"space-y-3 mb-6\">\n                  <div className=\"flex items-center gap-2 text-[#444653] text-sm\">\n                    <span className=\"material-symbols-outlined text-[#00288e]\" style={{ fontSize: 18, fontVariationSettings: \"'FILL' 1\" }}>star</span>\n                    <span className=\"font-semibold text-[#191c1e]\">{Number(tutor.avg_r || 4.8).toFixed(1)}</span>\n                    <span>({tutor.review_count || 128} đánh giá)</span>\n                  </div>\n                  {tutor.experience_years > 0 && (\n                    <div className=\"flex items-center gap-2 text-[#444653] text-sm\">\n                      <span className=\"material-symbols-outlined text-[#00288e]\" style={{ fontSize: 18 }}>work_history</span>\n                      {tutor.experience_years} năm kinh nghiệm\n                    </div>\n                  )}\n                  {tutor.city && (\n                    <div className=\"flex items-center gap-2 text-[#444653] text-sm\">\n                      <span className=\"material-symbols-outlined text-[#00288e]\" style={{ fontSize: 18 }}>location_on</span>\n                      {tutor.city} (Online/Offline)\n                    </div>\n                  )}\n                  <div className=\"flex items-center gap-2 text-[#444653] text-sm\">\n                    <span className=\"material-symbols-outlined text-[#00288e]\" style={{ fontSize: 18 }}>devices</span>\n                    {tutor.teachingFormatShort || 'Online / Offline'}\n                  </div>\n                </div>\n\n                {/* Action buttons */}\n                <div className=\"space-y-3\">\n                  <button\n                    onClick={() => alert('Tính năng đặt lịch sẽ được phát triển sau.')}\n                    className=\"w-full bg-[#00288e] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#1e40af] transition-colors shadow-md flex items-center justify-center gap-2\"\n                  >\n                    <span className=\"material-symbols-outlined text-[18px]\">calendar_month</span>\n                    Đặt Lịch Học\n                  </button>\n                  <button\n                    onClick={() => alert('Tính năng nhắn tin sẽ được phát triển sau.')}\n                    className=\"w-full bg-white border border-[#c4c5d5] text-[#00288e] py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#f8f9fb] transition-colors flex items-center justify-center gap-2\"\n                  >\n                    <span className=\"material-symbols-outlined text-[18px]\">chat</span>\n                    Nhắn Tin Với Gia Sư\n                  </button>\n                </div>\n\n                {/* Trust notice */}\n                <div className=\"mt-5 pt-4 border-t border-[#e1e2e4] text-xs text-[#757684] text-center leading-relaxed\">\n                  <span className=\"material-symbols-outlined text-green-600 align-middle mr-1\" style={{ fontSize: 16 }}>shield_check</span>\n                  Thanh toán an toàn qua EduX. Tiền chỉ giải ngân cho gia sư sau khi buổi học được xác nhận hoàn thành.\n                </div>\n              </div>\n            </div>\n          </aside>\n        </div>\n\n        {/* ── Mobile booking bar (fixed bottom) ── */}\n        <div className=\"lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e1e2e4] px-4 py-3 flex items-center gap-3 z-40 shadow-lg\">\n          <div className=\"flex-1\">\n            <span className=\"text-xl font-bold text-[#00288e]\">{priceDisplay}</span>\n            <span className=\"text-xs text-[#444653]\">/giờ</span>\n          </div>\n          <button\n            onClick={() => alert('Tính năng nhắn tin sẽ được phát triển sau.')}\n            className=\"px-4 py-2.5 border border-[#00288e] text-[#00288e] rounded-xl text-sm font-semibold\"\n          >\n            Nhắn Tin\n          </button>\n          <button\n            onClick={() => alert('Tính năng đặt lịch sẽ được phát triển sau.')}\n            className=\"px-5 py-2.5 bg-[#00288e] text-white rounded-xl text-sm font-semibold hover:bg-[#1e40af] transition-colors\"\n          >\n            Đặt Lịch\n          </button>\n        </div>\n      </main>\n    </div>\n  )\n}\n"
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 1879,
+    "cache_read_input_tokens": 134571,
+    "output_tokens": 10273,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1879,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 10273,
+        "cache_read_input_tokens": 134571,
+        "cache_creation_input_tokens": 1879,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1879
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_016EaS1DnUiG9Ge4k2dxRgFt",
+      "type": "tool_result",
+      "content": "File created successfully at: c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\pages\\TutorProfile.jsx (file state is current in your context — no need to Read it back)"
+    }
+  ]
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01LyGQCE47h3BUPw4VBSRXw2",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Now fix the router in App.jsx to handle `/tutor/:id`, and add the import + route handler:"
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 10333,
+    "cache_read_input_tokens": 136450,
+    "output_tokens": 201,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 10333,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 201,
+        "cache_read_input_tokens": 136450,
+        "cache_creation_input_tokens": 10333,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 10333
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01LyGQCE47h3BUPw4VBSRXw2",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_012CxzQCarZy9kDhJv7skzii",
+      "name": "Edit",
+      "input": {
+        "replace_all": false,
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\App.jsx",
+        "old_string": "import TutorDetailPage from './TutorDetailPage'\nimport { useAuth } from './AuthContext'",
+        "new_string": "import TutorDetailPage from './TutorDetailPage'\nimport TutorProfile from './pages/TutorProfile'\nimport { useAuth } from './AuthContext'"
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 10333,
+    "cache_read_input_tokens": 136450,
+    "output_tokens": 201,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 10333,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 201,
+        "cache_read_input_tokens": 136450,
+        "cache_creation_input_tokens": 10333,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 10333
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_012CxzQCarZy9kDhJv7skzii",
+      "type": "tool_result",
+      "content": "The file c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\App.jsx has been updated successfully. (file state is current in your context — no need to Read it back)"
+    }
+  ]
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_0127X4hsY5Zevv4njy6NvhZw",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "The import is added but TutorProfile is not yet used in the route handler. I need to:\n1. Add the route pattern for `/tutor/:id` in `getRouteFromHash()`\n2. Add the route handler that renders `<TutorProfile />`\n3. Update FindTutorsPage.jsx to use `#/tutor/${tutor.id}` instead of `#/tutor-detail/${tutor.id}`\n\nLet me do all three now.",
+      "signature": "EpUECmUIDhgCKkCRtWqbdMQU/U5Lp7OaCzIh/ai4gImRDwS/1KVt3A4H9GvPu2m8sFQmSck2X7Zt+DZb2xlsMAXCpA44x+ctlXbEMhFjbGF1ZGUtc29ubmV0LTQtNjgAQgh0aGlua2luZxIMoT990iQbPhImfY6yGgzHdx4gCzGTaJbj/YQiMGKY9ieJFFhofHD38wn2BWhdGi3PLNAGwwhLzMySoKZbapNQcXVZIjDrYByBAHzhpCrdAlJbCcX0hLMj28e5xZxR6foEhH1tKj8qZZ6rfLULzkq5Wxze5SLfYpyhwI8tvTatgmh2irIHnPSLKltd8rnhMn7usVHh1Ep0j+Md+3QoyDAcuhH5OQMX6YWlnBfYwqhDXRL760pxArnx4jW/OcdDE8t6HBdDOKZ+162EC2Wz/RsapeWBnAd6BiAncPD2zdrO1m0ZhKR9FhieEThe2OHXKt7qjQIcg4eSP5CatdYKe6BtfqZ6tMVVszBOP+gArWUWGAsUgfGL8lDdaswM1kyypxNLZfrEKlCVX0WOXtpXvbRWpeRQawPwqH5BT8hRTR8R6yb6v4LhhqRLIX8MGAcLha/LhumtsxcQZmbVTkro+loAHm3umAA8UoHwhjJApQ+29WEXvGN6wyXAVP6xXexZS7iogpqTTtPbb4m81BWqq4A7UDHz71tui0J+U4Hzccq0hOFhe8yaPHMixoc3g40YAQ=="
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 404,
+    "cache_read_input_tokens": 146783,
+    "output_tokens": 502,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 404,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 502,
+        "cache_read_input_tokens": 146783,
+        "cache_creation_input_tokens": 404,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 404
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_0127X4hsY5Zevv4njy6NvhZw",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Cần thêm route pattern và handler. Làm 3 việc cùng lúc:"
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 404,
+    "cache_read_input_tokens": 146783,
+    "output_tokens": 502,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 404,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 502,
+        "cache_read_input_tokens": 146783,
+        "cache_creation_input_tokens": 404,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 404
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_0127X4hsY5Zevv4njy6NvhZw",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_016q5osHpEVdnDP3gvxjE48T",
+      "name": "Edit",
+      "input": {
+        "replace_all": false,
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\App.jsx",
+        "old_string": "  if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }\n  if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }",
+        "new_string": "  if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }\n  if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }\n\n  const tutorViewMatch = normalized.match(/^\\/tutor\\/([^/]+)$/)\n  if (tutorViewMatch) return { name: 'tutor-view', id: tutorViewMatch[1] }\n\n  const tutorDetailMatch = normalized.match(/^\\/tutor-detail\\/([^/]+)$/)\n  if (tutorDetailMatch) return { name: 'tutor-view', id: tutorDetailMatch[1] }"
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 404,
+    "cache_read_input_tokens": 146783,
+    "output_tokens": 502,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 404,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 502,
+        "cache_read_input_tokens": 146783,
+        "cache_creation_input_tokens": 404,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 404
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_016q5osHpEVdnDP3gvxjE48T",
+      "type": "tool_result",
+      "content": "The file c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\App.jsx has been updated successfully. (file state is current in your context — no need to Read it back)"
+    }
+  ]
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01GhhEfsJ2GQ9eRUw6rKVBD8",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_013wiA8yUPjwFqo6gVr4R7sV",
+      "name": "Edit",
+      "input": {
+        "replace_all": false,
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\App.jsx",
+        "old_string": "  // ── Route: Tutor Detail Page ──\n  if (routeName === 'tutor-detail') {\n    return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />\n  }",
+        "new_string": "  // ── Route: Tutor Detail Page (legacy, no ID) ──\n  if (routeName === 'tutor-detail') {\n    return <TutorDetailPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />\n  }\n\n  // ── Route: Tutor Profile View (with ID) ──\n  if (routeName === 'tutor-view') {\n    return <TutorProfile tutorId={route.id} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />\n  }"
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 561,
+    "cache_read_input_tokens": 147187,
+    "output_tokens": 361,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 561,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 361,
+        "cache_read_input_tokens": 147187,
+        "cache_creation_input_tokens": 561,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 561
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_013wiA8yUPjwFqo6gVr4R7sV",
+      "type": "tool_result",
+      "content": "The file c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\App.jsx has been updated successfully. (file state is current in your context — no need to Read it back)"
+    }
+  ]
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01UEHYmZtNpHjXnfr9xzunDK",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Now update FindTutorsPage \"Xem Hồ Sơ\" to use the new route:"
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 418,
+    "cache_read_input_tokens": 147748,
+    "output_tokens": 201,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 418,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 201,
+        "cache_read_input_tokens": 147748,
+        "cache_creation_input_tokens": 418,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 418
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01UEHYmZtNpHjXnfr9xzunDK",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01UsG8ACxd7VXad6GZaffj82",
+      "name": "Edit",
+      "input": {
+        "replace_all": false,
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\FindTutorsPage.jsx",
+        "old_string": "            onClick={() => window.location.hash = `/tutor-detail/${tutor.id}`}",
+        "new_string": "            onClick={() => window.location.hash = `/tutor/${tutor.id}`}"
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 418,
+    "cache_read_input_tokens": 147748,
+    "output_tokens": 201,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 418,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 201,
+        "cache_read_input_tokens": 147748,
+        "cache_creation_input_tokens": 418,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 418
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_01UsG8ACxd7VXad6GZaffj82",
+      "type": "tool_result",
+      "content": "The file c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\FindTutorsPage.jsx has been updated successfully. (file state is current in your context — no need to Read it back)"
+    }
+  ]
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01D12pkA5WrEZirU4xsPfZp5",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "3 thay đổi đã xong:\n\n1. **`getRouteFromHash()`** — thêm 2 pattern mới:\n   - `/tutor/:id` → `{ name: 'tutor-view', id }`  \n   - `/tutor-detail/:id` → `{ name: 'tutor-view', id }` (backward compat — đây là bug cũ, hash có ID nhưng router check exact match nên không match)\n\n2. **App.jsx** — thêm handler render `<TutorProfile tutorId={route.id} />`\n\n3. **FindTutorsPage.jsx** — \"Xem Hồ Sơ\" giờ navigate đến `#/tutor/${tutor.id}` thay vì `#/tutor-detail/${tutor.id}`\n\nBấm \"Xem Hồ Sơ\" trên bất kỳ tutor card nào là sẽ thấy trang hồ sơ đầy đủ."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 262,
+    "cache_read_input_tokens": 148166,
+    "output_tokens": 263,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 262,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 263,
+        "cache_read_input_tokens": 148166,
+        "cache_creation_input_tokens": 262,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 262
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "text",
+      "text": "xem hồ sơ có nối dữ liệu với cá nhân mỗi người để hiển thị chưa"
+    }
+  ]
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01AiaiWLgJwjnR241AW1KXgX",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "The user is asking whether the \"Xem Hồ Sơ\" (View Profile) page is actually connected to each individual tutor's real data, or if it's just showing mock/static data.\n\nLet me check the current implementation:\n1. The TutorProfile.jsx currently tries to fetch from `/api/tutors/${tutorId}` and falls back to mock data\n2. The mock data is all the same (BASE_PROFILE - Nguyễn Thị Hương)\n3. The API endpoint `/api/tutors/:id` may or may not exist\n\nLet me check the backend to see if there's a GET endpoint for a single tutor by ID.",
+      "signature": "Et8FCmUIDhgCKkDn5diLswC6XxTMXjod3/eFghj1mhosFX/uFa63IZH5TlW4qUzjuGCVZaRJ51uokPe9YCOVWkbjZeT1IdVcUtfIMhFjbGF1ZGUtc29ubmV0LTQtNjgAQgh0aGlua2luZxIMHeSfItkgPDGyGFgRGgxfEybnRFHEPO21U3siMBy3a9yfMr/npGQpRSL3qXXRg8pyQkmRq6SsuJyhEgQNHZH72vRD5FnMEeVSXbQVGCqnBNmPesZIECRmYohVz2+8pmwae+PlYwJjRVV7OWXC/wgJY4IxcqjKJUI/Ftl9jvZR0gw2zxZ6PbtRJietSTEotP1crgt9PnyJm0VJ67MrCtSdNoGeaNhS7WqoNCbJ0rWyeQ+zwc/WCN5Dmjoqf5B0UfB9CU9bwvu4V7d7S3/tTOFcPwxEv6rfJyeVWZSO42vXAIqOhmvLRcAW3f8mgGbZVAEgtXu7v1O78JUVsVcf56xoW+beWuKhddcYAjoJ+OSgEK3ZsAlODHtWe39CV18YkjllnX25d+iz9fNhCOO8H+tTDjzGHtKQ/9BIqdC3jkK9zhyctv/bzlJkCFH9TlyHDefWYDSVyLEZe54hun/29bjGP79CHv1C2LFnn9GRB1b0tRn3EZgrA/csKTILN+5OohWTq4SzS2CdLxHYXrIZoFMzfUx13b4O74/++9IEckebN0629nJWP13xzd1BRWcs4WhpYYhlLX9/itsWkxf6UPLMFeyfzr5D+tea+vHLgh9vTvbTg2u8z6Ls4ZHxKNdLynt91UOMRUoqFMzor/JOJAaBWaL2LwSlaeeHc58A0b3vFP4X1y19WTcu0xeAteVznazBmbPhwYNq9CI0FjJuTCY6pjb46P5WsVZ5i/E4DVoAqhZIamNEbeMCN1eBAUzUqjIufgdewpPQkgen6vrU45vJ+iD2UMQ0h0WTNneOj98reA3hXj2pklo5B2kCq7+IsgSJ9haPErXJGAE="
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 2032,
+    "cache_read_input_tokens": 146783,
+    "output_tokens": 307,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 2032,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 307,
+        "cache_read_input_tokens": 146783,
+        "cache_creation_input_tokens": 2032,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2032
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": {
+    "cache_miss_reason": {
+      "type": "messages_changed",
+      "cache_missed_input_tokens": 97997
+    }
+  }
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01AiaiWLgJwjnR241AW1KXgX",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Để kiểm tra xem backend có endpoint lấy 1 tutor theo ID không."
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 2032,
+    "cache_read_input_tokens": 146783,
+    "output_tokens": 307,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 2032,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 307,
+        "cache_read_input_tokens": 146783,
+        "cache_creation_input_tokens": 2032,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2032
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": {
+    "cache_miss_reason": {
+      "type": "messages_changed",
+      "cache_missed_input_tokens": 97997
+    }
+  }
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01AiaiWLgJwjnR241AW1KXgX",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01JLUJfxcxshgfJbX9TWDFW2",
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"app\\.get.*\\/api\\/tutors\" \"c:/Users/DELL/Downloads/AssignmentSWP/backend/server.js\"",
+        "description": "Find all tutor GET endpoints in backend"
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 3,
+    "cache_creation_input_tokens": 2032,
+    "cache_read_input_tokens": 146783,
+    "output_tokens": 307,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 2032,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 3,
+        "output_tokens": 307,
+        "cache_read_input_tokens": 146783,
+        "cache_creation_input_tokens": 2032,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2032
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": {
+    "cache_miss_reason": {
+      "type": "messages_changed",
+      "cache_missed_input_tokens": 97997
+    }
+  }
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_01JLUJfxcxshgfJbX9TWDFW2",
+      "type": "tool_result",
+      "content": "2770:app.get(\"/api/tutors\", async (req, res) => {",
+      "is_error": false
+    }
+  ]
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_0141sWhni6dg8xd47YNQcxcQ",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_014iPrpXZKgJZhvC5tZToTEk",
+      "name": "Read",
+      "input": {
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\backend\\server.js",
+        "offset": 2770,
+        "limit": 60
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 341,
+    "cache_read_input_tokens": 148815,
+    "output_tokens": 108,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 341,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 108,
+        "cache_read_input_tokens": 148815,
+        "cache_creation_input_tokens": 341,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 341
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_014iPrpXZKgJZhvC5tZToTEk",
+      "type": "tool_result",
+      "content": "2770\tapp.get(\"/api/tutors\", async (req, res) => {\n2771\t  const { search = \"\", subjects = \"\", sort = \"rating\", page = \"1\", limit = \"12\" } = req.query;\n2772\t  const pageNum = Math.max(1, parseInt(page));\n2773\t  const limitNum = Math.min(50, Math.max(1, parseInt(limit)));\n2774\t  const offset = (pageNum - 1) * limitNum;\n2775\t\n2776\t  const conditions = [\"tp.status = 'approved'\"];\n2777\t  const values = [];\n2778\t  let idx = 1;\n2779\t\n2780\t  if (search.trim()) {\n2781\t    conditions.push(`(u.full_name ILIKE $${idx} OR tp.subjects ILIKE $${idx} OR tp.bio ILIKE $${idx})`);\n2782\t    values.push(`%${search.trim()}%`);\n2783\t    idx++;\n2784\t  }\n2785\t\n2786\t  if (subjects.trim()) {\n2787\t    const subjectList = subjects.split(\",\").map(s => s.trim()).filter(Boolean);\n2788\t    if (subjectList.length > 0) {\n2789\t      const subConds = subjectList.map(() => `tp.subjects ILIKE $${idx++}`);\n2790\t      conditions.push(`(${subConds.join(\" OR \")})`);\n2791\t      subjectList.forEach(s => values.push(`%${s}%`));\n2792\t    }\n2793\t  }\n2794\t\n2795\t  const where = `WHERE ${conditions.join(\" AND \")}`;\n2796\t\n2797\t  const orderMap = {\n2798\t    rating:     \"tp.experience_years DESC NULLS LAST\",\n2799\t    price_asc:  \"tp.hourly_rate ASC NULLS LAST\",\n2800\t    price_desc: \"tp.hourly_rate DESC NULLS LAST\",\n2801\t    experience: \"tp.experience_years DESC NULLS LAST\",\n2802\t    newest:     \"tp.created_at DESC\",\n2803\t  };\n2804\t  const orderBy = orderMap[sort] || orderMap.newest;\n2805\t\n2806\t  try {\n2807\t    const countRes = await pool.query(\n2808\t      `SELECT COUNT(*) FROM tutor_profiles tp JOIN users u ON tp.user_id = u.id ${where}`,\n2809\t      values\n2810\t    );\n2811\t    const total = parseInt(countRes.rows[0].count);\n2812\t\n2813\t    const tutorsRes = await pool.query(\n2814\t      `SELECT\n2815\t         u.id, u.full_name, u.picture,\n2816\t         tp.bio, tp.subjects, tp.experience_years,\n2817\t         tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,\n2818\t         0 AS avg_r,\n2819\t         0 AS review_count\n2820\t       FROM tutor_profiles tp\n2821\t       JOIN users u ON tp.user_id = u.id\n2822\t       ${where}\n2823\t       ORDER BY ${orderBy}\n2824\t       LIMIT $${idx} OFFSET $${idx + 1}`,\n2825\t      [...values, limitNum, offset]\n2826\t    );\n2827\t\n2828\t    return res.json({\n2829\t      tutors: tutorsRes.rows,"
+    }
+  ]
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_012kZ8Ggo26Q2WGKFPkndJNx",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "I can see that:\n1. There's only a list endpoint `GET /api/tutors` that returns a paginated list\n2. There's NO single tutor endpoint `GET /api/tutors/:id`\n\nSo when TutorProfile.jsx tries to fetch from `/api/tutors/${tutorId}`, it will get a 404 (or some error) and fall back to the static mock data (BASE_PROFILE - which is always Nguyễn Thị Hương regardless of which tutor was clicked).\n\nThe fields returned from the backend list endpoint are:\n- `u.id`, `u.full_name`, `u.picture`\n- `tp.bio`, `tp.subjects`, `tp.experience_years`, `tp.hourly_rate`, `tp.profile_photo_url`, `tp.city`, `tp.country`\n- Plus placeholder values for average rating and review count\n\nI need to create a new endpoint that retrieves a single tutor's full profile and update the frontend to use it instead of falling back to mock data.\n\nThere's a mismatch between the IDs though: real tutors from the API have UUID identifiers, while the mock tutors use simple numeric strings like '1' or '2'. When a user clicks on a tutor, I need to handle both cases—either fetch from the API if it's a UUID, or use the mock data if it's a numeric ID.\n\nI'll add a `GET /api/tutors/:id` endpoint to retrieve individual tutor details, pulling together the user and tutor profile information with all the relevant fields like name, bio, subjects, experience, rate, location, education, and teaching style.\n\nFor the frontend, I'll update TutorProfile.jsx to fetch from this endpoint first, and if it succeeds, merge the real data with mock supplementary data for things like schedule and reviews. If the fetch fails, it'll fall back to using mock data entirely.",
+      "signature": "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"
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 1009,
+    "cache_read_input_tokens": 149156,
+    "output_tokens": 1094,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1009,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 1094,
+        "cache_read_input_tokens": 149156,
+        "cache_creation_input_tokens": 1009,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1009
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_012kZ8Ggo26Q2WGKFPkndJNx",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Chưa có endpoint lấy 1 tutor theo ID. Tôi sẽ thêm backend endpoint rồi cập nhật frontend để dữ liệu thật (tên, ảnh, môn, giá...) hiển thị đúng người."
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 1009,
+    "cache_read_input_tokens": 149156,
+    "output_tokens": 1094,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1009,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 1094,
+        "cache_read_input_tokens": 149156,
+        "cache_creation_input_tokens": 1009,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1009
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_012kZ8Ggo26Q2WGKFPkndJNx",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01984KeoKGJJGcGSbHccwUPD",
+      "name": "Read",
+      "input": {
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\backend\\server.js",
+        "offset": 2828,
+        "limit": 15
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 1009,
+    "cache_read_input_tokens": 149156,
+    "output_tokens": 1094,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1009,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 1094,
+        "cache_read_input_tokens": 149156,
+        "cache_creation_input_tokens": 1009,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1009
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_01984KeoKGJJGcGSbHccwUPD",
+      "type": "tool_result",
+      "content": "2828\t    return res.json({\n2829\t      tutors: tutorsRes.rows,\n2830\t      total,\n2831\t      page: pageNum,\n2832\t      limit: limitNum,\n2833\t      totalPages: Math.ceil(total / limitNum),\n2834\t    });\n2835\t  } catch (err) {\n2836\t    console.error(\"GET /api/tutors error:\", err.message);\n2837\t    return res.status(500).json({ message: \"Server error.\", detail: err.message });\n2838\t  }\n2839\t});\n2840\t\n2841\t// ── GET /api/reviews/featured ─────────────────────────────────────────────────\n2842\t// Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)"
+    }
+  ]
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01SzE6GetuGFHzCBT639ws12",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01NybD6P7uoqhpvrRk5KLX4y",
+      "name": "Edit",
+      "input": {
+        "replace_all": false,
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\backend\\server.js",
+        "old_string": "// ── GET /api/reviews/featured ─────────────────────────────────────────────────\n// Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)",
+        "new_string": "// ── GET /api/tutors/:id ───────────────────────────────────────────────────────\n// Trả về hồ sơ chi tiết của một gia sư theo user ID (public, không cần auth)\napp.get(\"/api/tutors/:id\", async (req, res) => {\n  const { id } = req.params;\n  try {\n    const result = await pool.query(\n      `SELECT\n         u.id, u.full_name, u.picture, u.email,\n         tp.bio, tp.subjects, tp.experience_years,\n         tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,\n         tp.education, tp.language, tp.teaching_style, tp.qualifications,\n         tp.first_name, tp.last_name, tp.display_name, tp.phone,\n         tp.headline,\n         COALESCE(\n           (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.reviewer_id = u.id),\n           0\n         ) AS avg_r,\n         COALESCE(\n           (SELECT COUNT(*) FROM reviews r WHERE r.reviewer_id = u.id),\n           0\n         ) AS review_count\n       FROM tutor_profiles tp\n       JOIN users u ON tp.user_id = u.id\n       WHERE u.id = $1 AND tp.status = 'approved'\n       LIMIT 1`,\n      [id]\n    );\n    if (result.rows.length === 0) {\n      return res.status(404).json({ message: \"Tutor not found.\" });\n    }\n    return res.json(result.rows[0]);\n  } catch (err) {\n    console.error(\"GET /api/tutors/:id error:\", err.message);\n    return res.status(500).json({ message: \"Server error.\" });\n  }\n});\n\n// ── GET /api/reviews/featured ─────────────────────────────────────────────────\n// Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)"
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 1321,
+    "cache_read_input_tokens": 150165,
+    "output_tokens": 721,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1321,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 721,
+        "cache_read_input_tokens": 150165,
+        "cache_creation_input_tokens": 1321,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1321
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_01NybD6P7uoqhpvrRk5KLX4y",
+      "type": "tool_result",
+      "content": "The file c:\\Users\\DELL\\Downloads\\AssignmentSWP\\backend\\server.js has been updated successfully. (file state is current in your context — no need to Read it back)"
+    }
+  ]
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01NXaf45m6cfJqAPcqpHcCVo",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Now update TutorProfile.jsx to properly use real data when available:"
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 776,
+    "cache_read_input_tokens": 151486,
+    "output_tokens": 733,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 776,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 733,
+        "cache_read_input_tokens": 151486,
+        "cache_creation_input_tokens": 776,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 776
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01NXaf45m6cfJqAPcqpHcCVo",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_015Si9w33r3PXhiRixCvd4ab",
+      "name": "Edit",
+      "input": {
+        "replace_all": false,
+        "file_path": "c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\pages\\TutorProfile.jsx",
+        "old_string": "  useEffect(() => {\n    window.scrollTo(0, 0)\n    setLoading(true)\n    setNotFound(false)\n    fetch(`${API_BASE}/api/tutors/${tutorId}`)\n      .then(r => r.ok ? r.json() : null)\n      .then(data => {\n        const mock = getMockProfile(tutorId)\n        setTutor(data ? { ...mock, ...data } : mock)\n        setLoading(false)\n      })\n      .catch(() => {\n        setTutor(getMockProfile(tutorId))\n        setLoading(false)\n      })\n  }, [tutorId])",
+        "new_string": "  useEffect(() => {\n    window.scrollTo(0, 0)\n    setLoading(true)\n    setNotFound(false)\n\n    // Detect mock IDs (simple integers like '1','2','3') vs real UUIDs\n    const isMockId = /^\\d+$/.test(String(tutorId))\n\n    if (isMockId) {\n      // Use mock data directly for demo tutor cards\n      setTutor(getMockProfile(tutorId))\n      setLoading(false)\n      return\n    }\n\n    // Fetch real tutor data from backend\n    fetch(`${API_BASE}/api/tutors/${tutorId}`)\n      .then(r => {\n        if (r.status === 404) { setNotFound(true); setLoading(false); return null }\n        return r.ok ? r.json() : null\n      })\n      .then(data => {\n        if (!data) return\n        // Merge real data on top of mock template (keeps schedule/reviews/etc from mock)\n        const mock = getMockProfile(tutorId)\n        setTutor({\n          ...mock,\n          ...data,\n          // Prefer profile_photo_url from backend, fallback to picture (Google avatar)\n          picture: data.profile_photo_url || data.picture || mock.picture,\n          // Use real title from headline field, or build from bio\n          title: data.headline || (data.bio ? data.bio.slice(0, 60) : mock.title),\n        })\n        setLoading(false)\n      })\n      .catch(() => {\n        setTutor(getMockProfile(tutorId))\n        setLoading(false)\n      })\n  }, [tutorId])"
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 776,
+    "cache_read_input_tokens": 151486,
+    "output_tokens": 733,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 776,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 733,
+        "cache_read_input_tokens": 151486,
+        "cache_creation_input_tokens": 776,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 776
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "tool_use_id": "toolu_015Si9w33r3PXhiRixCvd4ab",
+      "type": "tool_result",
+      "content": "The file c:\\Users\\DELL\\Downloads\\AssignmentSWP\\frontend\\src\\pages\\TutorProfile.jsx has been updated successfully. (file state is current in your context — no need to Read it back)"
+    }
+  ]
+}
+
+---
+## unknown
+
+{
+  "model": "claude-sonnet-4-6",
+  "id": "msg_01QU8V5EZMcyFdqjgwrUUxjd",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Xong. Đây là cách hoạt động:\n\n**Khi click \"Xem Hồ Sơ\" trên tutor thật (từ API):**\n- ID là UUID → gọi `GET /api/tutors/:id` (endpoint vừa thêm vào backend)\n- Hiển thị tên thật, ảnh thật, bio thật, môn học thật, giá thật, thành phố thật từ database\n- Phần lịch dạy / đánh giá / chính sách giữ mock vì DB chưa có bảng đó\n\n**Khi click trên tutor mock (card mẫu số 1-6 khi API fail):**\n- ID là số nguyên (`'1'`, `'2'`...) → dùng mock data trực tiếp, không gọi API\n\n**Backend endpoint mới:** `GET /api/tutors/:id` trả về `full_name`, `picture`, `bio`, `subjects`, `experience_years`, `hourly_rate`, `city`, `country`, `education`, `teaching_style`, `avg_r`, `review_count`."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1,
+    "cache_creation_input_tokens": 795,
+    "cache_read_input_tokens": 152262,
+    "output_tokens": 295,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 795,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 295,
+        "cache_read_input_tokens": 152262,
+        "cache_creation_input_tokens": 795,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 795
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+
+
+---
+## unknown
+
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "image",
+      "source": {
+        "type": "base64",
+        "media_type": "image/png",
+        "data": "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

@@ -1436,6 +1436,78 @@ app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, re
   }
 });
 
+// ── GET /api/admin/analytics/dashboard/stats ─────────────────────────────────
+// CAP-1.1: Returns six live platform KPI values. All six DB queries run in
+// parallel via Promise.all. No audit log (read-only). All admin roles allowed.
+app.get("/api/admin/analytics/dashboard/stats", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [
+      totalUsersRes,
+      activeStudentsRes,
+      activeTutorsRes,
+      pendingTutorsRes,
+      monthlyRevenueRes,
+      openDisputesRes,
+    ] = await Promise.all([
+      // 1. Total registered users (all roles)
+      pool.query("SELECT COUNT(*) AS count FROM users"),
+
+      // 2. Active students (non-banned)
+      pool.query(
+        "SELECT COUNT(*) AS count FROM users WHERE role = 'student' AND is_banned = false"
+      ),
+
+      // 3. Active tutors: approved profile + non-banned user account
+      pool.query(`
+        SELECT COUNT(*) AS count
+        FROM tutor_profiles tp
+        INNER JOIN users u ON tp.user_id = u.id
+        WHERE tp.status = 'approved'
+          AND COALESCE(u.is_banned, false) = false
+      `),
+
+      // 4. Pending tutor profiles awaiting review
+      pool.query(
+        "SELECT COUNT(*) AS count FROM tutor_profiles WHERE status = 'pending'"
+      ),
+
+      // 5. Monthly revenue: sum of successful PAYMENT transactions in the
+      //    current calendar month, boundaries computed in Asia/Ho_Chi_Minh
+      //    timezone so month-start is midnight Vietnamese time not UTC.
+      pool.query(`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM transactions
+        WHERE type = 'PAYMENT'
+          AND status = 'SUCCESS'
+          AND created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                            AT TIME ZONE 'Asia/Ho_Chi_Minh'
+          AND created_at <  (DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                            + INTERVAL '1 month')
+                            AT TIME ZONE 'Asia/Ho_Chi_Minh'
+      `),
+
+      // 6. Open disputes requiring admin attention
+      pool.query("SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'"),
+    ]);
+
+    // COUNT fields: pg returns bigint as string → parseInt is safe.
+    // SUM(amount) on numeric type: pg may return '145000.00' or scientific
+    // notation for large values → Math.round(Number()) handles all cases.
+    return res.json({
+      total_users:     parseInt(totalUsersRes.rows[0].count,     10),
+      active_students: parseInt(activeStudentsRes.rows[0].count, 10),
+      active_tutors:   parseInt(activeTutorsRes.rows[0].count,   10),
+      pending_tutors:  parseInt(pendingTutorsRes.rows[0].count,  10),
+      monthly_revenue: Math.round(Number(monthlyRevenueRes.rows[0].total || 0)),
+      open_disputes:   parseInt(openDisputesRes.rows[0].count,   10),
+      generated_at:    new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/analytics/dashboard/stats error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu KPI." });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  QUIZ APIs
 // ══════════════════════════════════════════════════════════════════════════════

@@ -117,6 +117,14 @@ export default function AdminDashboard() {
   const [error,   setError]   = useState(null)
   const [toast,   setToast]   = useState(null)
 
+  // ── CAP-1.1: Live platform KPI stats ──
+  const [kpiStats, setKpiStats] = useState({
+    total_users: 0, active_students: 0, active_tutors: 0,
+    pending_tutors: 0, monthly_revenue: 0, open_disputes: 0,
+  })
+  const [kpiLoading, setKpiLoading] = useState(true)
+  const [kpiError,   setKpiError]   = useState(null)
+
   // ── Review panel ──
   const [selectedTutor,  setSelectedTutor]  = useState(null)
   const [reviewNotes,    setReviewNotes]    = useState('')
@@ -146,6 +154,25 @@ export default function AdminDashboard() {
   }, [token])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // ── CAP-1.1: Fetch live KPI stats, auto-refresh every 30 s ────────────────
+  const fetchKpiStats = useCallback(async () => {
+    setKpiLoading(true); setKpiError(null)
+    try {
+      const data = await authFetch(`${API}/api/admin/analytics/dashboard/stats`, token)
+      setKpiStats(data)
+    } catch (err) {
+      setKpiError(err.message)
+    } finally {
+      setKpiLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    fetchKpiStats()
+    const interval = setInterval(fetchKpiStats, 30000)
+    return () => clearInterval(interval)
+  }, [fetchKpiStats])
 
   useEffect(() => {
     if (!toast) return
@@ -343,7 +370,7 @@ export default function AdminDashboard() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" onClick={fetchData} title="Làm mới">
+            <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" onClick={() => { fetchData(); fetchKpiStats() }} title="Làm mới">
               <span className="material-symbols-outlined">refresh</span>
             </button>
             <NotificationDropdown token={token} />
@@ -364,7 +391,15 @@ export default function AdminDashboard() {
         {/* Page content */}
         <div className="pt-16">
           {activeView === 'dashboard' && (
-            <DashboardView stats={stats} loading={loading} onNavigate={setActiveView} />
+            <DashboardView
+              stats={stats}
+              loading={loading}
+              onNavigate={setActiveView}
+              kpiStats={kpiStats}
+              kpiLoading={kpiLoading}
+              kpiError={kpiError}
+              onRefreshKpi={fetchKpiStats}
+            />
           )}
           {activeView === 'tutor-approval' && (
             <TutorApprovalView
@@ -513,12 +548,53 @@ const BAR_DATA = [
   { month: 'Th4', h: 68 }, { month: 'Th5', h: 80 }, { month: 'Th6', h: 95 },
 ]
 
-function DashboardView({ stats, loading, onNavigate }) {
+// ── CAP-1.1 formatting helpers ────────────────────────────────────────────────
+const fmtCount      = (n) => (n ?? 0).toLocaleString('vi-VN')
+const fmtKpiRevenue = (n) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(n ?? 0)
+
+function DashboardView({ stats, loading, onNavigate, kpiStats, kpiLoading, kpiError, onRefreshKpi }) {
+  const K = kpiStats  // shorthand
+  const kv = (raw, isCurrency = false) => {
+    if (kpiLoading) return '…'
+    return isCurrency ? fmtKpiRevenue(raw) : fmtCount(raw)
+  }
+
   return (
     <div className="p-10 max-w-[1280px] mx-auto w-full">
-      <div className="mb-8">
-        <h2 className="text-3xl font-bold text-on-background">Tổng quan hệ thống</h2>
-        <p className="text-sm text-on-surface-variant mt-1">Phân tích và tóm tắt hoạt động nền tảng.</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h2 className="text-3xl font-bold text-on-background">Tổng quan hệ thống</h2>
+          <p className="text-sm text-on-surface-variant mt-1">Phân tích và tóm tắt hoạt động nền tảng.</p>
+        </div>
+        {/* KPI refresh status row */}
+        <div className="flex items-center gap-3 text-xs text-on-surface-variant mt-1">
+          {kpiError ? (
+            <span className="flex items-center gap-1 text-red-500">
+              <span className="material-symbols-outlined text-[15px]">error_outline</span>
+              Lỗi tải KPI —{' '}
+              <button onClick={onRefreshKpi} className="underline hover:text-red-700">Thử lại</button>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1">
+              {kpiLoading && <span className="material-symbols-outlined text-[15px] animate-spin">progress_activity</span>}
+              {!kpiLoading && K.generated_at && (
+                <>
+                  <span className="material-symbols-outlined text-[15px]">schedule</span>
+                  Cập nhật lúc {new Date(K.generated_at).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}
+                </>
+              )}
+            </span>
+          )}
+          <button
+            onClick={onRefreshKpi}
+            disabled={kpiLoading}
+            title="Làm mới KPI"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-outline-variant hover:bg-gray-50 disabled:opacity-40 transition-colors"
+          >
+            <span className={`material-symbols-outlined text-[15px] ${kpiLoading ? 'animate-spin' : ''}`}>refresh</span>
+            Làm mới
+          </button>
+        </div>
       </div>
 
       {/* AI Platform Summary */}
@@ -533,15 +609,15 @@ function DashboardView({ stats, loading, onNavigate }) {
             <div className="flex flex-wrap gap-x-8 gap-y-3">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                <span className="text-sm text-on-surface-variant"><strong className="text-on-background">5</strong> hồ sơ thiếu tài liệu</span>
+                <span className="text-sm text-on-surface-variant">
+                  <strong className="text-on-background">{kv(K.pending_tutors)}</strong> hồ sơ chờ duyệt
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-                <span className="text-sm text-on-surface-variant"><strong className="text-on-background">3</strong> khiếu nại khẩn cấp</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-                <span className="text-sm text-on-surface-variant"><strong className="text-on-background">2</strong> giao dịch đáng ngờ</span>
+                <span className="text-sm text-on-surface-variant">
+                  <strong className="text-on-background">{kv(K.open_disputes)}</strong> tranh chấp đang mở
+                </span>
               </div>
             </div>
           </div>
@@ -549,18 +625,49 @@ function DashboardView({ stats, loading, onNavigate }) {
             className="shrink-0 px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg hover:bg-primary/90 transition-colors"
             onClick={() => onNavigate('tutor-approval')}
           >
-            Xem cảnh báo
+            Xem hồ sơ
           </button>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-5 gap-6 mb-6">
-        <OverviewCard icon="group"       iconBg="bg-gray-100"    iconColor="text-on-surface-variant" label="Tổng người dùng"     value="24,592"  trend="+12%" trendUp />
-        <OverviewCard icon="school"      iconBg="bg-blue-50"     iconColor="text-blue-700"           label="Học sinh đang học"   value="18,204"  trend="+8%"  trendUp />
-        <OverviewCard icon="history_edu" iconBg="bg-indigo-50"   iconColor="text-indigo-700"         label="Gia sư đang hoạt động" value="6,388" trend="+4%"  trendUp />
-        <OverviewCard icon="how_to_reg"  iconBg="bg-amber-50"    iconColor="text-amber-700"          label="Hồ sơ chờ duyệt"    value={loading ? '…' : String(stats.pending)} trend="+18%" trendUp={false} />
-        <OverviewCard icon="payments"    iconBg="bg-emerald-50"  iconColor="text-emerald-700"        label="Doanh thu tháng"     value="$124.5k" trend="+22%" trendUp />
+      {/* ── CAP-1.1: Live KPI Cards (3 × 2 grid) ── */}
+      <div className="grid grid-cols-3 gap-6 mb-6">
+        <OverviewCard
+          icon="group"       iconBg="bg-gray-100"   iconColor="text-on-surface-variant"
+          label="Tổng người dùng"
+          value={kv(K.total_users)}
+          loading={kpiLoading}
+        />
+        <OverviewCard
+          icon="school"      iconBg="bg-blue-50"    iconColor="text-blue-700"
+          label="Học sinh đang học"
+          value={kv(K.active_students)}
+          loading={kpiLoading}
+        />
+        <OverviewCard
+          icon="workspace_premium" iconBg="bg-indigo-50" iconColor="text-indigo-700"
+          label="Gia sư đang hoạt động"
+          value={kv(K.active_tutors)}
+          loading={kpiLoading}
+        />
+        <OverviewCard
+          icon="pending"     iconBg="bg-amber-50"   iconColor="text-amber-700"
+          label="Hồ sơ chờ duyệt"
+          value={kv(K.pending_tutors)}
+          loading={kpiLoading}
+        />
+        <OverviewCard
+          icon="payments"    iconBg="bg-emerald-50" iconColor="text-emerald-700"
+          label="Doanh thu tháng (VND)"
+          value={kv(K.monthly_revenue, true)}
+          loading={kpiLoading}
+        />
+        <OverviewCard
+          icon="gavel"       iconBg="bg-red-50"     iconColor="text-red-700"
+          label="Tranh chấp đang mở"
+          value={kv(K.open_disputes)}
+          loading={kpiLoading}
+        />
       </div>
 
       {/* Charts Row */}
@@ -661,20 +768,29 @@ function DashboardView({ stats, loading, onNavigate }) {
 }
 
 // ─── Overview Card ────────────────────────────────────────────────────────────
-function OverviewCard({ icon, iconBg, iconColor, label, value, trend, trendUp }) {
+// OverviewCard: supports optional `loading` prop for skeleton state.
+// The `trend` / `trendUp` props are still accepted for backwards compatibility
+// with any callers that pass them, but CAP-1.1 KPI cards omit them.
+function OverviewCard({ icon, iconBg, iconColor, label, value, trend, trendUp, loading = false }) {
   return (
     <div className="bg-white rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
       <div className="flex justify-between items-start mb-4">
         <div className={`w-10 h-10 rounded-lg ${iconBg} flex items-center justify-center ${iconColor}`}>
           <span className="material-symbols-outlined">{icon}</span>
         </div>
-        <span className={`flex items-center text-xs font-semibold ${trendUp ? 'text-emerald-600' : 'text-red-600'}`}>
-          <span className="material-symbols-outlined text-[15px]">{trendUp ? 'trending_up' : 'trending_down'}</span>
-          {trend}
-        </span>
+        {trend != null && (
+          <span className={`flex items-center text-xs font-semibold ${trendUp ? 'text-emerald-600' : 'text-red-600'}`}>
+            <span className="material-symbols-outlined text-[15px]">{trendUp ? 'trending_up' : 'trending_down'}</span>
+            {trend}
+          </span>
+        )}
       </div>
       <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider mb-1">{label}</p>
-      <h4 className="text-2xl font-bold text-on-background">{value}</h4>
+      {loading ? (
+        <div className="h-8 bg-gray-200 rounded animate-pulse w-3/4" />
+      ) : (
+        <h4 className="text-2xl font-bold text-on-background">{value}</h4>
+      )}
     </div>
   )
 }
