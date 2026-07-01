@@ -1945,6 +1945,72 @@ app.get("/api/admin/transactions/failed", verifyToken, requireAdmin, async (req,
   }
 });
 
+// ── GET /api/admin/transactions/lesson-payments ───────────────────────────────
+// CAP-3.3: Lesson payment transactions (type=PAYMENT joined to bookings).
+// Amount is ABS(t.amount) — stored negative for student deductions.
+app.get("/api/admin/transactions/lesson-payments", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT t.id,
+              ABS(t.amount)::numeric                          AS amount,
+              t.status,
+              COALESCE(t.gateway, 'Internal Wallet')          AS gateway,
+              t.created_at,
+              COALESCE(u.full_name,  '')                      AS student_name,
+              COALESCE(u.email,      '')                      AS student_email,
+              b.id::text                                      AS booking_id,
+              COALESCE(b.subject,    '')                      AS subject,
+              TO_CHAR(b.lesson_date, 'YYYY-MM-DD')           AS lesson_date,
+              COALESCE(tu.full_name, '')                      AS tutor_name,
+              COALESCE(tu.email,     '')                      AS tutor_email
+       FROM transactions t
+       JOIN  wallets   w  ON w.id  = t.wallet_id
+       JOIN  users     u  ON u.id  = w.user_id
+       INNER JOIN bookings b  ON b.id  = t.reference_id
+       LEFT  JOIN users   tu ON tu.id = b.tutor_id
+       WHERE t.type = 'PAYMENT' AND t.reference_id IS NOT NULL
+       ORDER BY t.created_at DESC
+       LIMIT 200`
+    );
+    return res.json({ transactions: result.rows });
+  } catch (err) {
+    console.error("GET /api/admin/transactions/lesson-payments error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy giao dịch buổi học." });
+  }
+});
+
+// ── GET /api/admin/transactions/course-transactions ───────────────────────────
+// CAP-3.4: Course purchase records from course_enrollments.
+// Student wallet payments for courses do NOT carry a reference_id in the
+// transactions table (see POST /api/cart/checkout — INSERT omits reference_id).
+// The canonical source of truth for course purchases is course_enrollments.
+app.get("/api/admin/transactions/course-transactions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT ce.id::text                                         AS id,
+              ce.status                                           AS enrollment_status,
+              ce.created_at,
+              COALESCE(c.title,          '')                      AS course_title,
+              COALESCE(c.price,          0)::numeric              AS amount,
+              COALESCE(c.subject,        '')                      AS subject,
+              COALESCE(su.full_name, ce.student_name, '')        AS buyer_name,
+              COALESCE(su.email,         '')                      AS buyer_email,
+              COALESCE(tu.full_name,     '')                      AS tutor_name,
+              COALESCE(tu.email,         '')                      AS tutor_email
+       FROM   course_enrollments ce
+       JOIN   courses c  ON c.id  = ce.course_id
+       LEFT   JOIN users su ON su.id = ce.student_id
+       LEFT   JOIN users tu ON tu.id = c.tutor_id
+       ORDER  BY ce.created_at DESC
+       LIMIT  200`
+    );
+    return res.json({ transactions: result.rows });
+  } catch (err) {
+    console.error("GET /api/admin/transactions/course-transactions error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy giao dịch khóa học." });
+  }
+});
+
 // ── GET /api/admin/financial/overview ────────────────────────────────────────
 // CAP-3.2: Real-time financial summary from transactions table (read-only).
 // Platform fees and released-to-tutors are best-effort approximations only;

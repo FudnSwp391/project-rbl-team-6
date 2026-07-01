@@ -458,8 +458,8 @@ export default function AdminDashboard() {
           {activeView === 'transactions'     && <TransactionsView token={token} />}
           {/* ── Transaction Management Module ── */}
           {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} token={token} />}
-          {activeView === 'tx-lessons'       && <LessonPayments />}
-          {activeView === 'tx-courses'       && <CourseTransactions />}
+          {activeView === 'tx-lessons'       && <LessonPayments token={token} />}
+          {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
           {activeView === 'tx-withdrawals'   && <TutorWithdrawals />}
           {activeView === 'tx-refunds'       && <RefundManagement />}
           {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
