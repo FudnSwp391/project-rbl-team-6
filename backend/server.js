@@ -2011,6 +2011,75 @@ app.get("/api/admin/transactions/course-transactions", verifyToken, requireAdmin
   }
 });
 
+// ── GET /api/admin/transactions/withdrawals ───────────────────────────────────
+// CAP-3.5: Tutor withdrawal requests from withdraw_requests table (read-only).
+// account_details is JSONB — bank_name and account_number extracted if present;
+// account number is masked to show only last 4 digits.
+app.get("/api/admin/transactions/withdrawals", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT wr.id::text,
+              wr.amount::numeric,
+              wr.method,
+              wr.status,
+              COALESCE(wr.admin_note, '')                              AS admin_note,
+              wr.created_at,
+              wr.updated_at,
+              COALESCE(wr.account_details->>'bank_name',  wr.method, '') AS bank_name,
+              CASE
+                WHEN wr.account_details->>'account_number' IS NOT NULL
+                THEN '****' || RIGHT(wr.account_details->>'account_number', 4)
+                ELSE ''
+              END                                                       AS bank_account_masked,
+              COALESCE(u.full_name, '')                                AS tutor_name,
+              COALESCE(u.email,     '')                                AS tutor_email
+       FROM   withdraw_requests wr
+       JOIN   wallets w ON w.id  = wr.wallet_id
+       JOIN   users   u ON u.id  = w.user_id
+       ORDER  BY wr.created_at DESC
+       LIMIT  200`
+    );
+    return res.json({ withdrawals: result.rows });
+  } catch (err) {
+    console.error("GET /api/admin/transactions/withdrawals error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách yêu cầu rút tiền." });
+  }
+});
+
+// ── GET /api/admin/transactions/refunds ───────────────────────────────────────
+// CAP-3.6: Refund records from disputes table (read-only).
+// No dedicated refund_requests table exists. Source: disputes WHERE
+// status='RESOLVED_REFUND'. Amount approximated from courses.price (the actual
+// refunded amount is not stored separately in the disputes table).
+app.get("/api/admin/transactions/refunds", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT d.id::text,
+              d.reason,
+              d.status,
+              COALESCE(d.admin_note, '')              AS admin_note,
+              d.created_at,
+              d.resolved_at,
+              d.target_type,
+              d.evidence_url,
+              COALESCE(u.full_name, '')               AS user_name,
+              COALESCE(u.email,     '')               AS user_email,
+              COALESCE(c.title,     '')               AS course_title,
+              COALESCE(c.price,     0)::numeric       AS amount
+       FROM   disputes d
+       LEFT   JOIN users   u ON u.id = d.raised_by
+       LEFT   JOIN courses c ON c.id = d.course_id
+       WHERE  d.status = 'RESOLVED_REFUND'
+       ORDER  BY d.created_at DESC
+       LIMIT  200`
+    );
+    return res.json({ refunds: result.rows });
+  } catch (err) {
+    console.error("GET /api/admin/transactions/refunds error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách hoàn tiền." });
+  }
+});
+
 // ── GET /api/admin/financial/overview ────────────────────────────────────────
 // CAP-3.2: Real-time financial summary from transactions table (read-only).
 // Platform fees and released-to-tutors are best-effort approximations only;
