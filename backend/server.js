@@ -1436,6 +1436,692 @@ app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, re
   }
 });
 
+// ── GET /api/admin/analytics/dashboard/stats ─────────────────────────────────
+// CAP-1.1: Returns six live platform KPI values. All six DB queries run in
+// parallel via Promise.all. No audit log (read-only). All admin roles allowed.
+app.get("/api/admin/analytics/dashboard/stats", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [
+      totalUsersRes,
+      activeStudentsRes,
+      activeTutorsRes,
+      pendingTutorsRes,
+      monthlyRevenueRes,
+      openDisputesRes,
+    ] = await Promise.all([
+      // 1. Total registered users (all roles)
+      pool.query("SELECT COUNT(*) AS count FROM users"),
+
+      // 2. Active students (non-banned)
+      pool.query(
+        "SELECT COUNT(*) AS count FROM users WHERE role = 'student' AND is_banned = false"
+      ),
+
+      // 3. Active tutors: approved profile + non-banned user account
+      pool.query(`
+        SELECT COUNT(*) AS count
+        FROM tutor_profiles tp
+        INNER JOIN users u ON tp.user_id = u.id
+        WHERE tp.status = 'approved'
+          AND COALESCE(u.is_banned, false) = false
+      `),
+
+      // 4. Pending tutor profiles awaiting review
+      pool.query(
+        "SELECT COUNT(*) AS count FROM tutor_profiles WHERE status = 'pending'"
+      ),
+
+      // 5. Monthly revenue: gross student payment volume for the current
+      //    calendar month (VN timezone). PAYMENT rows on student wallets are
+      //    stored as negative amounts (wallet debit). SUM(ABS(amount)) converts
+      //    them to a positive total. The amount < 0 guard excludes the positive
+      //    PAYMENT+SUCCESS rows that release_escrow() writes to tutor wallets,
+      //    preventing double-counting once lesson escrow releases go live.
+      pool.query(`
+        SELECT COALESCE(SUM(ABS(amount)), 0) AS total
+        FROM transactions
+        WHERE type = 'PAYMENT'
+          AND status = 'SUCCESS'
+          AND amount < 0
+          AND created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                            AT TIME ZONE 'Asia/Ho_Chi_Minh'
+          AND created_at <  (DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                            + INTERVAL '1 month')
+                            AT TIME ZONE 'Asia/Ho_Chi_Minh'
+      `),
+
+      // 6. Open disputes requiring admin attention
+      pool.query("SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'"),
+    ]);
+
+    // COUNT fields: pg returns bigint as string → parseInt is safe.
+    // SUM(amount) on numeric type: pg may return '145000.00' or scientific
+    // notation for large values → Math.round(Number()) handles all cases.
+    return res.json({
+      total_users:     parseInt(totalUsersRes.rows[0].count,     10),
+      active_students: parseInt(activeStudentsRes.rows[0].count, 10),
+      active_tutors:   parseInt(activeTutorsRes.rows[0].count,   10),
+      pending_tutors:  parseInt(pendingTutorsRes.rows[0].count,  10),
+      monthly_revenue: Math.round(Number(monthlyRevenueRes.rows[0].total || 0)),
+      open_disputes:   parseInt(openDisputesRes.rows[0].count,   10),
+      generated_at:    new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/analytics/dashboard/stats error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu KPI." });
+  }
+});
+
+// ── GET /api/admin/analytics/dashboard/growth ─────────────────────────────────
+// CAP-1.2: Returns growth series (new_users + logins per period) and today
+// summary for the admin dashboard chart. Three ranges:
+//   30d  → daily,   last 30 days,  label format DD/MM
+//   6m   → monthly, last 6 months, label format ThN
+//   ytd  → monthly, Jan–current month of current year, label format ThN
+// All periods gap-filled via generate_series + LEFT JOIN so every period
+// always has a row (missing days/months return 0 via COALESCE).
+// ::int cast on COUNT ensures pg returns JS numbers, not bigint strings.
+app.get("/api/admin/analytics/dashboard/growth", verifyToken, requireAdmin, async (req, res) => {
+  const range = req.query.range ?? '30d'
+
+  if (!['30d', '6m', 'ytd'].includes(range)) {
+    return res.status(400).json({
+      message: "Tham số range không hợp lệ. Sử dụng: 30d, 6m, ytd."
+    })
+  }
+
+  const SERIES_SQL = {
+    '30d': `
+      WITH periods AS (
+        SELECT generate_series(
+          (CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '29 days',
+          (CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+          INTERVAL '1 day'
+        )::date AS d
+      ),
+      uc AS (
+        SELECT DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS day,
+               COUNT(*) AS cnt
+        FROM users
+        WHERE created_at >= ((CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '29 days')
+                             AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        GROUP BY day
+      ),
+      lc AS (
+        SELECT DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS day,
+               COUNT(*) AS cnt
+        FROM login_logs
+        WHERE created_at >= ((CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '29 days')
+                             AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        GROUP BY day
+      )
+      SELECT
+        TO_CHAR(p.d, 'DD/MM')    AS label,
+        COALESCE(uc.cnt, 0)::int AS new_users,
+        COALESCE(lc.cnt, 0)::int AS logins
+      FROM periods p
+      LEFT JOIN uc ON uc.day = p.d
+      LEFT JOIN lc ON lc.day = p.d
+      ORDER BY p.d ASC
+    `,
+    '6m': `
+      WITH periods AS (
+        SELECT generate_series(
+          DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '5 months',
+          DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+          INTERVAL '1 month'
+        )::date AS m
+      ),
+      uc AS (
+        SELECT DATE_TRUNC('month', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS mo,
+               COUNT(*) AS cnt
+        FROM users
+        WHERE created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '5 months'
+        GROUP BY mo
+      ),
+      lc AS (
+        SELECT DATE_TRUNC('month', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS mo,
+               COUNT(*) AS cnt
+        FROM login_logs
+        WHERE created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '5 months'
+        GROUP BY mo
+      )
+      SELECT
+        'Th' || EXTRACT(MONTH FROM p.m)::int  AS label,
+        COALESCE(uc.cnt, 0)::int              AS new_users,
+        COALESCE(lc.cnt, 0)::int              AS logins
+      FROM periods p
+      LEFT JOIN uc ON uc.mo = p.m
+      LEFT JOIN lc ON lc.mo = p.m
+      ORDER BY p.m ASC
+    `,
+    'ytd': `
+      WITH periods AS (
+        SELECT generate_series(
+          DATE_TRUNC('year',  NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date,
+          DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date,
+          INTERVAL '1 month'
+        )::date AS m
+      ),
+      uc AS (
+        SELECT DATE_TRUNC('month', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS mo,
+               COUNT(*) AS cnt
+        FROM users
+        WHERE created_at >= DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+        GROUP BY mo
+      ),
+      lc AS (
+        SELECT DATE_TRUNC('month', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS mo,
+               COUNT(*) AS cnt
+        FROM login_logs
+        WHERE created_at >= DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+        GROUP BY mo
+      )
+      SELECT
+        'Th' || EXTRACT(MONTH FROM p.m)::int  AS label,
+        COALESCE(uc.cnt, 0)::int              AS new_users,
+        COALESCE(lc.cnt, 0)::int              AS logins
+      FROM periods p
+      LEFT JOIN uc ON uc.mo = p.m
+      LEFT JOIN lc ON lc.mo = p.m
+      ORDER BY p.m ASC
+    `,
+  }
+
+  try {
+    const [seriesRes, todayUsersRes, todayTutorsRes] = await Promise.all([
+      pool.query(SERIES_SQL[range]),
+      pool.query(`
+        SELECT COUNT(*)::int AS cnt FROM users
+        WHERE DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') =
+              (CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+      `),
+      pool.query(`
+        SELECT COUNT(*)::int AS cnt FROM tutor_profiles
+        WHERE DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') =
+              (CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+      `),
+    ])
+
+    return res.json({
+      range,
+      series:      seriesRes.rows,
+      today: {
+        new_users:  todayUsersRes.rows[0].cnt,
+        new_tutors: todayTutorsRes.rows[0].cnt,
+      },
+      generated_at: new Date().toISOString(),
+    })
+  } catch (err) {
+    console.error("GET /api/admin/analytics/dashboard/growth error:", err)
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu biểu đồ." })
+  }
+})
+
+// ── GET /api/admin/transactions ───────────────────────────────────────────────
+// CAP-3.1 / CAP-3.8: Admin transaction list. Supports optional query params:
+//   ?status=SUCCESS|FAILED|PENDING|HELD_IN_ESCROW|REFUNDED|RELEASED|CANCELLED
+//   ?type=DEPOSIT|PAYMENT|WITHDRAWAL|REFUND
+//   ?limit=1..200  (default 100)
+const ALLOWED_TX_STATUSES = new Set(['SUCCESS','FAILED','PENDING','HELD_IN_ESCROW','REFUNDED','RELEASED','CANCELLED']);
+const ALLOWED_TX_TYPES    = new Set(['DEPOSIT','PAYMENT','WITHDRAWAL','REFUND']);
+
+app.get("/api/admin/transactions", verifyToken, requireAdmin, async (req, res) => {
+  const { status, type } = req.query;
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = isNaN(rawLimit) ? 100 : Math.min(Math.max(rawLimit, 1), 200);
+
+  if (status && !ALLOWED_TX_STATUSES.has(status.toUpperCase())) {
+    return res.status(400).json({ message: `Trạng thái không hợp lệ. Giá trị cho phép: ${[...ALLOWED_TX_STATUSES].join(', ')}.` });
+  }
+  if (type && !ALLOWED_TX_TYPES.has(type.toUpperCase())) {
+    return res.status(400).json({ message: `Loại giao dịch không hợp lệ. Giá trị cho phép: ${[...ALLOWED_TX_TYPES].join(', ')}.` });
+  }
+
+  const conds = [];
+  const vals  = [];
+  if (status) { conds.push(`t.status = $${vals.length + 1}`); vals.push(status.toUpperCase()); }
+  if (type)   { conds.push(`t.type   = $${vals.length + 1}`); vals.push(type.toUpperCase()); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+  try {
+    const result = await pool.query(
+      `SELECT t.id, t.amount, t.type, t.status, t.gateway, t.description, t.created_at,
+              u.full_name AS user_name, u.email AS user_email, u.role AS user_role,
+              b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date
+       FROM transactions t
+       JOIN wallets w   ON w.id  = t.wallet_id
+       JOIN users   u   ON u.id  = w.user_id
+       LEFT JOIN bookings b ON b.id = t.reference_id
+       ${where}
+       ORDER BY t.created_at DESC
+       LIMIT $${vals.length + 1}`,
+      [...vals, limit]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/admin/transactions error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách giao dịch." });
+  }
+});
+
+// ── GET /api/admin/subjects ────────────────────────────────────────────────────
+// CAP-2.1: Canonical Vietnamese tutoring subjects for Grade 1–12.
+// Raw DB values are normalised to Vietnamese names; counts aggregated from
+// quizzes, tutor_profiles, and courses. All 10 canonical subjects are always
+// returned (count=0 allowed) so the management screen stays complete.
+const CANONICAL_SUBJECTS = [
+  "Toán", "Tiếng Việt", "Ngữ văn", "Tiếng Anh",
+  "Vật lý", "Hóa học", "Sinh học", "Lịch sử", "Địa lý", "Tin học",
+];
+
+// Normalisation map: raw DB value (lowercase, trimmed) → canonical Vietnamese name.
+// "Science" is intentionally absent — too generic to map safely.
+const SUBJECT_NORM_MAP = {
+  // Toán
+  "toán": "Toán", "toan": "Toán", "toán học": "Toán",
+  "math": "Toán", "maths": "Toán", "mathematics": "Toán",
+  // Tiếng Việt
+  "tiếng việt": "Tiếng Việt", "tieng viet": "Tiếng Việt",
+  "vietnamese": "Tiếng Việt",
+  // Ngữ văn
+  "ngữ văn": "Ngữ văn", "ngu van": "Ngữ văn", "văn": "Ngữ văn",
+  "van": "Ngữ văn", "literature": "Ngữ văn",
+  "vietnamese literature": "Ngữ văn",
+  // Tiếng Anh
+  "tiếng anh": "Tiếng Anh", "tieng anh": "Tiếng Anh",
+  "anh văn": "Tiếng Anh", "anh": "Tiếng Anh",
+  "english": "Tiếng Anh", "english language": "Tiếng Anh",
+  // Vật lý
+  "vật lý": "Vật lý", "vat ly": "Vật lý", "lý": "Vật lý", "ly": "Vật lý",
+  "physics": "Vật lý",
+  // Hóa học
+  "hóa học": "Hóa học", "hoa hoc": "Hóa học", "hóa": "Hóa học",
+  "hoa": "Hóa học", "chemistry": "Hóa học",
+  // Sinh học
+  "sinh học": "Sinh học", "sinh hoc": "Sinh học", "sinh": "Sinh học",
+  "biology": "Sinh học",
+  // Lịch sử
+  "lịch sử": "Lịch sử", "lich su": "Lịch sử", "sử": "Lịch sử",
+  "su": "Lịch sử", "history": "Lịch sử",
+  // Địa lý
+  "địa lý": "Địa lý", "dia ly": "Địa lý", "địa": "Địa lý",
+  "dia": "Địa lý", "geography": "Địa lý",
+  // Tin học
+  "tin học": "Tin học", "tin hoc": "Tin học",
+  "computer science": "Tin học", "informatics": "Tin học",
+  "lập trình": "Tin học", "lap trinh": "Tin học",
+};
+
+function normaliseSubject(raw) {
+  if (!raw) return null;
+  const key = raw.trim().toLowerCase();
+  return SUBJECT_NORM_MAP[key] || null;
+}
+
+app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [quizRes, tutorRes, courseRes] = await Promise.all([
+      pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`SELECT subjects FROM tutor_profiles WHERE subjects IS NOT NULL AND subjects <> '' AND status = 'approved'`),
+      pool.query(`SELECT subject FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+    ]);
+
+    // Initialise counters for every canonical subject
+    const quizCount   = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
+    const tutorCount  = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
+    const courseCount = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
+
+    // Aggregate quiz counts
+    for (const row of quizRes.rows) {
+      const canon = normaliseSubject(row.subject);
+      if (canon) quizCount[canon] = (quizCount[canon] || 0) + 1;
+    }
+
+    // Aggregate tutor counts (subjects field may be CSV or JSON array)
+    const countedTutors = new Map(); // canonical → Set of tutor_profiles seen
+    for (const row of tutorRes.rows) {
+      let parts = [];
+      try {
+        const parsed = JSON.parse(row.subjects);
+        parts = Array.isArray(parsed) ? parsed : [row.subjects];
+      } catch {
+        parts = row.subjects.split(/[,;|]+/);
+      }
+      const seen = new Set();
+      for (const part of parts) {
+        const canon = normaliseSubject(part);
+        if (canon && !seen.has(canon)) {
+          seen.add(canon);
+          tutorCount[canon] = (tutorCount[canon] || 0) + 1;
+        }
+      }
+    }
+
+    // Aggregate course counts
+    for (const row of courseRes.rows) {
+      const canon = normaliseSubject(row.subject);
+      if (canon) courseCount[canon] = (courseCount[canon] || 0) + 1;
+    }
+
+    const subjects = CANONICAL_SUBJECTS.map(name => ({
+      name,
+      quiz_count:   quizCount[name]   || 0,
+      tutor_count:  tutorCount[name]  || 0,
+      course_count: courseCount[name] || 0,
+    }));
+
+    return res.json({ subjects });
+  } catch (err) {
+    console.error("GET /api/admin/subjects error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách môn học." });
+  }
+});
+
+// ── GET /api/admin/reviews ────────────────────────────────────────────────────
+// CAP-4.1: Latest 100 reviews for admin (read-only).
+// Mirrors /api/reviews/featured column access pattern (JOIN for reviewer info,
+// r.comment alias for content) which is confirmed working against the live DB.
+app.get("/api/admin/reviews", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT r.id,
+             COALESCE(u.full_name, '') AS reviewer_name,
+             COALESCE(u.role, 'student') AS reviewer_role,
+             r.rating,
+             r.comment AS content,
+             r.created_at
+      FROM reviews r
+      LEFT JOIN users u ON u.id = r.user_id
+      ORDER BY r.created_at DESC
+      LIMIT 100
+    `);
+    return res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/admin/reviews error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách đánh giá." });
+  }
+});
+
+// ── GET /api/admin/courses ────────────────────────────────────────────────────
+// CAP-2.2: All courses with tutor name, lesson count, review count (read-only).
+app.get("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
+  const STATUS_VI = {
+    published:      'Hoạt động',
+    approved:       'Hoạt động',
+    active:         'Hoạt động',
+    draft:          'Bản nháp',
+    pending_review: 'Bản nháp',
+    archived:       'Đã lưu trữ',
+    reported:       'Bị báo cáo',
+    rejected:       'Bị báo cáo',
+  };
+  try {
+    const result = await pool.query(`
+      SELECT
+        c.id::text                        AS id,
+        COALESCE(c.title, '')             AS title,
+        COALESCE(u.full_name, '')         AS tutor,
+        COALESCE(c.subject, '')           AS subject,
+        COALESCE(c.price, 0)             AS price,
+        COALESCE(c.status, 'draft')       AS status,
+        COALESCE(c.description, '')       AS desc,
+        COALESCE(c.avg_rating, 0)        AS rating,
+        COALESCE(c.enrollment_count, 0)  AS students,
+        c.created_at,
+        c.updated_at,
+        COUNT(DISTINCT cl.id)::int        AS lessons,
+        COUNT(DISTINCT r.id)::int         AS reviews
+      FROM courses c
+      LEFT JOIN users u           ON u.id         = c.tutor_id
+      LEFT JOIN course_lessons cl ON cl.course_id = c.id
+      LEFT JOIN reviews r         ON r.course_id  = c.id
+      GROUP BY c.id, u.full_name
+      ORDER BY c.updated_at DESC NULLS LAST
+      LIMIT 200
+    `);
+    const courses = result.rows.map(row => ({
+      id:         row.id,
+      title:      row.title,
+      tutor:      row.tutor,
+      subject:    row.subject,
+      price:      parseInt(row.price) || 0,
+      premium:    (parseInt(row.price) || 0) > 0,
+      status:     STATUS_VI[row.status] || 'Bản nháp',
+      desc:       row.desc,
+      rating:     row.rating ? parseFloat(row.rating) : 0,
+      students:   parseInt(row.students) || 0,
+      lessons:    parseInt(row.lessons) || 0,
+      reviews:    parseInt(row.reviews) || 0,
+      revenue:    0,
+      completion: 0,
+      created:    row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : '',
+      updated:    row.updated_at ? new Date(row.updated_at).toISOString().slice(0, 10) : '',
+    }));
+    return res.json({ courses });
+  } catch (err) {
+    console.error("GET /api/admin/courses error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách khóa học." });
+  }
+});
+
+// ── GET /api/admin/transactions/failed ────────────────────────────────────────
+// CAP-3.8: Transactions with non-standard statuses (failed / unknown).
+app.get("/api/admin/transactions/failed", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.id::text                                   AS id,
+             t.amount,
+             COALESCE(t.gateway, 'Internal Wallet')       AS gateway,
+             COALESCE(t.description, 'Giao dịch thất bại') AS description,
+             t.status,
+             t.created_at,
+             COALESCE(u.full_name, '')                    AS user_name,
+             COALESCE(u.email, '')                        AS user_email
+      FROM transactions t
+      JOIN wallets w ON w.id = t.wallet_id
+      JOIN users   u ON u.id = w.user_id
+      WHERE t.status NOT IN ('SUCCESS', 'HELD_IN_ESCROW', 'REFUNDED', 'RELEASED')
+      ORDER BY t.created_at DESC
+      LIMIT 100
+    `);
+    const rows = result.rows.map(r => ({
+      id:           r.id,
+      amount:       parseInt(r.amount) || 0,
+      gateway:      r.gateway,
+      errorCode:    r.status || 'ERR_UNKNOWN',
+      errorMessage: r.description,
+      createdAt:    r.created_at,
+      user: {
+        name:   r.user_name,
+        email:  r.user_email,
+        avatar: null,
+      },
+    }));
+    return res.json(rows);
+  } catch (err) {
+    console.error("GET /api/admin/transactions/failed error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy giao dịch thất bại." });
+  }
+});
+
+// ── GET /api/admin/financial/overview ────────────────────────────────────────
+// CAP-3.2: Real-time financial summary from transactions table (read-only).
+// Platform fees and released-to-tutors are best-effort approximations only;
+// commission per transaction is not stored, so both default to 0 where unsafe.
+app.get("/api/admin/financial/overview", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [
+      totalPayRes,
+      monthlyPayRes,
+      totalDepRes,
+      escrowRes,
+      successCountRes,
+      failedCountRes,
+      disputeRes,
+      releasedRes,
+    ] = await Promise.all([
+      // All-time student payment volume
+      pool.query(`
+        SELECT COALESCE(SUM(ABS(amount)), 0) AS total
+        FROM transactions
+        WHERE type = 'PAYMENT' AND status = 'SUCCESS' AND amount < 0
+      `),
+      // Current-month student payment volume (VN timezone, matching dashboard/stats)
+      pool.query(`
+        SELECT COALESCE(SUM(ABS(amount)), 0) AS total
+        FROM transactions
+        WHERE type = 'PAYMENT' AND status = 'SUCCESS' AND amount < 0
+          AND created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                            AT TIME ZONE 'Asia/Ho_Chi_Minh'
+      `),
+      // Total deposit volume (student top-ups + any internal credits)
+      pool.query(`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM transactions
+        WHERE type = 'DEPOSIT' AND status = 'SUCCESS' AND amount > 0
+      `),
+      // Current escrow balance
+      pool.query(`
+        SELECT COALESCE(SUM(ABS(amount)), 0) AS total
+        FROM transactions
+        WHERE status = 'HELD_IN_ESCROW'
+      `),
+      pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'SUCCESS'`),
+      pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'FAILED'`),
+      pool.query(`SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'`),
+      // Internal deposits (no external gateway) ≈ tutor earnings released
+      pool.query(`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM transactions
+        WHERE type = 'DEPOSIT' AND status = 'SUCCESS' AND amount > 0
+          AND (gateway IS NULL OR gateway = 'SYSTEM')
+      `),
+    ]);
+
+    return res.json({
+      total_revenue:            Math.round(Number(totalPayRes.rows[0].total)),
+      monthly_revenue:          Math.round(Number(monthlyPayRes.rows[0].total)),
+      total_payments:           Math.round(Number(totalPayRes.rows[0].total)),
+      total_deposits:           Math.round(Number(totalDepRes.rows[0].total)),
+      escrow_held:              Math.round(Number(escrowRes.rows[0].total)),
+      released_to_tutors:       Math.round(Number(releasedRes.rows[0].total)),
+      platform_fees:            0,
+      total_refunds:            0,
+      successful_transactions:  parseInt(successCountRes.rows[0].count, 10),
+      failed_transactions:      parseInt(failedCountRes.rows[0].count, 10),
+      open_disputes:            parseInt(disputeRes.rows[0].count, 10),
+      generated_at:             new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/financial/overview error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy tổng quan tài chính." });
+  }
+});
+
+// ── GET /api/admin/financial/revenue-series ───────────────────────────────────
+// CAP-3.11: Monthly revenue series + subject breakdown (read-only).
+// ?range=6m (default) | 12m | ytd
+const VALID_RANGES = new Set(['6m', '12m', 'ytd']);
+
+app.get("/api/admin/financial/revenue-series", verifyToken, requireAdmin, async (req, res) => {
+  const range = (req.query.range || '6m').toLowerCase();
+  if (!VALID_RANGES.has(range)) {
+    return res.status(400).json({ message: "Range không hợp lệ. Dùng: 6m, 12m, ytd." });
+  }
+
+  // Compute start date
+  const now = new Date();
+  let startDate;
+  if (range === 'ytd') {
+    startDate = new Date(now.getFullYear(), 0, 1);
+  } else {
+    const months = range === '12m' ? 11 : 5;
+    startDate = new Date(now.getFullYear(), now.getMonth() - months, 1);
+  }
+
+  // Build ordered list of YYYY-MM strings in range
+  const months = [];
+  const cur = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  while (cur <= now) {
+    months.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`);
+    cur.setMonth(cur.getMonth() + 1);
+  }
+
+  try {
+    const [seriesRes, subjectRes] = await Promise.all([
+      // Monthly revenue + deposits grouped by month (VN timezone)
+      pool.query(`
+        SELECT
+          TO_CHAR(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM') AS ym,
+          SUM(CASE WHEN type = 'PAYMENT' AND status = 'SUCCESS' AND amount < 0
+                   THEN ABS(amount) ELSE 0 END)                           AS revenue,
+          SUM(CASE WHEN status = 'REFUNDED' AND amount < 0
+                   THEN ABS(amount) ELSE 0 END)                           AS refunds,
+          SUM(CASE WHEN type = 'DEPOSIT' AND status = 'SUCCESS' AND amount > 0
+                   THEN amount    ELSE 0 END)                             AS deposits
+        FROM transactions
+        WHERE created_at >= $1
+        GROUP BY ym
+        ORDER BY ym
+      `, [startDate.toISOString()]),
+
+      // Subject revenue via booking join (lesson payments only)
+      pool.query(`
+        SELECT
+          b.subject,
+          SUM(ABS(t.amount)) AS revenue,
+          COUNT(*)::int       AS tx_count
+        FROM transactions t
+        JOIN bookings b ON b.id = t.reference_id
+        WHERE t.type = 'PAYMENT' AND t.status = 'SUCCESS' AND t.amount < 0
+          AND b.subject IS NOT NULL AND b.subject <> ''
+          AND t.created_at >= $1
+        GROUP BY b.subject
+        ORDER BY revenue DESC
+        LIMIT 20
+      `, [startDate.toISOString()]),
+    ]);
+
+    // Build lookup from DB rows
+    const byYM = {};
+    for (const row of seriesRes.rows) {
+      byYM[row.ym] = row;
+    }
+
+    // Fill all months (including zeros for missing months)
+    const series = months.map(ym => {
+      const [y, m] = ym.split('-');
+      const row = byYM[ym] || {};
+      const revenue = Math.round(Number(row.revenue || 0));
+      const refunds = Math.round(Number(row.refunds || 0));
+      return {
+        label:    `T${parseInt(m, 10)}/${y}`,
+        revenue,
+        refunds,
+        net:      revenue - refunds,
+        deposits: Math.round(Number(row.deposits || 0)),
+      };
+    });
+
+    const bySubject = subjectRes.rows.map(r => ({
+      subject:  r.subject,
+      revenue:  Math.round(Number(r.revenue)),
+      txCount:  r.tx_count,
+    }));
+
+    return res.json({
+      range,
+      series,
+      by_subject: bySubject,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/financial/revenue-series error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu doanh thu." });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  QUIZ APIs
 // ══════════════════════════════════════════════════════════════════════════════
