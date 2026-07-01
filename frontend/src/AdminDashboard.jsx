@@ -125,6 +125,14 @@ export default function AdminDashboard() {
   const [kpiLoading, setKpiLoading] = useState(true)
   const [kpiError,   setKpiError]   = useState(null)
 
+  // ── CAP-1.2: Growth chart state ──
+  const [chartRange,   setChartRange]   = useState('30d')
+  const [chartData,    setChartData]    = useState({
+    range: null, series: [], today: { new_users: 0, new_tutors: 0 }, generated_at: null,
+  })
+  const [chartLoading, setChartLoading] = useState(true)
+  const [chartError,   setChartError]   = useState(null)
+
   // ── Review panel ──
   const [selectedTutor,  setSelectedTutor]  = useState(null)
   const [reviewNotes,    setReviewNotes]    = useState('')
@@ -173,6 +181,27 @@ export default function AdminDashboard() {
     const interval = setInterval(fetchKpiStats, 30000)
     return () => clearInterval(interval)
   }, [fetchKpiStats])
+
+  // ── CAP-1.2: Fetch growth chart data; re-fetches whenever chartRange changes ──
+  const fetchChartData = useCallback(async () => {
+    setChartLoading(true)
+    setChartError(null)
+    try {
+      const data = await authFetch(
+        `${API}/api/admin/analytics/dashboard/growth?range=${chartRange}`,
+        token
+      )
+      setChartData(data)
+    } catch (err) {
+      setChartError(err.message)
+    } finally {
+      setChartLoading(false)
+    }
+  }, [token, chartRange])
+
+  useEffect(() => {
+    fetchChartData()
+  }, [fetchChartData])
 
   useEffect(() => {
     if (!toast) return
@@ -370,7 +399,7 @@ export default function AdminDashboard() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" onClick={() => { fetchData(); fetchKpiStats() }} title="Làm mới">
+            <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" onClick={() => { fetchData(); fetchKpiStats(); fetchChartData() }} title="Làm mới">
               <span className="material-symbols-outlined">refresh</span>
             </button>
             <NotificationDropdown token={token} />
@@ -399,6 +428,12 @@ export default function AdminDashboard() {
               kpiLoading={kpiLoading}
               kpiError={kpiError}
               onRefreshKpi={fetchKpiStats}
+              chartData={chartData}
+              chartLoading={chartLoading}
+              chartError={chartError}
+              chartRange={chartRange}
+              onRangeChange={setChartRange}
+              onRefreshChart={fetchChartData}
             />
           )}
           {activeView === 'tutor-approval' && (
@@ -441,7 +476,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-audit'         && <AuditLogs />}
           
           {/* ── Service Management Module ── */}
-          {activeView === 'sm-complaints'    && <Complaints complaints={globalComplaints} onUpdateComplaint={handleUpdateComplaint} onAddDispute={handleAddDispute} onNavigate={setActiveView} />}
+          {activeView === 'sm-complaints'    && <ComplaintsView token={token} />}
           {activeView === 'sm-reviews'       && <Reviews reviews={globalReviews} />}
           {activeView === 'sm-violations'    && <Violations violations={globalViolations} />}
           {activeView === 'sm-moderation'    && (
@@ -543,21 +578,33 @@ export default function AdminDashboard() {
 }
 
 // ─── Dashboard View ───────────────────────────────────────────────────────────
-const BAR_DATA = [
-  { month: 'Th1', h: 42 }, { month: 'Th2', h: 52 }, { month: 'Th3', h: 47 },
-  { month: 'Th4', h: 68 }, { month: 'Th5', h: 80 }, { month: 'Th6', h: 95 },
-]
-
-// ── CAP-1.1 formatting helpers ────────────────────────────────────────────────
+// CAP-1.1 formatting helpers
 const fmtCount      = (n) => (n ?? 0).toLocaleString('vi-VN')
 const fmtKpiRevenue = (n) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(n ?? 0)
 
-function DashboardView({ stats, loading, onNavigate, kpiStats, kpiLoading, kpiError, onRefreshKpi }) {
+function DashboardView({
+  stats, loading, onNavigate,
+  kpiStats, kpiLoading, kpiError, onRefreshKpi,
+  chartData, chartLoading, chartError, chartRange, onRangeChange, onRefreshChart,
+}) {
   const K = kpiStats  // shorthand
   const kv = (raw, isCurrency = false) => {
     if (kpiLoading) return '…'
     return isCurrency ? fmtKpiRevenue(raw) : fmtCount(raw)
   }
+
+  // ── CAP-1.2: chart computations ──────────────────────────────────────────
+  const series   = chartData.series || []
+  const maxVal   = Math.max(...series.map(d => d.new_users), 1)
+  const bars     = series.map((d, i) => ({
+    label:    d.label,
+    h:        Math.round((d.new_users / maxVal) * 100),
+    animDelay: i * 50,
+  }))
+  const yLabels = [maxVal, Math.round(maxVal * 0.75), Math.round(maxVal * 0.5), Math.round(maxVal * 0.25), 0]
+    .map(n => n.toLocaleString('vi-VN'))
+  const skeletonCount = chartRange === '30d' ? 30 : chartRange === '6m' ? 6 : new Date().getMonth() + 1
+  const rangeLabel    = chartRange === '30d' ? '30 ngày gần đây' : chartRange === '6m' ? '6 tháng gần đây' : 'Năm nay'
 
   return (
     <div className="p-10 max-w-[1280px] mx-auto w-full">
@@ -672,40 +719,85 @@ function DashboardView({ stats, loading, onNavigate, kpiStats, kpiLoading, kpiEr
 
       {/* Charts Row */}
       <div className="grid grid-cols-12 gap-6">
-        {/* Bar Chart */}
+        {/* Bar Chart — CAP-1.2: live data, dynamic Y-axis, range selector */}
         <div className="col-span-8 bg-white rounded-xl p-6 shadow-sm flex flex-col h-[380px]">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-semibold text-on-background">Xu hướng tăng trưởng người dùng</h3>
-            <select className="bg-gray-50 border border-outline-variant rounded-lg text-xs text-on-surface-variant py-2 pl-3 pr-6 outline-none">
-              <option>6 tháng gần đây</option>
-              <option>Năm nay</option>
+            <div>
+              <h3 className="text-lg font-semibold text-on-background">Xu hướng tăng trưởng người dùng</h3>
+              <p className="text-xs text-on-surface-variant mt-0.5">{rangeLabel}</p>
+            </div>
+            <select
+              value={chartRange}
+              onChange={e => onRangeChange(e.target.value)}
+              disabled={chartLoading}
+              className="bg-gray-50 border border-outline-variant rounded-lg text-xs text-on-surface-variant py-2 pl-3 pr-6 outline-none disabled:opacity-50"
+            >
+              <option value="30d">30 ngày gần đây</option>
+              <option value="6m">6 tháng gần đây</option>
+              <option value="ytd">Năm nay</option>
             </select>
           </div>
 
-          <div className="flex-1 flex items-end gap-2 relative">
-            {/* Y-axis */}
-            <div className="absolute left-0 top-0 bottom-6 w-10 flex flex-col justify-between text-xs text-on-surface-variant text-right pr-1">
-              <span>25k</span><span>20k</span><span>15k</span><span>10k</span><span>5k</span>
+          {chartError ? (
+            /* Error state */
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
+              <span className="material-symbols-outlined text-red-400 text-[40px]">bar_chart_off</span>
+              <p className="text-sm text-on-surface-variant">Không thể tải dữ liệu biểu đồ</p>
+              <button
+                onClick={onRefreshChart}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:bg-gray-50 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[15px]">refresh</span>
+                Thử lại
+              </button>
             </div>
-            {/* Grid lines */}
-            <div className="absolute left-11 right-0 top-2 bottom-6 flex flex-col justify-between pointer-events-none">
-              {[0,1,2,3,4].map(i => <div key={i} className="w-full border-t border-dashed border-gray-100" />)}
-            </div>
-            {/* Bars */}
-            <div className="ml-12 flex-1 flex justify-around items-end h-full pb-6 z-10 gap-1">
-              {BAR_DATA.map((d, i) => (
-                <div key={i} className="flex flex-col items-center gap-1 flex-1">
-                  <div className="w-full flex items-end justify-center" style={{ height: '200px' }}>
-                    <div
-                      className="w-10 bg-primary rounded-t-sm bar-grow"
-                      style={{ height: `${d.h}%`, animationDelay: `${i * 100}ms` }}
-                    />
+          ) : chartLoading ? (
+            /* Loading skeleton */
+            <div className="flex-1 flex items-end gap-2 relative">
+              <div className="absolute left-0 top-0 bottom-6 w-10 flex flex-col justify-between pointer-events-none">
+                {[0,1,2,3,4].map(i => <div key={i} className="h-2 bg-gray-200 rounded animate-pulse w-8 ml-auto" />)}
+              </div>
+              <div className="ml-12 flex-1 flex justify-around items-end h-full pb-6 z-10 gap-1">
+                {Array.from({ length: skeletonCount }).map((_, i) => (
+                  <div key={i} className="flex flex-col items-center gap-1 flex-1">
+                    <div className="w-full flex items-end justify-center" style={{ height: '200px' }}>
+                      <div
+                        className="w-10 bg-gray-200 rounded-t-sm animate-pulse"
+                        style={{ height: `${20 + (i % 5) * 15}%` }}
+                      />
+                    </div>
+                    <div className="h-2 w-6 bg-gray-200 rounded animate-pulse" />
                   </div>
-                  <span className="text-[11px] text-on-surface-variant">{d.month}</span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Live bars */
+            <div className="flex-1 flex items-end gap-2 relative">
+              {/* Dynamic Y-axis */}
+              <div className="absolute left-0 top-0 bottom-6 w-10 flex flex-col justify-between text-xs text-on-surface-variant text-right pr-1">
+                {yLabels.map((lbl, i) => <span key={i}>{lbl}</span>)}
+              </div>
+              {/* Grid lines */}
+              <div className="absolute left-11 right-0 top-2 bottom-6 flex flex-col justify-between pointer-events-none">
+                {[0,1,2,3,4].map(i => <div key={i} className="w-full border-t border-dashed border-gray-100" />)}
+              </div>
+              {/* Bars */}
+              <div className="ml-12 flex-1 flex justify-around items-end h-full pb-6 z-10 gap-1">
+                {bars.map((b, i) => (
+                  <div key={i} className="flex flex-col items-center gap-1 flex-1">
+                    <div className="w-full flex items-end justify-center" style={{ height: '200px' }}>
+                      <div
+                        className="w-10 bg-primary rounded-t-sm bar-grow"
+                        style={{ height: `${b.h}%`, animationDelay: `${b.animDelay}ms` }}
+                      />
+                    </div>
+                    <span className="text-[11px] text-on-surface-variant">{b.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center gap-4 mt-1">
             <div className="flex items-center gap-1.5">
@@ -715,27 +807,58 @@ function DashboardView({ stats, loading, onNavigate, kpiStats, kpiLoading, kpiEr
           </div>
         </div>
 
-        {/* Recent Activity */}
+        {/* Recent Activity — CAP-1.2: live data from chart endpoint + KPI stats */}
         <div className="col-span-4 bg-white rounded-xl p-6 shadow-sm">
           <h3 className="text-lg font-semibold text-on-background mb-5">Hoạt động gần đây</h3>
           <div className="space-y-4">
-            {[
-              { icon: 'how_to_reg',   color: 'text-blue-600',    bg: 'bg-blue-50',    text: '12 hồ sơ gia sư mới',         sub: '2 giờ trước' },
-              { icon: 'payments',     color: 'text-emerald-600', bg: 'bg-emerald-50', text: 'Doanh thu tăng 22% tháng này', sub: 'Hôm nay' },
-              { icon: 'report_problem', color: 'text-amber-600', bg: 'bg-amber-50',  text: '3 khiếu nại cần xử lý',       sub: '5 giờ trước' },
-              { icon: 'school',       color: 'text-indigo-600',  bg: 'bg-indigo-50',  text: '150 học sinh mới đăng ký',     sub: 'Hôm qua' },
-              { icon: 'verified_user',color: 'text-green-600',   bg: 'bg-green-50',   text: '8 gia sư được duyệt hôm nay', sub: 'Hôm nay' },
-            ].map((item, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <div className={`w-8 h-8 rounded-full ${item.bg} flex items-center justify-center flex-shrink-0 ${item.color}`}>
-                  <span className="material-symbols-outlined text-[18px]">{item.icon}</span>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-on-surface">{item.text}</p>
-                  <p className="text-xs text-on-surface-variant">{item.sub}</p>
-                </div>
+            {/* Item 1: new tutor profiles today (chartData.today) */}
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 text-blue-600">
+                <span className="material-symbols-outlined text-[18px]">how_to_reg</span>
               </div>
-            ))}
+              <div>
+                {chartLoading
+                  ? <div className="h-4 bg-gray-200 rounded animate-pulse w-40 mb-1" />
+                  : <p className="text-sm font-medium text-on-surface">{fmtCount(chartData.today.new_tutors)} hồ sơ gia sư mới hôm nay</p>}
+                <p className="text-xs text-on-surface-variant">Hôm nay</p>
+              </div>
+            </div>
+            {/* Item 2: new users today (chartData.today) */}
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0 text-indigo-600">
+                <span className="material-symbols-outlined text-[18px]">group</span>
+              </div>
+              <div>
+                {chartLoading
+                  ? <div className="h-4 bg-gray-200 rounded animate-pulse w-40 mb-1" />
+                  : <p className="text-sm font-medium text-on-surface">{fmtCount(chartData.today.new_users)} người dùng mới đăng ký hôm nay</p>}
+                <p className="text-xs text-on-surface-variant">Hôm nay</p>
+              </div>
+            </div>
+            {/* Item 3: pending tutors (kpiStats — no extra fetch) */}
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full bg-amber-50 flex items-center justify-center flex-shrink-0 text-amber-600">
+                <span className="material-symbols-outlined text-[18px]">pending</span>
+              </div>
+              <div>
+                {kpiLoading
+                  ? <div className="h-4 bg-gray-200 rounded animate-pulse w-40 mb-1" />
+                  : <p className="text-sm font-medium text-on-surface">{fmtCount(K.pending_tutors)} hồ sơ chờ duyệt</p>}
+                <p className="text-xs text-on-surface-variant">Hiện tại</p>
+              </div>
+            </div>
+            {/* Item 4: open disputes (kpiStats — no extra fetch) */}
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0 text-red-600">
+                <span className="material-symbols-outlined text-[18px]">gavel</span>
+              </div>
+              <div>
+                {kpiLoading
+                  ? <div className="h-4 bg-gray-200 rounded animate-pulse w-40 mb-1" />
+                  : <p className="text-sm font-medium text-on-surface">{fmtCount(K.open_disputes)} tranh chấp đang mở</p>}
+                <p className="text-xs text-on-surface-variant">Hiện tại</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -744,7 +867,7 @@ function DashboardView({ stats, loading, onNavigate, kpiStats, kpiLoading, kpiEr
       <div className="grid grid-cols-3 gap-6 mt-6">
         {[
           { id: 'tutor-approval',  icon: 'how_to_reg',  label: 'Duyệt gia sư',      desc: 'Xem xét hồ sơ chờ duyệt', count: null, accent: 'border-blue-500' },
-          { id: 'complaints',      icon: 'report_problem', label: 'Khiếu nại',    desc: '3 mục khẩn cấp cần xử lý', count: 3, accent: 'border-amber-500' },
+          { id: 'sm-complaints',   icon: 'report_problem', label: 'Khiếu nại',    desc: 'Xem và xử lý khiếu nại tranh chấp', count: null, accent: 'border-amber-500' },
           { id: 'transactions',    icon: 'payments',    label: 'Giao dịch',        desc: 'Theo dõi hoạt động thanh toán', count: null, accent: 'border-emerald-500' },
         ].map(item => (
           <button

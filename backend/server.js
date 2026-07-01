@@ -1471,14 +1471,18 @@ app.get("/api/admin/analytics/dashboard/stats", verifyToken, requireAdmin, async
         "SELECT COUNT(*) AS count FROM tutor_profiles WHERE status = 'pending'"
       ),
 
-      // 5. Monthly revenue: sum of successful PAYMENT transactions in the
-      //    current calendar month, boundaries computed in Asia/Ho_Chi_Minh
-      //    timezone so month-start is midnight Vietnamese time not UTC.
+      // 5. Monthly revenue: gross student payment volume for the current
+      //    calendar month (VN timezone). PAYMENT rows on student wallets are
+      //    stored as negative amounts (wallet debit). SUM(ABS(amount)) converts
+      //    them to a positive total. The amount < 0 guard excludes the positive
+      //    PAYMENT+SUCCESS rows that release_escrow() writes to tutor wallets,
+      //    preventing double-counting once lesson escrow releases go live.
       pool.query(`
-        SELECT COALESCE(SUM(amount), 0) AS total
+        SELECT COALESCE(SUM(ABS(amount)), 0) AS total
         FROM transactions
         WHERE type = 'PAYMENT'
           AND status = 'SUCCESS'
+          AND amount < 0
           AND created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
                             AT TIME ZONE 'Asia/Ho_Chi_Minh'
           AND created_at <  (DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
@@ -1507,6 +1511,152 @@ app.get("/api/admin/analytics/dashboard/stats", verifyToken, requireAdmin, async
     return res.status(500).json({ message: "Lỗi khi lấy dữ liệu KPI." });
   }
 });
+
+// ── GET /api/admin/analytics/dashboard/growth ─────────────────────────────────
+// CAP-1.2: Returns growth series (new_users + logins per period) and today
+// summary for the admin dashboard chart. Three ranges:
+//   30d  → daily,   last 30 days,  label format DD/MM
+//   6m   → monthly, last 6 months, label format ThN
+//   ytd  → monthly, Jan–current month of current year, label format ThN
+// All periods gap-filled via generate_series + LEFT JOIN so every period
+// always has a row (missing days/months return 0 via COALESCE).
+// ::int cast on COUNT ensures pg returns JS numbers, not bigint strings.
+app.get("/api/admin/analytics/dashboard/growth", verifyToken, requireAdmin, async (req, res) => {
+  const range = req.query.range ?? '30d'
+
+  if (!['30d', '6m', 'ytd'].includes(range)) {
+    return res.status(400).json({
+      message: "Tham số range không hợp lệ. Sử dụng: 30d, 6m, ytd."
+    })
+  }
+
+  const SERIES_SQL = {
+    '30d': `
+      WITH periods AS (
+        SELECT generate_series(
+          (CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '29 days',
+          (CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+          INTERVAL '1 day'
+        )::date AS d
+      ),
+      uc AS (
+        SELECT DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS day,
+               COUNT(*) AS cnt
+        FROM users
+        WHERE created_at >= ((CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '29 days')
+                             AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        GROUP BY day
+      ),
+      lc AS (
+        SELECT DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS day,
+               COUNT(*) AS cnt
+        FROM login_logs
+        WHERE created_at >= ((CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '29 days')
+                             AT TIME ZONE 'Asia/Ho_Chi_Minh'
+        GROUP BY day
+      )
+      SELECT
+        TO_CHAR(p.d, 'DD/MM')    AS label,
+        COALESCE(uc.cnt, 0)::int AS new_users,
+        COALESCE(lc.cnt, 0)::int AS logins
+      FROM periods p
+      LEFT JOIN uc ON uc.day = p.d
+      LEFT JOIN lc ON lc.day = p.d
+      ORDER BY p.d ASC
+    `,
+    '6m': `
+      WITH periods AS (
+        SELECT generate_series(
+          DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '5 months',
+          DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+          INTERVAL '1 month'
+        )::date AS m
+      ),
+      uc AS (
+        SELECT DATE_TRUNC('month', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS mo,
+               COUNT(*) AS cnt
+        FROM users
+        WHERE created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '5 months'
+        GROUP BY mo
+      ),
+      lc AS (
+        SELECT DATE_TRUNC('month', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS mo,
+               COUNT(*) AS cnt
+        FROM login_logs
+        WHERE created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') - INTERVAL '5 months'
+        GROUP BY mo
+      )
+      SELECT
+        'Th' || EXTRACT(MONTH FROM p.m)::int  AS label,
+        COALESCE(uc.cnt, 0)::int              AS new_users,
+        COALESCE(lc.cnt, 0)::int              AS logins
+      FROM periods p
+      LEFT JOIN uc ON uc.mo = p.m
+      LEFT JOIN lc ON lc.mo = p.m
+      ORDER BY p.m ASC
+    `,
+    'ytd': `
+      WITH periods AS (
+        SELECT generate_series(
+          DATE_TRUNC('year',  NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date,
+          DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date,
+          INTERVAL '1 month'
+        )::date AS m
+      ),
+      uc AS (
+        SELECT DATE_TRUNC('month', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS mo,
+               COUNT(*) AS cnt
+        FROM users
+        WHERE created_at >= DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+        GROUP BY mo
+      ),
+      lc AS (
+        SELECT DATE_TRUNC('month', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS mo,
+               COUNT(*) AS cnt
+        FROM login_logs
+        WHERE created_at >= DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')
+        GROUP BY mo
+      )
+      SELECT
+        'Th' || EXTRACT(MONTH FROM p.m)::int  AS label,
+        COALESCE(uc.cnt, 0)::int              AS new_users,
+        COALESCE(lc.cnt, 0)::int              AS logins
+      FROM periods p
+      LEFT JOIN uc ON uc.mo = p.m
+      LEFT JOIN lc ON lc.mo = p.m
+      ORDER BY p.m ASC
+    `,
+  }
+
+  try {
+    const [seriesRes, todayUsersRes, todayTutorsRes] = await Promise.all([
+      pool.query(SERIES_SQL[range]),
+      pool.query(`
+        SELECT COUNT(*)::int AS cnt FROM users
+        WHERE DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') =
+              (CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+      `),
+      pool.query(`
+        SELECT COUNT(*)::int AS cnt FROM tutor_profiles
+        WHERE DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') =
+              (CURRENT_DATE AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+      `),
+    ])
+
+    return res.json({
+      range,
+      series:      seriesRes.rows,
+      today: {
+        new_users:  todayUsersRes.rows[0].cnt,
+        new_tutors: todayTutorsRes.rows[0].cnt,
+      },
+      generated_at: new Date().toISOString(),
+    })
+  } catch (err) {
+    console.error("GET /api/admin/analytics/dashboard/growth error:", err)
+    return res.status(500).json({ message: "Lỗi khi lấy dữ liệu biểu đồ." })
+  }
+})
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  QUIZ APIs
