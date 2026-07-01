@@ -2130,6 +2130,222 @@ app.get("/api/admin/system-wallet", verifyToken, requireAdmin, async (req, res) 
   }
 });
 
+// ── GET /api/admin/ai-insights ───────────────────────────────────────────────
+// CAP-5.1: Rule-based insight cards — no external AI API.
+// Signals from: disputes, login_logs, transactions, tutor_profiles,
+// course_enrollments, courses, bookings, reviews.
+app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const SUBJ_META = {
+      'Toán học':  { icon: 'calculate',   color: 'text-blue-700',   bg: 'bg-blue-50' },
+      'Sinh học':  { icon: 'biotech',     color: 'text-green-700',  bg: 'bg-green-50' },
+      'Ngữ văn':   { icon: 'edit_note',   color: 'text-purple-700', bg: 'bg-purple-50' },
+      'Vật lí':    { icon: 'bolt',        color: 'text-amber-700',  bg: 'bg-amber-50' },
+      'Vật lý':    { icon: 'bolt',        color: 'text-amber-700',  bg: 'bg-amber-50' },
+      'Tiếng Anh': { icon: 'translate',   color: 'text-cyan-700',   bg: 'bg-cyan-50' },
+      'Hóa học':   { icon: 'science',     color: 'text-violet-700', bg: 'bg-violet-50' },
+      'Lịch sử':   { icon: 'history_edu', color: 'text-rose-700',   bg: 'bg-rose-50' },
+      'Địa lý':    { icon: 'public',      color: 'text-teal-700',   bg: 'bg-teal-50' },
+      'Tin học':   { icon: 'code',        color: 'text-cyan-700',   bg: 'bg-cyan-50' },
+      'General':   { icon: 'school',      color: 'text-gray-700',   bg: 'bg-gray-50' },
+      'Math':      { icon: 'calculate',   color: 'text-blue-700',   bg: 'bg-blue-50' },
+      'Toán':      { icon: 'calculate',   color: 'text-blue-700',   bg: 'bg-blue-50' },
+    };
+    const DEFAULT_SUBJ = { icon: 'school', color: 'text-gray-700', bg: 'bg-gray-50' };
+
+    const [revRes, dispStudentRes, dispTutorRes, pendingRes, zeroRes,
+           subjEnrollRes, bookSubjRes, enrollRes] = await Promise.all([
+      // Revenue this month vs last month
+      pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE created_at >= DATE_TRUNC('month',NOW())
+            AND type='DEPOSIT' AND status='SUCCESS'), 0)::numeric AS this_month,
+          COALESCE(SUM(amount) FILTER (WHERE created_at >= DATE_TRUNC('month',NOW()) - INTERVAL '1 month'
+            AND created_at < DATE_TRUNC('month',NOW()) AND type='DEPOSIT' AND status='SUCCESS'), 0)::numeric AS last_month
+        FROM transactions`),
+      // Students with 2+ disputes
+      pool.query(`
+        SELECT u.full_name, u.email, COUNT(d.id)::int AS n
+        FROM disputes d JOIN users u ON u.id = d.raised_by
+        GROUP BY u.id, u.full_name, u.email HAVING COUNT(d.id) >= 2`),
+      // Tutors with disputes
+      pool.query(`
+        SELECT u.full_name, u.email, COUNT(d.id)::int AS n
+        FROM disputes d JOIN users u ON u.id = d.tutor_id
+        WHERE d.tutor_id IS NOT NULL
+        GROUP BY u.id, u.full_name, u.email ORDER BY n DESC LIMIT 3`),
+      // Pending tutor applications
+      pool.query(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status = 'pending'`),
+      // Courses with 0 enrollments
+      pool.query(`
+        SELECT c.title, c.subject FROM courses c
+        WHERE NOT EXISTS (SELECT 1 FROM course_enrollments ce WHERE ce.course_id = c.id)
+        LIMIT 5`),
+      // Subject enrollment trends (this month vs last)
+      pool.query(`
+        SELECT * FROM (
+          SELECT c.subject,
+            COUNT(*) FILTER (WHERE ce.created_at >= DATE_TRUNC('month',NOW()))::int AS this_month,
+            COUNT(*) FILTER (WHERE ce.created_at >= DATE_TRUNC('month',NOW()) - INTERVAL '1 month'
+              AND ce.created_at < DATE_TRUNC('month',NOW()))::int AS last_month,
+            COUNT(*)::int AS total
+          FROM course_enrollments ce JOIN courses c ON c.id = ce.course_id
+          WHERE c.subject IS NOT NULL AND c.subject <> ''
+          GROUP BY c.subject
+        ) sub ORDER BY total DESC LIMIT 8`),
+      // Booking subject trends
+      pool.query(`
+        SELECT * FROM (
+          SELECT subject,
+            COUNT(*) FILTER (WHERE created_at >= DATE_TRUNC('month',NOW()))::int AS this_month,
+            COUNT(*) FILTER (WHERE created_at >= DATE_TRUNC('month',NOW()) - INTERVAL '1 month'
+              AND created_at < DATE_TRUNC('month',NOW()))::int AS last_month,
+            COUNT(*)::int AS total
+          FROM bookings WHERE subject IS NOT NULL AND subject <> ''
+          GROUP BY subject
+        ) sub ORDER BY total DESC LIMIT 8`),
+      // Enrollment trend this week vs last
+      pool.query(`
+        SELECT COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS this_week,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '14 days'
+            AND created_at < NOW() - INTERVAL '7 days')::int AS last_week
+        FROM course_enrollments`),
+    ]);
+
+    // ── Anomaly flags ──
+    const flags = [];
+    const thisRev = Math.round(Number(revRes.rows[0].this_month));
+    const lastRev = Math.round(Number(revRes.rows[0].last_month));
+
+    if (lastRev > 0 && thisRev < lastRev * 0.5) {
+      const pct = Math.round(((thisRev - lastRev) / lastRev) * 100);
+      flags.push({
+        type: 'Doanh thu giảm mạnh',
+        detail: `Doanh thu tháng này ${thisRev.toLocaleString('vi-VN')}đ, giảm ${Math.abs(pct)}% so với tháng trước (${lastRev.toLocaleString('vi-VN')}đ).`,
+        level: 'Cao', icon: 'trending_down',
+        color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200',
+      });
+    }
+
+    if (dispStudentRes.rows.length > 0) {
+      const names = dispStudentRes.rows.map(r => `${r.full_name || r.email} (${r.n} tranh chấp)`).join(', ');
+      flags.push({
+        type: 'Học sinh nhiều tranh chấp',
+        detail: `Phát hiện ${dispStudentRes.rows.length} học sinh có từ 2 tranh chấp: ${names}.`,
+        level: 'Cao', icon: 'report_problem',
+        color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200',
+      });
+    }
+
+    if (dispTutorRes.rows.length > 0) {
+      const r = dispTutorRes.rows[0];
+      flags.push({
+        type: 'Gia sư có khiếu nại',
+        detail: `${dispTutorRes.rows.length} gia sư bị khiếu nại. Cao nhất: ${r.full_name || r.email} (${r.n} tranh chấp).`,
+        level: 'Trung bình', icon: 'person_alert',
+        color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200',
+      });
+    }
+
+    const pendingN = pendingRes.rows[0].n;
+    if (pendingN >= 5) {
+      flags.push({
+        type: 'Hồ sơ gia sư chờ duyệt',
+        detail: `${pendingN} hồ sơ gia sư đang chờ xét duyệt. Xử lý để tránh tồn đọng.`,
+        level: 'Trung bình', icon: 'pending_actions',
+        color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200',
+      });
+    }
+
+    if (zeroRes.rows.length > 0) {
+      const titles = zeroRes.rows.slice(0, 3).map(r => r.title).join(', ');
+      flags.push({
+        type: 'Khóa học chưa có học viên',
+        detail: `${zeroRes.rows.length} khóa học chưa có lượt đăng ký: ${titles}…`,
+        level: 'Thấp', icon: 'school',
+        color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200',
+      });
+    }
+
+    // ── Subject trends ──
+    const subjMap = {};
+    for (const r of subjEnrollRes.rows) {
+      subjMap[r.subject] = { this_month: r.this_month, last_month: r.last_month, total: r.total };
+    }
+    for (const r of bookSubjRes.rows) {
+      if (subjMap[r.subject]) {
+        subjMap[r.subject].this_month += r.this_month;
+        subjMap[r.subject].last_month += r.last_month;
+        subjMap[r.subject].total      += r.total;
+      } else {
+        subjMap[r.subject] = { this_month: r.this_month, last_month: r.last_month, total: r.total };
+      }
+    }
+
+    const subject_trends = Object.entries(subjMap)
+      .map(([subject, d]) => {
+        let growth_pct, growth_label;
+        if (d.last_month === 0 && d.this_month > 0) {
+          growth_pct = 100; growth_label = 'Mới';
+        } else if (d.last_month > 0) {
+          growth_pct = Math.round(((d.this_month - d.last_month) / d.last_month) * 100);
+          growth_label = (growth_pct >= 0 ? '+' : '') + growth_pct + '%';
+        } else {
+          growth_pct = 0; growth_label = 'Ổn định';
+        }
+        return { subject, growth_pct, growth_label, total: d.total, ...(SUBJ_META[subject] || DEFAULT_SUBJ) };
+      })
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 6);
+
+    // ── Predictions ──
+    const predictions = [];
+    const enrollThisWeek = enrollRes.rows[0].this_week;
+    const enrollLastWeek = enrollRes.rows[0].last_week;
+
+    if (lastRev > 0) {
+      const up = thisRev >= lastRev * 0.9;
+      predictions.push({
+        text: up
+          ? `Doanh thu tháng này đang tăng trưởng tốt (${thisRev.toLocaleString('vi-VN')}đ)`
+          : `Doanh thu tháng này thấp hơn tháng trước — cần theo dõi thêm`,
+        confidence: '78%', up,
+      });
+    }
+
+    if (enrollThisWeek > 0) {
+      const up = enrollThisWeek >= enrollLastWeek;
+      predictions.push({
+        text: enrollThisWeek > enrollLastWeek
+          ? `Đăng ký khóa học tăng ${enrollThisWeek - enrollLastWeek} lượt so với tuần trước`
+          : `${enrollThisWeek} đăng ký khóa học mới trong tuần này`,
+        confidence: '82%', up,
+      });
+    }
+
+    if (pendingN > 0) {
+      predictions.push({
+        text: `${pendingN} gia sư chờ phê duyệt — có thể tăng nguồn cung gia sư sớm`,
+        confidence: '95%', up: true,
+      });
+    }
+
+    const highCount   = flags.filter(f => f.level === 'Cao').length;
+    const mediumCount = flags.filter(f => f.level === 'Trung bình').length;
+    const lowCount    = flags.filter(f => f.level === 'Thấp').length;
+
+    return res.json({
+      flags, subject_trends, predictions,
+      summary: { high_count: highCount, medium_count: mediumCount, low_count: lowCount },
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/ai-insights error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo AI Insights." });
+  }
+});
+
 // ── GET /api/admin/audit-logs ────────────────────────────────────────────────
 // CAP-4.1: Auth audit trail from login_logs (174+ rows, is_suspicious flag).
 // No dedicated admin audit table exists; login_logs is the closest real source.
