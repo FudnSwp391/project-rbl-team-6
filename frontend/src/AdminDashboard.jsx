@@ -23,6 +23,8 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('vi-VN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+import AdminWalletDashboard from './components/AdminWalletDashboard'
+
 const NAV_ITEMS = [
   { id: 'dashboard',       label: 'Tổng quan',             icon: 'dashboard' },
   { id: 'tutor-approval',  label: 'Duyệt gia sư',          icon: 'how_to_reg' },
@@ -30,6 +32,7 @@ const NAV_ITEMS = [
   { id: 'subjects',        label: 'Môn học',               icon: 'subject' },
   { id: 'lessons',         label: 'Bài học',               icon: 'menu_book' },
   { id: 'transactions',    label: 'Giao dịch',             icon: 'payments' },
+  { id: 'wallet-management', label: 'Duyệt giao dịch Ví',  icon: 'account_balance_wallet' },
   { id: 'complaints',      label: 'Khiếu nại',             icon: 'report_problem' },
   { id: 'reviews',         label: 'Đánh giá',              icon: 'reviews' },
   { id: 'reports',         label: 'Báo cáo',               icon: 'assessment' },
@@ -244,6 +247,9 @@ export default function AdminDashboard() {
         <div className="pt-16">
           {activeView === 'dashboard' && (
             <DashboardView stats={stats} loading={loading} onNavigate={setActiveView} />
+          )}
+          {activeView === 'wallet-management' && (
+            <AdminWalletDashboard />
           )}
           {activeView === 'tutor-approval' && (
             <TutorApprovalView

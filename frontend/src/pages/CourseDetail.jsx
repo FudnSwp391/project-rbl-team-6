@@ -97,22 +97,12 @@ export default function CourseDetail({ courseId }) {
       return
     }
 
-    if (isTutorView) {
-      window.location.hash = '/tutor'
-      return
-    }
-
-    if (isAdminView) {
-      window.location.hash = '/admin'
-      return
-    }
-
-    if (!canBuyCourse) {
+    if (!canBuyCourse && !course.isCourseTutor && !isAdminView) {
       setActionMessage('Tài khoản hiện tại không thể mua khóa học.')
       return
     }
 
-    if (course.isEnrolled) {
+    if (course.isEnrolled || course.isCourseTutor || isAdminView) {
       window.location.hash = `/course-player/${course.id}`
       return
     }
@@ -132,15 +122,17 @@ export default function CourseDetail({ courseId }) {
 
   const primaryActionLabel = !user
     ? 'Đăng nhập để mua khóa học'
-    : isTutorView
-      ? 'Quay lại khóa học của tôi'
+    : course.isCourseTutor
+      ? 'Vào xem khóa học'
       : isAdminView
-        ? 'Quay lại trang quản trị'
+        ? 'Vào xem khóa học (Admin)'
         : course.isEnrolled
           ? 'Vào học ngay'
-          : purchasing
-            ? 'Đang xử lý...'
-            : 'Mua và bắt đầu học'
+          : !canBuyCourse
+            ? 'Quay lại'
+            : purchasing
+              ? 'Đang xử lý...'
+              : 'Mua và bắt đầu học'
 
   return (
     <div className="min-h-screen bg-[#f6f7fb] text-[#141824]">
@@ -289,8 +281,18 @@ export default function CourseDetail({ courseId }) {
             <DetailPanel title="Chương trình học" icon="format_list_numbered">
               {lessons.length ? (
                 <div className="space-y-3">
-                  {lessons.map((lesson, index) => (
-                    <div key={lesson.id || index} className="rounded-xl border border-[#d7dce8] bg-white p-4">
+                  {lessons.map((lesson, index) => {
+                    const isPlayable = !lesson.isLocked;
+                    return (
+                    <div 
+                      key={lesson.id || index} 
+                      className={`rounded-xl border border-[#d7dce8] bg-white p-4 transition-colors ${isPlayable ? 'cursor-pointer hover:border-[#00288e] hover:shadow-md' : 'opacity-80'}`}
+                      onClick={() => {
+                        if (isPlayable) {
+                          window.location.hash = `/course-player/${course.id}`;
+                        }
+                      }}
+                    >
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex gap-3">
                           <div className="mt-0.5 w-10 h-10 rounded-full bg-[#eef3ff] text-[#00288e] flex items-center justify-center font-black">
@@ -306,10 +308,12 @@ export default function CourseDetail({ courseId }) {
                             </div>
                           </div>
                         </div>
-                        <span className="material-symbols-outlined text-[#8a91a3]">{lesson.isPreview ? 'play_circle' : 'lock'}</span>
+                        <span className={`material-symbols-outlined ${isPlayable ? 'text-[#00288e]' : 'text-[#8a91a3]'}`}>
+                          {lesson.isLocked ? 'lock' : 'play_circle'}
+                        </span>
                       </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
               ) : (
                 <p className="text-[#697083]">Khóa học chưa có chương trình học.</p>

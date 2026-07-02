@@ -18,6 +18,9 @@ import TutorAssessmentManager from './components/TutorAssessmentManager'
 import TutorGradingDashboard from './components/TutorGradingDashboard'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
+import WalletDashboard from './components/Wallet/WalletDashboard'
+import WalletDeposit from './components/Wallet/WalletDeposit'
+import WalletWithdraw from './components/Wallet/WalletWithdraw'
 
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Overview' },
@@ -27,6 +30,7 @@ const NAV_ITEMS = [
   { icon: 'description', label: 'Assessments' },
   { icon: 'fact_check', label: 'Review & Grade' },
   { icon: 'payments', label: 'Earnings' },
+  { icon: 'account_balance_wallet', label: 'Wallet' },
   { icon: 'chat', label: 'Messages' },
   { icon: 'account_circle', label: 'My Profile' },
 ]
@@ -501,6 +505,21 @@ export default function TutorDashboard() {
 
           {activeTab === 'Messages' && (
             <MessagesSection token={token} user={user} />
+          )}
+
+          {activeTab === 'Wallet' && (
+            <WalletDashboard 
+              onDepositClick={() => setActiveTab('WalletDeposit')} 
+              onWithdrawClick={() => setActiveTab('WalletWithdraw')}
+            />
+          )}
+
+          {activeTab === 'WalletDeposit' && (
+            <WalletDeposit onBack={() => setActiveTab('Wallet')} />
+          )}
+
+          {activeTab === 'WalletWithdraw' && (
+            <WalletWithdraw onBack={() => setActiveTab('Wallet')} />
           )}
 
         </main>

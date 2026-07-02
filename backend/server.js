@@ -834,7 +834,7 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
     let bookedSlots = {};
     if (from && to) {
       const bookingsResult = await pool.query(
-        `SELECT lesson_date, time_slot, status
+        `SELECT to_char(lesson_date, 'YYYY-MM-DD') AS lesson_date_str, time_slot, status
          FROM bookings
          WHERE tutor_id = $1
            AND lesson_date >= $2::date
@@ -844,7 +844,7 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
         [tutorId, from, to]
       );
       for (const row of bookingsResult.rows) {
-        const dateKey = String(row.lesson_date).slice(0, 10);
+        const dateKey = row.lesson_date_str;
         if (!bookedSlots[dateKey]) bookedSlots[dateKey] = [];
         bookedSlots[dateKey].push({ timeSlot: row.time_slot, status: row.status });
       }
@@ -3295,6 +3295,98 @@ app.get("/api/courses", async (req, res) => {
   }
 });
 
+// ── GET /api/courses/:id — Chi tiết khóa học ──────────────────────────────
+app.get("/api/courses/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const courseRes = await pool.query(
+      `SELECT c.*, 
+              u.id as tutor_id, u.full_name as tutor_name, u.picture as tutor_picture,
+              tp.headline as tutor_headline
+       FROM courses c
+       JOIN users u ON c.tutor_id = u.id
+       LEFT JOIN tutor_profiles tp ON u.id = tp.user_id
+       WHERE c.id = $1`,
+      [id]
+    );
+
+    if (courseRes.rows.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    }
+
+    const courseData = courseRes.rows[0];
+
+    const lessonsRes = await pool.query(
+      `SELECT * FROM course_lessons WHERE course_id = $1 ORDER BY position ASC, created_at ASC`,
+      [id]
+    );
+
+    let isEnrolled = false;
+    let userId = null;
+    let userRole = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, jwtSecret);
+        userId = decoded.userId || decoded.id;
+        userRole = decoded.role;
+        if (userId) {
+          const enrollRes = await pool.query(
+            `SELECT 1 FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+            [id, userId]
+          );
+          isEnrolled = enrollRes.rows.length > 0;
+        }
+      } catch (err) {
+        // Bỏ qua lỗi token (để xem dưới quyền khách)
+      }
+    }
+
+    const isCourseTutor = userId === courseData.tutor_id;
+    const isAdmin = userRole === 'admin';
+
+    const response = {
+      ...courseData,
+      thumbnailPreviewUrl: courseData.thumbnail_url,
+      thumbnailUrl: courseData.thumbnail_url,
+      tutor: {
+        id: courseData.tutor_id,
+        name: courseData.tutor_name,
+        picture: courseData.tutor_picture,
+        headline: courseData.tutor_headline
+      },
+      lessons: lessonsRes.rows.map(lesson => {
+        const isPreview = lesson.is_preview;
+        const isLocked = !isEnrolled && !isCourseTutor && !isAdmin && !isPreview;
+        return {
+          id: lesson.id,
+          title: lesson.title,
+          description: lesson.description,
+          position: lesson.position,
+          durationLabel: lesson.duration_label,
+          isPreview: isPreview,
+          isLocked: isLocked,
+          videoUrl: isLocked ? null : lesson.video_url,
+          materialUrl: isLocked ? null : lesson.material_url,
+          createdAt: lesson.created_at,
+          updatedAt: lesson.updated_at
+        };
+      }),
+      learningOutcomes: courseData.learning_outcomes || [],
+      requirements: courseData.requirements || [],
+      isEnrolled,
+      isCourseTutor
+    };
+
+    return res.json(response);
+  } catch (err) {
+    console.error("GET /api/courses/:id error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
 // ── POST /api/ai-suggest (TV3) ────────────────────────────────────────────────
 // Body { prompt } → query gia sư approved → AI chọn gia sư phù hợp.
 // Trả { success, aiUsed, reply, tutors:[...] }. AI lỗi → fallback lọc thủ công.
@@ -3502,46 +3594,7 @@ app.delete("/api/entity-reviews/:id", verifyToken, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 // ── Đặt lịch học với gia sư (TV3) ────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════════
-// POST /api/bookings — học sinh tạo yêu cầu đặt lịch (status mặc định 'Pending')
-app.post("/api/bookings", verifyToken, async (req, res) => {
-  const { tutor_id, tutor_name, subject, lesson_date, time_slot, note } = req.body || {};
-  if (!tutor_id || !lesson_date || !time_slot) {
-    return res.status(400).json({ message: "Cần chọn gia sư, ngày học và khung giờ." });
-  }
-  try {
-    const t = await pool.query(`SELECT 1 FROM tutor_profiles WHERE user_id = $1 AND status = 'approved'`, [tutor_id]);
-    if (t.rowCount === 0) return res.status(400).json({ message: "Gia sư không hợp lệ hoặc chưa được duyệt." });
 
-    const r = await pool.query(
-      `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, booking_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', 'regular')
-       RETURNING id, lesson_date, time_slot, status`,
-      [req.user.userId, tutor_id, tutor_name || null, subject || null, lesson_date, time_slot, note || null]
-    );
-    return res.status(201).json(r.rows[0]);
-  } catch (e) {
-    console.error("POST /api/bookings:", e.message);
-    return res.status(500).json({ message: "Server error.", detail: e.message });
-  }
-});
-
-// GET /api/bookings — danh sách lịch học của học sinh đang đăng nhập
-app.get("/api/bookings", verifyToken, async (req, res) => {
-  try {
-    const r = await pool.query(
-      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, b.lesson_date, b.time_slot,
-              b.note, b.status, b.created_at, u.full_name AS tutor_full_name
-       FROM bookings b LEFT JOIN users u ON u.id = b.tutor_id
-       WHERE b.student_id = $1
-       ORDER BY b.lesson_date DESC NULLS LAST, b.created_at DESC`,
-      [req.user.userId]
-    );
-    return res.json(r.rows);
-  } catch (e) {
-    console.error("GET /api/bookings:", e.message);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
 
 // ── GET /api/reviews/featured ─────────────────────────────────────────────────
 // Trả về các đánh giá 5 sao mới nhất để hiển thị trên trang chủ (không cần auth)
@@ -4458,9 +4511,21 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       lessonFeeForBooking = Number(rateRes.rows[0]?.hourly_rate || 0);
     }
 
+    const totalFee = lessonFeeForBooking * bookingSessions.length;
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      
+      let studentWalletId = null;
+      if (tutorId && totalFee > 0) {
+        const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id=$1', [req.user.userId]);
+        if (walletRes.rowCount === 0 || walletRes.rows[0].balance < totalFee) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ message: "Số dư ví không đủ để đặt lịch. Vui lòng nạp thêm tiền." });
+        }
+        studentWalletId = walletRes.rows[0].id;
+      }
       
       // Chèn từng session
       for (const session of bookingSessions) {
@@ -4491,9 +4556,36 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
            RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, created_at`,
           [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking]
         );
-        createdBookings.push(result.rows[0]);
+        const booking = result.rows[0];
+
+        // Tạm giữ tiền ngay lập tức
+        if (tutorId && lessonFeeForBooking > 0 && studentWalletId) {
+          const holdRes = await client.query(
+            'SELECT hold_money_for_lesson($1, $2, $3) AS tx_id',
+            [studentWalletId, lessonFeeForBooking, booking.id]
+          );
+          const txId = holdRes.rows[0].tx_id;
+          
+          await client.query(`
+            UPDATE bookings
+            SET escrow_tx_id=$1, payer_wallet_id=$2
+            WHERE id=$3
+          `, [txId, studentWalletId, booking.id]);
+          
+          booking.escrow_tx_id = txId;
+          booking.payer_wallet_id = studentWalletId;
+        }
+
+        createdBookings.push(booking);
       }
       
+      if (tutorId && totalFee > 0 && studentWalletId) {
+        await client.query(`
+          INSERT INTO notifications (user_id, type, title, body, icon, ref_type)
+          VALUES ($1,'escrow_hold','Lịch học đang chờ xác nhận — Tiền tạm giữ',$2,'lock','booking')
+        `, [req.user.userId, `Bạn đã gửi yêu cầu đặt ${bookingSessions.length} buổi học. Tổng ${totalFee.toLocaleString('vi-VN')}đ đã được tạm giữ.`]);
+      }
+
       await client.query("COMMIT");
     } catch (dbErr) {
       await client.query("ROLLBACK");
@@ -4583,46 +4675,23 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
 
     await client.query('BEGIN');
 
-    // ── APPROVE: hold escrow ──────────────────────────────────────────────────
-    if (status === 'Approved' && booking.status === 'Pending') {
+    // ── APPROVE: tiền đã được hold từ lúc đặt lịch ──────────────────────────
+    if (status === 'Approved' && (booking.status === 'Pending' || booking.status === 'pending')) {
       // Chỉ gia sư mới được approve
       if (req.user.userId !== booking.tutor_id) {
         await client.query('ROLLBACK');
         return res.status(403).json({ message: 'Chỉ gia sư mới có thể duyệt lịch học.' });
       }
 
-      // Hold tiền nếu có ví và có lesson_fee
-      if (lessonFee > 0 && booking.payer_wallet_id_val) {
-        try {
-          const holdRes = await client.query(
-            'SELECT hold_money_for_lesson($1, $2, $3) AS tx_id',
-            [booking.payer_wallet_id_val, lessonFee, booking.id]
-          );
-          const txId = holdRes.rows[0].tx_id;
-
-          // Lưu tx_id vào booking để dùng khi release/refund
-          await client.query(`
-            UPDATE bookings
-            SET status=$1, escrow_tx_id=$2, payer_wallet_id=$3, lesson_fee=$4,
-                auto_release_at = NULL
-            WHERE id=$5
-          `, [status, txId, booking.payer_wallet_id_val, lessonFee, booking.id]);
-
-          // Notify học sinh: tiền đã bị hold
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'escrow_hold','Lịch học đã được xác nhận — Tiền tạm giữ',$2,'lock',$3,'booking')
-          `, [booking.student_id,
-              `Gia sư đã duyệt lịch học. ${lessonFee.toLocaleString('vi-VN')}đ đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`,
-              booking.id]);
-        } catch (escrowErr) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ message: 'Số dư ví không đủ để xác nhận lịch học. Vui lòng nạp thêm tiền.' });
-        }
-      } else {
-        // Không có ví hoặc fee = 0: approve bình thường
-        await client.query(`UPDATE bookings SET status=$1 WHERE id=$2`, [status, booking.id]);
-      }
+      await client.query(`UPDATE bookings SET status=$1 WHERE id=$2`, [status, booking.id]);
+      
+      // Notify học sinh: gia sư đã duyệt
+      await client.query(`
+        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+        VALUES ($1,'booking_approved','Lịch học đã được xác nhận',$2,'check_circle',$3,'booking')
+      `, [booking.student_id,
+          `Gia sư đã duyệt lịch học của bạn. Số tiền ${lessonFee.toLocaleString('vi-VN')}đ đã được bảo đảm an toàn.`,
+          booking.id]);
     }
 
     // ── DECLINED/REJECTED: hoàn tiền toàn bộ ────────────────────────────────
@@ -4658,7 +4727,11 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
         let penaltyAmount = 0;
         let refundMsg = '';
 
-        if (hoursUntilLesson > 24) {
+        if (booking.status.toLowerCase() === 'pending') {
+          // Chưa duyệt thì hủy lúc nào cũng được hoàn 100%
+          refundAmount = lessonFee;
+          refundMsg = `Hủy khi lịch đang chờ duyệt — hoàn toàn bộ ${lessonFee.toLocaleString('vi-VN')}đ.`;
+        } else if (hoursUntilLesson > 24) {
           // Hủy sớm: hoàn 100%
           refundAmount = lessonFee;
           refundMsg = `Hủy trước 24h — hoàn toàn bộ ${lessonFee.toLocaleString('vi-VN')}đ.`;
@@ -5856,6 +5929,320 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log(`🚀 Server is running on http://localhost:${port}`);
   });
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SESSION EVALUATION APIs  (Tab 2 — Review & Grade)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Auto-create session_evaluations table if it doesn't exist
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS session_evaluations (
+        id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id            UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        tutor_id              UUID NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+        student_id            UUID NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+        score_attendance      SMALLINT CHECK (score_attendance  BETWEEN 1 AND 5),
+        score_attitude        SMALLINT CHECK (score_attitude    BETWEEN 1 AND 5),
+        score_comprehension   SMALLINT CHECK (score_comprehension BETWEEN 1 AND 5),
+        score_focus           SMALLINT CHECK (score_focus       BETWEEN 1 AND 5),
+        score_homework        SMALLINT CHECK (score_homework    BETWEEN 1 AND 5),
+        comments              TEXT,
+        parent_recommendation TEXT,
+        status                TEXT NOT NULL DEFAULT 'submitted'
+                              CHECK (status IN ('draft', 'submitted', 'locked')),
+        created_at            TIMESTAMPTZ DEFAULT NOW(),
+        updated_at            TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (booking_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_evals_tutor   ON session_evaluations(tutor_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_evals_student ON session_evaluations(student_id)`);
+    console.log('✅ session_evaluations table ready');
+  } catch (e) {
+    console.error('session_evaluations table error:', e.message);
+  }
+})();
+
+// ── GET /api/tutor/session-evaluations
+// Danh sách buổi học Approved của gia sư, kèm trạng thái đánh giá
+app.get('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const { search = '', status = 'all', page = '1', limit = '20' } = req.query;
+    const pageNum  = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+    const offset   = (pageNum - 1) * limitNum;
+
+    const conditions = [`b.tutor_id = $1`, `b.status = 'Approved'`, `b.lesson_date <= CURRENT_DATE`];
+    const params = [tutorId];
+    let idx = 2;
+
+    if (search.trim()) {
+      conditions.push(`u.full_name ILIKE $${idx}`);
+      params.push(`%${search.trim()}%`);
+      idx++;
+    }
+
+    if (status === 'pending') {
+      conditions.push(`se.id IS NULL`);
+    } else if (status === 'evaluated') {
+      conditions.push(`se.id IS NOT NULL`);
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM bookings b
+       JOIN users u ON u.id = b.student_id
+       LEFT JOIN session_evaluations se ON se.booking_id = b.id
+       ${where}`,
+      params
+    );
+    const total = parseInt(countRes.rows[0].count);
+
+    const result = await pool.query(
+      `SELECT
+         b.id            AS booking_id,
+         b.subject,
+         b.lesson_date,
+         b.time_slot,
+         b.status        AS booking_status,
+         u.id            AS student_id,
+         u.full_name     AS student_name,
+         u.picture       AS student_picture,
+         se.id           AS evaluation_id,
+         se.status       AS eval_status,
+         se.score_attendance,
+         se.score_attitude,
+         se.score_comprehension,
+         se.score_focus,
+         se.score_homework,
+         se.comments,
+         se.parent_recommendation,
+         se.created_at   AS evaluated_at
+       FROM bookings b
+       JOIN users u ON u.id = b.student_id
+       LEFT JOIN session_evaluations se ON se.booking_id = b.id
+       ${where}
+       ORDER BY b.lesson_date DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...params, limitNum, offset]
+    );
+
+    return res.json({
+      sessions: result.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    });
+  } catch (e) {
+    console.error('GET /api/tutor/session-evaluations error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── GET /api/tutor/session-evaluations/:bookingId
+// Chi tiết 1 buổi học để đánh giá
+app.get('/api/tutor/session-evaluations/:bookingId', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const { bookingId } = req.params;
+
+    const bookingRes = await pool.query(
+      `SELECT b.*, u.full_name AS student_name, u.picture AS student_picture, u.email AS student_email
+       FROM bookings b
+       JOIN users u ON u.id = b.student_id
+       WHERE b.id = $1 AND b.tutor_id = $2`,
+      [bookingId, tutorId]
+    );
+    if (!bookingRes.rows.length) {
+      return res.status(404).json({ message: 'Booking not found or not authorized.' });
+    }
+
+    const booking = bookingRes.rows[0];
+
+    if (booking.status !== 'Approved') {
+      return res.status(400).json({ message: 'Chỉ có thể đánh giá buổi học đã hoàn thành (Approved).' });
+    }
+
+    const evalRes = await pool.query(
+      `SELECT * FROM session_evaluations WHERE booking_id = $1`,
+      [bookingId]
+    );
+
+    return res.json({
+      booking,
+      evaluation: evalRes.rows[0] || null,
+    });
+  } catch (e) {
+    console.error('GET /api/tutor/session-evaluations/:bookingId error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── POST /api/tutor/session-evaluations
+// Tạo mới đánh giá cho 1 buổi học
+app.post('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const {
+      booking_id,
+      score_attendance,
+      score_attitude,
+      score_comprehension,
+      score_focus,
+      score_homework,
+      comments,
+      parent_recommendation,
+    } = req.body;
+
+    // Validation
+    if (!booking_id) return res.status(400).json({ message: 'booking_id là bắt buộc.' });
+
+    const scores = { score_attendance, score_attitude, score_comprehension, score_focus, score_homework };
+    for (const [key, val] of Object.entries(scores)) {
+      if (val !== undefined && val !== null && (isNaN(val) || val < 1 || val > 5)) {
+        return res.status(400).json({ message: `${key} phải từ 1 đến 5.` });
+      }
+    }
+
+    // Kiểm tra booking thuộc tutor và đã Approved
+    const bookingRes = await pool.query(
+      `SELECT id, student_id, status, lesson_date FROM bookings WHERE id = $1 AND tutor_id = $2`,
+      [booking_id, tutorId]
+    );
+    if (!bookingRes.rows.length) {
+      return res.status(404).json({ message: 'Booking không tìm thấy hoặc không thuộc quyền của bạn.' });
+    }
+    const booking = bookingRes.rows[0];
+    if (booking.status !== 'Approved') {
+      return res.status(400).json({ message: 'Chỉ đánh giá được buổi học đã hoàn thành (Approved).' });
+    }
+    if (new Date(booking.lesson_date) > new Date()) {
+      return res.status(400).json({ message: 'Không thể đánh giá buổi học chưa diễn ra.' });
+    }
+
+    // Kiểm tra đã đánh giá chưa
+    const existCheck = await pool.query(
+      `SELECT id, status FROM session_evaluations WHERE booking_id = $1`,
+      [booking_id]
+    );
+    if (existCheck.rows.length > 0) {
+      if (existCheck.rows[0].status === 'locked') {
+        return res.status(400).json({ message: 'Đánh giá này đã bị khoá, không thể sửa.' });
+      }
+      return res.status(409).json({
+        message: 'Buổi học này đã được đánh giá. Dùng PUT để cập nhật.',
+        evaluation_id: existCheck.rows[0].id,
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO session_evaluations
+         (booking_id, tutor_id, student_id,
+          score_attendance, score_attitude, score_comprehension, score_focus, score_homework,
+          comments, parent_recommendation, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'submitted')
+       RETURNING *`,
+      [
+        booking_id, tutorId, booking.student_id,
+        score_attendance || null, score_attitude || null,
+        score_comprehension || null, score_focus || null, score_homework || null,
+        comments || null, parent_recommendation || null,
+      ]
+    );
+
+    return res.status(201).json({ evaluation: result.rows[0], message: 'Đánh giá đã được lưu thành công.' });
+  } catch (e) {
+    console.error('POST /api/tutor/session-evaluations error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── PUT /api/tutor/session-evaluations/:evaluationId
+// Cập nhật đánh giá (chỉ khi status != 'locked')
+app.put('/api/tutor/session-evaluations/:evaluationId', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const { evaluationId } = req.params;
+    const {
+      score_attendance,
+      score_attitude,
+      score_comprehension,
+      score_focus,
+      score_homework,
+      comments,
+      parent_recommendation,
+    } = req.body;
+
+    // Kiểm tra evaluation thuộc tutor
+    const existing = await pool.query(
+      `SELECT * FROM session_evaluations WHERE id = $1 AND tutor_id = $2`,
+      [evaluationId, tutorId]
+    );
+    if (!existing.rows.length) {
+      return res.status(404).json({ message: 'Evaluation không tìm thấy hoặc không thuộc quyền của bạn.' });
+    }
+    if (existing.rows[0].status === 'locked') {
+      return res.status(400).json({ message: 'Đánh giá đã bị khoá, không thể chỉnh sửa.' });
+    }
+
+    const scores = { score_attendance, score_attitude, score_comprehension, score_focus, score_homework };
+    for (const [key, val] of Object.entries(scores)) {
+      if (val !== undefined && val !== null && (isNaN(val) || val < 1 || val > 5)) {
+        return res.status(400).json({ message: `${key} phải từ 1 đến 5.` });
+      }
+    }
+
+    const result = await pool.query(
+      `UPDATE session_evaluations
+       SET score_attendance=$1, score_attitude=$2, score_comprehension=$3,
+           score_focus=$4, score_homework=$5, comments=$6,
+           parent_recommendation=$7, updated_at=NOW()
+       WHERE id=$8 RETURNING *`,
+      [
+        score_attendance || null, score_attitude || null,
+        score_comprehension || null, score_focus || null, score_homework || null,
+        comments || null, parent_recommendation || null,
+        evaluationId,
+      ]
+    );
+
+    return res.json({ evaluation: result.rows[0], message: 'Cập nhật thành công.' });
+  } catch (e) {
+    console.error('PUT /api/tutor/session-evaluations/:id error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── GET /api/tutor/session-evaluations/stats
+// Thống kê nhanh: bao nhiêu buổi chờ đánh giá
+app.get('/api/tutor/session-eval-stats', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const result = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE se.id IS NULL) AS pending_count,
+         COUNT(*) FILTER (WHERE se.id IS NOT NULL) AS evaluated_count,
+         COUNT(*) AS total_count
+       FROM bookings b
+       LEFT JOIN session_evaluations se ON se.booking_id = b.id
+       WHERE b.tutor_id = $1 AND b.status = 'Approved' AND b.lesson_date <= CURRENT_DATE`,
+      [tutorId]
+    );
+    return res.json(result.rows[0]);
+  } catch (e) {
+    console.error('GET /api/tutor/session-eval-stats error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  END SESSION EVALUATION APIs
+// ══════════════════════════════════════════════════════════════════════════════
 
 startServer();
 

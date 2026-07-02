@@ -533,6 +533,59 @@ function PublishStep({ form, stats }) {
         <SummaryBox label="Thời lượng" value={`${form.estimatedHours || 0} giờ`} />
         <SummaryBox label="Khóa đang có" value={stats.courseCount} />
       </div>
+
+      <div className="mt-8 border-t border-[#c8cedd] pt-6">
+        <h4 className="mb-4 text-lg font-black text-[#001b7a]">Kiểm tra video bài giảng</h4>
+        {lessons.length === 0 ? (
+          <p className="text-[#51586a]">Chưa có bài giảng nào được thêm.</p>
+        ) : (
+          <div className="space-y-4">
+            {lessons.map((lesson, index) => (
+              <div key={index} className="rounded-xl border border-[#c8cedd] bg-[#f9fafb] p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="font-black text-[#001b7a]">Chương {index + 1}: {lesson.title}</p>
+                    {lesson.isPreview && <span className="mt-1 inline-block rounded-full bg-[#e8f8ef] px-2 py-0.5 text-xs font-bold text-[#147a3d]">Cho xem thử miễn phí</span>}
+                  </div>
+                </div>
+                {lesson.videoUrl ? (
+                  (() => {
+                    const ytMatch = lesson.videoUrl.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/);
+                    const ytId = ytMatch && ytMatch[2].length === 11 ? ytMatch[2] : null;
+                    if (ytId) {
+                      return (
+                        <iframe 
+                          src={`https://www.youtube.com/embed/${ytId}`}
+                          className="mt-3 w-full max-w-[480px] aspect-video bg-black rounded-lg shadow-sm border-0"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                        />
+                      );
+                    }
+                    
+                    const isValidUrl = lesson.videoUrl.startsWith('http') || lesson.videoUrl.startsWith('/');
+                    if (!isValidUrl) {
+                      return (
+                        <p className="mt-3 text-sm font-bold text-red-600 flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[18px]">link_off</span>
+                          Đường dẫn video "{lesson.videoUrl}" không hợp lệ. Vui lòng kiểm tra lại!
+                        </p>
+                      );
+                    }
+
+                    return <video src={lesson.videoUrl} controls preload="metadata" className="mt-3 w-full max-w-[480px] aspect-video bg-black rounded-lg shadow-sm" />;
+                  })()
+                ) : (
+                  <p className="mt-3 text-sm font-bold text-red-600 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[18px]">warning</span>
+                    Chưa có video cho chương này. Hãy quay lại bước Nội dung để tải lên.
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </Panel>
   )
 }

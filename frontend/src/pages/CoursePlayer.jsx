@@ -152,7 +152,36 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                   )}
                 </div>
               ) : selectedLesson?.videoUrl ? (
-                <video src={selectedLesson.videoUrl} controls preload="metadata" style={S.video} />
+                (() => {
+                  const url = selectedLesson.videoUrl;
+                  const ytMatch = url.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/);
+                  const ytId = ytMatch && ytMatch[2].length === 11 ? ytMatch[2] : null;
+                  
+                  if (ytId) {
+                    return (
+                      <iframe 
+                        key={selectedLesson.id}
+                        src={`https://www.youtube.com/embed/${ytId}`}
+                        style={{...S.video, border: 'none'}}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    );
+                  }
+                  
+                  const isValidUrl = url.startsWith('http') || url.startsWith('/');
+                  if (!isValidUrl) {
+                    return (
+                      <div style={S.locked}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 54, color: '#e53935' }}>link_off</span>
+                        <h2>Đường dẫn video không hợp lệ</h2>
+                        <p>Link: "{url}" không phải là link video hợp lệ.</p>
+                      </div>
+                    );
+                  }
+
+                  return <video key={selectedLesson.id} src={url} controls preload="metadata" style={S.video} />;
+                })()
               ) : (
                 <div style={S.locked}>
                   <span className="material-symbols-outlined" style={{ fontSize: 54 }}>play_disabled</span>

@@ -131,23 +131,7 @@ export async function getTutorAvailability(tutorId, params = {}) {
  * Fallback: Read from LocalStorage.
  */
 export async function getBookings() {
-  try {
-    return await request('/api/bookings');
-  } catch (error) {
-    console.warn(`[API] getBookings failed: ${error.message}. Falling back to LocalStorage.`);
-    try {
-      const stored = localStorage.getItem('edux_bookings');
-      const bookings = stored ? JSON.parse(stored) : [];
-      // Sanitize: only return valid booking objects (must have id and status string)
-      return Array.isArray(bookings)
-        ? bookings.filter(b => b && typeof b === 'object' && typeof b.status === 'string')
-        : [];
-    } catch {
-      // Corrupted localStorage â€” clear it and return empty
-      localStorage.removeItem('edux_bookings');
-      return [];
-    }
-  }
+  return await request('/api/bookings');
 }
 
 /**
@@ -191,28 +175,22 @@ export async function createBooking(bookingData) {
     throw new Error('Cần chọn gia sư, ngày học và khung giờ.');
   }
 
-  // Send one POST per session (backend handles single bookings)
-  const results = [];
-  for (const session of sessionList) {
-    const payload = {
-      tutor_id:    String(resolvedTutorId),
-      lesson_date: session.date,
-      time_slot:   session.timeSlot || session.time_slot,
-      tutor_name:  resolvedTutorName,
-      subject:     subject || null,
-      note:        resolvedNote,
-    };
-    console.log('[createBooking] Sending payload to /api/bookings:', payload);
-    const result = await request('/api/bookings', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    results.push(result);
-  }
+  // Send a single batch POST request to the new endpoint
+  const payload = {
+    tutorId: String(resolvedTutorId),
+    tutorName: resolvedTutorName,
+    subject: subject || null,
+    sessions: sessionList.map(s => ({ date: s.date, timeSlot: s.timeSlot || s.time_slot })),
+    notes: resolvedNote,
+    childName: childName || null,
+  };
+  console.log('[createBooking] Sending payload to /api/bookings:', payload);
+  const result = await request('/api/bookings', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 
-  // Return a unified response compatible with the caller
-  if (results.length === 1) return results[0];
-  return { bookings: results, count: results.length };
+  return result;
 }
 
 export async function createTrialBooking(bookingData) {
@@ -238,26 +216,10 @@ export async function submitTutorReview(tutorId, reviewData) {
  * Fallback: Update status in LocalStorage.
  */
 export async function updateBookingStatus(bookingId, status) {
-  try {
-    return await request(`/api/bookings/${bookingId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status })
-    });
-  } catch (error) {
-    console.warn(`[API] updateBookingStatus failed: ${error.message}. Updating in LocalStorage.`);
-    
-    const stored = localStorage.getItem('edux_bookings');
-    const bookings = stored ? JSON.parse(stored) : [];
-    
-    const index = bookings.findIndex(b => b.id === bookingId);
-    if (index !== -1) {
-      bookings[index].status = status;
-      localStorage.setItem('edux_bookings', JSON.stringify(bookings));
-      return bookings[index];
-    }
-    
-    throw new Error(`Booking with ID ${bookingId} not found.`);
-  }
+  return await request(`/api/bookings/${bookingId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status })
+  });
 }
 
 
@@ -686,3 +648,64 @@ export async function submitStudentHomework(hwId, fileUrl) {
     body: JSON.stringify({ file_url: fileUrl }),
   });
 }
+
+// ── Wallet APIs ───────────────────────────────────────────────────────────────
+
+export const getWalletOverview = async () => {
+  return request('/api/wallet');
+};
+
+export const getWalletTransactions = async () => {
+  return request('/api/wallet/transactions');
+};
+
+export const depositRequest = async (data) => {
+  return request('/api/wallet/deposit-request', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const withdrawRequest = async (data) => {
+  return request('/api/wallet/withdraw-request', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+// Admin Wallet API
+export const getAdminDepositRequests = async () => {
+  return request('/api/admin/wallet/deposit-requests');
+};
+
+export const getAdminWithdrawRequests = async () => {
+  return request('/api/admin/wallet/withdraw-requests');
+};
+
+export const approveDepositRequest = async (id, note) => {
+  return request(`/api/admin/wallet/deposit-requests/${id}/approve`, {
+    method: 'PATCH',
+    body: JSON.stringify({ note }),
+  });
+};
+
+export const rejectDepositRequest = async (id, note) => {
+  return request(`/api/admin/wallet/deposit-requests/${id}/reject`, {
+    method: 'PATCH',
+    body: JSON.stringify({ note }),
+  });
+};
+
+export const approveWithdrawRequest = async (id, note) => {
+  return request(`/api/admin/wallet/withdraw-requests/${id}/approve`, {
+    method: 'PATCH',
+    body: JSON.stringify({ note }),
+  });
+};
+
+export const rejectWithdrawRequest = async (id, note) => {
+  return request(`/api/admin/wallet/withdraw-requests/${id}/reject`, {
+    method: 'PATCH',
+    body: JSON.stringify({ note }),
+  });
+};
