@@ -7613,37 +7613,31 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
           booking.id]);
     }
 
-    // ── ABSENT / EXCUSED: Hoàn tiền cho học sinh ─────────────────────────────
+    // ── ABSENT / EXCUSED: Hoàn tiền 100% cho học sinh (Batch 16.1: refund_logs) ──
     if (['absent', 'excused'].includes(status) && booking.escrow_tx_id && lessonFee > 0) {
-      const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
-      const tutorWalletId = tw.rows.length ? tw.rows[0].id : null;
+      const reasonCode = status === 'absent' ? 'ATTENDANCE_ABSENT' : 'ATTENDANCE_EXCUSED';
 
-      if (status === 'absent') {
-        // Gia sư vắng hoặc học sinh vắng do gia sư báo: hoàn toàn bộ về học sinh
-        await client.query('SELECT refund_escrow($1,$2,$3)', [
-          booking.escrow_tx_id, booking.payer_wallet_id, lessonFee
-        ]);
+      // Idempotency guard (UNIQUE(target,student)) — skip if already refunded
+      const logId = await createRefundLog(client, {
+        target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
+        tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 1.0,
+        refund_amount: lessonFee, non_refunded_amount: 0, reason_code: reasonCode,
+        decision_by: 'tutor',
+        metadata: { source: 'attendance', attendance_status: status },
+      });
+
+      if (logId) {
+        await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, lessonFee]);
         await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
 
+        const notifTitle = status === 'absent' ? 'Hoàn tiền — buổi học vắng mặt' : 'Hoàn tiền — nghỉ có phép';
+        const notifBody = status === 'absent'
+          ? `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`
+          : `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`;
         await client.query(`
           INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-          VALUES ($1,'refund','Hoàn tiền — buổi học vắng mặt',$2,'undo',$3,'booking')
-        `, [booking.student_id,
-            `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`,
-            booking.id]);
-      } else if (status === 'excused') {
-        // Vắng có phép (học sinh xin nghỉ): hoàn 100% nếu báo trước 24h
-        await client.query('SELECT refund_escrow($1,$2,$3)', [
-          booking.escrow_tx_id, booking.payer_wallet_id, lessonFee
-        ]);
-        await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
-
-        await client.query(`
-          INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-          VALUES ($1,'refund','Hoàn tiền — nghỉ có phép',$2,'undo',$3,'booking')
-        `, [booking.student_id,
-            `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`,
-            booking.id]);
+          VALUES ($1,'refund',$2,$3,'undo',$4,'booking')
+        `, [booking.student_id, notifTitle, notifBody, booking.id]);
       }
     }
 
@@ -8674,33 +8668,52 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
       `);
 
       for (const row of dueBookings.rows) {
+        // Batch 16.1: wrap each booking in a transaction; refund_logs guard
+        const client = await pool.connect();
         try {
+          await client.query('BEGIN');
+          let refunded = false;
+
           if (row.escrow_tx_id && Number(row.lesson_fee) > 0) {
-            // Hoàn tiền cho học sinh
-            await pool.query('SELECT refund_escrow($1,$2,$3)', [
-              row.escrow_tx_id, row.payer_wallet_id, row.lesson_fee
-            ]);
-            await pool.query(`UPDATE bookings SET status='Cancelled', escrow_released_at=NOW() WHERE id=$1`, [row.id]);
+            const fee = Number(row.lesson_fee);
+            // Idempotency guard — skip refund if already refunded for this booking
+            const logId = await createRefundLog(client, {
+              target_type: 'booking', target_id: row.id, student_id: row.student_id,
+              tutor_id: row.tutor_id, original_amount: fee, refund_rate: 1.0,
+              refund_amount: fee, non_refunded_amount: 0, reason_code: 'AUTO_CANCEL_TUTOR_NO_RESPONSE',
+              decision_by: 'system', metadata: { source: 'cron_auto_cancel' },
+            });
+            if (logId) {
+              await client.query('SELECT refund_escrow($1,$2,$3)', [row.escrow_tx_id, row.payer_wallet_id, fee]);
+              refunded = true;
+            }
+            await client.query(`UPDATE bookings SET status='Cancelled', escrow_released_at=NOW() WHERE id=$1`, [row.id]);
           } else {
             // Hủy không hoàn tiền
-            await pool.query(`UPDATE bookings SET status='Cancelled' WHERE id=$1`, [row.id]);
+            await client.query(`UPDATE bookings SET status='Cancelled' WHERE id=$1`, [row.id]);
           }
 
           // Thông báo cho Học sinh
-          await pool.query(`
+          await client.query(`
             INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
             VALUES ($1,'refund','Lịch học đã bị hủy do gia sư không phản hồi',$2,'undo',$3,'booking')
-          `, [row.student_id, `Hệ thống đã hủy lịch học và hoàn lại ${Number(row.lesson_fee||0).toLocaleString('vi-VN')}đ vì gia sư không duyệt trong 24h.`, row.id]);
+          `, [row.student_id, refunded
+              ? `Hệ thống đã hủy lịch học và hoàn lại ${Number(row.lesson_fee || 0).toLocaleString('vi-VN')}đ vì gia sư không duyệt trong 24h.`
+              : `Hệ thống đã hủy lịch học vì gia sư không duyệt trong 24h.`, row.id]);
 
           // Thông báo cho Gia sư
-          await pool.query(`
+          await client.query(`
             INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
             VALUES ($1,'cancellation','Lịch học bị hủy tự động',$2,'event_busy',$3,'booking')
           `, [row.tutor_id, `Một lịch học đã bị hủy vì bạn không phản hồi trong 24h.`, row.id]);
 
+          await client.query('COMMIT');
           console.log(`✅ Auto-cancelled unapproved booking ${row.id}`);
         } catch (innerErr) {
+          await client.query('ROLLBACK');
           console.error(`❌ Auto-cancel failed for booking ${row.id}:`, innerErr.message);
+        } finally {
+          client.release();
         }
       }
     } catch (err) {
