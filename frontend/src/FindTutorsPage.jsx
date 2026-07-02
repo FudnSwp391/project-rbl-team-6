@@ -42,15 +42,23 @@ function fmtPrice(val) {
   return `$${n}`;
 }
 
-function TutorCard({ tutor, isMock }) {
+function TutorCard({ tutor, isMock, onFav }) {
   const avatar = tutor.profile_photo_url || tutor.picture;
   const rating = Number(tutor.avg_r || 0).toFixed(1);
   const subjects = tutor.subjects
     ? tutor.subjects.split(',').map(s => s.trim()).filter(Boolean).slice(0, 3)
     : [];
 
+  const handleViewProfile = () => {
+    sessionStorage.setItem('viewingTutor', JSON.stringify(tutor));
+    window.location.hash = `/tutor-detail/${tutor.id}`;
+  };
+
   return (
-    <div className="group bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col border border-transparent hover:border-[#00288e]/10">
+    <div 
+      onClick={handleViewProfile}
+      className="group bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col border border-transparent hover:border-[#00288e]/10 cursor-pointer"
+    >
       <div className="relative h-48 overflow-hidden bg-[#edeef0]">
         {avatar ? (
           <img
@@ -73,6 +81,12 @@ function TutorCard({ tutor, isMock }) {
             <span className="material-symbols-outlined text-[13px]">location_on</span>
             {tutor.city}
           </div>
+        )}
+        {onFav && !isMock && (
+          <button onClick={(e) => { e.stopPropagation(); onFav(tutor); }} title="Yêu thích"
+            className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white/90 backdrop-blur text-[#e11d48] flex items-center justify-center shadow hover:scale-110 transition-transform">
+            <span className="material-symbols-outlined text-[20px]">favorite</span>
+          </button>
         )}
       </div>
 
@@ -111,9 +125,9 @@ function TutorCard({ tutor, isMock }) {
             <span className="text-xs font-normal text-[#5d5f5f]">/giờ</span>
           </span>
           <button
-            onClick={() => {
-              sessionStorage.setItem('viewingTutor', JSON.stringify(tutor));
-              window.location.hash = `/tutor-detail/${tutor.id}`;
+            onClick={(e) => {
+              e.stopPropagation();
+              handleViewProfile();
             }}
             className="btn-shine px-5 py-2 border border-[#00288e] text-[#00288e] hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 rounded-lg text-sm font-semibold transition-all"
           >
@@ -133,13 +147,30 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   const [loading, setLoading]         = useState(true);
   const [isMock, setIsMock]           = useState(false);
 
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch]           = useState('');
+  const hashParts = window.location.hash.split('?');
+  const initialParams = new URLSearchParams(hashParts.length > 1 ? hashParts[1] : '');
+
+  const [searchInput, setSearchInput] = useState(initialParams.get('search') || '');
+  const [search, setSearch]           = useState(initialParams.get('search') || '');
   const [selectedSubjects, setSelectedSubjects] = useState([]);
   const [maxPrice, setMaxPrice]       = useState(200);
   const [sort, setSort]               = useState('rating');
-  const [method, setMethod]           = useState('');
+  const [method, setMethod]           = useState(initialParams.get('method') || '');
   const [level, setLevel]             = useState('');
+  const [favMsg, setFavMsg]           = useState('');
+
+  const addFav = (t) => {
+    const token = localStorage.getItem('token');
+    if (!token) { setFavMsg('Đăng nhập để lưu yêu thích.'); setTimeout(() => setFavMsg(''), 2500); return; }
+    fetch(`${API_BASE}/api/wishlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ item_type: 'tutor', item_id: t.id }),
+    })
+      .then(() => setFavMsg(`Đã thêm ${t.full_name} vào Yêu thích ❤`))
+      .catch(() => setFavMsg('Lỗi, thử lại.'))
+      .finally(() => setTimeout(() => setFavMsg(''), 2500));
+  };
 
   const fetchTutors = useCallback(async (pg = 1) => {
     setLoading(true);
@@ -197,9 +228,31 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
     setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setPage(1);
   };
 
-  const displayTutors = isMock
-    ? MOCK_TUTORS
-    : tutors.filter(t => !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice);
+  const displayTutors = (isMock ? MOCK_TUTORS : tutors).filter(t => {
+    // 1. Max price
+    const matchPrice = !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice;
+    
+    // 2. Search text
+    const matchSearch = !search.trim() || 
+      `${t.full_name} ${t.subjects || ''} ${t.bio || ''}`.toLowerCase().includes(search.toLowerCase().trim());
+      
+    // 3. Subjects
+    const matchSubjects = selectedSubjects.length === 0 || 
+      selectedSubjects.some(sub => (t.subjects || '').toLowerCase().includes(sub.toLowerCase()));
+      
+    // 4. Method
+    const matchMethod = !method || 
+      (t.teaching_methods && Array.isArray(t.teaching_methods) ? t.teaching_methods.some(m => m.toLowerCase() === method.toLowerCase()) : false) || 
+      (t.method && t.method.toLowerCase() === method.toLowerCase());
+      
+    // 5. Level
+    const matchLevel = !level || 
+      (t.suitable_students && Array.isArray(t.suitable_students) && t.suitable_students.some(l => l.toLowerCase() === level.toLowerCase())) ||
+      (t.level && typeof t.level === 'string' && t.level.toLowerCase().includes(level.toLowerCase())) || 
+      (!t.suitable_students && !t.level);
+
+    return matchPrice && matchSearch && matchSubjects && matchMethod && matchLevel;
+  });
 
   return (
     <div className="aqua-bg min-h-screen text-[#191c1e] font-sans">
@@ -220,13 +273,18 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             <span className="material-symbols-outlined text-[28px]" style={{fontVariationSettings:"'FILL' 1"}}>school</span>
             EduX
           </a>
-          <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
+          <nav className="hidden md:flex items-center gap-8">
             <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
             <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
           </nav>
-          <div className="flex items-center gap-4 z-10">
+          <div className="flex items-center gap-6 z-10">
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
             {user ? (
               <button
                 onClick={() => {
@@ -251,6 +309,15 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       </header>
 
       <main className="pt-24 pb-16 max-w-[1280px] mx-auto px-6">
+        {isMock && (
+          <div className="mb-6 flex items-start gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-900 shadow-[0_10px_26px_-12px_rgba(180,120,0,0.3)]">
+            <span className="material-symbols-outlined text-amber-500 mt-0.5">warning</span>
+            <div className="text-sm leading-relaxed">
+              <b>Đang hiển thị gia sư mẫu</b> — không kết nối được máy chủ (backend chưa chạy hoặc DB lỗi).
+              Đây <u>không phải</u> gia sư thật. Hãy khởi động lại backend rồi tải lại trang (F5).
+            </div>
+          </div>
+        )}
         {/* Search — banner tối + họa tiết ánh sáng động */}
         <section className="relative mb-10 overflow-hidden rounded-2xl border border-[#1e2a4a]"
           style={{ background: 'radial-gradient(60% 90% at 15% 8%, rgba(76,110,245,.35), transparent 60%), radial-gradient(50% 80% at 85% 18%, rgba(124,92,255,.30), transparent 60%), linear-gradient(135deg,#0b1840,#122163 60%,#0c1538)' }}>
@@ -278,6 +345,22 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
               >
                 Tìm Kiếm Gia Sư
               </button>
+            </div>
+            {/* AI Matching flow CTA - Premium Style */}
+            <div className="mt-5 flex items-center justify-center relative z-20 w-full max-w-[800px] mx-auto">
+              <div className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:bg-white/20 hover:shadow-[0_0_25px_rgba(124,92,255,0.5)] transition-all duration-300 shadow-[0_0_15px_rgba(124,92,255,0.2)] cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
+                <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
+                  <span className="material-symbols-outlined text-[#a4c9ff] text-[20px] animate-pulse">auto_awesome</span>
+                  <span>Muốn được gợi ý gia sư phù hợp nhất?</span>
+                </div>
+                <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
+                <button
+                  className="text-white font-bold text-sm flex items-center gap-1 group transition-colors"
+                >
+                  Tạo yêu cầu AI
+                  <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#a4c9ff]">arrow_forward</span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -412,8 +495,13 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {displayTutors.map(tutor => (
-                  <TutorCard key={tutor.id} tutor={tutor} isMock={isMock} />
+                  <TutorCard key={tutor.id} tutor={tutor} isMock={isMock} onFav={addFav} />
                 ))}
+              </div>
+            )}
+            {favMsg && (
+              <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] bg-[#1e40af] text-white px-5 py-3 rounded-xl shadow-2xl text-sm font-semibold flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>favorite</span>{favMsg}
               </div>
             )}
 
@@ -462,10 +550,10 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             <p className="text-xs font-medium text-[#444653]">© 2024 EduX. Đã đăng ký bản quyền.</p>
           </div>
           <div className="flex flex-wrap justify-center gap-6">
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Chính Sách Bảo Mật</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Điều Khoản Dịch Vụ</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Trung Tâm Hỗ Trợ</a>
-            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#">Liên Hệ</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Chính Sách Bảo Mật</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Điều Khoản Dịch Vụ</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Trung Tâm Hỗ Trợ</a>
+            <a className="text-xs font-medium text-[#444653] hover:text-[#00288e] underline transition-all" href="#" onClick={(e) => e.preventDefault()}>Liên Hệ</a>
           </div>
         </div>
       </footer>

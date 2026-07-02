@@ -119,7 +119,7 @@ export async function getTutorAvailability(tutorId, params = {}) {
     const idNum = parseInt(tutorId, 10);
     const tutor = findTutorByAnyId(mockTutors, tutorId) || mockTutors.find(t => t.id === idNum);
     if (!tutor) {
-      throw new Error(`Tutor with ID ${tutorId} not found.`);
+      throw new Error(`Tutor with ID ${tutorId} not found.`, { cause: error });
     }
     await new Promise(resolve => setTimeout(resolve, 500));
     return tutor.availability;
@@ -175,7 +175,7 @@ export async function createBooking(bookingData) {
     throw new Error('Cần chọn gia sư, ngày học và khung giờ.');
   }
 
-  // Send a single batch POST request to the new endpoint
+  // Send a single batch POST request
   const payload = {
     tutorId: String(resolvedTutorId),
     tutorName: resolvedTutorName,
@@ -189,7 +189,6 @@ export async function createBooking(bookingData) {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-
   return result;
 }
 
@@ -216,10 +215,23 @@ export async function submitTutorReview(tutorId, reviewData) {
  * Fallback: Update status in LocalStorage.
  */
 export async function updateBookingStatus(bookingId, status) {
-  return await request(`/api/bookings/${bookingId}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ status })
-  });
+  try {
+    return await request(`/api/bookings/${bookingId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    });
+  } catch (error) {
+    console.warn(`[API] updateBookingStatus failed: ${error.message}. Updating in LocalStorage.`);
+    const stored = localStorage.getItem('edux_bookings');
+    const bookings = stored ? JSON.parse(stored) : [];
+    const index = bookings.findIndex(b => b.id === bookingId);
+    if (index !== -1) {
+      bookings[index].status = status;
+      localStorage.setItem('edux_bookings', JSON.stringify(bookings));
+      return bookings[index];
+    }
+    throw new Error(`Booking with ID ${bookingId} not found.`, { cause: error });
+  }
 }
 
 
@@ -274,20 +286,20 @@ export async function resolveDispute(disputeId, decision, adminNote = '') {
   });
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // â”€â”€ TUTOR PROFILE APIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /**
  * Láº¥y profile Ä‘áº§y Ä‘á»§ cá»§a gia sÆ° (credentials + availability).
- * Fallback: tráº£ vá» mock profile náº¿u backend chÆ°a cĂ³.
+ * Fallback: tráº£ vá» mock profile náº¿u backend chÆ°a cĂ³.
  */
 export async function getTutorProfile() {
   try {
     return await request('/api/tutor/profile');
   } catch (error) {
     console.warn(`[API] getTutorProfile failed: ${error.message}. Using mock.`);
-    // Tráº£ vá» mock Ä‘á»ƒ UI váº«n hoáº¡t Ä‘á»™ng khi backend chÆ°a sáºµn sĂ ng
+    // Tráº£ vá» mock Ä‘á»ƒ UI váº«n hoáº¡t Ä‘á»™ng khi backend chÆ°a sáºµn sĂ ng
     return {
       bio: '',
       bio_pending: null,
@@ -301,7 +313,7 @@ export async function getTutorProfile() {
 }
 
 /**
- * Cáº­p nháº­t bio (gá»­i chá» admin duyá»‡t).
+ * Cáºp nháºt bio (gá»i chá» admin duyá»‡t).
  */
 export async function updateTutorBio(bio) {
   try {
@@ -331,7 +343,7 @@ export async function submitTutorProfile() {
 }
 
 /**
- * Cáº­p nháº­t avatar URL (khĂ´ng cáº§n duyá»‡t).
+ * Cáºp nháºt avatar URL (khĂ´ng cáº§n duyá»‡t).
  */
 export async function updateTutorAvatar(pictureUrl) {
   try {
@@ -388,7 +400,7 @@ export async function deleteTutorCredential(id) {
 }
 
 /**
- * Cáº­p nháº­t lá»‹ch dáº¡y (replace toĂ n bá»™).
+ * Cáºp nháºt lá»‹ch dáº¡y (replace toĂ n bá»™).
  * Fallback: lÆ°u vĂ o localStorage.
  */
 export async function updateTutorAvailability(availability) {
@@ -405,7 +417,7 @@ export async function updateTutorAvailability(availability) {
 }
 
 /**
- * Admin: láº¥y credentials Ä‘ang chá» duyá»‡t.
+ * Admin: láº¥y credentials Ä‘ang chá» duyá»‡t.
  */
 export async function getAdminPendingCredentials() {
   return request('/api/admin/credentials/pending');
@@ -429,7 +441,7 @@ export async function rejectCredential(id, reason) {
 }
 
 /**
- * Admin: láº¥y bio Ä‘ang chá» duyá»‡t.
+ * Admin: láº¥y bio Ä‘ang chá» duyá»‡t.
  */
 export async function getAdminPendingBios() {
   return request('/api/admin/bio/pending');
@@ -449,9 +461,9 @@ export async function rejectBio(id) {
   return request(`/api/admin/bio/${id}/reject`, { method: 'PATCH' });
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // â”€â”€ CHAT APIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export async function getConversations() {
   return request('/api/conversations')
@@ -651,61 +663,13 @@ export async function submitStudentHomework(hwId, fileUrl) {
 
 // ── Wallet APIs ───────────────────────────────────────────────────────────────
 
-export const getWalletOverview = async () => {
-  return request('/api/wallet');
-};
-
-export const getWalletTransactions = async () => {
-  return request('/api/wallet/transactions');
-};
-
-export const depositRequest = async (data) => {
-  return request('/api/wallet/deposit-request', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-};
-
-export const withdrawRequest = async (data) => {
-  return request('/api/wallet/withdraw-request', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-};
-
-// Admin Wallet API
-export const getAdminDepositRequests = async () => {
-  return request('/api/admin/wallet/deposit-requests');
-};
-
-export const getAdminWithdrawRequests = async () => {
-  return request('/api/admin/wallet/withdraw-requests');
-};
-
-export const approveDepositRequest = async (id, note) => {
-  return request(`/api/admin/wallet/deposit-requests/${id}/approve`, {
-    method: 'PATCH',
-    body: JSON.stringify({ note }),
-  });
-};
-
-export const rejectDepositRequest = async (id, note) => {
-  return request(`/api/admin/wallet/deposit-requests/${id}/reject`, {
-    method: 'PATCH',
-    body: JSON.stringify({ note }),
-  });
-};
-
-export const approveWithdrawRequest = async (id, note) => {
-  return request(`/api/admin/wallet/withdraw-requests/${id}/approve`, {
-    method: 'PATCH',
-    body: JSON.stringify({ note }),
-  });
-};
-
-export const rejectWithdrawRequest = async (id, note) => {
-  return request(`/api/admin/wallet/withdraw-requests/${id}/reject`, {
-    method: 'PATCH',
-    body: JSON.stringify({ note }),
-  });
-};
+export const getWalletOverview = async () => request('/api/wallet');
+export const getWalletTransactions = async () => request('/api/wallet/transactions');
+export const depositRequest = async (data) => request('/api/wallet/deposit-request', { method: 'POST', body: JSON.stringify(data) });
+export const withdrawRequest = async (data) => request('/api/wallet/withdraw-request', { method: 'POST', body: JSON.stringify(data) });
+export const getAdminDepositRequests = async () => request('/api/admin/wallet/deposit-requests');
+export const getAdminWithdrawRequests = async () => request('/api/admin/wallet/withdraw-requests');
+export const approveDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const rejectDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const approveWithdrawRequest = async (id, note) => request(`/api/admin/wallet/withdraw-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const rejectWithdrawRequest = async (id, note) => request(`/api/admin/wallet/withdraw-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ note }) });

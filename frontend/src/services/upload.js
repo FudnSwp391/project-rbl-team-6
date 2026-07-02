@@ -129,9 +129,7 @@ export async function getSignedStorageUrl(storageUrl) {
   if (!storageUrl || !String(storageUrl).startsWith('storage://')) return storageUrl
   const token = localStorage.getItem('token')
   const res = await fetch(`${API_BASE_URL}/api/storage/signed-url?path=${encodeURIComponent(storageUrl)}`, {
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   })
   if (!res.ok) return storageUrl
   const data = await res.json()
@@ -139,7 +137,12 @@ export async function getSignedStorageUrl(storageUrl) {
 }
 
 export async function uploadHomeworkFile(file, tutorId = 'anonymous') {
-  // Use uploadViaBackend with a specific folder
-  const uploaded = await uploadViaBackend(file, `homeworks/${tutorId}`);
-  return uploaded.storageUrl || uploaded.url;
+  const uploaded = await uploadViaBackend(file, `homeworks/${tutorId}`)
+  return uploaded.storageUrl || uploaded.url
+}
+
+export async function uploadEvidenceFile(file, userId = 'anonymous') {
+  const err = validateProofFile(file)
+  if (err) throw new Error(err)
+  return uploadViaBackend(file, `dispute-evidence/${userId}`)
 }

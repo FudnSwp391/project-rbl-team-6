@@ -1,10 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
-const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL  || ''
-const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+const url  = import.meta.env.VITE_SUPABASE_URL
+const anon = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-if (!SUPABASE_URL || !SUPABASE_ANON) {
-  console.warn('[Supabase] VITE_SUPABASE_URL hoặc VITE_SUPABASE_ANON_KEY chưa được cấu hình.')
-}
-
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON)
+// Export null when env vars are absent so callers can guard with `if (supabase)`.
+// This prevents the Supabase client from attempting WebSocket/realtime connections
+// to a dummy URL when running without Supabase credentials configured.
+export const supabase = (url && anon) ? createClient(url, anon) : null

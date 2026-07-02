@@ -9,9 +9,10 @@
  *
  * Nếu DB lỗi hoặc chưa tạo bảng → trả mock data fallback.
  */
-const express = require("express");
 const pool = require("../db");
+const { requireAuth, requireClassMember } = require("../middleware/auth");
 
+const express = require("express");
 const router = express.Router();
 
 // ── UUID v4 regex ────────────────────────────────────────────────────────────
@@ -21,6 +22,25 @@ const UUID_REGEX =
 function isValidUUID(str) {
   return UUID_REGEX.test(str);
 }
+
+const requireDiscussionMember = async (req, res, next) => {
+  const { discussionId } = req.params;
+  const userId = req.user.userId;
+  if (!isValidUUID(discussionId)) return res.status(400).json({ success: false, message: "Invalid discussion id" });
+  try {
+    const discRes = await pool.query(`SELECT class_id FROM discussions WHERE id = $1`, [discussionId]);
+    if (discRes.rows.length === 0) return res.status(404).json({ success: false, message: "Discussion not found" });
+    const classId = discRes.rows[0].class_id;
+    const memRes = await pool.query(
+      `SELECT 1 FROM class_members WHERE class_id = $1 AND student_id = $2 UNION SELECT 1 FROM classes WHERE id = $1 AND tutor_id = $2`,
+      [classId, userId]
+    );
+    if (memRes.rows.length === 0) return res.status(403).json({ success: false, message: "403 Forbidden: Bạn không có quyền truy cập lớp học này." });
+    next();
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+};
 
 // ── Mock data fallback ──────────────────────────────────────────────────────
 const MOCK_DISCUSSIONS = [
@@ -96,7 +116,7 @@ async function discussionExists(discussionId) {
 // GET /api/classes/:classId/discussions
 // Lấy danh sách bài thảo luận của một class
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/classes/:classId/discussions", async (req, res) => {
+router.get("/api/classes/:classId/discussions", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
 
   if (!isValidUUID(classId)) {
@@ -148,9 +168,10 @@ router.get("/api/classes/:classId/discussions", async (req, res) => {
 // POST /api/classes/:classId/discussions
 // Tạo bài thảo luận mới
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/api/classes/:classId/discussions", async (req, res) => {
+router.post("/api/classes/:classId/discussions", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
-  const { user_id, title, content, discussion_type } = req.body || {};
+  const { title, content, discussion_type } = req.body || {};
+  const user_id = req.user.userId; // Override with authenticated user
 
   // Validate classId
   if (!isValidUUID(classId)) {
@@ -236,7 +257,7 @@ router.post("/api/classes/:classId/discussions", async (req, res) => {
 // GET /api/discussions/:discussionId
 // Lấy chi tiết một bài thảo luận
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/discussions/:discussionId", async (req, res) => {
+router.get("/api/discussions/:discussionId", requireAuth, requireDiscussionMember, async (req, res) => {
   const { discussionId } = req.params;
 
   if (!isValidUUID(discussionId)) {
@@ -293,7 +314,7 @@ router.get("/api/discussions/:discussionId", async (req, res) => {
 // GET /api/discussions/:discussionId/replies
 // Lấy danh sách replies của một discussion
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/discussions/:discussionId/replies", async (req, res) => {
+router.get("/api/discussions/:discussionId/replies", requireAuth, requireDiscussionMember, async (req, res) => {
   const { discussionId } = req.params;
 
   if (!isValidUUID(discussionId)) {
@@ -343,9 +364,10 @@ router.get("/api/discussions/:discussionId/replies", async (req, res) => {
 // POST /api/discussions/:discussionId/replies
 // Tạo reply mới
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/api/discussions/:discussionId/replies", async (req, res) => {
+router.post("/api/discussions/:discussionId/replies", requireAuth, requireDiscussionMember, async (req, res) => {
   const { discussionId } = req.params;
-  const { user_id, content } = req.body || {};
+  const { content } = req.body || {};
+  const user_id = req.user.userId; // Override
 
   // Validate discussionId
   if (!isValidUUID(discussionId)) {

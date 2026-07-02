@@ -52,24 +52,15 @@ function CourseCover({ course }) {
   );
 }
 
-function CourseCard({ course, onAdd }) {
-  const openDetail = () => {
-    window.location.hash = `/course/${course.id}`;
-  };
-  const handleKeyDown = (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      openDetail();
-    }
-  };
+function CourseCard({ course, onAdd, onFav, user }) {
   const discount = course.original_price && course.original_price > course.price
     ? Math.round((1 - course.price / course.original_price) * 100) : 0;
+  const openDetail = () => { window.location.hash = `#/course/${course.id}`; };
+  const handleKeyDown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(); } };
   return (
     <article
-      role="button"
-      tabIndex={0}
-      onClick={openDetail}
-      onKeyDown={handleKeyDown}
+      role="button" tabIndex={0}
+      onClick={openDetail} onKeyDown={handleKeyDown}
       className="group flex gap-4 bg-white border border-[#e5e7eb] rounded-2xl overflow-hidden shadow-sm hover:border-[#00288e]/40 hover:shadow-[0_12px_40px_-12px_rgba(0,40,142,0.25)] transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#00288e]/30"
     >
       <div className="w-[200px] min-w-[200px] h-[150px] shrink-0"><CourseCover course={course} /></div>
@@ -105,10 +96,18 @@ function CourseCard({ course, onAdd }) {
           <div className="text-[#00288e] font-extrabold text-xl">{fmtVnd(course.price)}</div>
           {discount > 0 && <div className="text-[#16a34a] text-xs font-semibold">-{discount}%</div>}
         </div>
-        <button onClick={() => onAdd(course)} title="Thêm vào giỏ"
-          className="btn-shine w-11 h-11 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white flex items-center justify-center hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)] transition-all">
-          <span className="material-symbols-outlined">add_shopping_cart</span>
-        </button>
+        {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+          <div className="flex items-center gap-2">
+            <button onClick={(e) => { e.stopPropagation(); onFav(course); }} title="Yêu thích"
+              className="w-11 h-11 rounded-xl border border-[#e11d48]/30 text-[#e11d48] flex items-center justify-center hover:bg-[#e11d48]/10 hover:-translate-y-0.5 transition-all">
+              <span className="material-symbols-outlined">favorite</span>
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); onAdd(course); }} title="Thêm vào giỏ"
+              className="btn-shine w-11 h-11 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white flex items-center justify-center hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)] transition-all">
+              <span className="material-symbols-outlined">add_shopping_cart</span>
+            </button>
+          </div>
+        )}
       </div>
     </article>
   );
@@ -116,6 +115,7 @@ function CourseCard({ course, onAdd }) {
 
 export default function CoursesPage({ user }) {
   const [apiCourses, setApiCourses] = useState([]);
+  const [isMock, setIsMock]   = useState(false);
   const [search, setSearch]   = useState('');
   const [cat, setCat]         = useState('');
   const [level, setLevel]     = useState('');
@@ -125,10 +125,13 @@ export default function CoursesPage({ user }) {
 
   useEffect(() => {
     fetch(`${API_BASE}/api/courses`)
-      .then(r => r.ok ? r.json() : null)
+      .then(async r => {
+        if (!r.ok) throw new Error('API failed');
+        return r.json();
+      })
       .then(d => {
-        // API có thể trả về mảng trực tiếp hoặc { courses: [...] }
         const raw = Array.isArray(d) ? d : (d && Array.isArray(d.courses) ? d.courses : []);
+        if (raw.length === 0) throw new Error('No courses found');
         const rows = raw.map(c => ({
             id: c.id, title: c.title, description: c.description || '',
             category: c.subject, level: c.level || '',
@@ -136,16 +139,26 @@ export default function CoursesPage({ user }) {
             rating: Number(c.avg_rating) || 0, reviews: c.review_count || 0, lessons: c.total_lessons || 0,
           }));
         setApiCourses(rows);
+        setIsMock(false);
       })
-      .catch(() => {});
+      .catch(() => {
+        // Fallback mock data when API fails or DB is empty
+        setIsMock(true);
+        setApiCourses([
+          { id: 1, title: 'Toán Cao Cấp 1', description: 'Đại số tuyến tính & Hình học giải tích', category: 'Toán Học', level: 'Khóa đại học', price: 500000, original_price: 600000, rating: 4.8, reviews: 120, lessons: 30 },
+          { id: 2, title: 'Lập Trình C++ Cơ Bản', description: 'Nhập môn lập trình với C++', category: 'Kỹ Thuật Phần Mềm', level: 'Khóa đại học', price: 400000, original_price: 550000, rating: 4.5, reviews: 85, lessons: 25 },
+          { id: 3, title: 'Thiết Kế Vi Mạch VLSI', description: 'Nguyên lý và ứng dụng', category: 'Vi Mạch', level: 'Khóa đại học', price: 800000, original_price: 900000, rating: 4.9, reviews: 45, lessons: 40 },
+          { id: 4, title: 'Tiếng Anh Giao Tiếp', description: 'Tiếng Anh giao tiếp cơ bản', category: 'Ngoại Ngữ', level: 'Khóa học sinh', price: 0, original_price: 0, rating: 4.2, reviews: 210, lessons: 20 },
+        ]);
+      });
   }, []);
 
   const all = apiCourses;
 
   const filtered = useMemo(() => {
     let list = all.filter(c =>
-      (!cat || c.category === cat) &&
-      (!level || c.level === level) &&
+      (!cat || (c.category || '').toLowerCase() === cat.toLowerCase()) &&
+      (!level || (c.level || '').toLowerCase() === level.toLowerCase()) &&
       (!minRating || (c.rating || 0) >= minRating) &&
       (!search.trim() || `${c.title} ${c.description} ${c.category}`.toLowerCase().includes(search.trim().toLowerCase()))
     );
@@ -156,8 +169,38 @@ export default function CoursesPage({ user }) {
   }, [all, cat, level, minRating, search, sort]);
 
   const addToCart = (c) => {
-    setToast(`Đã thêm "${c.title.slice(0, 30)}${c.title.length > 30 ? '…' : ''}" vào giỏ`);
+    let cart = [];
+    try {
+      const stored = localStorage.getItem('edux_cart');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) cart = parsed;
+      }
+    } catch (e) {}
+    
+    const exists = cart.find(item => item.id === c.id);
+    if (exists) {
+      setToast(`Khóa học đã có trong giỏ hàng!`);
+    } else {
+      cart.push({ ...c, quantity: 1, addedAt: Date.now() });
+      localStorage.setItem('edux_cart', JSON.stringify(cart));
+      window.dispatchEvent(new Event('cartUpdated'));
+      setToast(`Đã thêm "${c.title.slice(0, 30)}${c.title.length > 30 ? '…' : ''}" vào giỏ`);
+    }
     setTimeout(() => setToast(''), 2200);
+  };
+
+  const addFav = (c) => {
+    const token = localStorage.getItem('token');
+    if (!token) { setToast('Đăng nhập để lưu yêu thích.'); setTimeout(() => setToast(''), 2500); return; }
+    fetch(`${API_BASE}/api/wishlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ item_type: 'course', item_id: c.id }),
+    })
+      .then(() => setToast('Đã thêm vào Yêu thích ❤'))
+      .catch(() => setToast('Lỗi, thử lại.'))
+      .finally(() => setTimeout(() => setToast(''), 2500));
   };
   const resetFilters = () => { setCat(''); setLevel(''); setMin(0); setSearch(''); setSort('newest'); };
 
@@ -180,56 +223,92 @@ export default function CoursesPage({ user }) {
             <a href="#/courses" className="text-[#00288e]">Khóa học</a>
             <a href="#/find-tutors" className="text-[#5d5f5f] hover:text-[#00288e] transition-colors">Tìm gia sư</a>
           </nav>
+          {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+            <div className="flex items-center gap-4 z-10 ml-4 md:ml-0">
+              <a href="#/wishlist" className="text-[#e11d48] flex items-center" title="Yêu thích">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>favorite</span>
+              </a>
+              <a href="#/orders" className="text-[#00288e] flex items-center" title="Đơn hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>receipt_long</span>
+              </a>
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            </div>
+          )}
         </div>
       </header>
 
       <main className="max-w-[1280px] mx-auto px-6 py-8">
-        <h1 className="text-2xl font-extrabold mb-6 text-[#191c1e]">{filtered.length} kết quả tất cả khóa học</h1>
+        {isMock && (
+          <div className="mb-6 flex items-start gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-900 shadow-[0_10px_26px_-12px_rgba(180,120,0,0.3)]">
+            <span className="material-symbols-outlined text-amber-500 mt-0.5">warning</span>
+            <div className="text-sm leading-relaxed">
+              <b>Đang hiển thị dữ liệu mẫu</b> — không kết nối được máy chủ (backend chưa chạy hoặc DB lỗi).
+              Đây <u>không phải</u> khóa học thật. Hãy khởi động lại backend rồi tải lại trang (F5).
+            </div>
+          </div>
+        )}
+        <h1 className="text-[28px] font-extrabold mb-6 text-[#191c1e]"><span className="text-[#00288e]">{filtered.length}</span> kết quả · tất cả khóa học</h1>
 
         <div className="flex flex-col lg:flex-row gap-8">
           {/* Sidebar */}
-          <aside className="w-full lg:w-72 shrink-0 space-y-6">
-            <div className="bg-white border border-[#e5e7eb] rounded-2xl p-5 shadow-sm">
-              <h2 className="font-bold mb-3 flex items-center gap-2 text-[#191c1e]"><span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 20 }}>kid_star</span>Xếp hạng</h2>
+          <aside className="w-full lg:w-72 shrink-0 space-y-5">
+            {/* Xếp hạng */}
+            <div className="bg-white border-2 border-[#d7e0f4] rounded-2xl p-5 shadow-[0_10px_26px_-12px_rgba(0,40,142,0.22)] hover:border-[#00288e]/45 hover:shadow-[0_14px_32px_-12px_rgba(0,40,142,0.3)] transition-all">
+              <h2 className="flex items-center gap-2.5 mb-4">
+                <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-[#00288e] to-[#3b6fe0]" />
+                <span className="material-symbols-outlined text-[#00288e]" style={{ fontSize: 22 }}>kid_star</span>
+                <span className="text-[17px] font-extrabold text-[#191c1e]">Xếp hạng</span>
+              </h2>
               <div className="flex items-center gap-1">
                 {[1, 2, 3, 4, 5].map(s => (
                   <button key={s} onClick={() => setMin(minRating === s ? 0 : s)}>
-                    <span className="material-symbols-outlined" style={{ fontSize: 28, color: s <= minRating ? '#f5a623' : '#d1d5db', fontVariationSettings: s <= minRating ? "'FILL' 1" : "'FILL' 0" }}>star</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 30, color: s <= minRating ? '#f5a623' : '#d1d5db', fontVariationSettings: s <= minRating ? "'FILL' 1" : "'FILL' 0" }}>star</span>
                   </button>
                 ))}
               </div>
               {minRating > 0 && <button onClick={() => setMin(0)} className="text-[#757684] text-xs mt-2 hover:text-[#00288e]">Bỏ chọn ({minRating}★ trở lên)</button>}
             </div>
 
-            <div className="bg-white border border-[#e5e7eb] rounded-2xl p-5 shadow-sm">
-              <h2 className="font-bold mb-3 text-[#191c1e]">Danh mục khóa học</h2>
-              <div className="space-y-2.5">
+            {/* Danh mục khóa học */}
+            <div className="bg-white border-2 border-[#d7e0f4] rounded-2xl p-5 shadow-[0_10px_26px_-12px_rgba(0,40,142,0.22)] hover:border-[#00288e]/45 hover:shadow-[0_14px_32px_-12px_rgba(0,40,142,0.3)] transition-all">
+              <h2 className="flex items-center gap-2.5 mb-4">
+                <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-[#00288e] to-[#3b6fe0]" />
+                <span className="text-[17px] font-extrabold text-[#191c1e]">Danh mục khóa học</span>
+              </h2>
+              <div className="space-y-3">
                 {CATEGORIES.map(c => (
                   <label key={c} className="flex items-center gap-3 cursor-pointer group">
                     <input type="radio" name="cat" checked={cat === c} onChange={() => setCat(cat === c ? '' : c)}
                       onClick={() => cat === c && setCat('')}
-                      className="accent-[#00288e] w-4 h-4" />
-                    <span className="text-sm text-[#444653] group-hover:text-[#00288e]">{c}</span>
+                      className="accent-[#00288e] w-[18px] h-[18px]" />
+                    <span className={`text-[15px] transition-colors group-hover:text-[#00288e] ${cat === c ? 'text-[#00288e] font-bold' : 'text-[#444653] font-semibold'}`}>{c}</span>
                   </label>
                 ))}
               </div>
             </div>
 
-            <div className="bg-white border border-[#e5e7eb] rounded-2xl p-5 shadow-sm">
-              <h2 className="font-bold mb-3 text-[#191c1e]">Cấp độ</h2>
-              <div className="space-y-2.5">
+            {/* Cấp độ */}
+            <div className="bg-white border-2 border-[#d7e0f4] rounded-2xl p-5 shadow-[0_10px_26px_-12px_rgba(0,40,142,0.22)] hover:border-[#00288e]/45 hover:shadow-[0_14px_32px_-12px_rgba(0,40,142,0.3)] transition-all">
+              <h2 className="flex items-center gap-2.5 mb-4">
+                <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-[#00288e] to-[#3b6fe0]" />
+                <span className="text-[17px] font-extrabold text-[#191c1e]">Cấp độ</span>
+              </h2>
+              <div className="space-y-3">
                 {LEVELS.map(l => (
                   <label key={l} className="flex items-center gap-3 cursor-pointer group">
                     <input type="radio" name="level" checked={level === l} onChange={() => setLevel(level === l ? '' : l)}
                       onClick={() => level === l && setLevel('')}
-                      className="accent-[#00288e] w-4 h-4" />
-                    <span className="text-sm text-[#444653] group-hover:text-[#00288e]">{l}</span>
+                      className="accent-[#00288e] w-[18px] h-[18px]" />
+                    <span className={`text-[15px] transition-colors group-hover:text-[#00288e] ${level === l ? 'text-[#00288e] font-bold' : 'text-[#444653] font-semibold'}`}>{l}</span>
                   </label>
                 ))}
               </div>
             </div>
 
-            <button onClick={resetFilters} className="w-full py-3 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white font-bold hover:-translate-y-0.5 transition-all btn-shine">
+            <button onClick={resetFilters} className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] text-white font-extrabold text-[15px] shadow-[0_12px_26px_-10px_rgba(30,64,175,0.7)] hover:-translate-y-0.5 transition-all btn-shine flex items-center justify-center gap-2">
+              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>filter_alt_off</span>
               Xóa bộ lọc
             </button>
           </aside>
@@ -246,7 +325,7 @@ export default function CoursesPage({ user }) {
             <div className="space-y-5">
               {filtered.length === 0 ? (
                 <div className="text-center text-[#757684] py-16">Không tìm thấy khóa học phù hợp. Thử xóa bớt bộ lọc nhé.</div>
-              ) : filtered.map(c => <CourseCard key={c.id} course={c} onAdd={addToCart} />)}
+              ) : filtered.map(c => <CourseCard key={c.id} course={c} onAdd={addToCart} onFav={addFav} user={user} />)}
             </div>
           </div>
         </div>

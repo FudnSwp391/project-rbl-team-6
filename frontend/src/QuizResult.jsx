@@ -264,6 +264,10 @@ export default function QuizResult({ attemptId, token, isPractice = false, sessi
     }
   }
 
+  useEffect(() => {
+    fetchResults()
+  }, [attemptId, sessionId])
+
   if (loading) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-background">

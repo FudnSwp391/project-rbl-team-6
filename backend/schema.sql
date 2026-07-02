@@ -282,3 +282,27 @@ CREATE OR REPLACE TRIGGER set_learning_paths_updated_at
 BEFORE UPDATE ON learning_paths
 FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- ── HẠNG MỤC 7: Student-Tutor Interactions (Favorites & Notes) ──────────────
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- Bảng lưu trạng thái yêu thích và ghi chú cá nhân của học sinh về gia sư
+CREATE TABLE IF NOT EXISTS student_tutor_interactions (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tutor_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  is_favorite BOOLEAN DEFAULT FALSE,
+  notes       TEXT,
+  created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(student_id, tutor_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sti_student_id ON student_tutor_interactions(student_id);
+CREATE INDEX IF NOT EXISTS idx_sti_tutor_id   ON student_tutor_interactions(tutor_id);
+
+CREATE OR REPLACE TRIGGER set_sti_updated_at
+BEFORE UPDATE ON student_tutor_interactions
+FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+

@@ -1,13 +1,12 @@
 import React from 'react'
 
 const NAV_ITEMS = [
-  { icon: 'dashboard', label: 'Dashboard', href: '#/dashboard', id: 'dashboard' },
-  { icon: 'school', label: 'My Courses', href: '#/my-courses', id: 'my-courses' },
-  { icon: 'calendar_today', label: 'Schedule', href: '#/dashboard/schedule', id: 'schedule' },
-  { icon: 'chat', label: 'Messages', href: '#/dashboard/messages', id: 'messages' },
-  { icon: 'quiz', label: 'Assessments', href: '#/dashboard/assessments', id: 'assessments' },
-  { icon: 'psychology', label: 'AI Practice', href: '#/dashboard/practice', id: 'practice' },
-  { icon: 'description', label: 'Đề thi', href: '#/dashboard/exam-papers', id: 'exam-papers' },
+  { icon: 'dashboard', label: 'Bảng điều khiển', href: '#/dashboard', id: 'dashboard' },
+  { icon: 'school', label: 'Khóa học của tôi', href: '#/my-courses', id: 'my-courses' },
+  { icon: 'calendar_today', label: 'Lịch học', href: '#/dashboard/schedule', id: 'schedule' },
+  { icon: 'chat', label: 'Tin nhắn', href: '#/dashboard/messages', id: 'messages' },
+  { icon: 'assignment', label: 'Kiểm tra & Đề thi', href: '#/dashboard/assessments', id: 'assessments' },
+  { icon: 'psychology', label: 'Luyện tập AI', href: '#/dashboard/practice', id: 'practice' },
   { icon: 'family_restroom', label: 'Mã chia sẻ', href: '#/dashboard/parent-link', id: 'parent-link' },
 ]
 
@@ -42,7 +41,7 @@ export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRout
               <h1 className="font-headline-md text-headline-md font-black text-primary leading-tight m-0">
                 EduX
               </h1>
-              <p className="font-label-sm text-label-sm text-on-surface-variant m-0">Student Portal</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant m-0">Cổng Học Sinh</p>
             </div>
           </a>
         </div>
@@ -81,24 +80,17 @@ export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRout
         {/* Bottom actions */}
         <div className="px-sm mt-auto flex flex-col gap-xs">
           <a
-            href="#"
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
-          >
-            <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Settings</span>
-          </a>
-          <a
-            href="#"
+            href="#" onClick={(e) => e.preventDefault()}
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
             onClick={(e) => { e.preventDefault(); logout && logout() }}
           >
             <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Logout</span>
+            <span className="font-label-md text-label-md">Đăng xuất</span>
           </a>
           <div className="mt-md px-xs">
             <button className="w-full bg-surface-container border border-outline-variant text-on-surface font-label-md text-label-md h-12 rounded-lg flex items-center justify-center gap-sm hover:bg-surface-container-highest transition-colors duration-200">
               <span className="material-symbols-outlined text-[18px]">help_center</span>
-              Get Support
+              Nhận hỗ trợ
             </button>
           </div>
         </div>

@@ -9,12 +9,14 @@ import { useAuth } from './AuthContext'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
+import ParentTimeline from './components/MicroFeedback/ParentTimeline'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
 const NAV = [
   { key: 'overview',  icon: 'dashboard',       label: 'Tổng quan' },
   { key: 'students',  icon: 'group',            label: 'Học sinh' },
+  { key: 'microfeedback', icon: 'rate_review',  label: 'Đánh giá buổi học' },
   { key: 'tutors',    icon: 'school',           label: 'Gia sư' },
   { key: 'messages',  icon: 'chat',             label: 'Tin nhắn' },
   { key: 'activity',  icon: 'analytics',        label: 'Hoạt động' },
@@ -78,6 +80,15 @@ export default function ParentDashboard() {
 
   const displayName = user?.name || user?.email?.split('@')[0] || 'Phụ huynh'
   const initials = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+
+  // Auto-open messages section nếu điều hướng từ TutorProfile
+  useEffect(() => {
+    const raw = sessionStorage.getItem('openChatWith')
+    if (raw) {
+      // Chưa xóa ở đây — để MessagesSection tự xử lý khi nó mount
+      setSection('messages')
+    }
+  }, [])
 
   return (
     <div className="bg-background text-on-background min-h-screen flex font-body-md">
@@ -182,12 +193,66 @@ export default function ParentDashboard() {
         <main className={`flex-1 overflow-y-auto ${section === 'messages' ? 'p-0' : 'p-md lg:p-lg'}`}>
           {section === 'overview'  && <OverviewSection  token={token} />}
           {section === 'students'  && <StudentsSection  token={token} />}
-          {section === 'tutors'    && <TutorsSection    token={token} />}
+          {section === 'microfeedback' && <MicrofeedbackSection token={token} />}
+          {section === 'tutors'    && <TutorsSection    token={token} onOpenMessages={() => setSection('messages')} />}
           {section === 'messages'  && <MessagesSection  token={token} user={user} />}
           {section === 'activity'  && <ActivitySection  token={token} />}
           {section === 'finance'   && <FinanceSection   token={token} />}
           {section === 'settings'  && <SettingsSection  user={user} displayName={displayName} />}
         </main>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION: MICROFEEDBACK
+// ═══════════════════════════════════════════════════════════════════════════════
+function MicrofeedbackSection({ token }) {
+  const [children, setChildren] = useState([])
+  const [selectedStudentId, setSelectedStudentId] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/parent/children`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(d => {
+        const list = d.children || [];
+        setChildren(list);
+        if (list.length > 0) setSelectedStudentId(list[0].student_id);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false))
+  }, [token])
+
+  if (loading) return <LoadingSkeleton />
+
+  if (children.length === 0) {
+    return <EmptyState icon="sentiment_dissatisfied" text="Bạn chưa có học sinh nào. Hãy thêm học sinh ở mục Học sinh trước." />
+  }
+
+  return (
+    <div className="flex flex-col gap-lg max-w-5xl mx-auto">
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {children.map(child => (
+          <button
+            key={child.student_id}
+            onClick={() => setSelectedStudentId(child.student_id)}
+            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border ${
+              selectedStudentId === child.student_id 
+                ? 'bg-primary text-white border-primary shadow-sm scale-105'
+                : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+            }`}
+          >
+            {child.nickname || child.student_name}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+        {selectedStudentId && <ParentTimeline studentId={selectedStudentId} />}
       </div>
     </div>
   )
@@ -732,6 +797,11 @@ function StudentDetailView({ token, student, onBack }) {
         )}
       </div>
 
+      {/* ── 4. Đánh giá nhanh từ gia sư (Micro-feedback) ── */}
+      <div className="mt-4">
+        <ParentTimeline studentId={student.student_id} />
+      </div>
+
       {/* Modals */}
       {leaveModal && (
         <LeaveRequestModal
@@ -743,7 +813,12 @@ function StudentDetailView({ token, student, onBack }) {
         />
       )}
       {messageModal && (
-        <QuickMessageModal tutorName={messageModal.tutorName} onClose={() => setMessageModal(null)} />
+        <QuickMessageModal
+          tutorId={messageModal.tutorId}
+          tutorName={messageModal.tutorName}
+          token={token}
+          onClose={() => setMessageModal(null)}
+        />
       )}
     </div>
   )
@@ -815,14 +890,43 @@ function LeaveRequestModal({ token, studentId, scheduleItem, onClose, onSubmit }
   )
 }
 
-function QuickMessageModal({ tutorName, onClose }) {
+function QuickMessageModal({ tutorId, tutorName, token, onClose }) {
   const [message, setMessage] = useState('')
+  const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
+  const [error, setError] = useState('')
 
-  const handleSend = () => {
-    if (!message.trim()) return
-    setSent(true)
-    setTimeout(onClose, 1500)
+  const handleSend = async () => {
+    if (!message.trim() || sending) return
+    setSending(true)
+    setError('')
+    const content = message.trim()
+    try {
+      // Thử gửi bình thường trước
+      let res = await fetch(`${API_BASE}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ receiver_id: tutorId, content })
+      })
+      if (res.status === 403) {
+        // Chưa có permission → dùng /api/chat/start
+        res = await fetch(`${API_BASE}/api/chat/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ tutor_id: tutorId, content })
+        })
+      }
+      if (res.ok) {
+        setSent(true)
+        setTimeout(onClose, 1500)
+      } else {
+        const d = await res.json().catch(() => ({}))
+        setError(d.message || 'Không gửi được tin nhắn')
+      }
+    } catch {
+      setError('Lỗi kết nối. Vui lòng thử lại.')
+    }
+    setSending(false)
   }
 
   return (
@@ -845,15 +949,19 @@ function QuickMessageModal({ tutorName, onClose }) {
             </div>
           ) : (
             <>
-              <p className="text-sm text-on-surface-variant">Tin nhắn sẽ được gửi qua mục Tin nhắn trong hệ thống.</p>
+              <p className="text-sm text-on-surface-variant">Tin nhắn sẽ được gửi trực tiếp đến gia sư qua hệ thống nhắn tin.</p>
               <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4}
                 placeholder={`Nhắn cho ${tutorName}...`}
                 className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
               />
-              <button onClick={handleSend} disabled={!message.trim()}
-                className="h-11 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+              <button onClick={handleSend} disabled={!message.trim() || sending}
+                className="h-11 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                Gửi tin nhắn
+                {sending
+                  ? <><span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span> Đang gửi...</>
+                  : 'Gửi tin nhắn'
+                }
               </button>
             </>
           )}
@@ -1163,7 +1271,7 @@ function FinanceSection({ token }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SECTION: TUTORS
 // ═══════════════════════════════════════════════════════════════════════════════
-function TutorsSection({ token }) {
+function TutorsSection({ token, onOpenMessages }) {
   const [tutors, setTutors] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -1196,12 +1304,23 @@ function TutorsSection({ token }) {
     'Địa lí': 'bg-teal-100 text-teal-700',
   }
 
+  const handleMessageTutor = (tutor) => {
+    // Lưu thông tin gia sư cần chat và chuyển sang section messages
+    sessionStorage.setItem('openChatWith', JSON.stringify({
+      id: tutor.user_id || tutor.id,
+      full_name: tutor.full_name,
+      picture: tutor.picture || null,
+      role: 'tutor'
+    }))
+    if (onOpenMessages) onOpenMessages()
+  }
+
   return (
     <div className="flex flex-col gap-lg max-w-5xl mx-auto">
       <div className="flex items-center gap-md flex-wrap">
         <div className="flex-1">
-          <h3 className="font-headline-md text-headline-md text-on-surface">Gia sư đã được duyệt</h3>
-          <p className="font-body-sm text-body-sm text-on-surface-variant">{filtered.length} gia sư trong hệ thống</p>
+          <h3 className="font-headline-md text-headline-md text-on-surface">Gia sư trong hệ thống</h3>
+          <p className="font-body-sm text-body-sm text-on-surface-variant">{filtered.length} gia sư</p>
         </div>
         <div className="relative">
           <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
@@ -1215,11 +1334,12 @@ function TutorsSection({ token }) {
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState icon="school" text="Chưa có gia sư nào được duyệt" />
+        <EmptyState icon="school" text="Chưa có gia sư nào" />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
           {filtered.map(t => {
             const subjects = t.subjects ? t.subjects.split(',').map(s => s.trim()).filter(Boolean) : []
+            const tutorId = t.user_id || t.id
             return (
               <div key={t.id} className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-lg flex flex-col gap-md hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
                 <div className="flex items-start gap-md">
@@ -1266,6 +1386,27 @@ function TutorsSection({ token }) {
                   ) : (
                     <span className="font-label-sm text-label-sm text-on-surface-variant ml-auto">Liên hệ để biết giá</span>
                   )}
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex gap-sm">
+                  <button
+                    onClick={() => handleMessageTutor(t)}
+                    className="flex-1 h-9 flex items-center justify-center gap-1 bg-primary/10 text-primary rounded-xl text-xs font-semibold hover:bg-primary/20 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">chat</span>
+                    Nhắn Tin
+                  </button>
+                  <button
+                    onClick={() => {
+                      sessionStorage.setItem('viewingTutor', JSON.stringify({ id: tutorId, ...t }))
+                      window.location.hash = `/tutor-detail/${tutorId}`
+                    }}
+                    className="flex-1 h-9 flex items-center justify-center gap-1 bg-surface-container text-on-surface rounded-xl text-xs font-semibold hover:bg-surface-container-high transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">calendar_month</span>
+                    Đặt Lịch
+                  </button>
                 </div>
               </div>
             )

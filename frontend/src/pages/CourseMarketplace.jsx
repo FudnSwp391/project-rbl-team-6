@@ -19,6 +19,7 @@ function getSearchFromHash() {
 
 export default function CourseMarketplace() {
   const { user } = useAuth();
+  const [featuredCourses, setFeaturedCourses] = useState([]);
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -28,6 +29,7 @@ export default function CourseMarketplace() {
   
   // Search & Filters state
   const [search, setSearch] = useState(() => getSearchFromHash());
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedFormat, setSelectedFormat] = useState('all');
   const [sortOption, setSortOption] = useState('newest');
@@ -46,7 +48,8 @@ export default function CourseMarketplace() {
 
   useEffect(() => {
     const handleHashChange = () => {
-      setSearch(getSearchFromHash());
+      const newSearch = getSearchFromHash();
+      setSearch(newSearch);
       setIsStandalone(window.location.hash.startsWith('#/courses'));
     };
     window.addEventListener('hashchange', handleHashChange);
@@ -54,9 +57,35 @@ export default function CourseMarketplace() {
   }, []);
 
   useEffect(() => {
-    const fetchCourses = async () => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    const fetchFeatured = async () => {
       try {
-        const response = await apiRequest('/api/courses');
+        const response = await apiRequest('/api/courses?sort=rating_desc&limit=3');
+        setFeaturedCourses(Array.isArray(response) ? response : response?.data || []);
+      } catch (err) {
+        console.error('Failed to load featured courses:', err);
+      }
+    };
+    fetchFeatured();
+  }, []);
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      setLoading(true);
+      try {
+        const queryParams = new URLSearchParams();
+        if (debouncedSearch) queryParams.append('search', debouncedSearch);
+        if (selectedSubject && selectedSubject !== 'all') queryParams.append('subject', selectedSubject);
+        if (selectedFormat && selectedFormat !== 'all') queryParams.append('format', selectedFormat);
+        if (sortOption) queryParams.append('sort', sortOption);
+        
+        const response = await apiRequest(`/api/courses?${queryParams.toString()}`);
         setCourses(Array.isArray(response) ? response : response?.data || []);
       } catch (err) {
         setError(err.message || 'Không thể tải danh sách khóa học.');
@@ -65,37 +94,9 @@ export default function CourseMarketplace() {
       }
     };
     fetchCourses();
-  }, []);
+  }, [debouncedSearch, selectedSubject, selectedFormat, sortOption]);
 
-  let filteredCourses = courses.filter(c => {
-    const matchSearch = !search || 
-      (c.title || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.subject || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.tutor_name || c.tutorName || '').toLowerCase().includes(search.toLowerCase());
-    
-    const matchFormat = selectedFormat === 'all' || 
-      (c.learning_mode || c.format || '').toLowerCase().includes(selectedFormat.toLowerCase());
-
-    const matchSubject = selectedSubject === 'all' || 
-      (c.subject || '').toLowerCase().includes(selectedSubject.toLowerCase());
-
-    return matchSearch && matchFormat && matchSubject;
-  });
-
-  // Sorting
-  filteredCourses.sort((a, b) => {
-    if (sortOption === 'price_asc') return (a.price || 0) - (b.price || 0);
-    if (sortOption === 'price_desc') return (b.price || 0) - (a.price || 0);
-    if (sortOption === 'rating_desc') return (b.rating || b.averageRating || 0) - (a.rating || a.averageRating || 0);
-    // newest (mocking by id descending)
-    return b.id - a.id;
-  });
-
-  // Featured courses: top 3 by rating
-  const featuredCourses = [...courses]
-    .sort((a, b) => (b.rating || b.averageRating || 0) - (a.rating || a.averageRating || 0))
-    .slice(0, 3);
-  const coursesToDisplay = isStandalone || showAllCourses ? filteredCourses : filteredCourses.slice(0, 3);
+  const coursesToDisplay = isStandalone || showAllCourses ? courses : courses.slice(0, 3);
   const hasActiveFilters = Boolean(search) || selectedSubject !== 'all' || selectedFormat !== 'all';
 
   const clearFilters = () => {
@@ -234,13 +235,18 @@ export default function CourseMarketplace() {
               <span className="material-symbols-outlined text-[28px]" style={{fontVariationSettings: "'FILL' 1"}}>school</span>
               EduX
             </a>
-            <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
+            <nav className="hidden md:flex items-center gap-8">
               <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
               <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
               <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
               <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/courses">Khóa Học</a>
             </nav>
-            <div className="flex items-center gap-4 z-10">
+            <div className="flex items-center gap-6 z-10">
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
+                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
+              </a>
+            )}
               {user ? (
                 <button
                   onClick={() => {
@@ -410,7 +416,7 @@ export default function CourseMarketplace() {
                   </div>
                 </div>
 
-                {filteredCourses.length === 0 ? (
+                {coursesToDisplay.length === 0 ? (
                   <div className="text-center py-20 bg-white rounded-2xl border border-gray-100 shadow-sm max-w-2xl mx-auto">
                     <span className="material-symbols-outlined text-[56px] text-gray-300 mb-4">search_off</span>
                     <h3 className="text-xl font-bold text-primary mb-2">Chưa tìm thấy kết quả</h3>

@@ -19,11 +19,18 @@ import TutorProfileForm from './TutorProfileForm'
 import FindTutorsPage from './FindTutorsPage'
 import CoursesPage from './CoursesPage'
 import SubjectsPage from './SubjectsPage'
+import THPTSubjectsPage from './THPTSubjectsPage'
+import TieuHocSubjectsPage from './TieuHocSubjectsPage'
+import THCSSubjectsPage from './THCSSubjectsPage'
 import BecomeTutorPage from './BecomeTutorPage'
 import TutorProfile from './pages/TutorProfile'
+import FindTutorRequest from './pages/FindTutorRequest'
+import TutorMatchesPage from './pages/TutorMatchesPage'
 import CourseMarketplace from './pages/CourseMarketplace'
 import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
+import CartPage from './pages/CartPage'
+import CompleteStudentProfile from './pages/CompleteStudentProfile'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -39,48 +46,48 @@ const tutors = [
   {
     id: 1,
     name: 'Dr. Sarah Jenkins',
-    subjects: ['Advanced Mathematics', 'Physics'],
+    subjects: ['Toán học nâng cao', 'Vật lý'],
     rating: 4.9,
     reviews: 120,
     rate: 45,
     description:
-      'Experienced university professor specializing in making complex mathematical concepts accessible to all levels.',
+      'Giáo sư đại học giàu kinh nghiệm, chuyên giúp sinh viên ở mọi trình độ tiếp cận các khái niệm toán học phức tạp một cách dễ hiểu.',
     avatar:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuAei6flyccoubtUkB2-JJhNfR9B-0SJqPfzmsGbxbjo0bwiIVbwttMeDMBINgJ5UBkNdaUIYVbXBh1wlNtftafnZqAUsknNmqfA8lgHYXmRibrLQLDDswAcDKaWexFiCJ0F5lYIqta06gn9UkHf9Yo6UEX6YY0zrRfLCox5fQYJGFjFtxYkapQrfLw5EWLC5MzcrAxy7Y4f4YlIDMNhd-wcULt1NSUWpDYZIjFGp0eSYw54W6Gk7zh3ebHETXHFVRvZ1FMlOY8uTcI',
   },
   {
     id: 2,
     name: 'David Chen',
-    subjects: ['Computer Science', 'Python'],
+    subjects: ['Khoa học Máy tính', 'Python'],
     rating: 5.0,
     reviews: 89,
     rate: 50,
     description:
-      'Former software engineer turned passionate educator, helping students build real-world coding skills.',
+      'Cựu kỹ sư phần mềm trở thành nhà giáo dục đầy nhiệt huyết, giúp học sinh xây dựng kỹ năng lập trình thực tế.',
     avatar:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuAqjwfwD85os_xcrUS6mBaT3L9cLxt_GyvK4DrMZMLL_ViTjYA5rM6aoXYoL153K1rXR10VvfnP00wQJRxBpqD8TtAgijnGQGepu7QT71lFgb-v8Mk9s7Zt0KvvSFlhluT9IML0DnyfosJYvm7BtNA6LhucaITW7Bsfpe13JhVa-0jbAy7f8B8UF7nNc8Vl8EyLjDJLmgkalntGMfzg8RN8YIzbxdlzDAHRB0kaNsi9K8_KvcbpfhL2gU_yw96vMEOsLznkPRny_Dk',
   },
   {
     id: 3,
     name: 'Elena Rodriguez',
-    subjects: ['Spanish', 'Literature'],
+    subjects: ['Tiếng Tây Ban Nha', 'Văn học'],
     rating: 4.8,
     reviews: 203,
     rate: 35,
     description:
-      'Native speaker offering immersive language lessons tailored to your individual learning pace and goals.',
+      'Người bản xứ cung cấp các bài học ngôn ngữ sống động phù hợp với tốc độ và mục tiêu học tập cá nhân của bạn.',
     avatar:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuCRPJ_nedKK76hx96Ioc925HajYJQrzRqKLk3-69yfy23Xp44nYiq2sidEe7r8Nc_XQitfR1vzCrnh9xpx05P_1zY2dgchQEncPRuiqThxZaV_qsRdGyL3NHOoTOBgsQM2wIO7EUWFuPmIQRIixXTJOXDPWyAbH50Hq9ljZxjUJLibVBmmhwTX4eSFXNwOjgXWJiK2DHUtYd0noMdDuglxTsYdwBnOKZUw2ti3RjsJTGH21zphbEicxrYLvzmsZETqsJYJs8BEDMgk',
   },
   {
     id: 4,
     name: 'James Wilson',
-    subjects: ['Chemistry', 'Biology'],
+    subjects: ['Hóa học', 'Sinh học'],
     rating: 4.7,
     reviews: 92,
     rate: 40,
     description:
-      'Dedicated science tutor focused on developing strong foundational understanding and critical thinking.',
+      'Gia sư khoa học tận tâm tập trung vào việc phát triển nền tảng hiểu biết vững chắc và tư duy phản biện.',
     avatar:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuDrbKTdRT8Kzgeb-fbmF1apykCqp-cDYVBmdeGP1NTKEm3OxFcXsoOeajBIr3osh_BwXPaW5vJSWueBaT866ZFbIJlaZy2-n3PE5ESBtwnzJu1cU-svmk7wSLbE8T1LVaX8q-DR0_VdCm1Y7lDn8hYECkyZ37CuP3RDScRP1JCiSLirfyS4LF-8i5zFX2-tE5kb0K7Z6zPzjzw88GBnmrEPUNAwZA75pgLwpqNxVFTbe6vCee5dkoPSyM4EY0wYMdZS9y_ELU2gV24',
   },
@@ -110,6 +117,8 @@ const getRouteFromHash = () => {
   if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }
   if (normalized === '/tutor')     return { name: 'tutor' }
   if (normalized === '/tutor-profile') return { name: 'tutor-profile' }
+  if (normalized === '/complete-student-profile') return { name: 'complete-student-profile' }
+  if (normalized === '/cart')      return { name: 'cart' }
 
   const tutorDetailMatch = normalized.match(/^\/tutor-detail\/([^/]+)$/)
   const bookingMatch = normalized.match(/^\/booking\/([^/]+)$/)
@@ -120,8 +129,13 @@ const getRouteFromHash = () => {
   if (normalized === '/parent')    return { name: 'parent' }
   if (normalized === '/find-tutors') return { name: 'find-tutors' }
   if (normalized === '/subjects')  return { name: 'subjects' }
+  if (normalized === '/subjects/thpt') return { name: 'thpt-subjects' }
+  if (normalized === '/subjects/tieu-hoc') return { name: 'tieu-hoc-subjects' }
+  if (normalized === '/subjects/thcs') return { name: 'thcs-subjects' }
   if (normalized === '/become-tutor') return { name: 'become-tutor' }
   if (normalized === '/courses') return { name: 'courses' }
+  if (normalized === '/tutor-request') return { name: 'tutor-request' }
+  if (normalized === '/tutor-matches') return { name: 'tutor-matches' }
   if (normalized.startsWith('/payment/result')) return { name: 'payment-result' }
   if (normalized.startsWith('/my-courses')) return { name: 'mycourses' }
   if (normalized.startsWith('/course/')) return { name: 'coursedetail', id: normalized.replace('/course/', '') }
@@ -143,6 +157,12 @@ const getRouteFromHash = () => {
 
   const examResultMatch = normalized.match(/^\/exam-result\/([^/]+)$/)
   if (examResultMatch) return { name: 'exam-result', id: examResultMatch[1] }
+
+  const tutorExamMatch = normalized.match(/^\/tutor-exam\/([^/]+)$/)
+  if (tutorExamMatch) return { name: 'tutor-exam', id: tutorExamMatch[1] }
+
+  const tutorResultMatch = normalized.match(/^\/tutor-exam-result\/([^/]+)$/)
+  if (tutorResultMatch) return { name: 'tutor-exam-result', id: tutorResultMatch[1] }
 
   return { name: 'home' }
 }
@@ -331,14 +351,16 @@ function HomePage({ onGoSignIn }) {
                   flexDirection: 'column',
                   overflow: 'hidden'
                 }}>
-                  <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Dashboard</a>
-                  <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>My Courses</a>
-                  <a href="#" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Settings</a>
+                  <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Bảng điều khiển</a>
+                  {user.role === 'student' && (
+                    <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Khóa học của tôi</a>
+                  )}
+                  <a href="#" onClick={(e) => e.preventDefault()} style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Cài đặt</a>
                   <button 
                     onClick={logout} 
                     style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
                   >
-                    Logout
+                    Đăng xuất
                   </button>
                 </div>
               )}
@@ -401,16 +423,40 @@ function HomePage({ onGoSignIn }) {
               </label>
               <label className="search-field">
                 <span className="material-symbols-outlined">location_on</span>
-                <input
-                  type="text"
+                <select
                   value={place}
                   onChange={(event) => setPlace(event.target.value)}
-                  placeholder="Học trực tuyến hay tại địa điểm cụ thể?"
-                />
+                >
+                  <option value="">Hình thức học (Tất cả)</option>
+                  <option value="online">Học trực tuyến (Online)</option>
+                  <option value="offline">Tại địa điểm cụ thể (Offline)</option>
+                </select>
               </label>
-              <button type="button" className="btn btn-primary search-button">
+              <button 
+                type="button" 
+                className="btn btn-primary search-button"
+                onClick={() => {
+                  window.location.hash = `/find-tutors?search=${encodeURIComponent(topic)}&method=${encodeURIComponent(place)}`;
+                }}
+              >
                 Tìm Kiếm
               </button>
+            </div>
+            {/* AI Matching flow CTA - Premium Style for Home Hero */}
+            <div className="mt-4 flex items-center justify-center relative z-10 w-full max-w-[800px] mx-auto pb-6">
+              <div className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:bg-white/20 hover:shadow-[0_0_25px_rgba(255,255,255,0.3)] transition-all duration-300 shadow-[0_0_15px_rgba(0,0,0,0.1)] cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
+                <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
+                  <span className="material-symbols-outlined text-[#ffd166] text-[20px] animate-pulse">auto_awesome</span>
+                  <span>Muốn được gợi ý gia sư phù hợp nhất?</span>
+                </div>
+                <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
+                <button
+                  className="text-white font-bold text-sm flex items-center gap-1 group transition-colors"
+                >
+                  Tạo yêu cầu AI
+                  <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#ffd166]">arrow_forward</span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -420,7 +466,7 @@ function HomePage({ onGoSignIn }) {
             <h2>Môn Học Phổ Biến</h2>
             <div className="subject-grid">
               {subjects.map((item) => (
-                <a href="#" className="subject-card" key={item.name}>
+                <a href="#" onClick={(e) => e.preventDefault()} className="subject-card" key={item.name}>
                   <span className="subject-icon material-symbols-outlined">
                     {item.icon}
                   </span>
@@ -577,7 +623,7 @@ function HomePage({ onGoSignIn }) {
       <footer className="site-footer">
         <div className="container footer-grid">
           <div>
-            <a href="#" className="brand">
+            <a href="#" onClick={(e) => e.preventDefault()} className="brand">
               <span className="material-symbols-outlined icon-fill">school</span>
               <span className="brand-name">EduX</span>
             </a>
@@ -800,7 +846,7 @@ function App() {
     return <QuizTaking quizId={route.id} token={token} isPractice={false} />
   }
 
-  // ── Route: Practice Quiz Taking ──
+    // ── Route: Practice Quiz Taking ──
   if (routeName === 'practice-quiz') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     return <QuizTaking
@@ -832,10 +878,26 @@ function App() {
     />
   }
 
+  // ── Route: Tutor Exam Taking ──
+  if (routeName === 'tutor-exam') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizTaking
+      isTutorExam={true}
+      tutorExamId={route.id}
+      token={token}
+    />
+  }
+
   // ── Route: Exam Paper Result ──
   if (routeName === 'exam-result') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     return <QuizResult isExamPaper={true} attemptId={route.id} token={token} />
+  }
+
+  // ── Route: Tutor Exam Result ──
+  if (routeName === 'tutor-exam-result') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <QuizResult isTutorExam={true} tutorExamId={route.id} token={token} />
   }
 
   // ── Route: Tutor Profile (protected) ──
@@ -868,9 +930,9 @@ function App() {
           <div className="w-full py-6 px-10 flex flex-col md:flex-row justify-between items-center max-w-[1280px] mx-auto gap-4">
             <span className="text-xs text-on-secondary-container">© 2024 EduX. Hỗ Trợ Học Thuật Chuyên Nghiệp.</span>
             <div className="flex gap-6">
-              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Hỗ Trợ</a>
-              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Chính Sách Bảo Mật</a>
-              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#">Liên Hệ</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#" onClick={(e) => e.preventDefault()}>Hỗ Trợ</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#" onClick={(e) => e.preventDefault()}>Chính Sách Bảo Mật</a>
+              <a className="text-xs text-on-secondary-container hover:text-primary transition-colors" href="#" onClick={(e) => e.preventDefault()}>Liên Hệ</a>
             </div>
           </div>
         </footer>
@@ -878,18 +940,47 @@ function App() {
     )
   }
 
+  // ── Route: Complete Student Profile ──
+  if (routeName === 'complete-student-profile') {
+    const hasPendingReg = !!sessionStorage.getItem('pendingStudentReg')
+    if (!user && !hasPendingReg) {
+      return (
+        <AccessDenied
+          isLoggedIn={false}
+          onGoSignIn={() => navigateTo('signin')}
+        />
+      )
+    }
+    return <CompleteStudentProfile onGoHome={() => navigateTo('home')} />
+  }
+
   // ── Route: Public Pages ──
   if (routeName === 'payment-result') {
     return <PaymentResult />
   }
+  if (routeName === 'cart') {
+    return <CartPage onGoSignIn={() => navigateTo('signin')} user={user} />
+  }
   if (routeName === 'find-tutors') {
     return <FindTutorsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
-  if (routeName === 'courses') {
-    return <CoursesPage user={user} />
+  if (routeName === 'tutor-request') {
+    return <FindTutorRequest user={user} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} />
+  }
+  if (routeName === 'tutor-matches') {
+    return <TutorMatchesPage user={user} onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} />
   }
   if (routeName === 'subjects') {
     return <SubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'thpt-subjects') {
+    return <THPTSubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'tieu-hoc-subjects') {
+    return <TieuHocSubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
+  }
+  if (routeName === 'thcs-subjects') {
+    return <THCSSubjectsPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
   }
   if (routeName === 'become-tutor') {
     return <BecomeTutorPage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} user={user} />
@@ -928,14 +1019,6 @@ function App() {
   }
 
   if (routeName === 'coursedetail') {
-    if (!user) {
-      return (
-        <AccessDenied
-          isLoggedIn={false}
-          onGoSignIn={() => navigateTo('signin')}
-        />
-      )
-    }
     return <CourseDetail courseId={route.id} />
   }
 

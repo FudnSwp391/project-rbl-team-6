@@ -6,14 +6,14 @@
  */
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
-import QuizList from './QuizList'
+import AssessmentsWrapper from './components/AssessmentsWrapper'
 import PracticeMode from './PracticeMode'
-import ExamPapers from './ExamPapers'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
 import SchedulePage from './components/SchedulePage'
 import { getStudentBookings, confirmLessonComplete, reportTutor } from './services/api'
+
 // ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
 const MY_TUTORS = [
   {
@@ -73,7 +73,7 @@ export default function StudentDashboard() {
   const initials = displayName.charAt(0).toUpperCase()
 
   return (
-    <div className="bg-background text-on-background font-body-md text-body-md antialiased flex h-screen overflow-hidden">
+    <div className={`bg-background text-on-background font-body-md text-body-md antialiased ${activeSection === 'schedule' ? 'block min-h-screen' : 'flex h-screen overflow-hidden'}`}>
 
       <StudentSidebar
         sidebarOpen={sidebarOpen}
@@ -83,7 +83,7 @@ export default function StudentDashboard() {
       />
 
       {/* ── Main content wrapper ── */}
-      <div className="flex-1 flex flex-col lg:ml-64 h-full overflow-hidden">
+      <div className={`lg:ml-64 ${activeSection === 'schedule' ? 'block min-h-screen' : 'flex-1 flex flex-col h-full overflow-hidden'}`}>
 
         {/* ── Top Bar ── */}
         <header className="w-full h-16 bg-surface/90 backdrop-blur-sm shadow-sm flex items-center z-30 shrink-0 sticky top-0 border-b border-surface-dim/30">
@@ -147,23 +147,21 @@ export default function StudentDashboard() {
         </header>
 
         {/* ── Main canvas ── */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-md lg:p-lg">
-          <div className="max-w-container-max mx-auto flex flex-col gap-xl pb-xl">
+        <main className={`overflow-x-hidden p-md lg:p-lg ${activeSection === 'schedule' ? 'block' : 'flex-1 overflow-y-auto'}`}>
+          <div className={`max-w-container-max mx-auto flex flex-col gap-xl ${activeSection === 'schedule' ? 'pb-8' : 'pb-xl'}`}>
 
-            {/* ── Assessments Section ── */}
+            {/* ── Assessments Section (Gộp Bài tập & Đề thi) ── */}
             {activeSection === 'assessments' && (
-              <QuizList token={token} />
+              <AssessmentsWrapper token={token} />
             )}
+
 
             {/* ── AI Practice Section ── */}
             {activeSection === 'practice' && (
               <PracticeMode token={token} />
             )}
 
-            {/* ── Đề thi Section ── */}
-            {activeSection === 'exam-papers' && (
-              <ExamPapers token={token} />
-            )}
+
 
             {/* ── Parent Link Section ── */}
             {activeSection === 'parent-link' && (
@@ -259,7 +257,7 @@ export default function StudentDashboard() {
               <div className="flex justify-between items-center mb-md">
                 <h3 className="font-headline-md text-headline-md text-on-surface">Gia Sư Của Tôi</h3>
                 <a
-                  href="#"
+                  href="#/find-tutors"
                   className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
                 >
                   Xem Tất Cả
@@ -274,16 +272,19 @@ export default function StudentDashboard() {
 
                 {/* Find New Tutor CTA */}
                 <a
-                  href="#/"
-                  className="bg-surface-container-lowest/70 backdrop-blur-md border-2 border-dashed border-outline-variant/50 rounded-xl p-md flex flex-col items-center justify-center text-center bg-transparent hover:bg-surface-container-lowest/50 hover:border-primary/50 transition-all duration-300 cursor-pointer group"
+                  href="#/tutor-request"
+                  className="bg-white border-2 border-dashed border-[#c4c5d5] rounded-xl p-6 flex flex-col items-center justify-center text-center hover:border-primary hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer group min-h-[250px]"
                 >
-                  <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-sm group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors duration-300">
-                    <span className="material-symbols-outlined text-[28px]">person_add</span>
+                  <div className="w-16 h-16 rounded-full bg-[#f3f4f6] flex items-center justify-center text-primary mb-4 group-hover:bg-primary group-hover:text-white transition-colors duration-300">
+                    <span className="material-symbols-outlined text-[28px]">person_search</span>
                   </div>
-                  <h4 className="font-label-md text-label-md text-on-surface mb-xs">Tìm Gia Sư</h4>
-                  <p className="font-label-sm text-label-sm text-on-surface-variant">
-                    Khám phá các gia sư hiện có
+                  <h4 className="text-[16px] font-bold text-[#191c1e] mb-2">Tạo yêu cầu tìm gia sư</h4>
+                  <p className="text-[14px] text-[#5d5f5f] mb-6 leading-relaxed px-2">
+                    EduX sẽ gợi ý gia sư phù hợp với nhu cầu học tập của bạn.
                   </p>
+                  <button className="bg-primary/10 text-primary font-semibold text-[14px] px-6 py-2.5 rounded-full group-hover:bg-primary group-hover:text-white transition-all shadow-sm">
+                    Bắt đầu
+                  </button>
                 </a>
               </div>
             </div>
@@ -449,7 +450,9 @@ function StudentBookingsSection({ token }) {
   const [actionLoading, setActionLoading] = useState(null)
   const [reportModal, setReportModal] = useState(null) // booking object
   const [reportReason, setReportReason] = useState('')
-
+  const [reportSeverity, setReportSeverity] = useState('medium')
+  const [reportEvidence, setReportEvidence] = useState(null)
+  
   const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
   const fetchBookings = async () => {
@@ -492,16 +495,26 @@ function StudentBookingsSection({ token }) {
     if (!reportReason.trim()) return alert('Vui lòng nhập lý do báo cáo.')
     setActionLoading(reportModal.id + '_report')
     try {
+      let evidenceUrl = null;
+      if (reportEvidence) {
+        const { uploadEvidenceFile } = await import('./services/upload');
+        const { useAuth } = await import('./AuthContext');
+        // We might not have user directly, but uploadEvidenceFile can just use 'anonymous' or token decoded id if not provided.
+        evidenceUrl = await uploadEvidenceFile(reportEvidence, 'student');
+      }
+
       const res = await fetch(`${API_BASE}/api/bookings/${reportModal.id}/report`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ reason: reportReason })
+        body: JSON.stringify({ reason: reportReason, severity: reportSeverity, evidenceUrl })
       })
       const data = await res.json()
       if (res.ok) {
-        alert('✅ Đã gửi báo cáo. Admin sẽ xem xét trong 24-48h. Tiền tạm thời bị giữ lại.')
+        alert('✅ Đã gửi khiếu nại. Admin sẽ xem xét. Tiền tạm thời bị giữ lại.')
         setReportModal(null)
         setReportReason('')
+        setReportSeverity('medium')
+        setReportEvidence(null)
         fetchBookings()
       } else {
         alert(data.message || 'Có lỗi xảy ra.')
@@ -683,7 +696,15 @@ function StudentBookingsSection({ token }) {
                     {canCancel && (
                       <button
                         onClick={async () => {
-                          if (!window.confirm('Bạn có chắc muốn hủy buổi học này?')) return
+                          if (!window.confirm(
+                            'Hủy buổi học này?\n\n' +
+                            'Chính sách hoàn tiền (tính theo thời gian trước buổi học):\n' +
+                            '• Từ 6 giờ trở lên: hoàn 100%\n' +
+                            '• 3–6 giờ: hoàn 50%\n' +
+                            '• 1–3 giờ: hoàn 25%\n' +
+                            '• Dưới 1 giờ hoặc đã qua giờ học: không hoàn tiền\n' +
+                            '(Nếu gia sư hủy, học sinh được hoàn 100%.)'
+                          )) return
                           setActionLoading(b.id + '_cancel')
                           try {
                             const res = await fetch(`${API_BASE}/api/bookings/${b.id}`, {
@@ -714,7 +735,7 @@ function StudentBookingsSection({ token }) {
       {/* Report Modal */}
       {reportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden">
+          <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
               <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
                 <span className="material-symbols-outlined text-red-500">report</span>
@@ -724,11 +745,21 @@ function StudentBookingsSection({ token }) {
                 <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
             </div>
-            <div className="p-4 flex flex-col gap-4">
+            <div className="p-4 flex flex-col gap-4 overflow-y-auto">
               <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm">
                 <p className="font-medium text-red-800">{reportModal.subject} — {reportModal.tutor_full_name || reportModal.tutor_name}</p>
                 <p className="text-red-600 text-xs mt-1">Tiền sẽ bị tạm giữ cho đến khi Admin giải quyết (24–48h).</p>
               </div>
+
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Mức độ nghiêm trọng</label>
+                <select className="w-full p-3 border border-outline-variant rounded-xl mb-1 focus:border-primary focus:ring-1 focus:ring-primary outline-none" value={reportSeverity} onChange={e => setReportSeverity(e.target.value)}>
+                  <option value="low">Thấp (Góp ý nhẹ)</option>
+                  <option value="medium">Trung bình (Vắng không phép, trễ giờ)</option>
+                  <option value="high">Cao (Hành vi sai trái, lừa đảo)</option>
+                </select>
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-on-surface-variant mb-1">Lý do báo cáo <span className="text-error">*</span></label>
                 <textarea value={reportReason} onChange={e => setReportReason(e.target.value)} rows={4}
@@ -736,6 +767,17 @@ function StudentBookingsSection({ token }) {
                   className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
                 />
               </div>
+
+              <div>
+                <label className="block text-xs font-medium text-on-surface-variant mb-1">Bằng chứng (Hình ảnh/Video nếu có)</label>
+                <input 
+                  type="file" 
+                  accept="image/*,video/*"
+                  className="w-full text-body-sm text-on-surface-variant file:mr-sm file:py-xs file:px-md file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-container file:text-primary hover:file:bg-primary/20"
+                  onChange={e => setReportEvidence(e.target.files[0])}
+                />
+              </div>
+
               <button onClick={handleReport} disabled={!reportReason.trim() || actionLoading === reportModal.id + '_report'}
                 className="h-11 w-full rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                 {actionLoading === reportModal.id + '_report' && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}

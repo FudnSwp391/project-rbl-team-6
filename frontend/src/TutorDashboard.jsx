@@ -1,11 +1,13 @@
 /**
  * TutorDashboard.jsx
- * Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
+ * Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬
  * Dashboard dÄ‚Â nh cho gia sĂ†Â° (role: tutor).
- * HiĂ¡Â»Æ’n thĂ¡Â»â€¹: thu nhĂ¡ÂºÂ­p, giĂ¡Â»Â dĂ¡ÂºÂ¡y, hĂ¡Â»Âc sinh, yÄ‚Âªu cĂ¡ÂºÂ§u chĂ¡Â»Â duyĂ¡Â»â€¡t, lĂ¡Â»â€¹ch hÄ‚Â´m nay.
+ * HiĂ¡Â»Æ’n thĂ¡Â»â€¹: thu nhĂ¡ÂºÂ­p, giĂ¡Â»Â  dĂ¡ÂºÂ¡y, hĂ¡Â»Â c sinh, yÄ‚Âªu cĂ¡ÂºÂ§u chĂ¡Â»Â  duyĂ¡Â»â€¡t, lĂ¡Â»â€¹ch hÄ‚Â´m nay.
  */
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
+import AIChatBox from './AIChatBox'
+import TutorFeedbackModal from './components/MicroFeedback/TutorFeedbackModal'
 import { getBookings, updateBookingStatus,
          getTutorProfile, updateTutorBio, updateTutorAvatar, updateTutorCv, submitTutorProfile,
          addTutorCredential, deleteTutorCredential,
@@ -38,7 +40,7 @@ const NAV_ITEMS = [
 export default function TutorDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState('Overview')
+  const [activeTab, setActiveTab] = useState('Tổng quan')
   const [requests, setRequests] = useState([])
   const [scheduleToday, setScheduleToday] = useState([])
   const [overviewStats, setOverviewStats] = useState({
@@ -211,7 +213,7 @@ export default function TutorDashboard() {
               <h1 className="font-headline-md text-[20px] leading-tight font-black text-primary">
                 EduX
               </h1>
-              <p className="font-label-sm text-label-sm text-on-surface-variant">Tutor Portal</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant">Cổng Gia Sư</p>
             </div>
           </a>
         </div>
@@ -220,7 +222,7 @@ export default function TutorDashboard() {
         <div className="flex flex-col gap-2 px-sm flex-1 mt-4">
           {NAV_ITEMS.map((item) => {
             const isActive = item.label === activeTab
-            const isMessages = item.label === 'Messages'
+            const isMessages = item.label === 'Tin nhắn'
             return (
               <a
                 key={item.label}
@@ -259,11 +261,11 @@ export default function TutorDashboard() {
         {/* Bottom */}
         <div className="px-md mt-auto pt-lg border-t border-surface-variant/50 flex flex-col gap-2">
           <a
-            href="#"
+            href="#" onClick={(e) => e.preventDefault()}
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
           >
             <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Settings</span>
+            <span className="font-label-md text-label-md">Cài đặt</span>
           </a>
           <a
             href="#"
@@ -271,11 +273,11 @@ export default function TutorDashboard() {
             className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
           >
             <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Logout</span>
+            <span className="font-label-md text-label-md">Đăng xuất</span>
           </a>
           <button className="mt-2 w-full h-12 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
             <span className="material-symbols-outlined">support_agent</span>
-            Get Support
+            Nhận hỗ trợ
           </button>
         </div>
       </nav>
@@ -337,7 +339,7 @@ export default function TutorDashboard() {
           {/* Decorative background glow */}
           <div className="fixed top-0 right-0 w-1/2 h-1/2 bg-gradient-to-bl from-primary-fixed-dim/20 to-transparent pointer-events-none -z-10 blur-3xl rounded-full" />
 
-          {activeTab === 'Overview' && (
+          {activeTab === 'Tổng quan' && (
             <>
           {/* Ă¢â€â‚¬Ă¢â€â‚¬ Welcome Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <div className="space-y-1">
@@ -437,7 +439,7 @@ export default function TutorDashboard() {
                 )}
 
                 <div className="p-4 bg-surface-container-lowest/30 border-t border-surface-variant/50 text-center">
-                  <a href="#" className="text-primary font-label-md hover:underline">
+                  <a href="#" onClick={(e) => e.preventDefault()} className="text-primary font-label-md hover:underline">
                     View all requests ({requests.length})
                   </a>
                 </div>
@@ -463,7 +465,7 @@ export default function TutorDashboard() {
                   )}
                 </div>
                 <button
-                  onClick={() => setActiveTab('My Schedule')}
+                  onClick={() => setActiveTab('Lịch trình')}
                   className="mt-6 w-full h-10 border border-outline-variant rounded-lg font-label-md text-on-surface-variant hover:bg-surface-container-high transition-colors"
                 >
                   Open Full Calendar
@@ -475,35 +477,35 @@ export default function TutorDashboard() {
             </>
           )}
 
-          {activeTab === 'My Profile' && (
+          {activeTab === 'Hồ sơ' && (
             <TutorProfileTab user={user} displayName={displayName} initials={initials} />
           )}
 
-          {activeTab === 'My Schedule' && (
+          {activeTab === 'Lịch trình' && (
             <MyScheduleTab />
           )}
 
-          {activeTab === 'Students' && (
+          {activeTab === 'Học viên' && (
             <TutorStudentsTab />
           )}
 
-          {activeTab === 'Courses' && (
+          {activeTab === 'Khóa học' && (
             <TutorCoursesTab user={user} />
           )}
 
-          {activeTab === 'Assessments' && (
+          {activeTab === 'Bài kiểm tra' && (
             <TutorAssessmentManager token={token} />
           )}
 
-          {activeTab === 'Review & Grade' && (
+          {activeTab === 'Chấm điểm & Nhận xét' && (
             <TutorGradingDashboard token={token} />
           )}
 
-          {activeTab === 'Earnings' && (
+          {activeTab === 'Thu nhập' && (
             <TutorEarningsTab />
           )}
 
-          {activeTab === 'Messages' && (
+          {activeTab === 'Tin nhắn' && (
             <MessagesSection token={token} user={user} />
           )}
 
@@ -849,6 +851,7 @@ function TutorStudentsTab() {
   const [error, setError] = useState('')
   const [savingId, setSavingId] = useState('')
   const [attendanceNotes, setAttendanceNotes] = useState({})
+  const [feedbackLesson, setFeedbackLesson] = useState(null)
 
   const loadStudents = async () => {
     setLoading(true)
@@ -885,6 +888,41 @@ function TutorStudentsTab() {
       alert(e.message || 'Failed to update attendance.')
     } finally {
       setSavingId('')
+    }
+  }
+
+  const handleFeedbackSubmit = async (data) => {
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const payload = {
+        lesson_id: feedbackLesson.bookingId,
+        student_id: selectedStudent.studentId,
+        subject_name: feedbackLesson.subject || selectedStudent.subjects[0] || 'General',
+        focus_rating: data.focusRating,
+        understanding_level: data.understandingLevel,
+        homework_status: data.homeworkStatus,
+        tutor_note: data.tutorNote
+      };
+
+      const res = await fetch('/api/feedbacks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        setFeedbackLesson(null);
+        alert('Đã gửi đánh giá thành công!');
+      } else {
+        const err = await res.json();
+        throw new Error(err.error || 'Server error');
+      }
+    } catch (error) {
+      console.error('Lỗi khi gửi feedback:', error);
+      alert('Không thể gửi đánh giá: ' + error.message);
     }
   }
 
@@ -951,12 +989,21 @@ function TutorStudentsTab() {
                 <span className="text-[12px] font-bold text-on-surface-variant">{selectedStudent?.lessons?.length || 0} records</span>
               </div>
               <div className="divide-y divide-outline-variant/10">
-                {(selectedStudent?.lessons || []).map((lesson) => <AttendanceRow key={lesson.bookingId} lesson={lesson} saving={savingId === lesson.bookingId} note={attendanceNotes[lesson.bookingId] ?? lesson.attendanceNote ?? ''} onNoteChange={(value) => setAttendanceNotes((prev) => ({ ...prev, [lesson.bookingId]: value }))} onMark={(status) => handleAttendance(lesson, status)} />)}
+                {(selectedStudent?.lessons || []).map((lesson) => <AttendanceRow key={lesson.bookingId} lesson={lesson} saving={savingId === lesson.bookingId} note={attendanceNotes[lesson.bookingId] ?? lesson.attendanceNote ?? ''} onNoteChange={(value) => setAttendanceNotes((prev) => ({ ...prev, [lesson.bookingId]: value }))} onMark={(status) => handleAttendance(lesson, status)} onFeedback={() => setFeedbackLesson(lesson)} />)}
               </div>
             </div>
             <AbsenceTimeline lessons={selectedStudent?.lessons || allLessons} />
           </div>
         </div>
+      )}
+
+      {feedbackLesson && (
+        <TutorFeedbackModal
+          isOpen={!!feedbackLesson}
+          onClose={() => setFeedbackLesson(null)}
+          lessonData={{ studentName: selectedStudent?.childName || selectedStudent?.studentName, datetime: `${feedbackLesson.date} ${feedbackLesson.timeSlot}` }}
+          onSubmit={handleFeedbackSubmit}
+        />
       )}
     </div>
   )
@@ -971,10 +1018,10 @@ function StudentDetailCard({ student }) {
   return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Selected student</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'No email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Lessons</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Absent</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Rate</p></div></div></div>{student.nextLesson && <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Next lesson: <strong>{student.nextLesson.date}</strong> at <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div>}</div>
 }
 
-function AttendanceRow({ lesson, saving, note, onNoteChange, onMark }) {
+function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback }) {
   const approved = lesson.bookingStatus === 'Approved'
   const statusConfig = { present: 'bg-[#dcfce7] text-[#16a34a] border-[#bbf7d0]', absent: 'bg-red-50 text-red-600 border-red-200', excused: 'bg-amber-50 text-amber-700 border-amber-200' }
-  return <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center"><div><p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'General'}</p><p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p><span className={`inline-flex mt-2 px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>{lesson.attendanceStatus || lesson.bookingStatus}</span></div><input value={note} onChange={(e) => onNoteChange(e.target.value)} placeholder="Attendance note..." disabled={!approved || saving} className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" /><div className="flex flex-wrap gap-2 justify-start lg:justify-end"><button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Present</button><button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Absent</button><button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Excused</button></div></div>
+  return <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center"><div><p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'General'}</p><p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p><span className={`inline-flex mt-2 px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>{lesson.attendanceStatus || lesson.bookingStatus}</span></div><input value={note} onChange={(e) => onNoteChange(e.target.value)} placeholder="Attendance note..." disabled={!approved || saving} className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" /><div className="flex flex-wrap gap-2 justify-start lg:justify-end"><button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Present</button><button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Absent</button><button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Excused</button><button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">edit_note</span>Feedback</button></div></div>
 }
 
 function AbsenceTimeline({ lessons }) {
@@ -1042,6 +1089,8 @@ function MyScheduleTab() {
   const [bookings, setBookings] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [sessionModal, setSessionModal] = useState(null)
+  const [sessionInfoMap, setSessionInfoMap] = useState({})
 
   useEffect(() => {
     let active = true
@@ -1063,6 +1112,17 @@ function MyScheduleTab() {
     loadSchedule()
     return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    const map = {}
+    bookings.filter(b => String(b.status).toLowerCase() === 'approved').forEach(b => {
+      const saved = localStorage.getItem(`session_info_booking-${b.id}`)
+      if (saved) {
+        try { map[`booking-${b.id}`] = JSON.parse(saved) } catch {}
+      }
+    })
+    setSessionInfoMap(map)
+  }, [bookings])
 
   const availability = profile?.availability || {}
   const approvedBookings = bookings.filter((booking) => String(booking.status).toLowerCase() === 'approved')
@@ -1129,7 +1189,7 @@ function MyScheduleTab() {
           <div className="min-h-[320px] flex items-center justify-center text-on-surface-variant">Loading schedule...</div>
         ) : view === 'week' ? (
           <div className="grid grid-cols-1 lg:grid-cols-7 divide-y lg:divide-y-0 lg:divide-x divide-outline-variant/20">
-            {weekDates.map((date) => <ScheduleDayColumn key={toDateKey(date)} date={date} events={eventsForDate(date)} />)}
+            {weekDates.map((date) => <ScheduleDayColumn key={toDateKey(date)} date={date} events={eventsForDate(date)} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />)}
           </div>
         ) : (
           <div>
@@ -1137,11 +1197,28 @@ function MyScheduleTab() {
               {DAY_ORDER.map((day) => <div key={day} className="px-3 py-2 text-[11px] font-bold uppercase text-outline">{day.slice(0, 3)}</div>)}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-7">
-              {monthGrid.map((date) => <ScheduleMonthCell key={toDateKey(date)} date={date} events={eventsForDate(date)} isCurrentMonth={date.getMonth() === cursor.getMonth()} />)}
+              {monthGrid.map((date) => <ScheduleMonthCell key={toDateKey(date)} date={date} events={eventsForDate(date)} isCurrentMonth={date.getMonth() === cursor.getMonth()} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />)}
             </div>
           </div>
         )}
       </div>
+
+      {sessionModal && (
+        <SessionInfoModal
+          event={sessionModal}
+          onClose={() => {
+            const map = {}
+            bookings.filter(b => String(b.status).toLowerCase() === 'approved').forEach(b => {
+              const saved = localStorage.getItem(`session_info_booking-${b.id}`)
+              if (saved) {
+                try { map[`booking-${b.id}`] = JSON.parse(saved) } catch {}
+              }
+            })
+            setSessionInfoMap(map)
+            setSessionModal(null)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -1160,7 +1237,7 @@ function ScheduleSummaryCard({ icon, label, value }) {
   )
 }
 
-function ScheduleDayColumn({ date, events }) {
+function ScheduleDayColumn({ date, events, onEventClick, sessionInfoMap }) {
   const isToday = toDateKey(date) === toDateKey(new Date())
   return (
     <div className={`min-h-[420px] p-4 ${isToday ? 'bg-primary/5' : 'bg-white/50'}`}>
@@ -1171,12 +1248,12 @@ function ScheduleDayColumn({ date, events }) {
         </div>
         {isToday && <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-primary text-on-primary">Today</span>}
       </div>
-      {events.length === 0 ? <p className="text-[12px] text-outline italic">No slots</p> : <div className="space-y-2">{events.map((event) => <ScheduleEventPill key={event.id} event={event} />)}</div>}
+      {events.length === 0 ? <p className="text-[12px] text-outline italic">No slots</p> : <div className="space-y-2">{events.map((event) => <ScheduleEventPill key={event.id} event={event} onClick={onEventClick} hasInfo={!!sessionInfoMap?.[event.id]} />)}</div>}
     </div>
   )
 }
 
-function ScheduleMonthCell({ date, events, isCurrentMonth }) {
+function ScheduleMonthCell({ date, events, isCurrentMonth, onEventClick, sessionInfoMap }) {
   const isToday = toDateKey(date) === toDateKey(new Date())
   return (
     <div className={`min-h-[120px] border-b sm:border-r border-outline-variant/20 p-3 ${isCurrentMonth ? 'bg-white' : 'bg-surface-container-low/40 opacity-60'}`}>
@@ -1185,20 +1262,360 @@ function ScheduleMonthCell({ date, events, isCurrentMonth }) {
         {events.length > 0 && <span className="text-[10px] text-primary font-bold">{events.length}</span>}
       </div>
       <div className="space-y-1">
-        {events.slice(0, 3).map((event) => <div key={event.id} className={`truncate rounded-md px-2 py-1 text-[10px] font-semibold ${event.type === 'booking' ? 'bg-primary text-on-primary' : 'bg-primary/10 text-primary'}`}>{event.time}</div>)}
+        {events.slice(0, 3).map((event) => (
+          <div
+            key={event.id}
+            onClick={event.type === 'booking' ? () => onEventClick?.(event) : undefined}
+            className={`truncate rounded-md px-2 py-1 text-[10px] font-semibold flex items-center gap-1 ${
+              event.type === 'booking'
+                ? 'bg-primary text-on-primary cursor-pointer hover:bg-primary/80 active:scale-95 transition-all'
+                : 'bg-primary/10 text-primary'
+            }`}
+          >
+            <span className="truncate">{event.time}</span>
+            {event.type === 'booking' && sessionInfoMap?.[event.id] && (
+              <span className="material-symbols-outlined text-[9px] flex-shrink-0">check_circle</span>
+            )}
+          </div>
+        ))}
         {events.length > 3 && <p className="text-[10px] text-outline">+{events.length - 3} more</p>}
       </div>
     </div>
   )
 }
 
-function ScheduleEventPill({ event }) {
+function ScheduleEventPill({ event, onClick, hasInfo }) {
   const isBooking = event.type === 'booking'
   return (
-    <div className={`rounded-xl border px-3 py-2 ${isBooking ? 'bg-primary text-on-primary border-primary' : 'bg-primary/5 text-primary border-primary/20'}`}>
-      <p className="text-[12px] font-bold">{event.time}</p>
-      <p className={`text-[12px] ${isBooking ? 'text-on-primary' : 'text-on-surface'}`}>{event.title}</p>
-      <p className={`text-[11px] ${isBooking ? 'text-on-primary/80' : 'text-on-surface-variant'}`}>{event.meta}</p>
+    <div
+      onClick={isBooking ? () => onClick?.(event) : undefined}
+      className={`rounded-xl border px-3 py-2 transition-all ${
+        isBooking
+          ? 'bg-primary text-on-primary border-primary cursor-pointer hover:bg-primary/80 active:scale-95'
+          : 'bg-primary/5 text-primary border-primary/20'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-1">
+        <div className="min-w-0">
+          <p className="text-[12px] font-bold">{event.time}</p>
+          <p className={`text-[12px] truncate ${isBooking ? 'text-on-primary' : 'text-on-surface'}`}>{event.title}</p>
+          <p className={`text-[11px] truncate ${isBooking ? 'text-on-primary/80' : 'text-on-surface-variant'}`}>{event.meta}</p>
+        </div>
+        {isBooking && (
+          <span
+            className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center mt-0.5 ${hasInfo ? 'bg-white/30' : 'bg-white/15'}`}
+            title={hasInfo ? 'Đã điền thông tin buổi học — nhấn để chỉnh sửa' : 'Nhấn để điền thông tin buổi học'}
+          >
+            <span className="material-symbols-outlined text-[11px] text-on-primary">{hasInfo ? 'edit' : 'add'}</span>
+          </span>
+        )}
+      </div>
+      {isBooking && hasInfo && (
+        <p className="text-[10px] text-on-primary/70 mt-1 flex items-center gap-0.5">
+          <span className="material-symbols-outlined text-[10px]">check_circle</span>
+          Đã điền thông tin
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ─── Session Info Modal ─────────────────────────────────────────────────────
+function SessionInfoModal({ event, onClose }) {
+  const storageKey = `session_info_${event.id}`
+  const [form, setForm] = useState(() => {
+    try {
+      const saved = localStorage.getItem(storageKey)
+      return saved ? JSON.parse(saved) : {
+        mode: 'online', meetLink: '', meetPassword: '',
+        location: '', locationNote: '',
+        topic: '', duration: '60', materials: '', homework: '',
+        notifyStudent: true,
+      }
+    } catch {
+      return { mode: 'online', meetLink: '', meetPassword: '', location: '', locationNote: '', topic: '', duration: '60', materials: '', homework: '', notifyStudent: true }
+    }
+  })
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
+
+  const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
+
+  const handleSave = () => {
+    setError('')
+    if (form.mode === 'online' && !form.meetLink.trim()) {
+      setError('Vui lòng nhập link phòng học online.')
+      return
+    }
+    if (form.mode === 'offline' && !form.location.trim()) {
+      setError('Vui lòng nhập địa điểm học offline.')
+      return
+    }
+    localStorage.setItem(storageKey, JSON.stringify(form))
+    setSaved(true)
+    setTimeout(() => { setSaved(false); onClose() }, 900)
+  }
+
+  const inputCls = 'w-full h-10 px-3 rounded-xl border border-outline-variant text-[14px] text-on-surface outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 bg-white transition-all'
+  const textareaCls = 'w-full px-3 py-2.5 rounded-xl border border-outline-variant text-[14px] text-on-surface outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 resize-none transition-all'
+  const fieldLabel = (icon, text, required = false, color = 'text-on-surface-variant') => (
+    <label className={`flex items-center gap-1.5 text-[12px] font-bold ${color} mb-1.5`}>
+      <span className="material-symbols-outlined text-[14px]">{icon}</span>
+      {text}{required && <span className="text-red-500 ml-0.5">*</span>}
+    </label>
+  )
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="bg-[#f8f9fb] rounded-[1.5rem] shadow-[0_24px_64px_rgba(0,0,0,0.22)] w-full max-w-[900px] max-h-[95vh] flex flex-col overflow-hidden">
+
+        {/* ── Gradient Header ── */}
+        <div className="bg-gradient-to-br from-[#00288e] via-[#0a35a8] to-[#1e40af] px-6 py-5 flex-shrink-0 relative overflow-hidden">
+          <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-white/[0.06]" />
+          <div className="absolute bottom-0 right-16 w-20 h-20 rounded-full bg-white/[0.04] translate-y-1/2" />
+          <div className="flex items-start justify-between relative z-10 gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="material-symbols-outlined text-white/70 text-[16px]">edit_calendar</span>
+                <span className="text-white/70 text-[11px] font-bold uppercase tracking-widest">Thông tin buổi học</span>
+              </div>
+              <h2 className="text-white text-[18px] font-bold leading-snug truncate">{event.title}</h2>
+              <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+                <span className="inline-flex items-center gap-1 bg-white/[0.15] text-white text-[12px] font-semibold px-2.5 py-1 rounded-full">
+                  <span className="material-symbols-outlined text-[13px]">schedule</span>
+                  {event.time}
+                </span>
+                <span className="inline-flex items-center gap-1 bg-white/[0.15] text-white text-[12px] font-semibold px-2.5 py-1 rounded-full">
+                  <span className="material-symbols-outlined text-[13px]">person</span>
+                  {event.meta}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-9 h-9 rounded-full bg-white/[0.12] hover:bg-white/[0.22] flex items-center justify-center text-white transition-colors flex-shrink-0"
+              aria-label="Đóng"
+            >
+              <span className="material-symbols-outlined text-[19px]">close</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ── Scrollable Body ── */}
+        <div className="overflow-y-auto flex-1 p-5 space-y-4">
+
+          {/* CARD 1 — Hình thức học */}
+          <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+            <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-outline-variant/15">
+              <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-on-primary text-[11px] font-black">1</div>
+              <p className="text-[12px] font-bold text-on-surface uppercase tracking-wider">Hình thức học</p>
+            </div>
+            <div className="p-4 space-y-4">
+              {/* Toggle Online / Offline */}
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { value: 'online',  icon: 'videocam',    label: 'Online',  sub: 'Zoom · Meet · Teams' },
+                  { value: 'offline', icon: 'location_on', label: 'Offline', sub: 'Học trực tiếp' },
+                ].map(opt => {
+                  const isActive = form.mode === opt.value
+                  const isOnline = opt.value === 'online'
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => set('mode', opt.value)}
+                      className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                        isActive
+                          ? isOnline
+                            ? 'border-primary bg-primary/5 shadow-sm'
+                            : 'border-[#16a34a] bg-[#f0fdf4] shadow-sm'
+                          : 'border-outline-variant/40 bg-surface-container-lowest hover:border-outline-variant'
+                      }`}
+                    >
+                      <div className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all ${
+                        isActive
+                          ? isOnline ? 'bg-primary text-on-primary' : 'bg-[#16a34a] text-white'
+                          : 'bg-surface-container text-outline'
+                      }`}>
+                        <span className="material-symbols-outlined text-[22px]">{opt.icon}</span>
+                      </div>
+                      <div className="text-center">
+                        <p className={`font-bold text-[13px] ${
+                          isActive ? (isOnline ? 'text-primary' : 'text-[#16a34a]') : 'text-on-surface-variant'
+                        }`}>{opt.label}</p>
+                        <p className="text-[11px] text-on-surface-variant mt-0.5">{opt.sub}</p>
+                      </div>
+                      {isActive && (
+                        <span
+                          className={`material-symbols-outlined text-[16px] ${isOnline ? 'text-primary' : 'text-[#16a34a]'}`}
+                          style={{ fontVariationSettings: "'FILL' 1" }}
+                        >check_circle</span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Online fields */}
+              {form.mode === 'online' && (
+                <div className="space-y-3 pt-3 border-t border-outline-variant/15">
+                  <div>
+                    {fieldLabel('link', 'Link phòng học', true, 'text-primary')}
+                    <input value={form.meetLink} onChange={e => set('meetLink', e.target.value)}
+                      placeholder="https://zoom.us/j/... hoặc meet.google.com/..."
+                      className={inputCls} />
+                  </div>
+                  <div>
+                    {fieldLabel('lock', 'Mật khẩu phòng (nếu có)')}
+                    <input value={form.meetPassword} onChange={e => set('meetPassword', e.target.value)}
+                      placeholder="Nhập mật khẩu phòng học..."
+                      className={inputCls} />
+                  </div>
+                </div>
+              )}
+
+              {/* Offline fields */}
+              {form.mode === 'offline' && (
+                <div className="space-y-3 pt-3 border-t border-outline-variant/15">
+                  <div>
+                    {fieldLabel('location_on', 'Địa điểm học', true, 'text-[#16a34a]')}
+                    <input value={form.location} onChange={e => set('location', e.target.value)}
+                      placeholder="VD: 123 Nguyễn Văn Linh, Q7, TP.HCM..."
+                      className={inputCls.replace('focus:border-primary focus:ring-primary/10', 'focus:border-[#16a34a] focus:ring-[#16a34a]/10')} />
+                  </div>
+                  <div>
+                    {fieldLabel('directions', 'Hướng dẫn đường đi (tùy chọn)')}
+                    <textarea value={form.locationNote} onChange={e => set('locationNote', e.target.value)}
+                      rows={2} placeholder="VD: Vào cổng A, lên tầng 2, phòng 201. Có bãi đậu xe máy miễn phí..."
+                      className={textareaCls.replace('focus:border-primary focus:ring-primary/10', 'focus:border-[#16a34a] focus:ring-[#16a34a]/10')} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* CARD 2 — Nội dung & Thời lượng */}
+          <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+            <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-outline-variant/15">
+              <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-on-primary text-[11px] font-black">2</div>
+              <p className="text-[12px] font-bold text-on-surface uppercase tracking-wider">Nội dung & Thời lượng</p>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                {fieldLabel('subject', 'Chủ đề / Nội dung buổi học')}
+                <input value={form.topic} onChange={e => set('topic', e.target.value)}
+                  placeholder="VD: Ôn tập chương 3 — Phương trình bậc 2, luyện đề thi..."
+                  className={inputCls} />
+              </div>
+              <div>
+                {fieldLabel('timer', 'Thời lượng dự kiến')}
+                <div className="grid grid-cols-4 gap-2 mt-1">
+                  {[['45','45 phút'],['60','1 giờ'],['90','1.5 giờ'],['120','2 giờ']].map(([val, label]) => (
+                    <button key={val} type="button" onClick={() => set('duration', val)}
+                      className={`h-10 rounded-xl border text-[12px] font-bold transition-all ${
+                        form.duration === val
+                          ? 'bg-primary text-on-primary border-primary shadow-sm'
+                          : 'border-outline-variant/50 text-on-surface-variant hover:border-primary/50 bg-white'
+                      }`}
+                    >{label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* CARD 3 — Chuẩn bị trước buổi học */}
+          <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
+            <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-outline-variant/15">
+              <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-on-primary text-[11px] font-black">3</div>
+              <p className="text-[12px] font-bold text-on-surface uppercase tracking-wider">Chuẩn bị trước buổi học</p>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                {fieldLabel('menu_book', 'Tài liệu / Dụng cụ cần mang')}
+                <textarea value={form.materials} onChange={e => set('materials', e.target.value)}
+                  rows={2} placeholder="VD: SGK Toán 10, bút + vở nháp, máy tính bỏ túi..."
+                  className={textareaCls} />
+              </div>
+              <div>
+                {fieldLabel('assignment', 'Bài tập / Ghi chú trước buổi học')}
+                <textarea value={form.homework} onChange={e => set('homework', e.target.value)}
+                  rows={3} placeholder="VD: Hoàn thành bài tập trang 45–47. Xem lại định lý Pythagore. Ghi câu hỏi cần hỏi..."
+                  className={textareaCls} />
+              </div>
+            </div>
+          </div>
+
+          {/* Toggle gửi thông báo */}
+          <button
+            type="button"
+            onClick={() => set('notifyStudent', !form.notifyStudent)}
+            className={`w-full flex items-center gap-3 p-4 rounded-2xl border-2 text-left transition-all ${
+              form.notifyStudent
+                ? 'border-primary bg-primary/5'
+                : 'border-outline-variant/30 bg-white hover:border-outline-variant'
+            }`}
+          >
+            <div className={`w-11 h-6 rounded-full relative flex-shrink-0 transition-colors ${form.notifyStudent ? 'bg-primary' : 'bg-outline/25'}`}>
+              <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-all ${form.notifyStudent ? 'left-[22px]' : 'left-0.5'}`} />
+            </div>
+            <div>
+              <p className={`text-[14px] font-bold ${form.notifyStudent ? 'text-primary' : 'text-on-surface'}`}>
+                Gửi thông báo cho học sinh
+              </p>
+              <p className="text-[12px] text-on-surface-variant">Học sinh sẽ nhận thông tin buổi học qua hệ thống</p>
+            </div>
+            {form.notifyStudent && (
+              <span className="material-symbols-outlined text-primary text-[18px] ml-auto flex-shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>
+                notifications_active
+              </span>
+            )}
+          </button>
+
+          {error && (
+            <div className="flex items-center gap-2 text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <span className="material-symbols-outlined text-[16px] flex-shrink-0">error</span>
+              {error}
+            </div>
+          )}
+        </div>
+
+        {/* ── Footer ── */}
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-outline-variant/20 bg-white flex-shrink-0">
+          <div className="flex items-center gap-1.5 text-[11px] text-on-surface-variant">
+            <span className="material-symbols-outlined text-[14px]">devices</span>
+            Lưu trên thiết bị này
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="h-10 px-5 rounded-xl border border-outline-variant text-on-surface-variant text-[13px] font-semibold hover:bg-surface-container transition-colors"
+            >
+              Hủy
+            </button>
+            <button
+              onClick={handleSave}
+              className={`h-10 px-6 rounded-xl text-[13px] font-bold flex items-center gap-2 transition-all shadow-sm ${
+                saved
+                  ? 'bg-[#16a34a] text-white'
+                  : 'bg-primary text-on-primary hover:bg-[#1e40af]'
+              }`}
+            >
+              <span
+                className="material-symbols-outlined text-[16px]"
+                style={saved ? { fontVariationSettings: "'FILL' 1" } : {}}
+              >
+                {saved ? 'check_circle' : 'save'}
+              </span>
+              {saved ? 'Đã lưu!' : 'Lưu thông tin'}
+            </button>
+          </div>
+        </div>
+
+      </div>
     </div>
   )
 }

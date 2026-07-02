@@ -10,6 +10,7 @@
 const express = require("express");
 const multer = require("multer");
 const pool = require("../db");
+const { requireAuth, requireClassMember } = require("../middleware/auth");
 const {
   validateFile,
   uploadToSupabase,
@@ -17,7 +18,7 @@ const {
   formatFileSize,
 } = require("../services/storageService");
 
-const router = express.Router({ mergeParams: true }); // mergeParams để nhận :classId từ parent
+const router = express.Router({ mergeParams: true });
 
 // ── Multer: lưu file vào memory buffer (không lưu disk) ─────────────────────
 const upload = multer({
@@ -29,69 +30,7 @@ const upload = multer({
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// ── Mock data fallback ──────────────────────────────────────────────────────
-const MOCK_MATERIALS = [
-  {
-    id: "m0000001-0000-0000-0000-000000000001",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Course Syllabus 2026",
-    description: "Course overview and weekly plan",
-    file_url: "https://example.com/files/syllabus.pdf",
-    file_type: "pdf",
-    file_size: "2.4 MB",
-    uploaded_by: "00000000-0000-0000-0000-000000000001",
-    uploader_name: "Jane Doe",
-    created_at: "2026-01-15T08:00:00.000Z",
-  },
-  {
-    id: "m0000002-0000-0000-0000-000000000002",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Design Principles Slides",
-    description: "Slides for Module 1",
-    file_url: "https://example.com/files/slides.ppt",
-    file_type: "ppt",
-    file_size: "15.3 MB",
-    uploaded_by: "00000000-0000-0000-0000-000000000001",
-    uploader_name: "Jane Doe",
-    created_at: "2026-01-18T10:30:00.000Z",
-  },
-  {
-    id: "m0000003-0000-0000-0000-000000000003",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Mobile UI Kit v2.sketch",
-    description: "Sketch file for hands-on exercises",
-    file_url: "https://example.com/files/ui-kit.sketch",
-    file_type: "docx",
-    file_size: "45.8 MB",
-    uploaded_by: "00000000-0000-0000-0000-000000000001",
-    uploader_name: "Jane Doe",
-    created_at: "2026-01-20T14:00:00.000Z",
-  },
-  {
-    id: "m0000004-0000-0000-0000-000000000004",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Figma Component Library",
-    description: "Online Figma file for prototyping",
-    file_url: "https://figma.com/file/example",
-    file_type: "link",
-    file_size: "Online",
-    uploaded_by: "00000000-0000-0000-0000-000000000001",
-    uploader_name: "Jane Doe",
-    created_at: "2026-01-22T09:00:00.000Z",
-  },
-  {
-    id: "m0000005-0000-0000-0000-000000000005",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Color Theory Workshop Recording",
-    description: "Video recording of live session",
-    file_url: "https://example.com/files/color-theory.mp4",
-    file_type: "video",
-    file_size: "320 MB",
-    uploaded_by: "00000000-0000-0000-0000-000000000001",
-    uploader_name: "Jane Doe",
-    created_at: "2026-01-25T16:00:00.000Z",
-  },
-];
+
 
 // ── Helper: validate UUID ───────────────────────────────────────────────────
 function isValidUUID(str) {
@@ -114,7 +53,7 @@ async function classExists(classId) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/classes/:classId/materials
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/", async (req, res) => {
+router.get("/", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
 
   if (!isValidUUID(classId)) {
@@ -154,11 +93,9 @@ router.get("/", async (req, res) => {
     return res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error("[Materials] GET error:", error.message);
-    const mockForClass = MOCK_MATERIALS.filter((m) => m.class_id === classId);
-    return res.json({
-      success: true,
-      data: mockForClass.length > 0 ? mockForClass : MOCK_MATERIALS,
-    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error. Please try again." });
   }
 });
 
@@ -166,10 +103,10 @@ router.get("/", async (req, res) => {
 // POST /api/classes/:classId/materials
 // Tạo metadata tài liệu (JSON body, không upload file)
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
-  const { title, description, file_url, file_type, file_size, uploaded_by } =
-    req.body || {};
+  const { title, description, file_url, file_type, file_size } = req.body || {};
+  const uploaded_by = req.user.userId; // Override with authenticated user
 
   if (!isValidUUID(classId)) {
     return res
@@ -244,9 +181,10 @@ router.post("/", async (req, res) => {
 //   description  — mô tả (optional)
 //   uploaded_by  — UUID of uploader (required)
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/upload", upload.single("file"), async (req, res) => {
+router.post("/upload", requireAuth, requireClassMember, upload.single("file"), async (req, res) => {
   const { classId } = req.params;
-  const { title, description, uploaded_by } = req.body || {};
+  const { title, description } = req.body || {};
+  const uploaded_by = req.user.userId;
   const file = req.file;
 
   // Validate UUID

@@ -7,9 +7,10 @@
  *
  * Nếu DB lỗi hoặc chưa tạo bảng → trả mock data fallback.
  */
-const express = require("express");
 const pool = require("../db");
+const { requireAuth, requireClassMember } = require("../middleware/auth");
 
+const express = require("express");
 const router = express.Router();
 
 // ── UUID v4 regex ────────────────────────────────────────────────────────────
@@ -20,35 +21,7 @@ function isValidUUID(str) {
   return UUID_REGEX.test(str);
 }
 
-// ── Mock data fallback ──────────────────────────────────────────────────────
-const MOCK_LESSONS = [
-  {
-    id: "l0000001-0000-0000-0000-000000000001",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Introduction to UI/UX",
-    description: "Basic principles of user interface and user experience design.",
-    lesson_order: 1,
-    duration_minutes: 45,
-    video_url: "https://example.com/video1.mp4",
-    material_id: null,
-    status: "published",
-    created_at: "2026-06-15T08:00:00.000Z",
-    updated_at: "2026-06-15T08:00:00.000Z",
-  },
-  {
-    id: "l0000002-0000-0000-0000-000000000002",
-    class_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    title: "Wireframing & Prototyping",
-    description: "How to design low-fidelity and high-fidelity wireframes.",
-    lesson_order: 2,
-    duration_minutes: 60,
-    video_url: "https://example.com/video2.mp4",
-    material_id: null,
-    status: "published",
-    created_at: "2026-06-16T09:00:00.000Z",
-    updated_at: "2026-06-16T09:00:00.000Z",
-  },
-];
+
 
 // ── Helper: check class exists ──────────────────────────────────────────────
 async function classExists(classId) {
@@ -67,7 +40,7 @@ async function classExists(classId) {
 // GET /api/classes/:classId/lessons
 // Lấy danh sách lessons của một class, sort theo lesson_order ASC
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/classes/:classId/lessons", async (req, res) => {
+router.get("/api/classes/:classId/lessons", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
 
   if (!isValidUUID(classId)) {
@@ -94,11 +67,9 @@ router.get("/api/classes/:classId/lessons", async (req, res) => {
     return res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error("[Lessons] GET list error:", error.message);
-    const mockForClass = MOCK_LESSONS.filter((l) => l.class_id === classId);
-    return res.json({
-      success: true,
-      data: mockForClass.length > 0 ? mockForClass : MOCK_LESSONS,
-    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error. Please try again." });
   }
 });
 
@@ -106,8 +77,9 @@ router.get("/api/classes/:classId/lessons", async (req, res) => {
 // GET /api/lessons/:lessonId
 // Lấy chi tiết một lesson
 // ─────────────────────────────────────────────────────────────────────────────
-router.get("/api/lessons/:lessonId", async (req, res) => {
+router.get("/api/lessons/:lessonId", requireAuth, async (req, res) => {
   const { lessonId } = req.params;
+  const userId = req.user.userId;
 
   if (!isValidUUID(lessonId)) {
     return res
@@ -121,28 +93,29 @@ router.get("/api/lessons/:lessonId", async (req, res) => {
       [lessonId]
     );
 
-    if (result.rows.length > 0) {
-      return res.json({ success: true, data: result.rows[0] });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Lesson not found" });
+    }
+    
+    const lesson = result.rows[0];
+    
+    // Check membership
+    const memRes = await pool.query(
+      `SELECT 1 FROM class_members WHERE class_id = $1 AND student_id = $2
+       UNION
+       SELECT 1 FROM classes WHERE id = $1 AND tutor_id = $2`,
+      [lesson.class_id, userId]
+    );
+    if (memRes.rows.length === 0) {
+      return res.status(403).json({ success: false, message: "403 Forbidden: Bạn không có quyền truy cập lớp học này." });
     }
 
-    // Không tìm thấy trong DB → tìm trong mock data
-    const mock = MOCK_LESSONS.find((l) => l.id === lessonId);
-    if (mock) {
-      return res.json({ success: true, data: mock });
-    }
-
-    return res
-      .status(404)
-      .json({ success: false, message: "Lesson not found" });
+    return res.json({ success: true, data: lesson });
   } catch (error) {
     console.error("[Lessons] GET detail error:", error.message);
-    const mock = MOCK_LESSONS.find((l) => l.id === lessonId);
-    if (mock) {
-      return res.json({ success: true, data: mock });
-    }
     return res
-      .status(404)
-      .json({ success: false, message: "Lesson not found" });
+      .status(500)
+      .json({ success: false, message: "Server error. Please try again." });
   }
 });
 
@@ -150,7 +123,7 @@ router.get("/api/lessons/:lessonId", async (req, res) => {
 // POST /api/classes/:classId/lessons
 // Tạo lesson mới
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/api/classes/:classId/lessons", async (req, res) => {
+router.post("/api/classes/:classId/lessons", requireAuth, requireClassMember, async (req, res) => {
   const { classId } = req.params;
   const {
     title,

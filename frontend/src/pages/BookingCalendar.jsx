@@ -766,4 +766,3 @@ const S = {
   btnDisabled: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, background: '#e5e7eb', color: '#9ca3af', border: 'none', borderRadius: 13, fontSize: 14, fontWeight: 700, cursor: 'not-allowed', fontFamily: 'inherit' },
   backBtn:     { display: 'flex', alignItems: 'center', gap: 5, height: 38, padding: '0 14px', background: 'transparent', color: 'var(--on-surface-variant)', border: '1px solid rgba(196,197,213,0.5)', borderRadius: 11, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' },
 };
-
