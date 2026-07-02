@@ -2902,6 +2902,104 @@ app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) 
   }
 });
 
+// ── GET /api/admin/wallet-ledger ──────────────────────────────────────────────
+// CAP-17.1: Read-only, paginated, filterable view of the append-only ledger.
+app.get("/api/admin/wallet-ledger", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit) || 50, 200);
+    const page   = Math.max(parseInt(req.query.page) || 1, 1);
+    const offset = (page - 1) * limit;
+
+    const conds = [];
+    const params = [];
+    const push = (col, val) => { params.push(val); conds.push(`${col} = $${params.length}`); };
+    if (req.query.walletId)      push('l.wallet_id', req.query.walletId);
+    if (req.query.userId)        push('l.user_id', req.query.userId);
+    if (req.query.transactionId) push('l.transaction_id', req.query.transactionId);
+    if (req.query.referenceType) push('l.reference_type', req.query.referenceType);
+    if (req.query.referenceId)   push('l.reference_id', req.query.referenceId);
+    if (req.query.reasonCode)    push('l.reason_code', req.query.reasonCode);
+    if (req.query.balanceType)   push('l.balance_type', req.query.balanceType);
+    if (req.query.direction)     push('l.direction', req.query.direction);
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+    const total = (await pool.query(`SELECT COUNT(*)::int AS n FROM wallet_ledger l ${where}`, params)).rows[0].n;
+
+    const items = (await pool.query(`
+      SELECT l.id, l.wallet_id, l.user_id, l.transaction_id, l.balance_type, l.direction,
+             l.amount, l.balance_before, l.balance_after, l.reason_code, l.reference_type,
+             l.reference_id, l.actor_id, l.source, l.policy_version, l.metadata, l.created_at,
+             u.full_name AS owner_name, u.email AS owner_email,
+             t.type::text AS tx_type, t.status::text AS tx_status
+      FROM wallet_ledger l
+      LEFT JOIN users u        ON u.id = l.user_id
+      LEFT JOIN transactions t ON t.id = l.transaction_id
+      ${where}
+      ORDER BY l.created_at DESC, l.id DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `, [...params, limit, offset])).rows;
+
+    return res.json({ items, pagination: { page, limit, total } });
+  } catch (err) {
+    console.error("GET /api/admin/wallet-ledger error:", err);
+    return res.status(500).json({ message: "Lỗi khi tải sổ cái ví." });
+  }
+});
+
+// ── GET /api/admin/wallet-integrity ───────────────────────────────────────────
+// CAP-17.2: Compare live wallet balances against signed ledger sums.
+app.get("/api/admin/wallet-integrity", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const includeClean = req.query.includeClean === 'true';
+    const rows = (await pool.query(`
+      SELECT w.id AS wallet_id, w.user_id,
+             u.full_name AS owner_name, u.email AS owner_email,
+             w.balance::numeric        AS actual_balance,
+             w.held_balance::numeric   AS actual_held_balance,
+             COALESCE(b.expected, 0)::numeric AS expected_balance,
+             COALESCE(h.expected, 0)::numeric AS expected_held_balance
+      FROM wallets w
+      LEFT JOIN users u ON u.id = w.user_id
+      LEFT JOIN (
+        SELECT wallet_id, SUM(CASE WHEN direction='credit' THEN amount ELSE -amount END) AS expected
+        FROM wallet_ledger WHERE balance_type='balance' GROUP BY wallet_id
+      ) b ON b.wallet_id = w.id
+      LEFT JOIN (
+        SELECT wallet_id, SUM(CASE WHEN direction='credit' THEN amount ELSE -amount END) AS expected
+        FROM wallet_ledger WHERE balance_type='held_balance' GROUP BY wallet_id
+      ) h ON h.wallet_id = w.id
+    `)).rows;
+
+    const items = [];
+    let totalDiffBalance = 0, totalDiffHeld = 0, discrepancies = 0;
+    for (const r of rows) {
+      const diffBalance = Number(r.actual_balance) - Number(r.expected_balance);
+      const diffHeld    = Number(r.actual_held_balance) - Number(r.expected_held_balance);
+      const hasDiff = Math.abs(diffBalance) > 0.001 || Math.abs(diffHeld) > 0.001;
+      if (hasDiff) { discrepancies++; totalDiffBalance += diffBalance; totalDiffHeld += diffHeld; }
+      if (hasDiff || includeClean) {
+        items.push({
+          wallet_id: r.wallet_id, user_id: r.user_id, owner_name: r.owner_name, owner_email: r.owner_email,
+          actual_balance: Number(r.actual_balance), expected_balance: Number(r.expected_balance), diff_balance: diffBalance,
+          actual_held_balance: Number(r.actual_held_balance), expected_held_balance: Number(r.expected_held_balance), diff_held_balance: diffHeld,
+        });
+      }
+    }
+    return res.json({
+      summary: {
+        wallets_checked: rows.length,
+        discrepancies,
+        total_diff_balance: Math.round(totalDiffBalance * 100) / 100,
+        total_diff_held_balance: Math.round(totalDiffHeld * 100) / 100,
+      },
+      items,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/wallet-integrity error:", err);
+    return res.status(500).json({ message: "Lỗi khi kiểm tra tính toàn vẹn ví." });
+  }
+});
+
 // ── GET /api/admin/violations ────────────────────────────────────────────────
 // CAP-6.1: Read-only list of disputes as violation reports.
 // Source: disputes JOIN users (raised_by=reporter, tutor_id=accused). No mutations.
@@ -5246,6 +5344,7 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await setLedgerContext(client, { reason_code: 'COURSE_PURCHASE', source: 'api', reference_type: 'course', actor_id: req.user.userId });
 
     const coursesRes = await client.query(
       `SELECT id, title, price, tutor_id FROM courses WHERE id = ANY($1::uuid[])`, [ids]);
@@ -7064,6 +7163,16 @@ async function createRefundLog(client, log) {
   return r.rows.length ? r.rows[0].id : null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// WALLET LEDGER (Batch 17) — set transaction-local context so the wallets
+// trigger records meaningful reason codes. MUST be called on the same `client`
+// inside an active transaction (set_config is_local=true => auto-cleared on
+// COMMIT/ROLLBACK, never leaks across requests). Safe to call multiple times.
+// ═══════════════════════════════════════════════════════════════════════════
+async function setLedgerContext(client, context) {
+  await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
+}
+
 // PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
 // Logic escrow:
 //   Approved  → hold_money_for_lesson (trừ balance, cộng held_balance)
@@ -7107,6 +7216,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
       // Hold tiền nếu có ví và có lesson_fee
       if (lessonFee > 0 && booking.payer_wallet_id_val) {
         try {
+          await setLedgerContext(client, { reason_code: 'ESCROW_HOLD', source: 'api', reference_type: 'booking', reference_id: booking.id, actor_id: req.user.userId });
           const holdRes = await client.query(
             'SELECT hold_money_for_lesson($1, $2, $3) AS tx_id',
             [booking.payer_wallet_id_val, lessonFee, booking.id]
@@ -7145,6 +7255,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(403).json({ message: 'Chỉ gia sư mới có thể từ chối lịch học.' });
       }
+      await setLedgerContext(client, { reason_code: 'BOOKING_DECLINED_REFUND', source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId });
       await client.query('SELECT refund_escrow($1,$2,$3)', [
         booking.escrow_tx_id, booking.payer_wallet_id, lessonFee
       ]);
@@ -7192,6 +7303,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
 
         // Settle escrow with vetted DB functions (held → student / tutor+admin)
         if (refundAmount > 0) {
+          await setLedgerContext(client, { reason_code: 'BOOKING_CANCEL_REFUND', source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId, policy_version: REFUND_POLICY_VERSION });
           await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, refundAmount]);
         }
         if (nonRefunded > 0) {
@@ -7201,6 +7313,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             await client.query('ROLLBACK');
             return res.status(500).json({ message: 'Thiếu ví gia sư/admin để xử lý phí hủy.' });
           }
+          await setLedgerContext(client, { reason_code: 'BOOKING_CANCEL_COMPENSATION', source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId, policy_version: REFUND_POLICY_VERSION });
           await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
             booking.escrow_tx_id, booking.payer_wallet_id, tw.rows[0].id, adminWalletId, nonRefunded, 0.1,
           ]);
@@ -7627,6 +7740,7 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
       });
 
       if (logId) {
+        await setLedgerContext(client, { reason_code: reasonCode, source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId });
         await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, lessonFee]);
         await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
 
@@ -7892,9 +8006,22 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
            return res.status(200).json({ RspCode: '00', Message: 'Success processing failed transaction' });
       }
 
-      // Call RPC process_deposit
-      const dbRes = await pool.query('SELECT process_deposit($1, $2, $3, $4) AS success', [walletId, amount, 'VNPAY', orderId]);
-      const isSuccess = dbRes.rows[0].success;
+      // Call RPC process_deposit inside a transaction so the wallet ledger
+      // trigger records a DEPOSIT_VNPAY reason (Batch 17)
+      let isSuccess;
+      const depClient = await pool.connect();
+      try {
+        await depClient.query('BEGIN');
+        await setLedgerContext(depClient, { reason_code: 'DEPOSIT_VNPAY', source: 'webhook', reference_type: 'transaction', metadata: { orderId } });
+        const dbRes = await depClient.query('SELECT process_deposit($1, $2, $3, $4) AS success', [walletId, amount, 'VNPAY', orderId]);
+        isSuccess = dbRes.rows[0].success;
+        await depClient.query('COMMIT');
+      } catch (depErr) {
+        await depClient.query('ROLLBACK').catch(() => {});
+        throw depErr;
+      } finally {
+        depClient.release();
+      }
 
       if (!isSuccess) {
            return res.status(200).json({ RspCode: '02', Message: 'Order already confirmed' });
@@ -8131,6 +8258,7 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
         });
         if (!logId) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Khóa học này đã được hoàn tiền.' }); }
 
+        await setLedgerContext(client, { reason_code: 'COURSE_REFUND_POLICY_V2_1', source: 'api', reference_type: 'course', reference_id: enrollment.course_id, actor_id: req.user.userId, policy_version: REFUND_POLICY_VERSION, metadata: { refund_rate: decision.refundRate } });
         await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [refundAmount, sw.rows[0].id]);
         if (tutorDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [tutorDeduct, tw.rows[0].id]);
         if (adminDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [adminDeduct, adminWalletId]);
@@ -8282,6 +8410,8 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
       });
       if (!logId) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Đã hoàn tiền cho khiếu nại này trước đó.' }); }
 
+      await setLedgerContext(client, { reason_code: 'DISPUTE_REFUND', source: 'admin', reference_type: dispute.target_type, reference_id: bookingId || courseId, transaction_id: escrowTxId || null, actor_id: req.user.userId, policy_version: REFUND_POLICY_VERSION, metadata: { disputeId, refund_rate: refundRate } });
+
       if (dispute.target_type === 'booking') {
         if (escrowTxId && payerWalletId) {
           if (refundAmount > 0) await client.query('SELECT refund_escrow($1,$2,$3)', [escrowTxId, payerWalletId, refundAmount]);
@@ -8325,6 +8455,7 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
       if (dispute.target_type === 'booking') {
         if (!tutorWalletId || !adminWalletId) { await client.query('ROLLBACK'); return res.status(500).json({ message: 'Thiếu ví.' }); }
         if (escrowTxId) {
+          await setLedgerContext(client, { reason_code: 'DISPUTE_RELEASE', source: 'admin', reference_type: 'booking', reference_id: bookingId, transaction_id: escrowTxId, actor_id: req.user.userId, metadata: { disputeId } });
           await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [escrowTxId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
         }
         await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [bookingId]);
@@ -8376,6 +8507,7 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
     }
 
     await client.query('BEGIN');
+    await setLedgerContext(client, { reason_code: 'MANUAL_RELEASE', source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId });
 
     // Logic cọc ảo: 2 buổi đầu → held_balance gia sư, buổi 3+ → balance thẳng
     const completedRes = await client.query('SELECT completed_lessons_count FROM tutor_profiles WHERE user_id=$1', [booking.tutor_id]);
@@ -8591,6 +8723,119 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.error('⚠️  DB migration (refund_logs) warning:', err.message);
   }
 
+  // ── Wallet Ledger: append-only audit of every wallet change (Batch 17) ──────
+  // A DB trigger captures ALL balance/held_balance changes automatically (even
+  // those inside SQL functions). Meaningful reason codes come from a per-txn GUC
+  // (app.ledger_context) set via setLedgerContext(); missing context is safe.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS wallet_ledger (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        wallet_id UUID NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+        balance_type TEXT NOT NULL CHECK (balance_type IN ('balance','held_balance')),
+        direction TEXT NOT NULL CHECK (direction IN ('debit','credit')),
+        amount NUMERIC(15,2) NOT NULL CHECK (amount >= 0),
+        balance_before NUMERIC(15,2) NOT NULL DEFAULT 0,
+        balance_after NUMERIC(15,2) NOT NULL DEFAULT 0,
+        reason_code TEXT NOT NULL DEFAULT 'UNKNOWN_WALLET_UPDATE',
+        reference_type TEXT,
+        reference_id UUID,
+        actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        source TEXT NOT NULL DEFAULT 'trigger'
+          CHECK (source IN ('trigger','api','admin','system','cron','webhook','migration')),
+        policy_version TEXT,
+        request_id TEXT,
+        idempotency_key TEXT UNIQUE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_ledger_wallet      ON wallet_ledger(wallet_id);
+      CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user        ON wallet_ledger(user_id);
+      CREATE INDEX IF NOT EXISTS idx_wallet_ledger_transaction ON wallet_ledger(transaction_id);
+      CREATE INDEX IF NOT EXISTS idx_wallet_ledger_reference   ON wallet_ledger(reference_type, reference_id);
+      CREATE INDEX IF NOT EXISTS idx_wallet_ledger_reason      ON wallet_ledger(reason_code);
+      CREATE INDEX IF NOT EXISTS idx_wallet_ledger_created     ON wallet_ledger(created_at);
+
+      CREATE OR REPLACE FUNCTION log_wallet_change() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      DECLARE
+        ctx JSONB;
+        v_reason TEXT; v_source TEXT; v_reftype TEXT; v_policy TEXT; v_request TEXT;
+        v_txid UUID; v_refid UUID; v_actor UUID; v_meta JSONB;
+      BEGIN
+        -- Parse per-transaction context; never fail the wallet update on bad ctx
+        BEGIN
+          ctx := COALESCE(NULLIF(current_setting('app.ledger_context', true), '')::jsonb, '{}'::jsonb);
+        EXCEPTION WHEN others THEN ctx := '{}'::jsonb;
+        END;
+
+        v_reason  := COALESCE(ctx->>'reason_code', 'UNKNOWN_WALLET_UPDATE');
+        v_source  := COALESCE(ctx->>'source', 'trigger');
+        IF v_source NOT IN ('trigger','api','admin','system','cron','webhook','migration') THEN v_source := 'trigger'; END IF;
+        v_reftype := ctx->>'reference_type';
+        v_policy  := ctx->>'policy_version';
+        v_request := ctx->>'request_id';
+        v_meta    := COALESCE(ctx->'metadata', '{}'::jsonb);
+
+        BEGIN v_txid  := (ctx->>'transaction_id')::uuid; EXCEPTION WHEN others THEN v_txid := NULL; END;
+        BEGIN v_refid := (ctx->>'reference_id')::uuid;   EXCEPTION WHEN others THEN v_refid := NULL; END;
+        BEGIN v_actor := (ctx->>'actor_id')::uuid;       EXCEPTION WHEN others THEN v_actor := NULL; END;
+
+        -- Guard FK columns against stale/invalid ids so the trigger never crashes
+        IF v_txid  IS NOT NULL AND NOT EXISTS (SELECT 1 FROM transactions WHERE id = v_txid)  THEN v_txid  := NULL; END IF;
+        IF v_actor IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users        WHERE id = v_actor) THEN v_actor := NULL; END IF;
+
+        BEGIN
+          IF NEW.balance IS DISTINCT FROM OLD.balance THEN
+            INSERT INTO wallet_ledger (wallet_id,user_id,transaction_id,balance_type,direction,amount,balance_before,balance_after,reason_code,reference_type,reference_id,actor_id,source,policy_version,request_id,metadata)
+            VALUES (NEW.id, NEW.user_id, v_txid, 'balance',
+              CASE WHEN NEW.balance > OLD.balance THEN 'credit' ELSE 'debit' END,
+              ABS(NEW.balance - OLD.balance), OLD.balance, NEW.balance,
+              v_reason, v_reftype, v_refid, v_actor, v_source, v_policy, v_request, v_meta);
+          END IF;
+          IF NEW.held_balance IS DISTINCT FROM OLD.held_balance THEN
+            INSERT INTO wallet_ledger (wallet_id,user_id,transaction_id,balance_type,direction,amount,balance_before,balance_after,reason_code,reference_type,reference_id,actor_id,source,policy_version,request_id,metadata)
+            VALUES (NEW.id, NEW.user_id, v_txid, 'held_balance',
+              CASE WHEN NEW.held_balance > OLD.held_balance THEN 'credit' ELSE 'debit' END,
+              ABS(NEW.held_balance - OLD.held_balance), OLD.held_balance, NEW.held_balance,
+              v_reason, v_reftype, v_refid, v_actor, v_source, v_policy, v_request, v_meta);
+          END IF;
+        EXCEPTION WHEN others THEN
+          RAISE WARNING 'wallet_ledger logging failed for wallet %: %', NEW.id, SQLERRM;
+        END;
+
+        RETURN NEW;
+      END;
+      $fn$;
+
+      DROP TRIGGER IF EXISTS trg_wallet_ledger ON wallets;
+      CREATE TRIGGER trg_wallet_ledger
+        AFTER UPDATE OF balance, held_balance ON wallets
+        FOR EACH ROW EXECUTE FUNCTION log_wallet_change();
+
+      -- Opening baseline: one credit row per wallet that has money but no ledger
+      -- history yet. Gated on NOT EXISTS so wallets funded later (already logged
+      -- by the trigger) are never double-counted.
+      INSERT INTO wallet_ledger (wallet_id,user_id,balance_type,direction,amount,balance_before,balance_after,reason_code,source,idempotency_key)
+      SELECT w.id, w.user_id, 'balance', 'credit', w.balance, 0, w.balance, 'OPENING_BALANCE', 'migration', 'opening:'||w.id||':balance'
+      FROM wallets w
+      WHERE w.balance > 0
+        AND NOT EXISTS (SELECT 1 FROM wallet_ledger l WHERE l.wallet_id=w.id AND l.balance_type='balance')
+      ON CONFLICT (idempotency_key) DO NOTHING;
+
+      INSERT INTO wallet_ledger (wallet_id,user_id,balance_type,direction,amount,balance_before,balance_after,reason_code,source,idempotency_key)
+      SELECT w.id, w.user_id, 'held_balance', 'credit', w.held_balance, 0, w.held_balance, 'OPENING_HELD_BALANCE', 'migration', 'opening:'||w.id||':held_balance'
+      FROM wallets w
+      WHERE w.held_balance > 0
+        AND NOT EXISTS (SELECT 1 FROM wallet_ledger l WHERE l.wallet_id=w.id AND l.balance_type='held_balance')
+      ON CONFLICT (idempotency_key) DO NOTHING;
+    `);
+    console.log('✅ DB migration: wallet_ledger + trigger + opening baseline ready (Batch 17)');
+  } catch (err) {
+    console.error('⚠️  DB migration (wallet_ledger) warning:', err.message);
+  }
+
   // ── Cron: Auto-release escrow sau 24h nếu không có khiếu nại ───────────────
   setInterval(async () => {
     try {
@@ -8611,41 +8856,41 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
       `);
 
       for (const row of due.rows) {
+        // Batch 17: run each release in a transaction with ledger context
+        const client = await pool.connect();
         try {
-          // Lấy tutor wallet
-          const tw = await pool.query('SELECT id FROM wallets WHERE user_id=$1', [row.tutor_id]);
-          if (!tw.rows.length) continue;
+          const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [row.tutor_id]);
+          if (!tw.rows.length) { client.release(); continue; }
           const tutorWalletId = tw.rows[0].id;
 
-          // Lấy admin wallet
           let adminWalletId = process.env.ADMIN_WALLET_ID;
           if (!adminWalletId) {
-            const aw = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
-            if (!aw.rows.length) continue;
+            const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
+            if (!aw.rows.length) { client.release(); continue; }
             adminWalletId = aw.rows[0].id;
           }
 
-          await pool.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+          await client.query('BEGIN');
+          await setLedgerContext(client, { reason_code: 'AUTO_RELEASE_24H', source: 'cron', reference_type: 'booking', reference_id: row.id, transaction_id: row.escrow_tx_id });
+          await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
             row.escrow_tx_id, row.payer_wallet_id, tutorWalletId, adminWalletId, row.lesson_fee, 0.1
           ]);
-
-          await pool.query(`UPDATE bookings SET escrow_released_at=NOW() WHERE id=$1`, [row.id]);
-
-          // Cộng completed_lessons_count cho gia sư
-          await pool.query(`
+          await client.query(`UPDATE bookings SET escrow_released_at=NOW() WHERE id=$1`, [row.id]);
+          await client.query(`
             UPDATE tutor_profiles SET completed_lessons_count = completed_lessons_count + 1
             WHERE user_id = $1
           `, [row.tutor_id]);
-
-          // Thông báo cho gia sư
-          await pool.query(`
+          await client.query(`
             INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
             VALUES ($1,'escrow_released','Tiền học phí đã được giải ngân',$2,'payments',$3,'booking')
           `, [row.tutor_id, `Học phí buổi học đã được chuyển vào ví của bạn (sau 24h xác nhận).`, row.id]);
-
+          await client.query('COMMIT');
           console.log(`✅ Auto-released escrow for booking ${row.id}`);
         } catch (innerErr) {
+          await client.query('ROLLBACK').catch(() => {});
           console.error(`❌ Auto-release failed for booking ${row.id}:`, innerErr.message);
+        } finally {
+          client.release();
         }
       }
     } catch (err) {
@@ -8684,6 +8929,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
               decision_by: 'system', metadata: { source: 'cron_auto_cancel' },
             });
             if (logId) {
+              await setLedgerContext(client, { reason_code: 'AUTO_CANCEL_TUTOR_NO_RESPONSE', source: 'cron', reference_type: 'booking', reference_id: row.id, transaction_id: row.escrow_tx_id });
               await client.query('SELECT refund_escrow($1,$2,$3)', [row.escrow_tx_id, row.payer_wallet_id, fee]);
               refunded = true;
             }
