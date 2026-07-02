@@ -6996,11 +6996,79 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// REFUND POLICY V2.1 — helpers (Batch 16). Pure decision helpers + audit utils.
+// ═══════════════════════════════════════════════════════════════════════════
+const REFUND_POLICY_VERSION = "REFUND_POLICY_V2_1";
+
+// Course purchase: 48h window, progress-tiered refund rate.
+function getCourseRefundDecision(hoursSincePurchase, progressPercent) {
+  if (hoursSincePurchase > 48)
+    return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "COURSE_AFTER_48H_ADMIN_REVIEW" };
+  if (progressPercent <= 20)
+    return { eligible: true, mode: "AUTO_FULL", refundRate: 1.0, reasonCode: "COURSE_WITHIN_48H_PROGRESS_LE_20" };
+  if (progressPercent <= 40)
+    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.7, reasonCode: "COURSE_WITHIN_48H_PROGRESS_21_40" };
+  if (progressPercent <= 60)
+    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.4, reasonCode: "COURSE_WITHIN_48H_PROGRESS_41_60" };
+  if (progressPercent <= 80)
+    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.2, reasonCode: "COURSE_WITHIN_48H_PROGRESS_61_80" };
+  return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "COURSE_PROGRESS_GT_80_ADMIN_REVIEW" };
+}
+
+// Lesson/booking: tutor fault = full; student cancel = hours-before-lesson tiered.
+function getLessonRefundDecision(hoursBeforeLesson, reasonCode) {
+  if (["TUTOR_CANCELLED", "TUTOR_NO_SHOW", "TUTOR_FAULT"].includes(reasonCode))
+    return { eligible: true, mode: "AUTO_FULL", refundRate: 1.0, reasonCode };
+  if (reasonCode === "STUDENT_CANCELLED") {
+    if (hoursBeforeLesson >= 6) return { eligible: true, mode: "AUTO_FULL",    refundRate: 1.0,  reasonCode: "STUDENT_CANCEL_GE_6H" };
+    if (hoursBeforeLesson >= 3) return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.5,  reasonCode: "STUDENT_CANCEL_3_TO_6H" };
+    if (hoursBeforeLesson >= 1) return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.25, reasonCode: "STUDENT_CANCEL_1_TO_3H" };
+    return { eligible: false, mode: "NO_REFUND", refundRate: 0, reasonCode: "STUDENT_CANCEL_LT_1H_NO_REFUND" };
+  }
+  if (reasonCode === "STUDENT_NO_SHOW")
+    return { eligible: false, mode: "NO_REFUND", refundRate: 0, reasonCode: "STUDENT_NO_SHOW_NO_REFUND" };
+  return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "UNKNOWN_REASON_ADMIN_REVIEW" };
+}
+
+// Combine booking.lesson_date (date) + booking.time_slot ('HH:MM') into a Date.
+function parseBookingStartDateTime(booking) {
+  const d = String(booking.lesson_date).slice(0, 10);
+  const t = (booking.time_slot || '00:00').slice(0, 5);
+  return new Date(`${d}T${t}:00`);
+}
+
+async function getAdminWalletId(client) {
+  if (process.env.ADMIN_WALLET_ID) return process.env.ADMIN_WALLET_ID;
+  const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
+  return aw.rows.length ? aw.rows[0].id : null;
+}
+
+// Idempotent refund-log insert — the UNIQUE(target_type,target_id,student_id)
+// index makes this the atomic double-refund lock. Returns the new log id, or
+// null when a refund log already exists for this target/student.
+async function createRefundLog(client, log) {
+  const r = await client.query(
+    `INSERT INTO refund_logs
+       (target_type, target_id, student_id, tutor_id, dispute_id,
+        original_amount, refund_rate, refund_amount, non_refunded_amount,
+        reason_code, policy_version, decision_by, admin_id, note, metadata)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)
+     ON CONFLICT (target_type, target_id, student_id) DO NOTHING
+     RETURNING id`,
+    [log.target_type, log.target_id, log.student_id, log.tutor_id || null, log.dispute_id || null,
+     log.original_amount, log.refund_rate, log.refund_amount, log.non_refunded_amount,
+     log.reason_code, REFUND_POLICY_VERSION, log.decision_by || 'system', log.admin_id || null,
+     log.note || null, JSON.stringify(log.metadata || {})]
+  );
+  return r.rows.length ? r.rows[0].id : null;
+}
+
 // PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
 // Logic escrow:
 //   Approved  → hold_money_for_lesson (trừ balance, cộng held_balance)
 //   Declined/Rejected → hoàn tiền nếu đã hold
-//   Cancelled → hoàn tiền theo policy: trước 24h = 100%, trong 24h = 50% (phạt hủy trễ)
+//   Cancelled → Refund Policy v2.1 (gia sư lỗi=100%; học sinh: >=6h=100%, 3-6h=50%, 1-3h=25%, <1h=0%)
 app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -7090,103 +7158,77 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
           booking.id]);
     }
 
-    // ── CANCELLED: policy hoàn tiền theo thời gian ───────────────────────────
+    // ── CANCELLED: Refund Policy v2.1 (Batch 16) ─────────────────────────────
+    //   Tutor fault → 100%. Student: >=6h=100%, 3-6h=50%, 1-3h=25%, <1h=0%.
+    //   Refund via refund_escrow; non-refunded portion → tutor 90% / admin 10%
+    //   via release_escrow. refund_logs unique index = atomic double-refund lock.
     else if (status === 'Cancelled') {
-      let refundUpdate = `UPDATE bookings SET status='Cancelled'`;
+      // Guard: only un-settled bookings can be cancelled here
+      if (booking.status === 'Cancelled' || booking.escrow_released_at) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: 'Lịch học đã được hủy hoặc đã giải ngân trước đó.' });
+      }
 
       if (booking.escrow_tx_id && lessonFee > 0) {
-        // Tính thời gian còn lại đến buổi học
-        const lessonDateTime = new Date(`${String(booking.lesson_date).slice(0,10)}T${booking.time_slot || '00:00'}:00`);
-        const hoursUntilLesson = (lessonDateTime - new Date()) / (1000 * 60 * 60);
+        const isTutor    = req.user.userId === booking.tutor_id;
+        const reasonCode = req.body?.reasonCode || (isTutor ? 'TUTOR_CANCELLED' : 'STUDENT_CANCELLED');
 
-        let refundAmount = lessonFee;
-        let penaltyAmount = 0;
-        let refundMsg = '';
+        const startDT           = parseBookingStartDateTime(booking);
+        const hoursBeforeLesson = (startDT.getTime() - Date.now()) / 3600000;
+        const decision          = getLessonRefundDecision(hoursBeforeLesson, reasonCode);
 
-        if (hoursUntilLesson > 24) {
-          // Hủy sớm: hoàn 100%
-          refundAmount = lessonFee;
-          refundMsg = `Hủy trước 24h — hoàn toàn bộ ${lessonFee.toLocaleString('vi-VN')}đ.`;
-        } else if (hoursUntilLesson > 0) {
-          // Hủy trễ (trong 24h): hoàn 50%, gia sư nhận 50% nếu đã được approve
-          refundAmount = Math.floor(lessonFee * 0.5);
-          penaltyAmount = lessonFee - refundAmount;
-          refundMsg = `Hủy trong 24h trước giờ học — hoàn 50% (${refundAmount.toLocaleString('vi-VN')}đ). Phí hủy trễ: ${penaltyAmount.toLocaleString('vi-VN')}đ.`;
-        } else {
-          // Đã qua giờ học: không hoàn tiền
-          refundAmount = 0;
-          penaltyAmount = lessonFee;
-          refundMsg = `Buổi học đã qua — không hoàn tiền.`;
-        }
+        const refundAmount = Math.round(lessonFee * decision.refundRate);
+        const nonRefunded  = lessonFee - refundAmount;
 
+        // Idempotency + audit (UNIQUE(target,student) prevents double refund)
+        const logId = await createRefundLog(client, {
+          target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
+          tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: decision.refundRate,
+          refund_amount: refundAmount, non_refunded_amount: nonRefunded, reason_code: decision.reasonCode,
+          decision_by: isTutor ? 'tutor' : 'student',
+          metadata: { mode: decision.mode, hours_before_lesson: Math.round(hoursBeforeLesson * 100) / 100 },
+        });
+        if (!logId) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Lịch học này đã được hoàn tiền.' }); }
+
+        // Settle escrow with vetted DB functions (held → student / tutor+admin)
         if (refundAmount > 0) {
-          // Hoàn phần refundAmount về học sinh
-          await client.query(`
-            UPDATE wallets SET held_balance=held_balance-$1, balance=balance+$2 WHERE id=$3
-          `, [lessonFee, refundAmount, booking.payer_wallet_id]);
-
-          // Phần penalty (nếu có): chuyển cho gia sư (50%) + admin (50% của penalty)
-          if (penaltyAmount > 0 && booking.tutor_id) {
-            const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
-            if (tw.rows.length) {
-              const tutorShare = Math.floor(penaltyAmount * 0.5);
-              const adminShare = penaltyAmount - tutorShare;
-
-              await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [tutorShare, tw.rows[0].id]);
-
-              // Admin
-              let adminWalletId = process.env.ADMIN_WALLET_ID;
-              if (!adminWalletId) {
-                const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
-                if (aw.rows.length) adminWalletId = aw.rows[0].id;
-              }
-              if (adminWalletId) {
-                await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminShare, adminWalletId]);
-              }
-
-              // Thông báo gia sư nhận phí hủy
-              await client.query(`
-                INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-                VALUES ($1,'cancellation_fee','Nhận phí hủy lịch học',$2,'payments',$3,'booking')
-              `, [booking.tutor_id,
-                  `Học sinh đã hủy muộn. Bạn nhận được phí hủy ${tutorShare.toLocaleString('vi-VN')}đ.`,
-                  booking.id]);
-            }
+          await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, refundAmount]);
+        }
+        if (nonRefunded > 0) {
+          const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+          const adminWalletId = await getAdminWalletId(client);
+          if (!tw.rows.length || !adminWalletId) {
+            await client.query('ROLLBACK');
+            return res.status(500).json({ message: 'Thiếu ví gia sư/admin để xử lý phí hủy.' });
           }
-
-          // Log transaction hoàn tiền
-          await client.query(`
-            INSERT INTO transactions (wallet_id, amount, type, status, gateway, reference_id, description)
-            VALUES ($1,$2,'REFUND','SUCCESS','SYSTEM',$3,$4)
-          `, [booking.payer_wallet_id, refundAmount, booking.id, `Hoàn tiền hủy lịch học: ${refundMsg}`]);
-
-          // Cập nhật transaction gốc (nếu có)
-          if (booking.escrow_tx_id) {
-            await client.query(`UPDATE transactions SET status='REFUNDED', updated_at=NOW() WHERE id=$1`, [booking.escrow_tx_id]);
-          }
-        } else {
-          // Không hoàn — chỉ release held_balance
-          await client.query(`
-            UPDATE wallets SET held_balance=held_balance-$1 WHERE id=$2
-          `, [lessonFee, booking.payer_wallet_id]);
-          if (booking.escrow_tx_id) {
-            await client.query(`UPDATE transactions SET status='REFUNDED', updated_at=NOW() WHERE id=$1`, [booking.escrow_tx_id]);
-          }
+          await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+            booking.escrow_tx_id, booking.payer_wallet_id, tw.rows[0].id, adminWalletId, nonRefunded, 0.1,
+          ]);
         }
 
-        await client.query(`UPDATE bookings SET status='Cancelled', escrow_released_at=NOW() WHERE id=$1`, [booking.id]);
+        await client.query(`UPDATE bookings SET status='Cancelled', escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
 
-        // Notify học sinh
+        const pct = Math.round(decision.refundRate * 100);
+        const refundMsg = decision.refundRate >= 1
+          ? `Hoàn toàn bộ ${refundAmount.toLocaleString('vi-VN')}đ.`
+          : decision.refundRate > 0
+            ? `Hoàn ${pct}% (${refundAmount.toLocaleString('vi-VN')}đ). Phí hủy: ${nonRefunded.toLocaleString('vi-VN')}đ.`
+            : `Không hoàn tiền theo chính sách (${decision.reasonCode}).`;
+
         await client.query(`
           INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
           VALUES ($1,'cancellation','Lịch học đã bị hủy',$2,'cancel',$3,'booking')
         `, [booking.student_id, refundMsg, booking.id]);
 
-        if (booking.tutor_id && req.user.userId !== booking.tutor_id) {
+        // Notify the counter-party (tutor when student cancels)
+        if (booking.tutor_id && !isTutor) {
+          const tutorMsg = nonRefunded > 0
+            ? `Học sinh đã hủy buổi học. Bạn nhận phí hủy ${Math.floor(nonRefunded * 0.9).toLocaleString('vi-VN')}đ.`
+            : `Học sinh đã hủy buổi học và được hoàn tiền theo chính sách.`;
           await client.query(`
             INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
             VALUES ($1,'cancellation','Học sinh đã hủy lịch học',$2,'event_busy',$3,'booking')
-          `, [booking.tutor_id, `Học sinh đã hủy buổi học. ${refundMsg}`, booking.id]);
+          `, [booking.tutor_id, tutorMsg, booking.id]);
         }
       } else {
         // Không có escrow: hủy bình thường
@@ -8053,59 +8095,83 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
     );
     if (existingDispute.rows.length) return res.status(409).json({ message: 'Bạn đã gửi khiếu nại cho khóa học này rồi.' });
 
-    // Check Auto-Refund conditions: <= 7 days AND <= 20% progress
-    const daysSincePurchase = (Date.now() - new Date(enrollment.purchased_at).getTime()) / (1000 * 3600 * 24);
-    
-    // Check progress
+    // ── Refund Policy v2.1: 48h window + progress-tiered rate (Batch 16) ──────
+    const hoursSincePurchase = (Date.now() - new Date(enrollment.purchased_at).getTime()) / 3600000;
+
     const lessonsRes = await client.query("SELECT COUNT(*) FROM course_lessons WHERE course_id=$1", [enrollment.course_id]);
     const totalLessons = parseInt(lessonsRes.rows[0].count);
     const progressRes = await client.query("SELECT COUNT(*) FROM course_progress WHERE enrollment_id=$1 AND is_completed=true", [enrollment.id]);
     const completedLessons = parseInt(progressRes.rows[0].count);
-    
     const progressPercent = totalLessons === 0 ? 0 : (completedLessons / totalLessons) * 100;
+
+    const decision = getCourseRefundDecision(hoursSincePurchase, progressPercent);
+    const price = parseFloat(enrollment.price || 0);
 
     await client.query('BEGIN');
 
-    if (daysSincePurchase <= 7 && progressPercent <= 20) {
-      // Auto refund
-      const price = parseFloat(enrollment.price || 0);
-      
-      const adminShare = Math.round(price * 0.1);
-      const tutorShare = price - adminShare;
+    if (decision.eligible && price > 0) {
+      // Reverse only refundAmount proportionally (course pays out immediately)
+      const refundAmount = Math.round(price * decision.refundRate);
+      const nonRefunded  = price - refundAmount;
+      const tutorDeduct  = Math.round(refundAmount * 0.9);
+      const adminDeduct  = refundAmount - tutorDeduct;
 
-      const sw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [enrollment.student_id]);
-      const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [enrollment.tutor_id]);
-      let adminWalletId = process.env.ADMIN_WALLET_ID;
-      if (!adminWalletId) {
-        const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
-        if (aw.rows.length) adminWalletId = aw.rows[0].id;
-      }
+      const sw = await client.query('SELECT id, balance FROM wallets WHERE user_id=$1', [enrollment.student_id]);
+      const tw = await client.query('SELECT id, balance FROM wallets WHERE user_id=$1', [enrollment.tutor_id]);
+      const adminWalletId = await getAdminWalletId(client);
+      const adminW = adminWalletId ? await client.query('SELECT balance FROM wallets WHERE id=$1', [adminWalletId]) : { rows: [] };
 
-      if (sw.rows.length && tw.rows.length && adminWalletId) {
-        await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [price, sw.rows[0].id]);
-        await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [tutorShare, tw.rows[0].id]);
-        await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [adminShare, adminWalletId]);
+      // Only auto-settle if wallets exist AND have sufficient balance (CHECK balance>=0).
+      // Otherwise fall through to ADMIN_REVIEW rather than corrupt balances.
+      const canSettle = sw.rows.length && tw.rows.length && adminWalletId && adminW.rows.length &&
+        Number(tw.rows[0].balance) >= tutorDeduct && Number(adminW.rows[0].balance) >= adminDeduct;
+
+      if (canSettle) {
+        // Idempotency + audit (UNIQUE(target,student) = atomic double-refund lock)
+        const logId = await createRefundLog(client, {
+          target_type: 'course', target_id: enrollment.course_id, student_id: enrollment.student_id,
+          tutor_id: enrollment.tutor_id, original_amount: price, refund_rate: decision.refundRate,
+          refund_amount: refundAmount, non_refunded_amount: nonRefunded, reason_code: decision.reasonCode,
+          decision_by: 'system',
+          metadata: { mode: decision.mode, progress_percent: Math.round(progressPercent), hours_since_purchase: Math.round(hoursSincePurchase) },
+        });
+        if (!logId) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Khóa học này đã được hoàn tiền.' }); }
+
+        await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [refundAmount, sw.rows[0].id]);
+        if (tutorDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [tutorDeduct, tw.rows[0].id]);
+        if (adminDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [adminDeduct, adminWalletId]);
 
         await client.query(`UPDATE course_enrollments SET status='refunded' WHERE id=$1`, [enrollment.id]);
 
         await client.query(`
+          INSERT INTO transactions (wallet_id, amount, type, status, gateway, reference_id, description)
+          VALUES ($1,$2,'REFUND','SUCCESS','SYSTEM',$3,$4)
+        `, [sw.rows[0].id, refundAmount, enrollment.course_id, `Hoàn tiền khóa học ${Math.round(decision.refundRate * 100)}% — ${decision.reasonCode}`]);
+
+        await client.query(`
           INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url, admin_note, resolved_at)
-          VALUES (NULL, $1, $2, 'RESOLVED_REFUND', $3, 'course', $4, $5, $6, $7, 'Hệ thống tự động hoàn tiền do chưa vượt quá 20% tiến độ và 7 ngày.', NOW())
-        `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl]);
+          VALUES (NULL, $1, $2, 'RESOLVED_REFUND', $3, 'course', $4, $5, $6, $7, $8, NOW())
+        `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
+            `Tự động hoàn ${Math.round(decision.refundRate * 100)}% theo ${REFUND_POLICY_VERSION} (tiến độ ${Math.round(progressPercent)}%, ${Math.round(hoursSincePurchase)}h).`]);
 
         await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'course_refund','Hoàn tiền khóa học thành công',$2,'undo',$3,'course')`,
-          [enrollment.student_id, `Bạn đã được hoàn ${price.toLocaleString('vi-VN')}đ cho khóa học "${enrollment.title}".`, enrollment.course_id]);
+          [enrollment.student_id, `Bạn đã được hoàn ${refundAmount.toLocaleString('vi-VN')}đ (${Math.round(decision.refundRate * 100)}%) cho khóa học "${enrollment.title}".`, enrollment.course_id]);
 
         await client.query('COMMIT');
-        return res.status(200).json({ message: 'Yêu cầu khiếu nại đã được phê duyệt tự động. Tiền đã được hoàn vào ví của bạn.' });
+        return res.status(200).json({
+          message: `Đã hoàn ${refundAmount.toLocaleString('vi-VN')}đ (${Math.round(decision.refundRate * 100)}%) vào ví của bạn.`,
+          refund: { rate: decision.refundRate, amount: refundAmount, reason_code: decision.reasonCode, policy_version: REFUND_POLICY_VERSION },
+        });
       }
+      // wallets missing / insufficient balance → fall through to ADMIN_REVIEW
     }
 
-    // Manual resolve needed
+    // ── ADMIN_REVIEW (>80% progress, >48h, or auto-settle unsafe) → OPEN dispute
     const dispute = await client.query(`
-      INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url)
-      VALUES (NULL, $1, $2, 'OPEN', $3, 'course', $4, $5, $6, $7) RETURNING id
-    `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl]);
+      INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url, admin_note)
+      VALUES (NULL, $1, $2, 'OPEN', $3, 'course', $4, $5, $6, $7, $8) RETURNING id
+    `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
+        `Chuyển admin xét duyệt theo ${REFUND_POLICY_VERSION}: ${decision.reasonCode}.`]);
 
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
@@ -8143,6 +8209,15 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
     const dRes = await client.query('SELECT * FROM disputes WHERE id=$1', [disputeId]);
     if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
     const dispute = dRes.rows[0];
+
+    // Idempotency: only an OPEN dispute can be resolved (Batch 16)
+    if (dispute.status !== 'OPEN') {
+      return res.status(409).json({ message: 'Khiếu nại đã được xử lý.' });
+    }
+
+    // Optional partial refund rate for admin manual refund; default = full refund
+    let refundRate = Number(req.body?.refundRate);
+    if (!Number.isFinite(refundRate) || refundRate < 0 || refundRate > 1) refundRate = 1;
 
     let studentId, tutorId, amount = 0, payerWalletId, escrowTxId, bookingId, courseId;
 
@@ -8200,27 +8275,55 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
     }
 
     if (decision === 'REFUND_TO_STUDENT') {
+      const refundAmount = Math.round(amount * refundRate);
+      const nonRefunded  = amount - refundAmount;
+
+      // Idempotency + audit (UNIQUE(target,student) prevents double refund)
+      const logId = await createRefundLog(client, {
+        target_type: dispute.target_type, target_id: bookingId || courseId, student_id: studentId,
+        tutor_id: tutorId, dispute_id: disputeId, original_amount: amount, refund_rate: refundRate,
+        refund_amount: refundAmount, non_refunded_amount: nonRefunded,
+        reason_code: 'ADMIN_REFUND', decision_by: 'admin', admin_id: req.user.userId,
+        note: adminNote || null, metadata: { penaltyType },
+      });
+      if (!logId) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Đã hoàn tiền cho khiếu nại này trước đó.' }); }
+
       if (dispute.target_type === 'booking') {
         if (escrowTxId && payerWalletId) {
-          await client.query('SELECT refund_escrow($1,$2,$3)', [escrowTxId, payerWalletId, amount]);
+          if (refundAmount > 0) await client.query('SELECT refund_escrow($1,$2,$3)', [escrowTxId, payerWalletId, refundAmount]);
+          if (nonRefunded > 0) {
+            if (!tutorWalletId || !adminWalletId) { await client.query('ROLLBACK'); return res.status(500).json({ message: 'Thiếu ví để xử lý phần không hoàn.' }); }
+            await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [escrowTxId, payerWalletId, tutorWalletId, adminWalletId, nonRefunded, 0.1]);
+          }
         }
         await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [bookingId]);
       } else if (dispute.target_type === 'course') {
-        const sw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [studentId]);
-        if (sw.rows.length && tutorWalletId && adminWalletId) {
-          const adminShare = Math.round(amount * 0.1);
-          const tutorShare = amount - adminShare;
-          await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [amount, sw.rows[0].id]);
-          await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [tutorShare, tutorWalletId]);
-          await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [adminShare, adminWalletId]);
+        const sw  = await client.query('SELECT id, balance FROM wallets WHERE user_id=$1', [studentId]);
+        const twb = tutorWalletId ? await client.query('SELECT balance FROM wallets WHERE id=$1', [tutorWalletId]) : { rows: [] };
+        const awb = adminWalletId ? await client.query('SELECT balance FROM wallets WHERE id=$1', [adminWalletId]) : { rows: [] };
+        const tutorDeduct = Math.round(refundAmount * 0.9);
+        const adminDeduct = refundAmount - tutorDeduct;
+        if (refundAmount > 0) {
+          if (!sw.rows.length || !tutorWalletId || !adminWalletId ||
+              Number(twb.rows[0]?.balance) < tutorDeduct || Number(awb.rows[0]?.balance) < adminDeduct) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ message: 'Số dư ví gia sư/admin không đủ để hoàn tiền. Cần xử lý thủ công.' });
+          }
+          await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [refundAmount, sw.rows[0].id]);
+          if (tutorDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [tutorDeduct, tutorWalletId]);
+          if (adminDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [adminDeduct, adminWalletId]);
+          await client.query(`
+            INSERT INTO transactions (wallet_id, amount, type, status, gateway, reference_id, description)
+            VALUES ($1,$2,'REFUND','SUCCESS','SYSTEM',$3,$4)
+          `, [sw.rows[0].id, refundAmount, courseId, `Admin hoàn tiền khóa học ${Math.round(refundRate * 100)}%`]);
         }
         await client.query(`UPDATE course_enrollments SET status='refunded' WHERE course_id=$1 AND student_id=$2`, [courseId, studentId]);
       }
 
       await client.query("UPDATE disputes SET status='RESOLVED_REFUND', penalty_type=$1, admin_note=$2, resolved_at=NOW() WHERE id=$3", [penaltyType, adminNote, disputeId]);
-      
+
       await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Đã hoàn tiền',$2,'check_circle',$3,'dispute')`,
-        [studentId, `Admin phán quyết: Hoàn ${amount.toLocaleString('vi-VN')}đ vào ví bạn.`, disputeId]);
+        [studentId, `Admin phán quyết: Hoàn ${refundAmount.toLocaleString('vi-VN')}đ (${Math.round(refundRate * 100)}%) vào ví bạn.`, disputeId]);
       await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Phán quyết chống lại bạn',$2,'gavel',$3,'dispute')`,
         [tutorId, `Admin hoàn tiền cho học sinh. ${repDeduct > 0 ? 'Điểm uy tín bị trừ ' + repDeduct + '.' : ''}`, disputeId]);
 
@@ -8457,6 +8560,41 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: parent feature tables ready');
   } catch (err) {
     console.error('⚠️  DB migration (parent features) warning:', err.message);
+  }
+
+  // ── Refund Policy v2.1: refund_logs audit table (Batch 16) ─────────────────
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS refund_logs (
+        id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        target_type         TEXT NOT NULL CHECK (target_type IN ('course','booking','dispute')),
+        target_id           UUID NOT NULL,
+        student_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tutor_id            UUID REFERENCES users(id) ON DELETE SET NULL,
+        dispute_id          UUID,
+        original_amount     NUMERIC(15,2) NOT NULL DEFAULT 0,
+        refund_rate         NUMERIC(5,4)  NOT NULL DEFAULT 0,
+        refund_amount       NUMERIC(15,2) NOT NULL DEFAULT 0,
+        non_refunded_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        reason_code         TEXT NOT NULL,
+        policy_version      TEXT NOT NULL DEFAULT 'REFUND_POLICY_V2_1',
+        decision_by         TEXT NOT NULL DEFAULT 'system' CHECK (decision_by IN ('system','admin','student','tutor')),
+        admin_id            UUID REFERENCES users(id) ON DELETE SET NULL,
+        note                TEXT,
+        metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at          TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_refund_logs_target     ON refund_logs(target_type, target_id);
+      CREATE INDEX IF NOT EXISTS idx_refund_logs_student    ON refund_logs(student_id);
+      CREATE INDEX IF NOT EXISTS idx_refund_logs_tutor      ON refund_logs(tutor_id);
+      CREATE INDEX IF NOT EXISTS idx_refund_logs_dispute    ON refund_logs(dispute_id);
+      CREATE INDEX IF NOT EXISTS idx_refund_logs_created    ON refund_logs(created_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_refund_logs_unique_target_student
+        ON refund_logs(target_type, target_id, student_id);
+    `);
+    console.log('✅ DB migration: refund_logs table ready (Refund Policy v2.1)');
+  } catch (err) {
+    console.error('⚠️  DB migration (refund_logs) warning:', err.message);
   }
 
   // ── Cron: Auto-release escrow sau 24h nếu không có khiếu nại ───────────────

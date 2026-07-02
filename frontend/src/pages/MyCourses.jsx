@@ -327,9 +327,18 @@ export default function MyCourses() {
             </div>
             <div className="p-lg overflow-y-auto">
               <p className="text-body-md text-on-surface-variant mb-md">
-                Bạn đang khiếu nại khóa học <strong className="text-primary">{selectedCourseToReport.title}</strong>. 
-                <br/>Hệ thống sẽ tự động hoàn tiền nếu bạn chưa học quá 20% và đăng ký chưa quá 7 ngày.
+                Bạn đang khiếu nại khóa học <strong className="text-primary">{selectedCourseToReport.title}</strong>.
               </p>
+              <div className="text-label-md text-on-surface-variant bg-surface-container rounded-lg p-sm mb-md border border-outline-variant">
+                <p className="font-bold mb-xs">Chính sách hoàn tiền khóa học (trong 48 giờ đầu, theo tiến độ học):</p>
+                <ul className="list-disc pl-md space-y-0.5">
+                  <li>Tiến độ ≤ 20%: hoàn 100%</li>
+                  <li>21–40%: hoàn 70%</li>
+                  <li>41–60%: hoàn 40%</li>
+                  <li>61–80%: hoàn 20%</li>
+                  <li>Trên 80% hoặc sau 48 giờ: chuyển admin xem xét</li>
+                </ul>
+              </div>
               {reportError && <div className="p-sm bg-red-100 text-red-600 rounded mb-md text-label-md">{reportError}</div>}
               
               <label className="block text-label-md font-bold text-on-surface mb-xs mt-md">Mức độ nghiêm trọng</label>
