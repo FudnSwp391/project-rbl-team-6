@@ -19,6 +19,7 @@ import Reconciliation        from './admin/transactions/Reconciliation'
 import FraudAlerts           from './admin/transactions/FraudAlerts'
 import NotificationCenter    from './admin/transactions/NotificationCenter'
 import AuditLogs             from './admin/transactions/AuditLogs'
+import WalletLedger          from './admin/transactions/WalletLedger'
 
 import Violations from './admin/services/Violations'
 import Moderation from './admin/services/Moderation'
@@ -61,6 +62,7 @@ const TX_SUB_ITEMS = [
   { id: 'tx-reconciliation', label: 'Đối Soát',      icon: 'compare_arrows' },
   { id: 'tx-fraud',        label: 'Cảnh Báo Gian Lận',          icon: 'warning' },
   { id: 'tx-notifications', label: 'Trung Tâm Thông Báo',  icon: 'notifications' },
+  { id: 'tx-wallet-ledger', label: 'Sổ Cái Ví',             icon: 'account_balance_wallet' },
   { id: 'tx-audit',        label: 'Nhật Ký Admin',            icon: 'history_edu' },
 ]
 
@@ -459,6 +461,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-reconciliation' && <Reconciliation token={token} />}
           {activeView === 'tx-fraud'         && <FraudAlerts token={token} />}
           {activeView === 'tx-notifications' && <NotificationCenter token={token} />}
+          {activeView === 'tx-wallet-ledger' && <WalletLedger token={token} />}
           {activeView === 'tx-audit'         && <AuditLogs token={token} />}
           
           {/* ── Service Management Module ── */}
