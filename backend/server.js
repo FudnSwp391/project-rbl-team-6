@@ -2790,6 +2790,118 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
   }
 });
 
+// ── GET /api/admin/notifications ─────────────────────────────────────────────
+// CAP-9.1: Read-only notification history from notifications table.
+// Source: notifications JOIN users (user_id=recipient). No writes/sends/deletes.
+app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit)  || 200, 500);
+    const type   = req.query.type   || null;
+    const status = req.query.status || null; // read|unread
+
+    // Map status filter to is_read boolean
+    const isReadFilter =
+      status === 'read'   ? true  :
+      status === 'unread' ? false : null;
+
+    const conditions = [];
+    const params     = [];
+    if (type) {
+      params.push(type);
+      conditions.push(`n.type = $${params.length}`);
+    }
+    if (isReadFilter !== null) {
+      params.push(isReadFilter);
+      conditions.push(`n.is_read = $${params.length}`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    params.push(limit);
+    const rows = (await pool.query(`
+      SELECT
+        n.id,
+        n.type,
+        n.title,
+        n.body        AS message,
+        n.is_read,
+        n.ref_type,
+        n.ref_id,
+        n.created_at,
+        u.full_name   AS recipient_name,
+        u.email       AS recipient_email,
+        u.role        AS recipient_role
+      FROM notifications n
+      LEFT JOIN users u ON u.id = n.user_id
+      ${where}
+      ORDER BY n.created_at DESC
+      LIMIT $${params.length}
+    `, params)).rows;
+
+    // Aggregate summary
+    const total        = rows.length;
+    const unread_count = rows.filter(r => r.is_read === false).length;
+    const read_count   = rows.filter(r => r.is_read === true).length;
+    const unknown_count = rows.filter(r => r.is_read === null).length;
+
+    // Derive notification category
+    const typeCategory = t => {
+      if (!t) return 'other';
+      if (t.includes('course'))   return 'course';
+      if (t.includes('lesson'))   return 'booking';
+      if (t.includes('refund') || t.includes('escrow') || t.includes('payment')) return 'transaction';
+      if (t === 'cancellation')   return 'booking';
+      if (t === 'new_message')    return 'other';
+      return 'other';
+    };
+
+    // Derive priority
+    const typePriority = t => {
+      if (!t) return 'low';
+      if (t === 'escrow_hold' || t.includes('refund') || t === 'course_refund') return 'high';
+      if (t === 'course_enrollment' || t === 'lesson_completed') return 'medium';
+      return 'low';
+    };
+
+    const notifications = rows.map(r => ({
+      id:              r.id,
+      title:           r.title,
+      message:         r.message,
+      type:            typeCategory(r.type),
+      raw_type:        r.type,
+      status:          r.is_read === true ? 'read' : r.is_read === false ? 'unread' : 'unknown',
+      recipient_name:  r.recipient_name  || null,
+      recipient_email: r.recipient_email || null,
+      recipient_role:  r.recipient_role  || null,
+      sender_name:     null,
+      sender_email:    null,
+      priority:        typePriority(r.type),
+      ref_type:        r.ref_type || null,
+      ref_id:          r.ref_id   || null,
+      source:          'notifications',
+      source_id:       r.id,
+      created_at:      r.created_at,
+    }));
+
+    const type_counts = {};
+    notifications.forEach(n => { type_counts[n.raw_type] = (type_counts[n.raw_type] || 0) + 1; });
+
+    return res.json({
+      summary: {
+        total,
+        unread_count,
+        read_count,
+        unknown_count,
+        type_counts,
+        generated_at: new Date().toISOString(),
+      },
+      notifications,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/notifications error:", err);
+    return res.status(500).json({ message: "Lỗi khi tải thông báo." });
+  }
+});
+
 // ── GET /api/admin/violations ────────────────────────────────────────────────
 // CAP-6.1: Read-only list of disputes as violation reports.
 // Source: disputes JOIN users (raised_by=reporter, tutor_id=accused). No mutations.
