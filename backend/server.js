@@ -925,6 +925,9 @@ app.post(
       try { parsedSuitableStudents = JSON.parse(suitable_students || '[]'); } catch {}
       try { parsedCertMetadata = JSON.parse(cert_metadata || '[]'); } catch {}
 
+      // Route này nhận JSON (không phải multipart), certificates upload riêng qua presigned URL
+      const certFiles = [];
+
             let photoPath = profile_photo_url || null;
       let cccdPath  = cccd_url || null;
 
@@ -2347,10 +2350,9 @@ app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) =>
 });
 
 // ── GET /api/admin/commissions ───────────────────────────────────────────────
-// CAP-7.1: Read-only commission/revenue breakdown from PAYMENT transactions.
-// No commission table exists; uses a fixed 10% estimated rate (clearly labelled).
-// No tutor link available (reference_id mostly null). Course title from description.
-const COMMISSION_RATE = 10; // estimated fixed rate, no DB commission table
+// CAP-7.1: Commission summary — prefers commission_logs (Batch 18 source of truth).
+// Falls back to legacy PAYMENT-estimate when commission_logs table is empty/absent.
+const COMMISSION_RATE = 10; // kept for backwards-compat legacy estimate path
 
 function extractCourseTitle(desc) {
   if (!desc) return null;
@@ -2367,15 +2369,25 @@ function paymentSource(desc) {
 
 app.get("/api/admin/commissions", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT t.id::text            AS id,
-             t.id::text            AS transaction_id,
-             ABS(t.amount)::numeric AS gross_amount,
-             t.status,
-             t.description,
-             t.created_at,
-             u.full_name           AS student_name,
-             u.email               AS student_email
+    // Primary: commission_logs summary (Batch 18)
+    const clRes = await pool.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN gross_amount       ELSE 0 END), 0)::numeric AS total_gross_earned,
+        COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN commission_amount  ELSE 0 END), 0)::numeric AS total_commission_earned,
+        COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN tutor_amount       ELSE 0 END), 0)::numeric AS total_tutor_earned,
+        COALESCE(SUM(CASE WHEN event_type='REVERSED' THEN commission_amount  ELSE 0 END), 0)::numeric AS total_commission_reversed,
+        COUNT(*)::int AS total_events
+      FROM commission_logs
+    `).catch(() => ({ rows: [null] }));
+
+    const cl = clRes.rows[0];
+    const hasTracked = cl && cl.total_events > 0;
+
+    // Legacy fallback: PAYMENT transactions estimate (no tutor link)
+    const legRes = await pool.query(`
+      SELECT t.id::text AS id, t.id::text AS transaction_id,
+             ABS(t.amount)::numeric AS gross_amount, t.status, t.description, t.created_at,
+             u.full_name AS student_name, u.email AS student_email
       FROM transactions t
       JOIN wallets w ON w.id = t.wallet_id
       JOIN users u   ON u.id = w.user_id
@@ -2384,40 +2396,48 @@ app.get("/api/admin/commissions", verifyToken, requireAdmin, async (req, res) =>
       LIMIT 100
     `);
 
-    const rows = result.rows;
-    let totalGross = 0;
-    const commissions = rows.map(r => {
+    let totalLegacyGross = 0;
+    const legacyCommissions = legRes.rows.map(r => {
       const gross = Number(r.gross_amount);
-      totalGross += gross;
+      totalLegacyGross += gross;
       const commission = Math.round(gross * COMMISSION_RATE / 100);
       return {
-        id:                  r.id,
-        transaction_id:      r.transaction_id,
-        source:              paymentSource(r.description),
-        student_name:        r.student_name,
-        student_email:       r.student_email,
-        tutor_name:          null,
-        tutor_email:         null,
-        course_title:        extractCourseTitle(r.description) || r.description || null,
-        gross_amount:        gross,
-        platform_commission: commission,
-        tutor_earning:       gross - commission,
-        commission_rate:     COMMISSION_RATE,
-        status:              r.status,
-        created_at:          r.created_at,
+        id: r.id, transaction_id: r.transaction_id,
+        source: paymentSource(r.description),
+        student_name: r.student_name, student_email: r.student_email,
+        tutor_name: null, tutor_email: null,
+        course_title: extractCourseTitle(r.description) || r.description || null,
+        gross_amount: gross, platform_commission: commission,
+        tutor_earning: gross - commission,
+        commission_rate: COMMISSION_RATE, status: r.status, created_at: r.created_at,
       };
     });
 
+    const trackedSummary = hasTracked ? {
+      source: 'commission_logs',
+      policy_version: COMMISSION_POLICY_VERSION,
+      total_gross_earned:          Number(cl.total_gross_earned),
+      total_commission_earned:     Number(cl.total_commission_earned),
+      total_tutor_earned:          Number(cl.total_tutor_earned),
+      total_commission_reversed:   Number(cl.total_commission_reversed),
+      net_platform_commission:     Number(cl.total_commission_earned) - Number(cl.total_commission_reversed),
+      total_events:                cl.total_events,
+      commission_rate:             PLATFORM_COMMISSION_RATE * 100,
+      generated_at:                new Date().toISOString(),
+    } : null;
+
     return res.json({
-      summary: {
-        total_gross_revenue:            totalGross,
-        estimated_platform_commission:  Math.round(totalGross * COMMISSION_RATE / 100),
-        estimated_tutor_earnings:       Math.round(totalGross * (100 - COMMISSION_RATE) / 100),
-        commission_rate:                COMMISSION_RATE,
-        total_payment_count:            rows.length,
-        generated_at:                   new Date().toISOString(),
+      summary: trackedSummary || {
+        source: 'legacy_estimate',
+        total_gross_revenue:           totalLegacyGross,
+        estimated_platform_commission: Math.round(totalLegacyGross * COMMISSION_RATE / 100),
+        estimated_tutor_earnings:      Math.round(totalLegacyGross * (100 - COMMISSION_RATE) / 100),
+        commission_rate:               COMMISSION_RATE,
+        total_payment_count:           legRes.rows.length,
+        generated_at:                  new Date().toISOString(),
       },
-      commissions,
+      tracked_summary: trackedSummary,
+      commissions: legacyCommissions,
     });
   } catch (err) {
     console.error("GET /api/admin/commissions error:", err);
@@ -2997,6 +3017,81 @@ app.get("/api/admin/wallet-integrity", verifyToken, requireAdmin, async (req, re
   } catch (err) {
     console.error("GET /api/admin/wallet-integrity error:", err);
     return res.status(500).json({ message: "Lỗi khi kiểm tra tính toàn vẹn ví." });
+  }
+});
+
+// ── GET /api/admin/commission-logs ────────────────────────────────────────────
+// Batch 18: Paginated/filterable read-only view of commission_logs.
+app.get("/api/admin/commission-logs", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit)  || 50));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    const conditions = [];
+    const params = [];
+    const addParam = v => { params.push(v); return `$${params.length}`; };
+
+    if (req.query.sourceType)    conditions.push(`cl.source_type = ${addParam(req.query.sourceType)}`);
+    if (req.query.sourceId)      conditions.push(`cl.source_id = ${addParam(req.query.sourceId)}::uuid`);
+    if (req.query.bookingId)     conditions.push(`cl.booking_id = ${addParam(req.query.bookingId)}::uuid`);
+    if (req.query.courseId)      conditions.push(`cl.course_id = ${addParam(req.query.courseId)}::uuid`);
+    if (req.query.disputeId)     conditions.push(`cl.dispute_id = ${addParam(req.query.disputeId)}::uuid`);
+    if (req.query.transactionId) conditions.push(`cl.transaction_id = ${addParam(req.query.transactionId)}::uuid`);
+    if (req.query.studentId)     conditions.push(`cl.student_id = ${addParam(req.query.studentId)}::uuid`);
+    if (req.query.tutorId)       conditions.push(`cl.tutor_id = ${addParam(req.query.tutorId)}::uuid`);
+    if (req.query.eventType)     conditions.push(`cl.event_type = ${addParam(req.query.eventType)}`);
+    if (req.query.reasonCode)    conditions.push(`cl.reason_code = ${addParam(req.query.reasonCode)}`);
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const total = (await pool.query(
+      `SELECT COUNT(*)::int AS n FROM commission_logs cl ${where}`, params
+    )).rows[0].n;
+
+    params.push(limit); params.push(offset);
+    const items = (await pool.query(`
+      SELECT cl.*,
+             s.full_name  AS student_name,  s.email AS student_email,
+             t.full_name  AS tutor_name,    t.email AS tutor_email,
+             b.lesson_date, b.time_slot,
+             c.title      AS course_title,
+             d.reason     AS dispute_reason
+      FROM commission_logs cl
+      LEFT JOIN users s ON s.id = cl.student_id
+      LEFT JOIN users t ON t.id = cl.tutor_id
+      LEFT JOIN bookings b   ON b.id = cl.booking_id
+      LEFT JOIN courses  c   ON c.id = cl.course_id
+      LEFT JOIN disputes d   ON d.id = cl.dispute_id
+      ${where}
+      ORDER BY cl.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params)).rows;
+
+    // Page-level summary for the filtered result set
+    const sumRes = (await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN gross_amount      ELSE 0 END),0)::numeric AS gross_earned,
+         COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN commission_amount ELSE 0 END),0)::numeric AS commission_earned,
+         COALESCE(SUM(CASE WHEN event_type='REVERSED' THEN commission_amount ELSE 0 END),0)::numeric AS commission_reversed,
+         COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN tutor_amount      ELSE 0 END),0)::numeric AS tutor_amount
+       FROM commission_logs cl ${where}`, params.slice(0, -2)
+    )).rows[0];
+
+    return res.json({
+      items,
+      pagination: { page, limit, total },
+      summary: {
+        gross_earned:          Number(sumRes.gross_earned),
+        commission_earned:     Number(sumRes.commission_earned),
+        commission_reversed:   Number(sumRes.commission_reversed),
+        net_commission:        Number(sumRes.commission_earned) - Number(sumRes.commission_reversed),
+        tutor_amount:          Number(sumRes.tutor_amount),
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/commission-logs error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nhật ký hoa hồng." });
   }
 });
 
@@ -5406,6 +5501,17 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
             [tw.rows[0].id, tutorShare, `Doanh thu bán khóa học: ${c.title}`]);
         }
         if (adminWalletId) await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id=$2`, [adminShare, adminWalletId]);
+        // Commission log: EARNED per course in cart (Batch 18)
+        await createCommissionLog(client, {
+          source_type: 'course', source_id: c.id, course_id: c.id,
+          student_id: studentId, tutor_id: c.tutor_id,
+          gross_amount: eff, commission_rate: PLATFORM_COMMISSION_RATE,
+          commission_amount: adminShare, tutor_amount: tutorShare,
+          event_type: 'EARNED', reason_code: 'COURSE_PURCHASE',
+          decision_by: 'api', actor_id: req.user.userId,
+          idempotency_key: `commission:course:${c.id}:student:${studentId}:COURSE_PURCHASE`,
+          metadata: { cart: true, discount_applied: discount > 0 },
+        });
       }
     }
 
@@ -5534,6 +5640,18 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [price, studentWallet.id]);
       await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [tutorShare, tutorWalletId]);
       await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [adminShare, adminWalletId]);
+
+      // Commission log: EARNED (single course buy, Batch 18)
+      await createCommissionLog(client, {
+        source_type: 'course', source_id: course.id, course_id: course.id,
+        student_id: studentId, tutor_id: course.tutor_id,
+        gross_amount: price, commission_rate: PLATFORM_COMMISSION_RATE,
+        commission_amount: adminShare, tutor_amount: tutorShare,
+        event_type: 'EARNED', reason_code: 'COURSE_PURCHASE',
+        decision_by: 'api', actor_id: req.user.userId,
+        idempotency_key: `commission:course:${course.id}:student:${studentId}:COURSE_PURCHASE`,
+        metadata: { cart: false },
+      });
 
       // 5. Ghi log Transactions
       // Học viên trừ tiền mua khóa
@@ -7173,6 +7291,56 @@ async function setLedgerContext(client, context) {
   await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
+// commission_logs is append-only; wallet_ledger remains the low-level audit.
+// ═══════════════════════════════════════════════════════════════════════════
+const PLATFORM_COMMISSION_RATE = 0.10;
+const COMMISSION_POLICY_VERSION = "COMMISSION_POLICY_V1";
+
+function calculateCommissionSplit(grossAmount, rate = PLATFORM_COMMISSION_RATE) {
+  const gross = Math.max(0, Math.round(Number(grossAmount || 0)));
+  const commissionAmount = gross - Math.floor(gross * (1 - rate));
+  const tutorAmount = gross - commissionAmount;
+  return { grossAmount: gross, commissionRate: rate, commissionAmount, tutorAmount };
+}
+
+// Idempotent commission log insert. Returns new row id or null on duplicate.
+// Must be called inside caller's transaction so rollback covers the log too.
+async function createCommissionLog(client, log) {
+  try {
+    const r = await client.query(
+      `INSERT INTO commission_logs
+         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
+          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
+          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING id`,
+      [
+        log.source_type, log.source_id,
+        log.booking_id   || null,
+        log.course_id    || null,
+        log.dispute_id   || null,
+        log.transaction_id || null,
+        log.student_id   || null,
+        log.tutor_id     || null,
+        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
+        log.commission_amount, log.tutor_amount,
+        log.event_type, log.reason_code,
+        log.policy_version || COMMISSION_POLICY_VERSION,
+        log.decision_by || 'system',
+        log.actor_id    || null,
+        log.idempotency_key || null,
+        JSON.stringify(log.metadata || {}),
+      ]
+    );
+    return r.rows.length ? r.rows[0].id : null;
+  } catch (e) {
+    throw e;
+  }
+}
+
 // PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
 // Logic escrow:
 //   Approved  → hold_money_for_lesson (trừ balance, cộng held_balance)
@@ -7317,6 +7485,19 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
           await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
             booking.escrow_tx_id, booking.payer_wallet_id, tw.rows[0].id, adminWalletId, nonRefunded, 0.1,
           ]);
+          // Commission log: EARNED on non-refunded cancellation fee (Batch 18)
+          const _ccSplit = calculateCommissionSplit(nonRefunded);
+          await createCommissionLog(client, {
+            source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+            transaction_id: booking.escrow_tx_id,
+            student_id: booking.student_id, tutor_id: booking.tutor_id,
+            gross_amount: _ccSplit.grossAmount, commission_rate: _ccSplit.commissionRate,
+            commission_amount: _ccSplit.commissionAmount, tutor_amount: _ccSplit.tutorAmount,
+            event_type: 'EARNED', reason_code: 'BOOKING_CANCEL_COMPENSATION',
+            decision_by: isTutor ? 'tutor' : 'student', actor_id: req.user.userId,
+            idempotency_key: `commission:booking:${booking.id}:BOOKING_CANCEL_COMPENSATION`,
+            metadata: { refund_rate: decision.refundRate, non_refunded: nonRefunded },
+          });
         }
 
         await client.query(`UPDATE bookings SET status='Cancelled', escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
@@ -8263,6 +8444,20 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
         if (tutorDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [tutorDeduct, tw.rows[0].id]);
         if (adminDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [adminDeduct, adminWalletId]);
 
+        // Commission log: REVERSED — policy refund reverses prior commission (Batch 18)
+        if (refundAmount > 0) {
+          await createCommissionLog(client, {
+            source_type: 'course', source_id: enrollment.course_id, course_id: enrollment.course_id,
+            student_id: enrollment.student_id, tutor_id: enrollment.tutor_id,
+            gross_amount: refundAmount, commission_rate: PLATFORM_COMMISSION_RATE,
+            commission_amount: adminDeduct, tutor_amount: tutorDeduct,
+            event_type: 'REVERSED', reason_code: 'COURSE_REFUND_POLICY_V2_1',
+            decision_by: 'api', actor_id: req.user.userId,
+            idempotency_key: `commission:course:${enrollment.course_id}:student:${enrollment.student_id}:COURSE_REFUND_POLICY_V2_1`,
+            metadata: { refund_rate: decision.refundRate, reason_code: decision.reasonCode, progress_percent: Math.round(progressPercent), hours_since_purchase: Math.round(hoursSincePurchase) },
+          });
+        }
+
         await client.query(`UPDATE course_enrollments SET status='refunded' WHERE id=$1`, [enrollment.id]);
 
         await client.query(`
@@ -8418,6 +8613,19 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
           if (nonRefunded > 0) {
             if (!tutorWalletId || !adminWalletId) { await client.query('ROLLBACK'); return res.status(500).json({ message: 'Thiếu ví để xử lý phần không hoàn.' }); }
             await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [escrowTxId, payerWalletId, tutorWalletId, adminWalletId, nonRefunded, 0.1]);
+            // Commission log: EARNED on the non-refunded portion of booking dispute (Batch 18)
+            const _dpSplit = calculateCommissionSplit(nonRefunded);
+            await createCommissionLog(client, {
+              source_type: 'dispute', source_id: disputeId, dispute_id: disputeId, booking_id: bookingId,
+              transaction_id: escrowTxId,
+              student_id: studentId, tutor_id: tutorId,
+              gross_amount: _dpSplit.grossAmount, commission_rate: _dpSplit.commissionRate,
+              commission_amount: _dpSplit.commissionAmount, tutor_amount: _dpSplit.tutorAmount,
+              event_type: 'EARNED', reason_code: 'BOOKING_CANCEL_COMPENSATION',
+              decision_by: 'admin', actor_id: req.user.userId,
+              idempotency_key: `commission:dispute:${disputeId}:BOOKING_PARTIAL_RELEASE`,
+              metadata: { refund_rate: refundRate, non_refunded: nonRefunded },
+            });
           }
         }
         await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [bookingId]);
@@ -8440,6 +8648,17 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
             INSERT INTO transactions (wallet_id, amount, type, status, gateway, reference_id, description)
             VALUES ($1,$2,'REFUND','SUCCESS','SYSTEM',$3,$4)
           `, [sw.rows[0].id, refundAmount, courseId, `Admin hoàn tiền khóa học ${Math.round(refundRate * 100)}%`]);
+          // Commission log: REVERSED — admin refunded course (Batch 18)
+          await createCommissionLog(client, {
+            source_type: 'dispute', source_id: disputeId, dispute_id: disputeId, course_id: courseId,
+            student_id: studentId, tutor_id: tutorId,
+            gross_amount: refundAmount, commission_rate: PLATFORM_COMMISSION_RATE,
+            commission_amount: adminDeduct, tutor_amount: tutorDeduct,
+            event_type: 'REVERSED', reason_code: 'COURSE_REFUND_ADMIN',
+            decision_by: 'admin', actor_id: req.user.userId,
+            idempotency_key: `commission:dispute:${disputeId}:COURSE_REFUND_ADMIN`,
+            metadata: { refund_rate: refundRate, course_id: courseId },
+          });
         }
         await client.query(`UPDATE course_enrollments SET status='refunded' WHERE course_id=$1 AND student_id=$2`, [courseId, studentId]);
       }
@@ -8457,6 +8676,19 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
         if (escrowTxId) {
           await setLedgerContext(client, { reason_code: 'DISPUTE_RELEASE', source: 'admin', reference_type: 'booking', reference_id: bookingId, transaction_id: escrowTxId, actor_id: req.user.userId, metadata: { disputeId } });
           await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [escrowTxId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
+          // Commission log: EARNED on admin dispute release (Batch 18)
+          const _drSplit = calculateCommissionSplit(amount);
+          await createCommissionLog(client, {
+            source_type: 'dispute', source_id: disputeId, dispute_id: disputeId, booking_id: bookingId,
+            transaction_id: escrowTxId,
+            student_id: studentId, tutor_id: tutorId,
+            gross_amount: _drSplit.grossAmount, commission_rate: _drSplit.commissionRate,
+            commission_amount: _drSplit.commissionAmount, tutor_amount: _drSplit.tutorAmount,
+            event_type: 'EARNED', reason_code: 'DISPUTE_RELEASE',
+            decision_by: 'admin', actor_id: req.user.userId,
+            idempotency_key: `commission:dispute:${disputeId}:DISPUTE_RELEASE`,
+            metadata: { booking_id: bookingId },
+          });
         }
         await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [bookingId]);
       } else if (dispute.target_type === 'course') {
@@ -8523,6 +8755,18 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
       await client.query('UPDATE transactions SET status=\'RELEASED\', updated_at=NOW() WHERE id=$1', [booking.escrow_tx_id]);
       await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'escrow_released','Tiền giữ trong quỹ đảm bảo',$2,'lock',$3,'booking')`,
         [booking.tutor_id, `${tutorAmount.toLocaleString('vi-VN')}đ trong quỹ đảm bảo. Sẽ rút được sau buổi thứ 3.`, booking.id]);
+      // Commission log: EARNED (cọc ảo path, held_balance, Batch 18)
+      await createCommissionLog(client, {
+        source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+        transaction_id: booking.escrow_tx_id,
+        student_id: booking.student_id, tutor_id: booking.tutor_id,
+        gross_amount: lessonFee, commission_rate: PLATFORM_COMMISSION_RATE,
+        commission_amount: adminAmount, tutor_amount: tutorAmount,
+        event_type: 'EARNED', reason_code: 'MANUAL_RELEASE',
+        decision_by: 'student', actor_id: req.user.userId,
+        idempotency_key: `commission:booking:${booking.id}:MANUAL_RELEASE`,
+        metadata: { virtual_deposit: true, completed_count: completedCount },
+      });
     } else {
       // Buổi 3+: giải ngân thẳng vào balance
       await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
@@ -8530,6 +8774,18 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
       ]);
       await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'escrow_released','Tiền học phí đã vào ví',$2,'payments',$3,'booking')`,
         [booking.tutor_id, `${tutorAmount.toLocaleString('vi-VN')}đ đã vào ví (sau 10% hoa hồng).`, booking.id]);
+      // Commission log: EARNED (normal release path, Batch 18)
+      await createCommissionLog(client, {
+        source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+        transaction_id: booking.escrow_tx_id,
+        student_id: booking.student_id, tutor_id: booking.tutor_id,
+        gross_amount: lessonFee, commission_rate: PLATFORM_COMMISSION_RATE,
+        commission_amount: adminAmount, tutor_amount: tutorAmount,
+        event_type: 'EARNED', reason_code: 'MANUAL_RELEASE',
+        decision_by: 'student', actor_id: req.user.userId,
+        idempotency_key: `commission:booking:${booking.id}:MANUAL_RELEASE`,
+        metadata: { virtual_deposit: false, completed_count: completedCount },
+      });
     }
 
     await client.query('UPDATE tutor_profiles SET completed_lessons_count=completed_lessons_count+1 WHERE user_id=$1', [booking.tutor_id]);
@@ -8836,6 +9092,48 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.error('⚠️  DB migration (wallet_ledger) warning:', err.message);
   }
 
+  // ── Commission Policy V1: append-only business-level commission log (Batch 18) ─
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS commission_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        source_type TEXT NOT NULL CHECK (source_type IN ('booking','course','dispute','transaction','system')),
+        source_id UUID NOT NULL,
+        booking_id UUID REFERENCES bookings(id) ON DELETE SET NULL,
+        course_id UUID REFERENCES courses(id) ON DELETE SET NULL,
+        dispute_id UUID REFERENCES disputes(id) ON DELETE SET NULL,
+        transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+        student_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        tutor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        gross_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        commission_rate NUMERIC(6,5) NOT NULL DEFAULT 0.10,
+        commission_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        tutor_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        event_type TEXT NOT NULL CHECK (event_type IN ('EARNED','REVERSED','ADJUSTED')),
+        reason_code TEXT NOT NULL,
+        policy_version TEXT NOT NULL DEFAULT 'COMMISSION_POLICY_V1',
+        decision_by TEXT NOT NULL DEFAULT 'system'
+          CHECK (decision_by IN ('system','admin','student','tutor','api','cron')),
+        actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        idempotency_key TEXT UNIQUE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_source      ON commission_logs(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_booking     ON commission_logs(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_course      ON commission_logs(course_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_dispute     ON commission_logs(dispute_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_transaction ON commission_logs(transaction_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_student     ON commission_logs(student_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_tutor       ON commission_logs(tutor_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_reason      ON commission_logs(reason_code);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_created     ON commission_logs(created_at);
+    `);
+    console.log('✅ DB migration: commission_logs table + indexes ready (Batch 18)');
+  } catch (err) {
+    console.error('⚠️  DB migration (commission_logs) warning:', err.message);
+  }
+
   // ── Cron: Auto-release escrow sau 24h nếu không có khiếu nại ───────────────
   setInterval(async () => {
     try {
@@ -8875,6 +9173,20 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
           await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
             row.escrow_tx_id, row.payer_wallet_id, tutorWalletId, adminWalletId, row.lesson_fee, 0.1
           ]);
+          // Commission log: EARNED on auto-release (Batch 18)
+          const _arSplit = calculateCommissionSplit(row.lesson_fee);
+          const _arStudent = (await client.query('SELECT student_id FROM bookings WHERE id=$1', [row.id])).rows[0]?.student_id || null;
+          await createCommissionLog(client, {
+            source_type: 'booking', source_id: row.id, booking_id: row.id,
+            transaction_id: row.escrow_tx_id,
+            student_id: _arStudent, tutor_id: row.tutor_id,
+            gross_amount: _arSplit.grossAmount, commission_rate: _arSplit.commissionRate,
+            commission_amount: _arSplit.commissionAmount, tutor_amount: _arSplit.tutorAmount,
+            event_type: 'EARNED', reason_code: 'AUTO_RELEASE_24H',
+            decision_by: 'cron',
+            idempotency_key: `commission:booking:${row.id}:AUTO_RELEASE_24H`,
+            metadata: { lesson_fee: row.lesson_fee },
+          });
           await client.query(`UPDATE bookings SET escrow_released_at=NOW() WHERE id=$1`, [row.id]);
           await client.query(`
             UPDATE tutor_profiles SET completed_lessons_count = completed_lessons_count + 1
