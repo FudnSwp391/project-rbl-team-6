@@ -8,7 +8,6 @@ import LessonPayments        from './admin/transactions/LessonPayments'
 import CourseTransactions    from './admin/transactions/CourseTransactions'
 import TutorWithdrawals      from './admin/transactions/TutorWithdrawals'
 import RefundManagement      from './admin/transactions/RefundManagement'
-import DisputeManagement     from './admin/transactions/DisputeManagement'
 import FailedTransactions    from './admin/transactions/FailedTransactions'
 import PaymentGateways       from './admin/transactions/PaymentGateways'
 import CommissionManagement  from './admin/transactions/CommissionManagement'
@@ -21,10 +20,6 @@ import FraudAlerts           from './admin/transactions/FraudAlerts'
 import NotificationCenter    from './admin/transactions/NotificationCenter'
 import AuditLogs             from './admin/transactions/AuditLogs'
 
-import { DISPUTES } from './admin/transactions/mockData'
-import { COMPLAINTS, REPORTED_REVIEWS } from './admin/services/mockData'
-import Complaints from './admin/services/Complaints'
-import Reviews from './admin/services/Reviews'
 import Violations from './admin/services/Violations'
 import Moderation from './admin/services/Moderation'
 
@@ -100,15 +95,6 @@ export default function AdminDashboard() {
   const [activeView, setActiveView]   = useState('dashboard')
   const [txMenuOpen, setTxMenuOpen]   = useState(false)
   const [smMenuOpen, setSmMenuOpen]   = useState(false)
-
-  // ── Global Service/Transaction States ──
-  const [globalDisputes, setGlobalDisputes] = useState(DISPUTES)
-  const [globalComplaints, setGlobalComplaints] = useState(COMPLAINTS)
-  const [globalReviews, setGlobalReviews] = useState(REPORTED_REVIEWS)
-
-  const handleAddDispute = (dispute) => setGlobalDisputes(prev => [dispute, ...prev])
-  const handleUpdateComplaint = (id, updates) => setGlobalComplaints(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c))
-  const handleUpdateDispute = (updatedDispute) => setGlobalDisputes(prev => prev.map(d => d.id === updatedDispute.id ? updatedDispute : d))
 
   // ── Tutor data ──
   const [stats,   setStats]   = useState({ pending: 0, approved: 0, rejected: 0, total: 0 })
@@ -469,10 +455,10 @@ export default function AdminDashboard() {
           {activeView === 'tx-platform-revenue' && <PlatformRevenue token={token} />}
           {activeView === 'tx-system-wallet' && <SystemWallet token={token} />}
           {activeView === 'tx-promotions'    && <PromotionTransactions token={token} />}
-          {activeView === 'tx-reports'       && <FinancialReports />}
-          {activeView === 'tx-reconciliation' && <Reconciliation />}
+          {activeView === 'tx-reports'       && <FinancialReports token={token} />}
+          {activeView === 'tx-reconciliation' && <Reconciliation token={token} />}
           {activeView === 'tx-fraud'         && <FraudAlerts token={token} />}
-          {activeView === 'tx-notifications' && <NotificationCenter />}
+          {activeView === 'tx-notifications' && <NotificationCenter token={token} />}
           {activeView === 'tx-audit'         && <AuditLogs token={token} />}
           
           {/* ── Service Management Module ── */}
@@ -481,9 +467,9 @@ export default function AdminDashboard() {
           {activeView === 'sm-violations'    && <Violations token={token} />}
           {activeView === 'sm-moderation'    && <Moderation token={token} />}
 
-          {activeView === 'reports'          && <ReportsView />}
+          {activeView === 'reports'          && <FinancialReports token={token} />}
           {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
-          {activeView === 'audit-logs'       && <AuditLogsView />}
+          {activeView === 'audit-logs'       && <AuditLogs token={token} />}
           {activeView === 'settings'         && <SettingsView />}
         </div>
       </main>
@@ -2038,21 +2024,6 @@ const cStatusMeta = s => C_STATUS_META[s] || C_STATUS_META['Bản nháp']
 const AVATAR_COLORS = ['bg-blue-600','bg-violet-600','bg-rose-600','bg-emerald-600','bg-orange-600','bg-cyan-600']
 const initialsOf = name => name.split(' ').filter(Boolean).slice(-2).map(w => w[0]).join('').toUpperCase()
 
-const MOCK_COURSES = [
-  { id: 'C-1001', title: 'Luyện thi THPT Quốc gia môn Toán 2026', tutor: 'Trần Thị Bích',  subject: 'Toán học',  students: 1204, lessons: 24, rating: 4.9, reviews: 312, price: 599000,  premium: true,  status: 'Hoạt động', created: '2025-09-12', updated: '2026-06-24', revenue: 245000000, completion: 78, desc: 'Hệ thống hóa toàn bộ kiến thức Toán THPT, bám sát cấu trúc đề thi 2026 với hơn 600 bài tập tự luận và trắc nghiệm có lời giải chi tiết.' },
-  { id: 'C-1002', title: 'Lập trình Web Full-Stack với React & Node', tutor: 'Phạm Quỳnh Anh', subject: 'Lập trình', students: 2860, lessons: 58, rating: 4.8, reviews: 740, price: 899000,  premium: true,  status: 'Hoạt động', created: '2025-05-03', updated: '2026-06-20', revenue: 1280000000, completion: 64, desc: 'Xây dựng ứng dụng web hoàn chỉnh từ giao diện đến backend: React, Node.js, Express, PostgreSQL và triển khai thực tế lên cloud.' },
-  { id: 'C-1003', title: 'Tiếng Anh giao tiếp cấp tốc 30 ngày', tutor: 'Nguyễn Hải Đăng', subject: 'Tiếng Anh', students: 540,  lessons: 32, rating: 4.7, reviews: 188, price: 0,       premium: false, status: 'Hoạt động', created: '2025-11-20', updated: '2026-06-18', revenue: 0,         completion: 71, desc: 'Lộ trình luyện phản xạ giao tiếp theo chủ đề thực tế, tập trung phát âm và nghe hiểu cho người đi làm bận rộn.' },
-  { id: 'C-1004', title: 'Hóa học Hữu cơ chuyên sâu lớp 12', tutor: 'Bùi Phương Thảo', subject: 'Hóa học',  students: 0,    lessons: 18, rating: 0,   reviews: 0,   price: 499000,  premium: false, status: 'Bản nháp',  created: '2026-06-22', updated: '2026-06-22', revenue: 0,         completion: 0,  desc: 'Phân tích chuyên sâu các chuỗi phản ứng hữu cơ, cơ chế và bài toán nhận biết — đang soạn thảo, chưa xuất bản.' },
-  { id: 'C-1005', title: 'Vật lý 12 — Dao động & Sóng cơ', tutor: 'Lê Minh Tuấn',  subject: 'Vật lý',    students: 312,  lessons: 21, rating: 4.6, reviews: 96,  price: 399000,  premium: false, status: 'Hoạt động', created: '2026-06-15', updated: '2026-06-21', revenue: 124000000, completion: 58, desc: 'Trọng tâm chuyên đề Dao động và Sóng cơ với phương pháp giải nhanh, kèm hệ thống bài tập phân hóa theo mức độ.' },
-  { id: 'C-1006', title: 'Python cho người mới bắt đầu', tutor: 'Phạm Quỳnh Anh', subject: 'Lập trình', students: 4120, lessons: 40, rating: 4.9, reviews: 1530, price: 0,      premium: false, status: 'Hoạt động', created: '2025-03-01', updated: '2026-06-15', revenue: 0,         completion: 82, desc: 'Khởi đầu hành trình lập trình với Python: cú pháp, cấu trúc dữ liệu, hàm và 12 dự án nhỏ thực hành.' },
-  { id: 'C-1007', title: 'Ngữ pháp tiếng Anh từ A đến Z', tutor: 'Nguyễn Hải Đăng', subject: 'Tiếng Anh', students: 96,   lessons: 16, rating: 4.4, reviews: 41,  price: 299000,  premium: false, status: 'Bản nháp',  created: '2026-06-08', updated: '2026-06-10', revenue: 0,         completion: 0,  desc: 'Tổng hợp toàn bộ điểm ngữ pháp cốt lõi, đang trong giai đoạn soạn thảo và chưa xuất bản.' },
-  { id: 'C-1008', title: 'Lịch sử Việt Nam hiện đại', tutor: 'Đỗ Quang Huy',   subject: 'Lịch sử',   students: 88,   lessons: 14, rating: 4.2, reviews: 33,  price: 0,       premium: false, status: 'Đã lưu trữ', created: '2024-09-10', updated: '2026-03-02', revenue: 0,         completion: 55, desc: 'Khóa học đã được lưu trữ — nội dung về giai đoạn lịch sử Việt Nam từ 1945 đến nay.' },
-  { id: 'C-1009', title: 'Luyện viết IELTS Writing 7.0+', tutor: 'Nguyễn Hải Đăng', subject: 'Tiếng Anh', students: 760,  lessons: 28, rating: 4.8, reviews: 410, price: 1290000, premium: true,  status: 'Hoạt động', created: '2025-07-19', updated: '2026-06-23', revenue: 615000000, completion: 69, desc: 'Phương pháp viết Task 1 & Task 2 theo band điểm, chữa bài chi tiết và ngân hàng mẫu câu học thuật.' },
-  { id: 'C-1010', title: 'Cấu trúc dữ liệu & Giải thuật', tutor: 'Lê Minh Tuấn',  subject: 'Lập trình', students: 1530, lessons: 46, rating: 3.9, reviews: 220, price: 799000,  premium: true,  status: 'Bị báo cáo', created: '2025-08-05', updated: '2026-06-19', revenue: 712000000, completion: 48, desc: 'Khóa học bị báo cáo về vấn đề bản quyền tài liệu — cần kiểm duyệt lại trước khi tiếp tục phân phối.' },
-  { id: 'C-1011', title: 'Sinh học phân tử nâng cao', tutor: 'Bùi Phương Thảo', subject: 'Sinh học',  students: 210,  lessons: 22, rating: 4.5, reviews: 64,  price: 549000,  premium: false, status: 'Hoạt động', created: '2025-10-02', updated: '2026-06-12', revenue: 92000000,  completion: 60, desc: 'Đi sâu vào cơ chế di truyền cấp phân tử, công nghệ gen và ứng dụng trong y sinh hiện đại.' },
-  { id: 'C-1012', title: 'Văn học Việt Nam lớp 12', tutor: 'Đỗ Quang Huy',   subject: 'Văn học',   students: 980,  lessons: 20, rating: 4.6, reviews: 158, price: 349000,  premium: false, status: 'Hoạt động', created: '2025-06-14', updated: '2026-06-08', revenue: 188000000, completion: 73, desc: 'Phân tích các tác phẩm trọng tâm trong chương trình, kỹ năng làm văn nghị luận và mở bài ấn tượng.' },
-]
-
 const AI_COURSE_INSIGHTS = [
   { icon: 'trending_down', tone: 'text-amber-600', bg: 'bg-amber-50',  text: '42% học viên dừng lại ở Module 3 — nội dung có thể quá dài hoặc khó tiếp thu.' },
   { icon: 'content_cut',   tone: 'text-blue-600',  bg: 'bg-blue-50',   text: 'Đề xuất chia nhỏ video bài giảng dài hơn 20 phút để tăng tỷ lệ hoàn thành.' },
@@ -3220,83 +3191,6 @@ function ReviewsView({ token }) {
   )
 }
 
-// ─── Reports View ─────────────────────────────────────────────────────────────
-const REPORT_CARDS = [
-  { title: 'Báo cáo nền tảng tháng',      desc: 'Tăng trưởng người dùng, doanh thu và thống kê tương tác tháng này.', icon: 'bar_chart',      color: 'bg-blue-50 text-blue-700',    ready: true  },
-  { title: 'Báo cáo hiệu suất gia sư',   desc: 'Xếp hạng, số buổi học và tỷ lệ duyệt theo từng gia sư.',    icon: 'history_edu',    color: 'bg-indigo-50 text-indigo-700', ready: true  },
-  { title: 'Doanh thu & Giao dịch',       desc: 'Tổng hợp thanh toán, hoàn tiền và tóm tắt tài chính.',       icon: 'payments',       color: 'bg-emerald-50 text-emerald-700', ready: true },
-  { title: 'Báo cáo tương tác học sinh',  desc: 'Tham gia buổi học, điểm bài kiểm tra và bản đồ hoạt động.', icon: 'school',         color: 'bg-cyan-50 text-cyan-700',    ready: true  },
-  { title: 'Báo cáo khiếu nại & An toàn', desc: 'Người dùng bị gắn cờ, tranh chấp đã giải quyết và sự cố.', icon: 'report_problem', color: 'bg-amber-50 text-amber-700',  ready: false },
-  { title: 'Báo cáo AI & Insights',       desc: 'Tóm tắt bất thường và dự báo do AI tạo ra.',                 icon: 'psychology',     color: 'bg-purple-50 text-purple-700', ready: false },
-]
-
-function ReportsView() {
-  return (
-    <div className="p-10 max-w-[1280px] mx-auto">
-      <div className="flex justify-between items-end mb-8">
-        <div>
-          <h2 className="text-3xl font-bold text-on-background">Báo cáo</h2>
-          <p className="text-sm text-on-surface-variant mt-1">Tải xuống hoặc tạo báo cáo phân tích nền tảng.</p>
-        </div>
-        <div className="flex items-center gap-3 bg-white border border-outline-variant rounded-lg px-4 py-2 shadow-sm">
-          <span className="material-symbols-outlined text-on-surface-variant text-[18px]">date_range</span>
-          <span className="text-sm text-on-surface-variant">June 2024</span>
-          <span className="material-symbols-outlined text-on-surface-variant text-[18px]">expand_more</span>
-        </div>
-      </div>
-
-      {/* Snapshot stats */}
-      <div className="grid grid-cols-3 gap-6 mb-8">
-        {[
-          { label: 'Tổng buổi học tháng này', value: '3,412',  change: '+14%', up: true  },
-          { label: 'Doanh thu tháng này',    value: '$124.5k', change: '+22%', up: true  },
-          { label: 'Đánh giá TB buổi học',   value: '4.6 ★',  change: '-0.1', up: false },
-        ].map(s => (
-          <div key={s.label} className="bg-white rounded-xl p-6 shadow-sm border border-outline-variant">
-            <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide mb-2">{s.label}</p>
-            <p className="text-3xl font-bold text-on-background mb-1">{s.value}</p>
-            <p className={`text-sm font-semibold flex items-center gap-1 ${s.up ? 'text-green-600' : 'text-red-500'}`}>
-              <span className="material-symbols-outlined text-[16px]">{s.up ? 'trending_up' : 'trending_down'}</span>
-              {s.change} so với tháng trước
-            </p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-6">
-        {REPORT_CARDS.map(r => (
-          <div key={r.title} className="bg-white rounded-xl p-6 shadow-sm border border-outline-variant flex items-start gap-4 hover:shadow-md transition-shadow">
-            <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${r.color}`}>
-              <span className="material-symbols-outlined text-[24px]">{r.icon}</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <h3 className="text-sm font-bold text-on-surface">{r.title}</h3>
-                {!r.ready && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-semibold rounded-full whitespace-nowrap">Sắp ra mắt</span>}
-              </div>
-              <p className="text-xs text-on-surface-variant mb-4">{r.desc}</p>
-              <div className="flex gap-2">
-                <button
-                  disabled={!r.ready}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <span className="material-symbols-outlined text-[15px]">download</span> Tải PDF
-                </button>
-                <button
-                  disabled={!r.ready}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-outline-variant text-on-surface-variant rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <span className="material-symbols-outlined text-[15px]">table_chart</span> Xuất CSV
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 // ─── AI Insights View ─────────────────────────────────────────────────────────
 function AIInsightsView({ token }) {
   const [data,    setData]    = useState(null)
@@ -3447,164 +3341,10 @@ function AIInsightsView({ token }) {
   )
 }
 
-// ─── Audit Logs View ──────────────────────────────────────────────────────────
-const MOCK_LOGS = [
-  { id: 'A-9041', actor: 'admin@academiaflow.com', action: 'APPROVE_TUTOR',   target: 'David Chen (ID: 241)',      ip: '192.168.1.10', time: '2024-06-10T14:32:00Z', level: 'Info'    },
-  { id: 'A-9040', actor: 'admin@academiaflow.com', action: 'REJECT_TUTOR',    target: 'Lisa Park (ID: 238)',       ip: '192.168.1.10', time: '2024-06-10T14:10:00Z', level: 'Info'    },
-  { id: 'A-9039', actor: 'admin@academiaflow.com', action: 'BAN_USER',        target: 'vu.thi.lan@email.com',      ip: '192.168.1.10', time: '2024-06-10T13:45:00Z', level: 'Warning' },
-  { id: 'A-9038', actor: 'system',                 action: 'AUTO_FLAG_TXN',   target: 'TXN-4816 (suspicious)',     ip: 'system',       time: '2024-06-10T12:00:00Z', level: 'Warning' },
-  { id: 'A-9037', actor: 'admin@academiaflow.com', action: 'VIEW_DOCUMENT',   target: 'CCCD of Marcus Robinson',   ip: '192.168.1.10', time: '2024-06-10T11:30:00Z', level: 'Info'    },
-  { id: 'A-9036', actor: 'admin@academiaflow.com', action: 'DELETE_REVIEW',   target: 'Review #5 (spam detected)', ip: '192.168.1.10', time: '2024-06-10T10:52:00Z', level: 'Warning' },
-  { id: 'A-9035', actor: 'system',                 action: 'BACKUP_COMPLETE', target: 'Daily DB snapshot',         ip: 'system',       time: '2024-06-10T03:00:00Z', level: 'Info'    },
-  { id: 'A-9034', actor: 'admin@academiaflow.com', action: 'EXPORT_REPORT',   target: 'Monthly Revenue CSV',       ip: '192.168.1.10', time: '2024-06-09T17:20:00Z', level: 'Info'    },
-  { id: 'A-9033', actor: 'system',                 action: 'AUTO_FLAG_USER',  target: 'Multiple login anomaly',    ip: 'system',       time: '2024-06-09T16:45:00Z', level: 'Critical'},
-  { id: 'A-9032', actor: 'admin@academiaflow.com', action: 'ADD_SUBJECT',     target: 'New subject: Robotics',     ip: '192.168.1.10', time: '2024-06-09T15:10:00Z', level: 'Info'    },
-]
-
-function AuditLogsView() {
-  const [levelFilter, setLevelFilter] = useState('Tất cả')
-  const [search, setSearch]           = useState('')
-
-  const levelColor = l => ({
-    Info:     'bg-blue-100 text-blue-700',
-    Warning:  'bg-amber-100 text-amber-700',
-    Critical: 'bg-red-100 text-red-700',
-  }[l] || 'bg-gray-100 text-gray-600')
-
-  const actionIcon = a => ({
-    APPROVE_TUTOR:   { icon: 'how_to_reg',    color: 'text-green-600 bg-green-50' },
-    REJECT_TUTOR:    { icon: 'cancel',        color: 'text-red-500   bg-red-50'   },
-    BAN_USER:        { icon: 'block',         color: 'text-red-600   bg-red-50'   },
-    AUTO_FLAG_TXN:   { icon: 'flag',          color: 'text-amber-600 bg-amber-50' },
-    VIEW_DOCUMENT:   { icon: 'visibility',    color: 'text-blue-600  bg-blue-50'  },
-    DELETE_REVIEW:   { icon: 'delete',        color: 'text-red-500   bg-red-50'   },
-    BACKUP_COMPLETE: { icon: 'cloud_done',    color: 'text-green-600 bg-green-50' },
-    EXPORT_REPORT:   { icon: 'download',      color: 'text-blue-600  bg-blue-50'  },
-    AUTO_FLAG_USER:  { icon: 'gpp_bad',       color: 'text-red-600   bg-red-50'   },
-    ADD_SUBJECT:     { icon: 'add_circle',    color: 'text-indigo-600 bg-indigo-50'},
-  }[a] || { icon: 'history', color: 'text-gray-500 bg-gray-100' })
-
-  const filtered = MOCK_LOGS.filter(l => {
-    const matchLevel  = levelFilter === 'Tất cả' || l.level === levelFilter
-    const matchSearch = l.action.toLowerCase().includes(search.toLowerCase()) || l.actor.toLowerCase().includes(search.toLowerCase()) || l.target.toLowerCase().includes(search.toLowerCase())
-    return matchLevel && matchSearch
-  })
-
-  const fmtTime = iso => {
-    const d = new Date(iso)
-    return d.toLocaleDateString('vi-VN', { day: 'numeric', month: 'short' }) + ' · ' + d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-  }
-
-  return (
-    <div className="p-10 max-w-[1280px] mx-auto">
-      <div className="flex justify-between items-end mb-8">
-        <div>
-          <h2 className="text-3xl font-bold text-on-background">Nhật ký hệ thống</h2>
-          <p className="text-sm text-on-surface-variant mt-1">Toàn bộ lịch sử các hành động quản trị và sự kiện hệ thống.</p>
-        </div>
-        <button className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-primary/90">
-          <span className="material-symbols-outlined text-[18px]">download</span> Xuất nhật ký
-        </button>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-6 mb-8">
-        {[
-          { label: 'Tổng sự kiện hôm nay', value: MOCK_LOGS.length,                               icon: 'history',      bg: 'bg-gray-100',   color: 'text-gray-600' },
-          { label: 'Thông tin',          value: MOCK_LOGS.filter(l=>l.level==='Info').length,    icon: 'info',         bg: 'bg-blue-50',    color: 'text-blue-600' },
-          { label: 'Cảnh báo',           value: MOCK_LOGS.filter(l=>l.level==='Warning').length, icon: 'warning',      bg: 'bg-amber-50',   color: 'text-amber-600' },
-          { label: 'Nghiêm trọng',       value: MOCK_LOGS.filter(l=>l.level==='Critical').length,icon: 'error',        bg: 'bg-red-50',     color: 'text-red-600' },
-        ].map(c => (
-          <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-outline-variant">
-            <div className={`w-10 h-10 rounded-lg ${c.bg} flex items-center justify-center ${c.color} mb-3`}>
-              <span className="material-symbols-outlined">{c.icon}</span>
-            </div>
-            <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide mb-1">{c.label}</p>
-            <p className="text-2xl font-bold text-on-background">{c.value}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
-        {/* Toolbar */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-outline-variant flex-wrap">
-          {['Tất cả','Info','Warning','Critical'].map(l => (
-            <button key={l} onClick={() => setLevelFilter(l)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${levelFilter === l ? 'bg-primary text-white' : 'bg-gray-100 text-on-surface-variant hover:bg-gray-200'}`}>
-              {l}
-            </button>
-          ))}
-          <div className="ml-auto relative">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
-            <input
-              className="pl-9 pr-4 py-2 bg-gray-50 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary w-60"
-              placeholder="Tìm kiếm nhật ký..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <table className="w-full text-left">
-          <thead className="bg-gray-50 border-b border-outline-variant">
-            <tr>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Sự kiện</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Người thực hiện</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Đối tượng</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">IP</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Mức độ</th>
-              <th className="py-3 px-6 text-xs font-semibold text-on-surface-variant uppercase">Thời gian</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-outline-variant">
-            {filtered.map(log => {
-              const ai = actionIcon(log.action)
-              return (
-                <tr key={log.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="py-3.5 px-6">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${ai.color}`}>
-                        <span className="material-symbols-outlined text-[16px]">{ai.icon}</span>
-                      </div>
-                      <div>
-                        <p className="text-sm font-mono font-semibold text-on-surface">{log.action}</p>
-                        <p className="text-xs text-on-surface-variant">#{log.id}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-3.5 px-6">
-                    <div className="flex items-center gap-2">
-                      {log.actor === 'system' ? (
-                        <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-bold rounded-full">system</span>
-                      ) : (
-                        <p className="text-sm text-on-surface">{log.actor}</p>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-3.5 px-6 text-sm text-on-surface-variant max-w-xs truncate">{log.target}</td>
-                  <td className="py-3.5 px-6 text-xs font-mono text-on-surface-variant">{log.ip}</td>
-                  <td className="py-3.5 px-6">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${levelColor(log.level)}`}>{log.level}</span>
-                  </td>
-                  <td className="py-3.5 px-6 text-xs text-on-surface-variant whitespace-nowrap">{fmtTime(log.time)}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-
-        <div className="px-6 py-3 bg-gray-50 border-t border-outline-variant flex items-center justify-between">
-          <p className="text-xs text-on-surface-variant">Hiển thị {filtered.length} trong {MOCK_LOGS.length} bản ghi</p>
-          <p className="text-xs text-on-surface-variant">Nhật ký được lưu trữ trong 90 ngày</p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ─── Settings View ────────────────────────────────────────────────────────────
 function SettingsView() {
-  const [saved, setSaved] = useState(false)
+  // Read-only: no settings store exists in the DB, so values are display-only
+  // defaults and cannot be persisted. No mutation is performed here.
   const [form, setForm] = useState({
     siteName: 'EduX',
     supportEmail: 'support@academiaflow.com',
@@ -3618,8 +3358,6 @@ function SettingsView() {
     auditLogRetention: '90',
   })
 
-  const handleSave = () => { setSaved(true); setTimeout(() => setSaved(false), 2500) }
-
   return (
     <div className="p-10 max-w-[900px] mx-auto">
       <div className="mb-8">
@@ -3627,14 +3365,15 @@ function SettingsView() {
         <p className="text-sm text-on-surface-variant mt-1">Cấu hình cài đặt và chính sách toàn nền tảng.</p>
       </div>
 
-      {saved && (
-        <div className="mb-6 bg-green-50 border border-green-200 rounded-xl p-4 flex items-center gap-3">
-          <span className="material-symbols-outlined text-green-600">check_circle</span>
-          <p className="text-sm font-semibold text-green-800">Đã lưu cài đặt thành công!</p>
+      <div className="mb-6 bg-sky-50 border border-sky-200 rounded-xl p-4 flex items-start gap-3">
+        <span className="material-symbols-outlined text-sky-600 mt-0.5">visibility</span>
+        <div>
+          <p className="text-sm font-semibold text-sky-800">Chế độ chỉ xem</p>
+          <p className="text-sm text-sky-700">Các giá trị dưới đây là mặc định hiển thị và chưa được kết nối với kho lưu trữ cấu hình thực — không thể chỉnh sửa hoặc lưu tại đây.</p>
         </div>
-      )}
+      </div>
 
-      <div className="space-y-6">
+      <fieldset disabled className="space-y-6 border-0 p-0 m-0 min-w-0">
         {/* General */}
         <SettingsSection title="Chung" icon="settings">
           <SettingsField label="Tên nền tảng" sub="Hiển thị trên toàn bộ trang và trong email.">
@@ -3680,18 +3419,9 @@ function SettingsView() {
             <input className="settings-input w-32" type="number" min="30" value={form.auditLogRetention} onChange={e => setForm(f => ({ ...f, auditLogRetention: e.target.value }))} />
           </SettingsField>
         </SettingsSection>
-      </div>
+      </fieldset>
 
-      <div className="mt-8 flex gap-3">
-        <button onClick={handleSave} className="px-6 py-2.5 bg-primary text-white rounded-lg text-sm font-bold hover:bg-primary/90 transition-colors">
-          Lưu thay đổi
-        </button>
-        <button className="px-6 py-2.5 bg-gray-100 text-on-surface-variant rounded-lg text-sm font-bold hover:bg-gray-200 transition-colors">
-          Hủy bỏ
-        </button>
-      </div>
-
-      <style>{`.settings-input { width: 100%; padding: 8px 12px; border: 1px solid #c4c5d5; border-radius: 8px; font-size: 14px; background: #f9fafb; outline: none; transition: border-color .2s; } .settings-input:focus { border-color: #00288e; box-shadow: 0 0 0 2px rgba(0,40,142,.1); }`}</style>
+      <style>{`.settings-input { width: 100%; padding: 8px 12px; border: 1px solid #c4c5d5; border-radius: 8px; font-size: 14px; background: #f9fafb; outline: none; transition: border-color .2s; } .settings-input:focus { border-color: #00288e; box-shadow: 0 0 0 2px rgba(0,40,142,.1); } fieldset[disabled] .settings-input { background: #f3f4f6; color: #6b7280; cursor: not-allowed; }`}</style>
     </div>
   )
 }

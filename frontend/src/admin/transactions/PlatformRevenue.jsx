@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { PageHeader, ExportButton } from './components'
+import { PageHeader } from './components'
 
 const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
 const VALID_RANGES = ['6m', '12m', 'ytd']
@@ -53,9 +53,7 @@ export default function PlatformRevenue({ token }) {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Doanh Thu Nền Tảng" subtitle="Theo dõi doanh thu nền tảng theo nhiều chiều phân tích">
-        <ExportButton label="Xuất Báo Cáo" />
-      </PageHeader>
+      <PageHeader title="Doanh Thu Nền Tảng" subtitle="Theo dõi doanh thu nền tảng theo nhiều chiều phân tích">      </PageHeader>
 
       {error && (
         <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">

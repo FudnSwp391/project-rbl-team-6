@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   StatusBadge, PageHeader, DataTable, SearchFilterBar, FilterTabs,
-  Pagination, AvatarCell, ExportButton, Drawer, Timeline, EmptyState,
+  Pagination, AvatarCell, Drawer, Timeline, EmptyState,
   usePagination, useSearch
 } from './components'
 import { fmtMoney, fmtDateTime } from './mockData'
@@ -80,9 +80,7 @@ export default function LessonPayments({ token }) {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Thanh Toán Buổi Học" subtitle="Quản lý tất cả giao dịch thanh toán buổi học">
-        <ExportButton />
-      </PageHeader>
+      <PageHeader title="Thanh Toán Buổi Học" subtitle="Quản lý tất cả giao dịch thanh toán buổi học">      </PageHeader>
 
       {error && (
         <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">

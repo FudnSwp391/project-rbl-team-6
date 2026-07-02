@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { StatusBadge, PageHeader, DataTable, SearchFilterBar, FilterTabs, Pagination, AvatarCell, ExportButton, EmptyState, usePagination, useSearch } from './components'
+import { StatusBadge, PageHeader, DataTable, SearchFilterBar, FilterTabs, Pagination, AvatarCell, EmptyState, usePagination, useSearch } from './components'
 import { fmtDateTime } from './mockData'
 
 const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
@@ -51,9 +51,7 @@ export default function FraudAlerts({ token }) {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Cảnh Báo Gian Lận" subtitle="Tín hiệu rủi ro từ tranh chấp, hoàn tiền và giao dịch bất thường (chỉ xem)">
-        <ExportButton />
-      </PageHeader>
+      <PageHeader title="Cảnh Báo Gian Lận" subtitle="Tín hiệu rủi ro từ tranh chấp, hoàn tiền và giao dịch bất thường (chỉ xem)">      </PageHeader>
 
       {error && (
         <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">

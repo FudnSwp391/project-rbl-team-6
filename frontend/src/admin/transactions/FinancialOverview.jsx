@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { KpiCard, SkeletonCard, PageHeader, ExportButton, SectionCard } from './components'
-import { AUDIT_LOGS, FRAUD_ALERTS, fmtMoney, fmtDateTime } from './mockData'
+import { KpiCard, SkeletonCard, PageHeader, SectionCard } from './components'
+import { fmtDateTime } from './mockData'
 
 const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
@@ -33,11 +33,11 @@ function RecentActivityRow({ log }) {
         <span className={`material-symbols-outlined text-[16px] ${cfg.color}`}>{cfg.icon}</span>
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-gray-800">{log.action.replace(/_/g, ' ')}</p>
-        <p className="text-xs text-gray-400 truncate">{log.target}</p>
+        <p className="text-sm font-semibold text-gray-800">{(log.action || '').replace(/_/g, ' ')}</p>
+        <p className="text-xs text-gray-400 truncate">{log.actor_name || log.target}</p>
       </div>
       <div className="text-right flex-shrink-0">
-        <p className="text-xs text-gray-400">{fmtDateTime(log.timestamp)}</p>
+        <p className="text-xs text-gray-400">{fmtDateTime(log.created_at)}</p>
         <span className={`text-xs font-semibold ${log.result === 'SUCCESS' ? 'text-emerald-600' : log.result === 'FAILED' ? 'text-red-500' : 'text-orange-500'}`}>
           {log.result}
         </span>
@@ -49,6 +49,8 @@ function RecentActivityRow({ log }) {
 export default function FinancialOverview({ onNavigate, token }) {
   const [overview, setOverview] = useState(null)
   const [series,   setSeries]   = useState([])
+  const [auditLogs,   setAuditLogs]   = useState([])
+  const [fraudAlerts, setFraudAlerts] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
 
@@ -56,18 +58,29 @@ export default function FinancialOverview({ onNavigate, token }) {
     if (!token) return
     setLoading(true)
     setError(null)
+    const authGet = url => fetch(url, { headers: { Authorization: `Bearer ${token}` } })
     Promise.all([
-      fetch(`${API}/api/admin/financial/overview`,            { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API}/api/admin/financial/revenue-series?range=6m`, { headers: { Authorization: `Bearer ${token}` } }),
+      authGet(`${API}/api/admin/financial/overview`),
+      authGet(`${API}/api/admin/financial/revenue-series?range=6m`),
+      authGet(`${API}/api/admin/audit-logs`),
+      authGet(`${API}/api/admin/fraud-alerts`),
     ])
-      .then(([r1, r2]) => {
+      .then(([r1, r2, r3, r4]) => {
         if (!r1.ok) throw new Error(`overview HTTP ${r1.status}`)
         if (!r2.ok) throw new Error(`revenue-series HTTP ${r2.status}`)
-        return Promise.all([r1.json(), r2.json()])
+        // audit-logs & fraud-alerts are secondary — tolerate their failure
+        return Promise.all([
+          r1.json(),
+          r2.json(),
+          r3.ok ? r3.json() : { logs: [] },
+          r4.ok ? r4.json() : { alerts: [] },
+        ])
       })
-      .then(([ov, rev]) => {
+      .then(([ov, rev, audit, fraud]) => {
         setOverview(ov)
         setSeries(rev.series || [])
+        setAuditLogs(audit.logs || [])
+        setFraudAlerts(fraud.alerts || [])
         setLoading(false)
       })
       .catch(err => { setError(err.message); setLoading(false) })
@@ -102,9 +115,7 @@ export default function FinancialOverview({ onNavigate, token }) {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Tổng Quan Tài Chính" subtitle="Tổng quan tài chính toàn hệ thống EduX Marketplace">
-        <ExportButton label="Xuất Báo Cáo" />
-      </PageHeader>
+      <PageHeader title="Tổng Quan Tài Chính" subtitle="Tổng quan tài chính toàn hệ thống EduX Marketplace">      </PageHeader>
 
       {error && (
         <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">
@@ -192,13 +203,19 @@ export default function FinancialOverview({ onNavigate, token }) {
         </div>
       </div>
 
-      {/* Bottom Row — kept as mock (audit logs & fraud alerts are out of scope) */}
+      {/* Bottom Row — real read-only data from audit-logs & fraud-alerts endpoints */}
       <div className="grid grid-cols-2 gap-6">
         <SectionCard title="Hoạt Động Gần Đây" icon="history">
           <div className="px-6 py-2">
-            {AUDIT_LOGS.slice(0, 7).map(log => (
-              <RecentActivityRow key={log.id} log={log} />
-            ))}
+            {loading ? (
+              Array(5).fill(0).map((_, i) => <div key={i} className="h-10 bg-gray-100 rounded mb-2 animate-pulse" />)
+            ) : auditLogs.length === 0 ? (
+              <p className="py-6 text-center text-sm text-gray-400">Chưa có nhật ký hoạt động.</p>
+            ) : (
+              auditLogs.slice(0, 7).map(log => (
+                <RecentActivityRow key={log.id} log={log} />
+              ))
+            )}
           </div>
           <div className="px-6 py-3 border-t border-gray-50">
             <button onClick={() => onNavigate('tx-audit')} className="text-xs text-blue-600 font-semibold hover:underline">
@@ -213,18 +230,24 @@ export default function FinancialOverview({ onNavigate, token }) {
           action={<button onClick={() => onNavigate('tx-fraud')} className="text-xs text-blue-600 font-semibold hover:underline">Xem tất cả</button>}
         >
           <div className="px-6 py-2">
-            {FRAUD_ALERTS.slice(0, 4).map(a => (
-              <div key={a.id} className="flex items-start gap-3 py-3 border-b border-gray-50 last:border-0">
-                <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${a.riskLevel === 'HIGH' ? 'bg-red-500' : a.riskLevel === 'MEDIUM' ? 'bg-amber-500' : 'bg-green-500'}`} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-800">{a.user.name}</p>
-                  <p className="text-xs text-gray-400 truncate">{a.reason}</p>
+            {loading ? (
+              Array(4).fill(0).map((_, i) => <div key={i} className="h-10 bg-gray-100 rounded mb-2 animate-pulse" />)
+            ) : fraudAlerts.length === 0 ? (
+              <p className="py-6 text-center text-sm text-gray-400">Không có cảnh báo gian lận.</p>
+            ) : (
+              fraudAlerts.slice(0, 4).map(a => (
+                <div key={a.id} className="flex items-start gap-3 py-3 border-b border-gray-50 last:border-0">
+                  <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${a.severity === 'HIGH' ? 'bg-red-500' : a.severity === 'MEDIUM' ? 'bg-amber-500' : 'bg-green-500'}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-800">{a.user_name || a.user_email || '—'}</p>
+                    <p className="text-xs text-gray-400 truncate">{a.description}</p>
+                  </div>
+                  <span className={`text-xs font-bold flex-shrink-0 ${a.severity === 'HIGH' ? 'text-red-600' : a.severity === 'MEDIUM' ? 'text-amber-600' : 'text-green-600'}`}>
+                    {a.severity === 'HIGH' ? '⚠ CAO' : a.severity === 'MEDIUM' ? '~ TRUNG' : '✓ THẤP'}
+                  </span>
                 </div>
-                <span className={`text-xs font-bold flex-shrink-0 ${a.riskLevel === 'HIGH' ? 'text-red-600' : a.riskLevel === 'MEDIUM' ? 'text-amber-600' : 'text-green-600'}`}>
-                  {a.riskLevel === 'HIGH' ? '⚠ CAO' : a.riskLevel === 'MEDIUM' ? '~ TRUNG' : '✓ THẤP'}
-                </span>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </SectionCard>
       </div>

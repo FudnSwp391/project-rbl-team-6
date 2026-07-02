@@ -1,42 +1,115 @@
-import { StatusBadge, PageHeader, DataTable, SearchFilterBar, Pagination, AvatarCell, EmptyState, usePagination, useSearch } from './components'
-import { NOTIFICATIONS, fmtDateTime } from './mockData'
+import { useState, useEffect } from 'react'
+import { PageHeader, EmptyState } from './components'
 
-const NT_TYPE_LABELS = {
-  PAYMENT_SUCCESS: 'Thanh toán thành công',
-  WITHDRAWAL_APPROVED: 'Rút tiền được duyệt',
-  REFUND_PROCESSED: 'Hoàn tiền xử lý',
-  FRAUD_ALERT: 'Cảnh báo gian lận',
-  DISPUTE_OPENED: 'Mở tranh chấp',
-  WITHDRAWAL_PENDING: 'Rút tiền chờ duyệt',
-  PAYMENT_FAILED: 'Thanh toán thất bại',
-  COMMISSION_UPDATED: 'Cập nhật hoa hồng',
+const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+
+const fmtDate = iso =>
+  iso ? new Date(iso).toLocaleDateString('vi-VN') + ' ' +
+        new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—'
+
+const RAW_TYPE_LABEL = {
+  course_enrollment: 'Đăng ký khóa học',
+  course_refund:     'Hoàn tiền khóa học',
+  lesson_completed:  'Buổi học hoàn thành',
+  escrow_hold:       'Giữ tiền Escrow',
+  cancellation:      'Hủy lịch học',
+  new_message:       'Tin nhắn mới',
+  refund:            'Hoàn tiền',
 }
 
-const NT_ICONS = {
-  PAYMENT_SUCCESS: { icon: 'check_circle', color: 'text-emerald-600 bg-emerald-50' },
-  WITHDRAWAL_APPROVED: { icon: 'account_balance', color: 'text-blue-600 bg-blue-50' },
-  REFUND_PROCESSED: { icon: 'undo', color: 'text-sky-600 bg-sky-50' },
-  FRAUD_ALERT: { icon: 'warning', color: 'text-red-600 bg-red-50' },
-  DISPUTE_OPENED: { icon: 'gavel', color: 'text-orange-600 bg-orange-50' },
-  WITHDRAWAL_PENDING: { icon: 'schedule', color: 'text-amber-600 bg-amber-50' },
-  PAYMENT_FAILED: { icon: 'error', color: 'text-red-600 bg-red-50' },
-  COMMISSION_UPDATED: { icon: 'percent', color: 'text-purple-600 bg-purple-50' },
+const RAW_TYPE_ICON = {
+  course_enrollment: { icon: 'school',           color: 'text-blue-600 bg-blue-50' },
+  course_refund:     { icon: 'undo',             color: 'text-sky-600 bg-sky-50' },
+  lesson_completed:  { icon: 'check_circle',     color: 'text-emerald-600 bg-emerald-50' },
+  escrow_hold:       { icon: 'savings',          color: 'text-purple-600 bg-purple-50' },
+  cancellation:      { icon: 'cancel',           color: 'text-red-600 bg-red-50' },
+  new_message:       { icon: 'chat',             color: 'text-gray-600 bg-gray-50' },
+  refund:            { icon: 'currency_exchange', color: 'text-amber-600 bg-amber-50' },
 }
 
-export default function NotificationCenter() {
-  const { search, setSearch, filtered } = useSearch(NOTIFICATIONS, ['id', 'recipient.name', 'type', 'channel'])
-  const { page, setPage, totalPages, paginated } = usePagination(filtered, 8)
+const STATUS_CFG = {
+  read:    { label: 'Đã đọc',   cls: 'bg-emerald-100 text-emerald-700' },
+  unread:  { label: 'Chưa đọc', cls: 'bg-amber-100 text-amber-700' },
+  unknown: { label: '—',        cls: 'bg-gray-100 text-gray-500' },
+}
+
+const PRIORITY_CFG = {
+  high:   { label: 'Cao',        cls: 'bg-red-100 text-red-700' },
+  medium: { label: 'Trung bình', cls: 'bg-amber-100 text-amber-700' },
+  low:    { label: 'Thấp',       cls: 'bg-gray-100 text-gray-500' },
+}
+
+const ROLE_LABEL = { student: 'Học sinh', tutor: 'Gia sư', admin: 'Admin' }
+
+export default function NotificationCenter({ token }) {
+  const [data, setData]         = useState(null)
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState(null)
+  const [filterType, setFilterType]     = useState('all')
+  const [filterStatus, setFilterStatus] = useState('all')
+  const [search, setSearch]     = useState('')
+
+  useEffect(() => {
+    if (!token) return
+    setLoading(true)
+    setError(null)
+    fetch(`${API}/api/admin/notifications?limit=200`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => setData(d))
+      .catch(e => setError(`Không thể tải thông báo (${e})`))
+      .finally(() => setLoading(false))
+  }, [token])
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-24 text-gray-400">
+      <span className="material-symbols-outlined animate-spin mr-2">progress_activity</span>
+      Đang tải thông báo...
+    </div>
+  )
+
+  if (error) return (
+    <div className="p-8">
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm">{error}</div>
+    </div>
+  )
+
+  if (!data) return null
+
+  const { summary, notifications } = data
+
+  const rawTypes = Object.keys(summary.type_counts || {})
+
+  const filtered = notifications.filter(n => {
+    if (filterType !== 'all' && n.raw_type !== filterType) return false
+    if (filterStatus !== 'all' && n.status !== filterStatus) return false
+    if (search) {
+      const q = search.toLowerCase()
+      return (
+        (n.title || '').toLowerCase().includes(q) ||
+        (n.recipient_name || '').toLowerCase().includes(q) ||
+        (n.recipient_email || '').toLowerCase().includes(q) ||
+        (n.raw_type || '').toLowerCase().includes(q)
+      )
+    }
+    return true
+  })
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Trung Tâm Thông Báo" subtitle="Lịch sử thông báo liên quan đến giao dịch" />
+      <PageHeader
+        title="Trung Tâm Thông Báo"
+        subtitle="Lịch sử thông báo hệ thống — chỉ xem, không gửi"
+      />
 
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {[
-          { label: 'Tổng thông báo', value: NOTIFICATIONS.length, icon: 'notifications', color: 'bg-blue-50 text-blue-600' },
-          { label: 'Đã gửi', value: NOTIFICATIONS.filter(n => n.status === 'DELIVERED').length, icon: 'mark_email_read', color: 'bg-emerald-50 text-emerald-600' },
-          { label: 'Thất bại', value: NOTIFICATIONS.filter(n => n.status === 'FAILED').length, icon: 'error', color: 'bg-red-50 text-red-600' },
-          { label: 'Chờ gửi', value: NOTIFICATIONS.filter(n => n.status === 'PENDING').length, icon: 'schedule', color: 'bg-amber-50 text-amber-600' },
+          { label: 'Tổng thông báo', value: summary.total,        icon: 'notifications',   color: 'bg-blue-50 text-blue-600' },
+          { label: 'Chưa đọc',       value: summary.unread_count,  icon: 'mark_email_unread', color: 'bg-amber-50 text-amber-600' },
+          { label: 'Đã đọc',         value: summary.read_count,    icon: 'mark_email_read', color: 'bg-emerald-50 text-emerald-600' },
+          { label: 'Loại thông báo', value: rawTypes.length,       icon: 'category',        color: 'bg-purple-50 text-purple-600' },
         ].map(c => (
           <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
             <div className={`w-9 h-9 rounded-lg ${c.color} flex items-center justify-center mb-3`}>
@@ -48,38 +121,112 @@ export default function NotificationCenter() {
         ))}
       </div>
 
-      <SearchFilterBar search={search} onSearch={v => { setSearch(v); setPage(1) }} placeholder="Tìm người nhận, loại thông báo, kênh..." />
-
-      <DataTable
-        headers={['Mã', 'Người Nhận', 'Loại Thông Báo', 'Kênh', 'Trạng Thái', 'Thời Gian Gửi']}
-        loading={false}
-        empty={filtered.length === 0 && <EmptyState icon="notifications_off" title="Không có thông báo" />}
-      >
-        {paginated.map(n => {
-          const cfg = NT_ICONS[n.type] || { icon: 'notifications', color: 'text-gray-600 bg-gray-50' }
-          return (
-            <tr key={n.id} className="hover:bg-gray-50 transition-colors">
-              <td className="py-3.5 px-5"><span className="text-xs font-mono font-bold text-gray-500">{n.id}</span></td>
-              <td className="py-3.5 px-5"><AvatarCell name={n.recipient.name} avatar={n.recipient.avatar} email={n.recipient.email} /></td>
-              <td className="py-3.5 px-5">
-                <div className="flex items-center gap-2">
-                  <div className={`w-7 h-7 rounded-lg ${cfg.color} flex items-center justify-center`}>
-                    <span className={`material-symbols-outlined text-[14px]`}>{cfg.icon}</span>
-                  </div>
-                  <span className="text-sm font-semibold text-gray-800">{NT_TYPE_LABELS[n.type] || n.type}</span>
-                </div>
-              </td>
-              <td className="py-3.5 px-5"><span className="text-sm text-gray-600">{n.channel}</span></td>
-              <td className="py-3.5 px-5"><StatusBadge status={n.status} /></td>
-              <td className="py-3.5 px-5"><span className="text-xs text-gray-400">{fmtDateTime(n.sentTime)}</span></td>
-            </tr>
-          )
-        })}
-      </DataTable>
-
-      <div className="bg-white rounded-b-xl border border-t-0 border-gray-100">
-        <Pagination page={page} totalPages={totalPages} onPage={setPage} />
+      {/* Type breakdown chips */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        {Object.entries(summary.type_counts || {}).map(([t, cnt]) => (
+          <span key={t} className="px-3 py-1 bg-gray-100 rounded-full text-xs font-medium text-gray-700">
+            {RAW_TYPE_LABEL[t] || t}: {cnt}
+          </span>
+        ))}
       </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 mb-4">
+        <input
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          placeholder="Tìm tiêu đề, người nhận..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        <select
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
+          value={filterType}
+          onChange={e => setFilterType(e.target.value)}
+        >
+          <option value="all">Tất cả loại</option>
+          {rawTypes.map(t => (
+            <option key={t} value={t}>{RAW_TYPE_LABEL[t] || t}</option>
+          ))}
+        </select>
+        <select
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
+          value={filterStatus}
+          onChange={e => setFilterStatus(e.target.value)}
+        >
+          <option value="all">Tất cả trạng thái</option>
+          <option value="unread">Chưa đọc</option>
+          <option value="read">Đã đọc</option>
+        </select>
+        <span className="ml-auto self-center text-xs text-gray-400">{filtered.length} thông báo</span>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        {filtered.length === 0 ? (
+          <div className="p-10">
+            <EmptyState title="Không có thông báo" description="Không tìm thấy thông báo phù hợp." />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  {['Loại', 'Tiêu Đề / Nội Dung', 'Người Nhận', 'Trạng Thái', 'Ưu Tiên', 'Thời Gian'].map(h => (
+                    <th key={h} className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filtered.map(n => {
+                  const icfg = RAW_TYPE_ICON[n.raw_type] || { icon: 'notifications', color: 'text-gray-600 bg-gray-50' }
+                  const scfg = STATUS_CFG[n.status]   || STATUS_CFG.unknown
+                  const pcfg = PRIORITY_CFG[n.priority] || PRIORITY_CFG.low
+                  return (
+                    <tr key={n.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-7 h-7 rounded-lg ${icfg.color} flex items-center justify-center shrink-0`}>
+                            <span className="material-symbols-outlined text-[14px]">{icfg.icon}</span>
+                          </div>
+                          <span className="text-xs font-semibold text-gray-700 whitespace-nowrap">
+                            {RAW_TYPE_LABEL[n.raw_type] || n.raw_type}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 max-w-xs">
+                        <div className="text-sm font-semibold text-gray-900 truncate" title={n.title}>{n.title}</div>
+                        <div className="text-xs text-gray-400 truncate" title={n.message}>{n.message}</div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="text-sm font-medium text-gray-900">{n.recipient_name || '—'}</div>
+                        <div className="text-xs text-gray-400">{n.recipient_email || ''}</div>
+                        {n.recipient_role && (
+                          <span className="text-[10px] text-gray-400">{ROLE_LABEL[n.recipient_role] || n.recipient_role}</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${scfg.cls}`}>
+                          {scfg.label}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${pcfg.cls}`}>
+                          {pcfg.label}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-xs text-gray-400 whitespace-nowrap">{fmtDate(n.created_at)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <p className="text-xs text-gray-400 mt-4 italic">
+        * Dữ liệu từ bảng <code>notifications</code>. Hệ thống không gửi, tạo, xóa hay cập nhật thông báo từ trang này.
+      </p>
     </div>
   )
 }
