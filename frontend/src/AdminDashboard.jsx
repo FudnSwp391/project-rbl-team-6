@@ -469,8 +469,8 @@ export default function AdminDashboard() {
           {activeView === 'tx-platform-revenue' && <PlatformRevenue token={token} />}
           {activeView === 'tx-system-wallet' && <SystemWallet token={token} />}
           {activeView === 'tx-promotions'    && <PromotionTransactions token={token} />}
-          {activeView === 'tx-reports'       && <FinancialReports />}
-          {activeView === 'tx-reconciliation' && <Reconciliation />}
+          {activeView === 'tx-reports'       && <FinancialReports token={token} />}
+          {activeView === 'tx-reconciliation' && <Reconciliation token={token} />}
           {activeView === 'tx-fraud'         && <FraudAlerts token={token} />}
           {activeView === 'tx-notifications' && <NotificationCenter />}
           {activeView === 'tx-audit'         && <AuditLogs token={token} />}

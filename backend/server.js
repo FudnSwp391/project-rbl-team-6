@@ -2509,6 +2509,287 @@ app.get("/api/admin/promotion-transactions", verifyToken, requireAdmin, async (r
   }
 });
 
+// ── GET /api/admin/financial/reports ──────────────────────────────────────────
+// CAP-8.1: Read-only financial report aggregations from transactions table.
+// Commission (10%) and discount (regex from description) are ESTIMATES — labelled.
+// Refunds derived from RESOLVED_REFUND disputes (no refund transaction table exists).
+app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [
+      totalsRes,
+      monthlyRes,
+      byTypeRes,
+      byStatusRes,
+      topTxRes,
+      discountRes,
+      refundRes,
+    ] = await Promise.all([
+      // Overall totals
+      pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE type='DEPOSIT' AND status='SUCCESS' AND amount>0),0)::numeric      AS total_deposits,
+          COALESCE(SUM(ABS(amount)) FILTER (WHERE type='PAYMENT' AND status='SUCCESS' AND amount<0),0)::numeric AS total_payments,
+          COUNT(*)::int                                                                                          AS transaction_count,
+          COUNT(*) FILTER (WHERE type='PAYMENT')::int                                                            AS payment_count,
+          COUNT(*) FILTER (WHERE type='DEPOSIT')::int                                                            AS deposit_count
+        FROM transactions
+      `),
+      // Monthly breakdown
+      pool.query(`
+        SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM')                                              AS month,
+               COUNT(*)::int                                                                                     AS transaction_count,
+               COALESCE(SUM(amount) FILTER (WHERE type='DEPOSIT' AND status='SUCCESS' AND amount>0),0)::numeric  AS deposits,
+               COALESCE(SUM(ABS(amount)) FILTER (WHERE type='PAYMENT' AND status='SUCCESS' AND amount<0),0)::numeric AS payments
+        FROM transactions
+        GROUP BY DATE_TRUNC('month', created_at)
+        ORDER BY month
+      `),
+      // By type
+      pool.query(`
+        SELECT type, COUNT(*)::int AS count, COALESCE(SUM(ABS(amount)),0)::numeric AS amount
+        FROM transactions GROUP BY type ORDER BY amount DESC
+      `),
+      // By status
+      pool.query(`
+        SELECT status, COUNT(*)::int AS count, COALESCE(SUM(ABS(amount)),0)::numeric AS amount
+        FROM transactions GROUP BY status ORDER BY amount DESC
+      `),
+      // Top 20 latest transactions with user info
+      pool.query(`
+        SELECT t.id::text, t.type, t.status, ABS(t.amount)::numeric AS amount,
+               t.description, t.created_at,
+               u.full_name AS user_name, u.email AS user_email
+        FROM transactions t
+        JOIN wallets w ON w.id = t.wallet_id
+        JOIN users u   ON u.id = w.user_id
+        ORDER BY t.created_at DESC
+        LIMIT 20
+      `),
+      // Discount estimate from PAYMENT descriptions containing "giảm N"
+      pool.query(`
+        SELECT description FROM transactions
+        WHERE type='PAYMENT' AND description ILIKE '%giảm%'
+      `),
+      // Refund count from resolved-refund disputes (no refund tx table exists)
+      pool.query(`SELECT COUNT(*)::int AS count FROM disputes WHERE status='RESOLVED_REFUND'`),
+    ]);
+
+    const t = totalsRes.rows[0];
+    const totalDeposits = Number(t.total_deposits);
+    const totalPayments = Number(t.total_payments);
+
+    // Estimated discount from description text (no coupon_usages table)
+    let totalDiscount = 0;
+    for (const row of discountRes.rows) {
+      const m = (row.description || '').match(/giảm\s+([\d,]+)/i);
+      if (m) totalDiscount += parseInt(m[1].replace(/,/g, ''), 10) || 0;
+    }
+
+    const COMMISSION_RATE_EST = 10; // estimated, no commission table
+    return res.json({
+      summary: {
+        total_revenue:             Math.round(totalPayments),
+        total_deposits:            Math.round(totalDeposits),
+        total_payments:            Math.round(totalPayments),
+        total_refunds:             0, // amount not stored on disputes; count below
+        refund_count:              refundRes.rows[0].count,
+        total_commission_estimate: Math.round(totalPayments * COMMISSION_RATE_EST / 100),
+        total_discount_estimate:   totalDiscount,
+        commission_rate_estimate:  COMMISSION_RATE_EST,
+        transaction_count:         t.transaction_count,
+        payment_count:             t.payment_count,
+        deposit_count:             t.deposit_count,
+        generated_at:              new Date().toISOString(),
+      },
+      monthly: monthlyRes.rows.map(r => ({
+        month:             r.month,
+        revenue:           Math.round(Number(r.payments)),
+        deposits:          Math.round(Number(r.deposits)),
+        payments:          Math.round(Number(r.payments)),
+        refunds:           0,
+        discounts:         0,
+        transaction_count: r.transaction_count,
+      })),
+      by_type: byTypeRes.rows.map(r => ({ type: r.type, count: r.count, amount: Math.round(Number(r.amount)) })),
+      by_status: byStatusRes.rows.map(r => ({ status: r.status, count: r.count, amount: Math.round(Number(r.amount)) })),
+      top_transactions: topTxRes.rows.map(r => ({
+        id:          r.id,
+        type:        r.type,
+        status:      r.status,
+        amount:      Math.round(Number(r.amount)),
+        user_name:   r.user_name,
+        user_email:  r.user_email,
+        description: r.description,
+        created_at:  r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/financial/reports error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy báo cáo tài chính." });
+  }
+});
+
+// ── GET /api/admin/financial/reconciliation ───────────────────────────────────
+// CAP-8.2: Read-only reconciliation checks. Performs NO writes/fixes/settlements.
+// Where exact matching is impossible (internal transfers, no per-tx ledger link)
+// checks are marked "review_only" or "warning" — never a fake "matched".
+app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const LARGE_THRESHOLD = 1000000; // 1M VND — flagged for manual review only
+    const [
+      walletRes,
+      txAggRes,
+      escrowRes,
+      withdrawRes,
+      integrityRes,
+      refundRes,
+      largeRes,
+    ] = await Promise.all([
+      pool.query(`SELECT COALESCE(SUM(balance),0)::numeric AS balance, COALESCE(SUM(held_balance),0)::numeric AS held FROM wallets`),
+      pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE type='DEPOSIT' AND status='SUCCESS' AND amount>0),0)::numeric      AS deposits,
+          COALESCE(SUM(ABS(amount)) FILTER (WHERE type='PAYMENT' AND status='SUCCESS' AND amount<0),0)::numeric AS payments
+        FROM transactions
+      `),
+      pool.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(ABS(amount)),0)::numeric AS amount FROM transactions WHERE status='HELD_IN_ESCROW'`),
+      pool.query(`
+        SELECT COALESCE(SUM(amount) FILTER (WHERE status IN ('pending','PENDING')),0)::numeric AS pending_amount,
+               COUNT(*) FILTER (WHERE status IN ('pending','PENDING'))::int                     AS pending_count
+        FROM withdraw_requests
+      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0 }] })),
+      pool.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM transactions t LEFT JOIN wallets w ON w.id=t.wallet_id WHERE w.id IS NULL) AS orphan_tx,
+          (SELECT COUNT(*)::int FROM wallets w LEFT JOIN users u ON u.id=w.user_id WHERE u.id IS NULL)          AS orphan_wallet,
+          (SELECT COUNT(*)::int FROM transactions WHERE amount IS NULL OR amount=0)                             AS bad_amount
+      `),
+      pool.query(`SELECT COUNT(*)::int AS count FROM disputes WHERE status='RESOLVED_REFUND'`),
+      pool.query(`
+        SELECT t.id::text, t.type, t.status, ABS(t.amount)::numeric AS amount, t.description, t.created_at
+        FROM transactions t
+        WHERE ABS(t.amount) >= ${LARGE_THRESHOLD}
+        ORDER BY ABS(t.amount) DESC
+        LIMIT 20
+      `),
+    ]);
+
+    const wallet    = walletRes.rows[0];
+    const txAgg     = txAggRes.rows[0];
+    const escrow    = escrowRes.rows[0];
+    const withdraw  = withdrawRes.rows[0];
+    const integ     = integrityRes.rows[0];
+    const refundCnt = refundRes.rows[0].count;
+
+    const walletBalance = Number(wallet.balance);
+    const walletHeld    = Number(wallet.held);
+    const deposits      = Number(txAgg.deposits);
+    const payments      = Number(txAgg.payments);
+    const escrowAmount  = Number(escrow.amount);
+    const netFlow       = deposits - payments; // gross expected liquid balance
+
+    const checks = [];
+
+    // 1. Escrow (transactions) vs wallet held_balance
+    const escrowDiff = escrowAmount - walletHeld;
+    checks.push({
+      id: 'escrow-vs-held',
+      name: 'Escrow giao dịch vs Số dư tạm giữ ví',
+      status: escrowDiff === 0 ? 'matched' : 'warning',
+      expected_amount: Math.round(walletHeld),
+      actual_amount: Math.round(escrowAmount),
+      difference: Math.round(escrowDiff),
+      description: 'So sánh tổng giao dịch HELD_IN_ESCROW với tổng held_balance của ví. Chỉ kiểm tra, không điều chỉnh.',
+    });
+
+    // 2. Wallet balance vs net transaction flow (review only — internal transfers exist)
+    const flowDiff = walletBalance - netFlow;
+    checks.push({
+      id: 'wallet-vs-transactions',
+      name: 'Số dư ví vs Dòng tiền giao dịch',
+      status: 'review_only',
+      expected_amount: Math.round(netFlow),
+      actual_amount: Math.round(walletBalance),
+      difference: Math.round(flowDiff),
+      description: 'Nạp trừ Thanh toán so với tổng số dư ví. Chênh lệch dự kiến do chuyển khoản nội bộ / giải ngân escrow không lưu theo từng giao dịch — chỉ để xem.',
+    });
+
+    // 3. Transaction integrity
+    const integrityIssues = integ.orphan_tx + integ.orphan_wallet + integ.bad_amount;
+    checks.push({
+      id: 'transaction-integrity',
+      name: 'Toàn vẹn giao dịch',
+      status: integrityIssues === 0 ? 'matched' : 'issue',
+      expected_amount: 0,
+      actual_amount: integrityIssues,
+      difference: integrityIssues,
+      description: `Giao dịch không có ví: ${integ.orphan_tx}; ví không có người dùng: ${integ.orphan_wallet}; số tiền null/0: ${integ.bad_amount}.`,
+    });
+
+    // 4. Pending withdrawals
+    checks.push({
+      id: 'pending-withdrawals',
+      name: 'Yêu cầu rút tiền đang chờ',
+      status: Number(withdraw.pending_amount) === 0 ? 'matched' : 'review_only',
+      expected_amount: 0,
+      actual_amount: Math.round(Number(withdraw.pending_amount)),
+      difference: Math.round(Number(withdraw.pending_amount)),
+      description: `${withdraw.pending_count} yêu cầu rút tiền đang chờ duyệt. Chỉ xem, không duyệt.`,
+    });
+
+    // 5. Refund disputes vs refund transactions
+    checks.push({
+      id: 'refund-dispute-check',
+      name: 'Tranh chấp hoàn tiền vs Giao dịch hoàn tiền',
+      status: refundCnt === 0 ? 'matched' : 'warning',
+      expected_amount: refundCnt,
+      actual_amount: 0,
+      difference: refundCnt,
+      description: `${refundCnt} tranh chấp RESOLVED_REFUND. Không có bảng giao dịch hoàn tiền để đối chiếu số tiền — cần kiểm tra thủ công.`,
+    });
+
+    // Build review items
+    const items = [];
+    for (const r of largeRes.rows) {
+      const amt = Number(r.amount);
+      items.push({
+        id: r.id,
+        type: 'transaction',
+        severity: amt >= 5000000 ? 'medium' : 'low',
+        status: 'review_only',
+        title: `Giao dịch lớn: ${r.type}`,
+        description: r.description || `${r.type} — ${r.status}`,
+        amount: Math.round(amt),
+        reference_id: r.id,
+        created_at: r.created_at,
+      });
+    }
+
+    const issueCount   = checks.filter(c => c.status === 'issue').length;
+    const unmatchedCnt = checks.filter(c => c.status === 'warning' || c.status === 'issue').length;
+
+    return res.json({
+      summary: {
+        wallet_total_balance:      Math.round(walletBalance),
+        wallet_total_held_balance: Math.round(walletHeld),
+        successful_deposits:       Math.round(deposits),
+        successful_payments:       Math.round(payments),
+        escrow_transactions:       escrow.count,
+        escrow_amount:             Math.round(escrowAmount),
+        withdraw_pending_amount:   Math.round(Number(withdraw.pending_amount)),
+        unmatched_count:           unmatchedCnt,
+        issue_count:               issueCount,
+        generated_at:              new Date().toISOString(),
+      },
+      checks,
+      items,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/financial/reconciliation error:", err);
+    return res.status(500).json({ message: "Lỗi khi thực hiện đối soát." });
+  }
+});
+
 // ── GET /api/admin/violations ────────────────────────────────────────────────
 // CAP-6.1: Read-only list of disputes as violation reports.
 // Source: disputes JOIN users (raised_by=reporter, tutor_id=accused). No mutations.

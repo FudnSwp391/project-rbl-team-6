@@ -1,108 +1,199 @@
-import { useState } from 'react'
-import { PageHeader, ExportButton } from './components'
+import { useState, useEffect } from 'react'
+import { PageHeader, StatusBadge, EmptyState } from './components'
 
-const REPORTS = [
-  {
-    id: 'revenue', icon: 'payments', title: 'Revenue Report', desc: 'Tổng doanh thu theo tháng, quý, năm và theo loại giao dịch.',
-    color: 'from-blue-500 to-blue-600', metrics: ['Đ182.5M doanh thu', '6 tháng dữ liệu', '+18.2% MoM'],
-  },
-  {
-    id: 'refund', icon: 'undo', title: 'Refund Report', desc: 'Phân tích các khoản hoàn tiền, lý do và xu hướng.',
-    color: 'from-red-500 to-red-600', metrics: ['6 yêu cầu', 'đ12.4M hoàn', '3.2% refund rate'],
-  },
-  {
-    id: 'withdrawal', icon: 'account_balance', title: 'Withdrawal Report', desc: 'Lịch sử rút tiền, trạng thái và gia sư liên quan.',
-    color: 'from-emerald-500 to-emerald-600', metrics: ['7 yêu cầu', 'đ26.7M giải ngân', '3 chờ duyệt'],
-  },
-  {
-    id: 'dispute', icon: 'gavel', title: 'Dispute Report', desc: 'Báo cáo tranh chấp, thời gian giải quyết và kết quả.',
-    color: 'from-orange-500 to-orange-600', metrics: ['3 tranh chấp', '2 đang mở', '1 đã giải quyết'],
-  },
-  {
-    id: 'promotion', icon: 'local_offer', title: 'Promotion Report', desc: 'Hiệu quả khuyến mãi, mã giảm giá và tác động doanh thu.',
-    color: 'from-purple-500 to-purple-600', metrics: ['5 chương trình', 'đ66.3M giảm', '1119 lượt dùng'],
-  },
-]
+const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
-export default function FinancialReports() {
-  const [active, setActive] = useState(null)
-  const [dateRange, setDateRange] = useState({ from: '2024-01-01', to: '2024-06-30' })
+const fmtMoney = n => 'đ' + Number(n || 0).toLocaleString('vi-VN')
+const fmtDate  = iso => iso ? new Date(iso).toLocaleDateString('vi-VN') : '—'
 
-  const handleExport = (type, format) => {
-    alert(`Đang xuất ${type} dưới dạng ${format}... (Demo mode)`)
-  }
+const TYPE_LABEL   = { DEPOSIT: 'Nạp tiền', PAYMENT: 'Thanh toán', REFUND: 'Hoàn tiền' }
+const STATUS_LABEL = { SUCCESS: 'Thành công', HELD_IN_ESCROW: 'Đang giữ Escrow', FAILED: 'Thất bại' }
+
+export default function FinancialReports({ token }) {
+  const [data, setData]       = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState(null)
+
+  useEffect(() => {
+    if (!token) return
+    setLoading(true)
+    setError(null)
+    fetch(`${API}/api/admin/financial/reports`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => setData(d))
+      .catch(e => setError(`Không thể tải báo cáo tài chính (${e})`))
+      .finally(() => setLoading(false))
+  }, [token])
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-24 text-gray-400">
+      <span className="material-symbols-outlined animate-spin mr-2">progress_activity</span>
+      Đang tải báo cáo tài chính...
+    </div>
+  )
+
+  if (error) return (
+    <div className="p-8">
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm">{error}</div>
+    </div>
+  )
+
+  if (!data) return null
+
+  const { summary, monthly, by_type, by_status, top_transactions } = data
+  const maxMonthly = Math.max(1, ...monthly.map(m => Math.max(m.deposits, m.payments)))
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Báo Cáo Tài Chính" subtitle="Trung tâm báo cáo tài chính toàn diện" />
+      <PageHeader title="Báo Cáo Tài Chính" subtitle="Tổng hợp tài chính từ dữ liệu giao dịch thực (chỉ xem)" />
 
-      {/* Date Range Filter */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6">
-        <div className="flex items-center gap-6">
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1.5">Từ Ngày</label>
-            <input type="date" value={dateRange.from} onChange={e => setDateRange(p => ({ ...p, from: e.target.value }))}
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-blue-500" />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1.5">Đến Ngày</label>
-            <input type="date" value={dateRange.to} onChange={e => setDateRange(p => ({ ...p, to: e.target.value }))}
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-blue-500" />
-          </div>
-          <div className="pt-5">
-            <button className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold hover:opacity-90">
-              Áp dụng
-            </button>
-          </div>
-          <div className="flex-1 flex items-end justify-end gap-2 pt-5">
-            {['T7 ngày', 'T30 ngày', 'Q1', 'Q2', 'Năm 2024'].map(p => (
-              <button key={p} className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-xs font-semibold transition-colors">{p}</button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Report Cards Grid */}
-      <div className="grid grid-cols-3 gap-5">
-        {REPORTS.map(r => (
-          <div key={r.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
-            <div className={`bg-gradient-to-r ${r.color} p-5`}>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-                  <span className="material-symbols-outlined text-white text-[20px]">{r.icon}</span>
-                </div>
-                <h3 className="text-base font-bold text-white">{r.title}</h3>
-              </div>
-              <p className="text-sm text-white/80">{r.desc}</p>
+      {/* Summary KPI cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        {[
+          { label: 'Doanh thu (Thanh toán)', value: fmtMoney(summary.total_revenue),  icon: 'payments',     color: 'bg-blue-50 text-blue-600' },
+          { label: 'Tổng nạp tiền',           value: fmtMoney(summary.total_deposits), icon: 'account_balance', color: 'bg-emerald-50 text-emerald-600' },
+          { label: 'Hoa hồng ước tính (~10%)', value: fmtMoney(summary.total_commission_estimate), icon: 'percent', color: 'bg-purple-50 text-purple-600' },
+          { label: 'Giảm giá ước tính',       value: fmtMoney(summary.total_discount_estimate), icon: 'discount', color: 'bg-red-50 text-red-600' },
+        ].map(c => (
+          <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+            <div className={`w-9 h-9 rounded-lg ${c.color} flex items-center justify-center mb-3`}>
+              <span className="material-symbols-outlined text-[18px]">{c.icon}</span>
             </div>
-            <div className="p-5">
-              <div className="flex flex-wrap gap-2 mb-4">
-                {r.metrics.map(m => (
-                  <span key={m} className="text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full font-semibold">{m}</span>
-                ))}
-              </div>
-              <div className="flex items-center gap-2">
-                {['Excel', 'CSV', 'PDF'].map(fmt => (
-                  <button key={fmt} onClick={() => handleExport(r.title, fmt)}
-                    className="flex-1 py-2 border border-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-50 transition-colors">
-                    {fmt}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <p className="text-xs font-semibold text-gray-400 uppercase mb-1">{c.label}</p>
+            <p className="text-lg font-bold text-gray-900">{c.value}</p>
           </div>
         ))}
       </div>
 
-      {/* Generate Custom Report */}
-      <div className="mt-6 bg-gradient-to-r from-gray-900 to-gray-700 rounded-xl p-6 flex items-center justify-between">
-        <div>
-          <h3 className="text-base font-bold text-white mb-1">Tạo Báo Cáo Tùy Chỉnh</h3>
-          <p className="text-sm text-gray-400">Chọn bất kỳ kết hợp dữ liệu và xuất ra định dạng bạn muốn.</p>
+      {/* Secondary stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        {[
+          { label: 'Tổng giao dịch', value: summary.transaction_count },
+          { label: 'Lượt thanh toán', value: summary.payment_count },
+          { label: 'Lượt nạp tiền',  value: summary.deposit_count },
+          { label: 'Tranh chấp hoàn tiền', value: summary.refund_count },
+        ].map(s => (
+          <div key={s.label} className="bg-gray-50 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-gray-800">{s.value ?? 0}</div>
+            <div className="text-xs text-gray-500 mt-1">{s.label}</div>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-gray-400 mb-6 italic">
+        * Hoa hồng và giảm giá là số liệu <strong>ước tính</strong> (không có bảng commission / coupon_usages thực tế).
+        Hoàn tiền tính theo số lượng tranh chấp RESOLVED_REFUND (số tiền không được lưu trên tranh chấp).
+      </p>
+
+      {/* Monthly breakdown */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h3 className="text-sm font-bold text-gray-700 uppercase">Theo Tháng</h3>
         </div>
-        <button className="px-6 py-3 bg-white text-gray-900 rounded-xl font-bold text-sm hover:bg-gray-100 transition-colors">
-          ✨ Tạo báo cáo
-        </button>
+        {monthly.length === 0 ? (
+          <div className="p-8"><EmptyState title="Không có dữ liệu" description="Chưa có giao dịch nào." /></div>
+        ) : (
+          <div className="p-6 space-y-4">
+            {monthly.map(m => (
+              <div key={m.month}>
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="font-semibold text-gray-700">{m.month}</span>
+                  <span className="text-gray-400">{m.transaction_count} giao dịch</span>
+                </div>
+                <div className="flex gap-2 items-center">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs text-emerald-600 w-16">Nạp</span>
+                      <div className="flex-1 h-4 bg-gray-100 rounded overflow-hidden">
+                        <div className="h-full bg-emerald-400 rounded" style={{ width: `${(m.deposits / maxMonthly) * 100}%` }} />
+                      </div>
+                      <span className="text-xs font-semibold text-gray-600 w-28 text-right">{fmtMoney(m.deposits)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-blue-600 w-16">Thanh toán</span>
+                      <div className="flex-1 h-4 bg-gray-100 rounded overflow-hidden">
+                        <div className="h-full bg-blue-400 rounded" style={{ width: `${(m.payments / maxMonthly) * 100}%` }} />
+                      </div>
+                      <span className="text-xs font-semibold text-gray-600 w-28 text-right">{fmtMoney(m.payments)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Type & status breakdown */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <h3 className="text-sm font-bold text-gray-700 uppercase">Theo Loại Giao Dịch</h3>
+          </div>
+          <table className="w-full">
+            <tbody className="divide-y divide-gray-50">
+              {by_type.map(r => (
+                <tr key={r.type}>
+                  <td className="py-3 px-6 text-sm font-medium text-gray-700">{TYPE_LABEL[r.type] || r.type}</td>
+                  <td className="py-3 px-6 text-sm text-gray-400">{r.count} GD</td>
+                  <td className="py-3 px-6 text-sm font-bold text-gray-900 text-right">{fmtMoney(r.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <h3 className="text-sm font-bold text-gray-700 uppercase">Theo Trạng Thái</h3>
+          </div>
+          <table className="w-full">
+            <tbody className="divide-y divide-gray-50">
+              {by_status.map(r => (
+                <tr key={r.status}>
+                  <td className="py-3 px-6"><StatusBadge status={r.status} /></td>
+                  <td className="py-3 px-6 text-sm text-gray-400">{r.count} GD</td>
+                  <td className="py-3 px-6 text-sm font-bold text-gray-900 text-right">{fmtMoney(r.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Top transactions */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h3 className="text-sm font-bold text-gray-700 uppercase">Giao Dịch Gần Nhất ({top_transactions.length})</h3>
+        </div>
+        {top_transactions.length === 0 ? (
+          <div className="p-8"><EmptyState title="Không có giao dịch" description="Chưa có giao dịch nào." /></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  {['Người Dùng', 'Loại', 'Mô Tả', 'Số Tiền', 'Trạng Thái', 'Ngày'].map(h => (
+                    <th key={h} className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {top_transactions.map(tx => (
+                  <tr key={tx.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="py-3 px-4">
+                      <div className="text-sm font-medium text-gray-900">{tx.user_name || '—'}</div>
+                      <div className="text-xs text-gray-400">{tx.user_email || ''}</div>
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-600">{TYPE_LABEL[tx.type] || tx.type}</td>
+                    <td className="py-3 px-4 text-sm text-gray-600 max-w-xs truncate" title={tx.description}>{tx.description || '—'}</td>
+                    <td className="py-3 px-4 text-sm font-bold text-gray-900 whitespace-nowrap">{fmtMoney(tx.amount)}</td>
+                    <td className="py-3 px-4"><StatusBadge status={tx.status} /></td>
+                    <td className="py-3 px-4 text-sm text-gray-500 whitespace-nowrap">{fmtDate(tx.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   )
