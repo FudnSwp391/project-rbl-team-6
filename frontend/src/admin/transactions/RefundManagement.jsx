@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   StatusBadge, PageHeader, DataTable, SearchFilterBar, FilterTabs,
-  Pagination, AvatarCell, ExportButton, EmptyState,
+  Pagination, AvatarCell, EmptyState,
   usePagination, useSearch
 } from './components'
 import { fmtMoney, fmtDateTime } from './mockData'
@@ -67,9 +67,7 @@ export default function RefundManagement({ token }) {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Quản Lý Hoàn Tiền" subtitle="Danh sách hoàn tiền từ tranh chấp khóa học (chỉ xem)">
-        <ExportButton />
-      </PageHeader>
+      <PageHeader title="Quản Lý Hoàn Tiền" subtitle="Danh sách hoàn tiền từ tranh chấp khóa học (chỉ xem)">      </PageHeader>
 
       {error && (
         <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">

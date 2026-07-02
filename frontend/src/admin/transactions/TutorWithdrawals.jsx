@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   StatusBadge, PageHeader, DataTable, SearchFilterBar, FilterTabs,
-  Pagination, AvatarCell, ExportButton, EmptyState,
+  Pagination, AvatarCell, EmptyState,
   usePagination, useSearch
 } from './components'
 import { fmtMoney, fmtDateTime } from './mockData'
@@ -58,9 +58,7 @@ export default function TutorWithdrawals({ token }) {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Gia Sư Rút Tiền" subtitle="Danh sách yêu cầu rút tiền của gia sư (chỉ xem)">
-        <ExportButton />
-      </PageHeader>
+      <PageHeader title="Gia Sư Rút Tiền" subtitle="Danh sách yêu cầu rút tiền của gia sư (chỉ xem)">      </PageHeader>
 
       {error && (
         <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">
