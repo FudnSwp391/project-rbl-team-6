@@ -696,7 +696,15 @@ function StudentBookingsSection({ token }) {
                     {canCancel && (
                       <button
                         onClick={async () => {
-                          if (!window.confirm('Bạn có chắc muốn hủy buổi học này?')) return
+                          if (!window.confirm(
+                            'Hủy buổi học này?\n\n' +
+                            'Chính sách hoàn tiền (tính theo thời gian trước buổi học):\n' +
+                            '• Từ 6 giờ trở lên: hoàn 100%\n' +
+                            '• 3–6 giờ: hoàn 50%\n' +
+                            '• 1–3 giờ: hoàn 25%\n' +
+                            '• Dưới 1 giờ hoặc đã qua giờ học: không hoàn tiền\n' +
+                            '(Nếu gia sư hủy, học sinh được hoàn 100%.)'
+                          )) return
                           setActionLoading(b.id + '_cancel')
                           try {
                             const res = await fetch(`${API_BASE}/api/bookings/${b.id}`, {

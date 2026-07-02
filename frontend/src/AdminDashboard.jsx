@@ -2836,6 +2836,7 @@ function ComplaintsView({ token }) {
   const [resolveModal, setResolveModal] = useState(null)
   const [adminNote, setAdminNote] = useState('')
   const [penaltyType, setPenaltyType] = useState('NONE')
+  const [refundRate, setRefundRate] = useState(1)
   const [resolving, setResolving] = useState(false)
 
   const fetchDisputes = async () => {
@@ -2859,12 +2860,13 @@ function ComplaintsView({ token }) {
       const res = await fetch(API_BASE + '/api/escrow/resolve-dispute-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('token') },
-        body: JSON.stringify({ disputeId: resolveModal.id, decision, adminNote, penaltyType })
+        body: JSON.stringify({ disputeId: resolveModal.id, decision, adminNote, penaltyType,
+          ...(decision === 'REFUND_TO_STUDENT' ? { refundRate } : {}) })
       })
       const data = await res.json()
       if (data.success) {
         alert('Đã xử lý: ' + (decision === 'REFUND_TO_STUDENT' ? 'Hoàn tiền cho học sinh' : 'Giải ngân cho gia sư'))
-        setResolveModal(null); setAdminNote(''); setPenaltyType('NONE'); fetchDisputes()
+        setResolveModal(null); setAdminNote(''); setPenaltyType('NONE'); setRefundRate(1); fetchDisputes()
       } else { alert(data.message || 'Có lỗi xảy ra.') }
     } catch { alert('Lỗi kết nối.') }
     setResolving(false)
@@ -2962,7 +2964,7 @@ function ComplaintsView({ token }) {
                   </td>
                   <td className="py-3 px-4 text-right">
                     {d.status === 'OPEN' ? (
-                      <button onClick={() => { setResolveModal(d); setAdminNote('') }}
+                      <button onClick={() => { setResolveModal(d); setAdminNote(''); setRefundRate(1) }}
                         className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 flex items-center gap-1 ml-auto">
                         <span className="material-symbols-outlined text-[14px]">gavel</span>Phán quyết
                       </button>
@@ -3025,13 +3027,27 @@ function ComplaintsView({ token }) {
                   </p>
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-semibold text-on-surface-variant mb-1">Tỷ lệ hoàn tiền (chỉ áp dụng khi Hoàn tiền)</label>
+                <select value={refundRate} onChange={e => setRefundRate(Number(e.target.value))}
+                  className="w-full p-3 rounded-xl border border-gray-300 focus:border-primary focus:ring-1 focus:ring-primary text-sm outline-none">
+                  <option value={1}>Hoàn 100% (mặc định)</option>
+                  <option value={0.7}>Hoàn 70%</option>
+                  <option value={0.5}>Hoàn 50%</option>
+                  <option value={0.25}>Hoàn 25%</option>
+                  <option value={0}>Không hoàn (0%) — giải ngân cho gia sư</option>
+                </select>
+                <p className="text-xs text-on-surface-variant mt-1">
+                  Phần không hoàn được chia cho gia sư (90%) và nền tảng (10%). Theo {`REFUND_POLICY_V2_1`}.
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-3 pt-2">
                 <button onClick={() => handleResolve('REFUND_TO_STUDENT')} disabled={resolving}
                   className="p-4 rounded-xl bg-red-50 border-2 border-red-300 hover:border-red-500 hover:bg-red-100 transition-all disabled:opacity-50 text-left relative overflow-hidden group">
                   <span className="material-symbols-outlined text-red-600 text-[22px] block mb-2">undo</span>
                   <p className="font-bold text-red-800 text-sm">Chấp nhận khiếu nại (Hoàn tiền)</p>
                   <p className="text-xs text-red-600 mt-1">Hoàn lại tiền cho học sinh và áp dụng hình thức xử phạt với gia sư.</p>
-                  <p className="text-xs font-bold text-red-700 mt-2">→ {fmtMoney(resolveModal.lesson_fee)}</p>
+                  <p className="text-xs font-bold text-red-700 mt-2">→ {fmtMoney(Math.round(Number(resolveModal.lesson_fee || 0) * refundRate))} ({Math.round(refundRate * 100)}%)</p>
                   <div className="absolute inset-0 bg-red-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 </button>
                 <button onClick={() => handleResolve('RELEASE_TO_TUTOR')} disabled={resolving}
