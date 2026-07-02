@@ -30,6 +30,7 @@ import CourseMarketplace from './pages/CourseMarketplace'
 import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
 import CartPage from './pages/CartPage'
+import CompleteStudentProfile from './pages/CompleteStudentProfile'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -116,6 +117,7 @@ const getRouteFromHash = () => {
   if (normalized.startsWith('/dashboard')) return { name: 'dashboard' }
   if (normalized === '/tutor')     return { name: 'tutor' }
   if (normalized === '/tutor-profile') return { name: 'tutor-profile' }
+  if (normalized === '/complete-student-profile') return { name: 'complete-student-profile' }
   if (normalized === '/cart')      return { name: 'cart' }
 
   const tutorDetailMatch = normalized.match(/^\/tutor-detail\/([^/]+)$/)
@@ -820,6 +822,20 @@ function App() {
         </footer>
       </div>
     )
+  }
+
+  // ── Route: Complete Student Profile ──
+  if (routeName === 'complete-student-profile') {
+    const hasPendingReg = !!sessionStorage.getItem('pendingStudentReg')
+    if (!user && !hasPendingReg) {
+      return (
+        <AccessDenied
+          isLoggedIn={false}
+          onGoSignIn={() => navigateTo('signin')}
+        />
+      )
+    }
+    return <CompleteStudentProfile onGoHome={() => navigateTo('home')} />
   }
 
   // ── Route: Public Pages ──
