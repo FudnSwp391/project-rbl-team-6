@@ -6,7 +6,6 @@ import NotificationDropdown from './components/NotificationDropdown'
 import FinancialOverview     from './admin/transactions/FinancialOverview'
 import LessonPayments        from './admin/transactions/LessonPayments'
 import CourseTransactions    from './admin/transactions/CourseTransactions'
-import TutorWithdrawals      from './admin/transactions/TutorWithdrawals'
 import RefundManagement      from './admin/transactions/RefundManagement'
 import FailedTransactions    from './admin/transactions/FailedTransactions'
 import PaymentGateways       from './admin/transactions/PaymentGateways'
@@ -21,6 +20,8 @@ import NotificationCenter    from './admin/transactions/NotificationCenter'
 import AuditLogs             from './admin/transactions/AuditLogs'
 import WalletLedger          from './admin/transactions/WalletLedger'
 import CommissionLogs        from './admin/transactions/CommissionLogs'
+import NotificationOutbox     from './admin/transactions/NotificationOutbox'
+import WithdrawalRequests     from './admin/transactions/WithdrawalRequests'
 
 import Violations from './admin/services/Violations'
 import Moderation from './admin/services/Moderation'
@@ -50,7 +51,7 @@ const TX_SUB_ITEMS = [
   { id: 'tx-overview',     label: 'Tổng Quan Tài Chính',    icon: 'bar_chart' },
   { id: 'tx-lessons',      label: 'Thanh Toán Buổi Học',       icon: 'receipt_long' },
   { id: 'tx-courses',      label: 'Giao Dịch Khóa Học',   icon: 'school' },
-  { id: 'tx-withdrawals',  label: 'Gia Sư Rút Tiền',     icon: 'account_balance' },
+  { id: 'tx-withdrawals',  label: 'Duyệt Rút Tiền',      icon: 'account_balance' },
   { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
   { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
   { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
@@ -65,6 +66,7 @@ const TX_SUB_ITEMS = [
   { id: 'tx-notifications', label: 'Trung Tâm Thông Báo',  icon: 'notifications' },
   { id: 'tx-wallet-ledger',    label: 'Sổ Cái Ví',            icon: 'account_balance_wallet' },
   { id: 'tx-commission-logs', label: 'Nhật Ký Hoa Hồng',    icon: 'receipt_long' },
+  { id: 'notifications-outbox', label: 'Email / Hàng Đợi Thông Báo', icon: 'mark_email_read' },
   { id: 'tx-audit',        label: 'Nhật Ký Admin',            icon: 'history_edu' },
 ]
 
@@ -450,7 +452,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} token={token} />}
           {activeView === 'tx-lessons'       && <LessonPayments token={token} />}
           {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
-          {activeView === 'tx-withdrawals'   && <TutorWithdrawals token={token} />}
+          {activeView === 'tx-withdrawals'   && <WithdrawalRequests token={token} />}
           {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
           {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
@@ -465,6 +467,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-notifications' && <NotificationCenter token={token} />}
           {activeView === 'tx-wallet-ledger'    && <WalletLedger token={token} />}
           {activeView === 'tx-commission-logs' && <CommissionLogs token={token} />}
+          {activeView === 'notifications-outbox' && <NotificationOutbox token={token} />}
           {activeView === 'tx-audit'         && <AuditLogs token={token} />}
           
           {/* ── Service Management Module ── */}

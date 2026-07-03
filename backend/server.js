@@ -389,6 +389,326 @@ async function sendPasswordResetEmail(to, otp) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// NOTIFICATION & EMAIL RELIABILITY (Batch 20) — centralized in-app notification
+// + email outbox with retry. Module-level (not inside startServer) so it is
+// callable from every route handler regardless of scope. In-app notifications
+// are written with whatever client/pool the caller passes in — pass the active
+// transaction client from money flows so a rollback also rolls back the
+// notification (email queuing never fires synchronously inside a transaction;
+// the outbox processor sends it after COMMIT).
+// ═══════════════════════════════════════════════════════════════════════════
+const NOTIFICATION_POLICY_VERSION = "NOTIFICATION_POLICY_V1";
+const EMAIL_RETRY_MAX_ATTEMPTS = 3;
+
+// Trim, strip control chars, collapse whitespace, cap length. Null-safe.
+function sanitizeNotificationText(value, maxLength = 500) {
+  if (value == null) return null;
+  // eslint-disable-next-line no-control-regex
+  let s = String(value).replace(/[\x00-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  return s.slice(0, maxLength);
+}
+
+const fmtVnd = n => Number(n || 0).toLocaleString('vi-VN') + 'đ';
+
+// Plain-text/simple-HTML templates for every notifiable event. Vietnamese,
+// short, no external images, no secrets. Returns {subject,title,body,htmlBody,icon,priority}.
+const NOTIFICATION_TEMPLATES = {
+  withdrawal_created: d => ({
+    subject: '[EduX] Yêu cầu rút tiền đã được tạo', title: 'Yêu cầu rút tiền đã được tạo',
+    body: `Bạn đã yêu cầu rút ${fmtVnd(d.amount)}. Admin sẽ xem xét và chuyển khoản thủ công.`,
+    icon: 'account_balance', priority: 'normal',
+  }),
+  withdrawal_approved: d => ({
+    subject: '[EduX] Yêu cầu rút tiền đã được duyệt', title: 'Yêu cầu rút tiền đã được duyệt',
+    body: `Yêu cầu rút ${fmtVnd(d.amount)} đã được duyệt. Admin sẽ chuyển khoản.`,
+    icon: 'check_circle', priority: 'normal',
+  }),
+  withdrawal_rejected: d => ({
+    subject: '[EduX] Yêu cầu rút tiền bị từ chối', title: 'Yêu cầu rút tiền bị từ chối',
+    body: `Yêu cầu rút ${fmtVnd(d.amount)} bị từ chối. Số dư đã được hoàn lại.${d.reason ? ` Lý do: ${d.reason}` : ''}`,
+    icon: 'cancel', priority: 'normal',
+  }),
+  withdrawal_paid: d => ({
+    subject: '[EduX] Rút tiền thành công', title: 'Rút tiền thành công',
+    body: `Admin đã chuyển khoản ${fmtVnd(d.amount)} cho bạn.`,
+    icon: 'paid', priority: 'high',
+  }),
+  refund_created: d => ({
+    subject: '[EduX] Yêu cầu hoàn tiền đã được ghi nhận', title: 'Yêu cầu hoàn tiền đã được ghi nhận',
+    body: `Yêu cầu hoàn tiền cho "${d.itemName || 'giao dịch'}" đang được xử lý.`,
+    icon: 'undo', priority: 'normal',
+  }),
+  refund_resolved: d => ({
+    subject: '[EduX] Hoàn tiền thành công', title: 'Hoàn tiền thành công',
+    body: `Bạn đã được hoàn ${fmtVnd(d.amount)}${d.rate != null ? ` (${Math.round(d.rate * 100)}%)` : ''} cho "${d.itemName || 'giao dịch'}".`,
+    icon: 'undo', priority: 'normal',
+  }),
+  dispute_opened: d => ({
+    subject: '[EduX] Khiếu nại mới', title: d.forAdmin ? 'Khiếu nại mới cần xử lý' : 'Bạn đang bị khiếu nại',
+    body: d.forAdmin
+      ? `${d.reporterName || 'Người dùng'} báo cáo vi phạm. Lý do: ${d.reason || ''}`
+      : `${d.reporterName || 'Người dùng'} gửi khiếu nại. Admin sẽ xem xét và phán quyết.`,
+    icon: d.forAdmin ? 'gavel' : 'report', priority: 'high',
+  }),
+  dispute_resolved_refund: d => ({
+    subject: '[EduX] Khiếu nại: Đã hoàn tiền', title: 'Khiếu nại: Đã hoàn tiền',
+    body: d.forTutor
+      ? `Admin hoàn tiền cho học sinh.${d.repDeduct ? ` Điểm uy tín bị trừ ${d.repDeduct}.` : ''}`
+      : `Admin phán quyết: Hoàn ${fmtVnd(d.amount)} (${Math.round((d.rate ?? 1) * 100)}%) vào ví bạn.`,
+    icon: d.forTutor ? 'gavel' : 'check_circle', priority: 'high',
+  }),
+  dispute_resolved_release: d => ({
+    subject: '[EduX] Khiếu nại đã được xử lý', title: 'Khiếu nại không được chấp nhận',
+    body: 'Admin xem xét và phán quyết gia sư không vi phạm.',
+    icon: 'gavel', priority: 'normal',
+  }),
+  booking_approved: d => ({
+    subject: '[EduX] Lịch học đã được xác nhận', title: 'Lịch học đã được xác nhận — Tiền tạm giữ',
+    body: `Gia sư đã duyệt lịch học. ${fmtVnd(d.amount)} đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`,
+    icon: 'lock', priority: 'normal',
+  }),
+  booking_declined: d => ({
+    subject: '[EduX] Lịch học bị từ chối', title: 'Hoàn tiền lịch học bị từ chối',
+    body: `Gia sư đã từ chối lịch học. ${fmtVnd(d.amount)} đã được hoàn lại vào ví của bạn.`,
+    icon: 'undo', priority: 'normal',
+  }),
+  booking_cancelled: d => ({
+    subject: '[EduX] Lịch học đã bị hủy', title: 'Lịch học đã bị hủy',
+    body: d.message || 'Lịch học đã bị hủy theo chính sách hoàn tiền.',
+    icon: 'cancel', priority: 'normal',
+  }),
+  booking_completed_present: d => ({
+    subject: '[EduX] Buổi học đã hoàn thành', title: 'Buổi học đã hoàn thành',
+    body: `Buổi học đã được đánh dấu tham gia đầy đủ. Học phí sẽ giải ngân sau 24h nếu không có khiếu nại.`,
+    icon: 'task_alt', priority: 'normal',
+  }),
+  escrow_auto_release_pending: d => ({
+    subject: '[EduX] Học phí sắp được giải ngân', title: 'Học phí sắp được giải ngân',
+    body: `Học phí ${fmtVnd(d.amount)} sẽ tự động giải ngân sau 24h nếu không có khiếu nại.`,
+    icon: 'schedule', priority: 'low',
+  }),
+  escrow_released: d => ({
+    subject: '[EduX] Học phí đã được giải ngân', title: 'Tiền học phí đã vào ví',
+    body: `${fmtVnd(d.amount)} đã vào ví (sau 10% hoa hồng).`,
+    icon: 'payments', priority: 'normal',
+  }),
+  course_purchased: d => ({
+    subject: '[EduX] Đăng ký khóa học thành công', title: 'Đăng ký khóa học thành công',
+    body: `Bạn đã đăng ký khóa học "${d.courseName || ''}" thành công.`,
+    icon: 'school', priority: 'normal',
+  }),
+  course_refunded: d => ({
+    subject: '[EduX] Hoàn tiền khóa học', title: 'Hoàn tiền khóa học thành công',
+    body: `Bạn đã được hoàn ${fmtVnd(d.amount)}${d.rate != null ? ` (${Math.round(d.rate * 100)}%)` : ''} cho khóa học "${d.courseName || ''}".`,
+    icon: 'undo', priority: 'normal',
+  }),
+  tutor_profile_approved: d => ({
+    subject: '[EduX] Hồ sơ gia sư đã được duyệt', title: 'Hồ sơ gia sư đã được duyệt',
+    body: 'Hồ sơ đăng ký gia sư của bạn đã được chấp thuận. Tài khoản của bạn hiện đã hoạt động đầy đủ.',
+    icon: 'verified', priority: 'high',
+  }),
+  tutor_profile_rejected: d => ({
+    subject: '[EduX] Hồ sơ gia sư chưa được duyệt', title: 'Hồ sơ gia sư chưa được duyệt',
+    body: `Hồ sơ đăng ký gia sư chưa đáp ứng điều kiện.${d.reason ? ` Lý do: ${d.reason}` : ''}`,
+    icon: 'gavel', priority: 'high',
+  }),
+  system_alert_admin: d => ({
+    subject: `[EduX] ${d.title || 'Cảnh báo hệ thống'}`, title: d.title || 'Cảnh báo hệ thống',
+    body: d.message || '',
+    icon: 'warning', priority: d.priority || 'normal',
+  }),
+};
+
+// Renders a template into {subject,title,body,htmlBody,icon,priority}. Unknown
+// keys fall back to a generic safe template rather than throwing.
+function renderNotificationTemplate(templateKey, data = {}) {
+  const fn = NOTIFICATION_TEMPLATES[templateKey];
+  const base = fn ? fn(data) : {
+    subject: '[EduX] Thông báo', title: data.title || 'Thông báo mới',
+    body: data.message || data.body || '', icon: 'notifications', priority: 'normal',
+  };
+  const title = sanitizeNotificationText(base.title, 200) || 'Thông báo';
+  const body  = sanitizeNotificationText(base.body, 1000) || '';
+  const subject = sanitizeNotificationText(base.subject, 200) || `[EduX] ${title}`;
+  const htmlBody = `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:32px 16px;"><tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);">
+<tr><td style="background:#00288e;padding:24px 32px;"><h1 style="margin:0;color:#fff;font-size:20px;">EduX</h1></td></tr>
+<tr><td style="padding:32px;"><h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${title}</h2>
+<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${body}</p></td></tr>
+<tr><td style="background:#f8f9fb;padding:16px 32px;border-top:1px solid #e1e2e4;"><p style="margin:0;color:#757684;font-size:12px;">EduX — support@edux.com</p></td></tr>
+</table></td></tr></table></body></html>`;
+  return { subject, title, body, htmlBody, icon: base.icon || 'notifications', priority: base.priority || 'normal' };
+}
+
+// Insert an in-app notification row. Idempotent via idempotency_key (ON
+// CONFLICT DO NOTHING). Returns the row id, or null if duplicate/skipped.
+async function createInAppNotification(clientOrPool, payload) {
+  const rendered = renderNotificationTemplate(payload.templateKey, payload.data || {});
+  const title = sanitizeNotificationText(payload.title || rendered.title, 200) || rendered.title;
+  const body  = sanitizeNotificationText(payload.body  || rendered.body, 1000)  || rendered.body;
+  const r = await clientOrPool.query(
+    `INSERT INTO notifications
+       (user_id, type, title, body, icon, ref_id, ref_type, event_type, priority,
+        source_type, source_id, idempotency_key, metadata)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)
+     ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+     RETURNING id`,
+    [
+      payload.userId, payload.type || payload.eventType || 'system', title, body,
+      payload.icon || rendered.icon, payload.refId || null, payload.refType || null,
+      payload.eventType || null, rendered.priority || payload.priority || 'normal',
+      payload.sourceType || null, payload.sourceId || null,
+      payload.idempotencyKey || null, JSON.stringify(payload.metadata || {}),
+    ]
+  );
+  return r.rows.length ? r.rows[0].id : null;
+}
+
+// Queue an email in the outbox (does NOT send synchronously). Idempotent via
+// idempotency_key. Returns the outbox row id, or null if duplicate.
+async function queueEmailNotification(clientOrPool, payload) {
+  const rendered = renderNotificationTemplate(payload.templateKey, payload.data || {});
+  const r = await clientOrPool.query(
+    `INSERT INTO notification_outbox
+       (user_id, email, channel, event_type, template_key, subject, title, body, html_body,
+        status, priority, source_type, source_id, ref_type, ref_id, notification_id,
+        idempotency_key, metadata)
+     VALUES ($1,$2,'EMAIL',$3,$4,$5,$6,$7,$8,'PENDING',$9,$10,$11,$12,$13,$14,$15,$16::jsonb)
+     ON CONFLICT (idempotency_key) DO NOTHING
+     RETURNING id`,
+    [
+      payload.userId || null, payload.email || null, payload.eventType || payload.templateKey,
+      payload.templateKey, rendered.subject, rendered.title, rendered.body, rendered.htmlBody,
+      rendered.priority || payload.priority || 'normal',
+      payload.sourceType || null, payload.sourceId || null,
+      payload.refType || null, payload.refId || null, payload.notificationId || null,
+      payload.idempotencyKey || null, JSON.stringify(payload.metadata || {}),
+    ]
+  );
+  return r.rows.length ? r.rows[0].id : null;
+}
+
+// Central entry point: creates in-app notification and/or queues email
+// depending on payload.channels (default ['IN_APP']). Pass the active
+// transaction client when called from inside a money-flow transaction so
+// rollback covers the notification too. Throws on real DB errors — callers in
+// critical (money) paths MUST use safeNotifyUser instead.
+async function notifyUser(clientOrPool, payload) {
+  const channels = payload.channels || ['IN_APP'];
+  const result = { notificationId: null, outboxId: null };
+
+  if (channels.includes('IN_APP') && payload.userId) {
+    const idemKey = payload.idempotencyKey ? `notif:${payload.idempotencyKey}` : null;
+    result.notificationId = await createInAppNotification(clientOrPool, { ...payload, idempotencyKey: idemKey });
+  }
+
+  if (channels.includes('EMAIL') && (payload.email || payload.userId)) {
+    let email = payload.email;
+    if (!email && payload.userId) {
+      const u = await clientOrPool.query('SELECT email FROM users WHERE id=$1', [payload.userId]);
+      email = u.rows[0]?.email || null;
+    }
+    if (email) {
+      const idemKey = payload.idempotencyKey ? `email:${payload.idempotencyKey}` : null;
+      result.outboxId = await queueEmailNotification(clientOrPool, {
+        ...payload, email, notificationId: result.notificationId, idempotencyKey: idemKey,
+      });
+    }
+  }
+  return result;
+}
+
+// Safe wrapper: never throws. Use inside money-movement flows so a
+// notification/email failure can never roll back or crash a financial
+// transaction. Logs the error and returns null on failure.
+async function safeNotifyUser(clientOrPool, payload) {
+  try {
+    return await notifyUser(clientOrPool, payload);
+  } catch (err) {
+    console.error('[safeNotifyUser] non-fatal notification error:', err.message);
+    return null;
+  }
+}
+
+// ── Email outbox processor (Batch 20) ────────────────────────────────────────
+// Picks up PENDING/RETRYING EMAIL rows whose next_attempt_at has passed and
+// sends them via the existing nodemailer transporter. Never crashes the
+// server; never resends a SENT row (guarded by the status filter + FOR UPDATE
+// SKIP LOCKED so overlapping runs cannot double-send).
+let _outboxProcessorRunning = false;
+async function processNotificationOutbox(limit = 20) {
+  if (_outboxProcessorRunning) return { skipped: true, reason: 'already_running' };
+  _outboxProcessorRunning = true;
+  const client = await pool.connect();
+  const stats = { sent: 0, failed: 0, retrying: 0, skipped: 0 };
+  try {
+    await client.query('BEGIN');
+    const due = await client.query(
+      `SELECT * FROM notification_outbox
+       WHERE channel='EMAIL' AND status IN ('PENDING','RETRYING')
+         AND next_attempt_at <= NOW() AND attempts < max_attempts
+       ORDER BY priority = 'critical' DESC, priority = 'high' DESC, created_at ASC
+       LIMIT $1
+       FOR UPDATE SKIP LOCKED`,
+      [limit]
+    );
+
+    for (const row of due.rows) {
+      if (!row.email) {
+        await client.query(
+          `UPDATE notification_outbox SET status='SKIPPED', error_message='NO_EMAIL_ADDRESS', updated_at=NOW() WHERE id=$1`,
+          [row.id]);
+        stats.skipped++;
+        continue;
+      }
+      if (!emailTransporter) {
+        await client.query(
+          `UPDATE notification_outbox SET status='SKIPPED', error_message='SMTP_NOT_CONFIGURED', updated_at=NOW() WHERE id=$1`,
+          [row.id]);
+        stats.skipped++;
+        continue;
+      }
+      try {
+        await emailTransporter.sendMail({
+          from: process.env.SMTP_FROM || process.env.SMTP_USER,
+          to: row.email,
+          replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
+          subject: row.subject || row.title || 'EduX',
+          text: row.body,
+          html: row.html_body || undefined,
+          headers: { 'X-Mailer': 'EduX Notification System' },
+        });
+        await client.query(
+          `UPDATE notification_outbox SET status='SENT', sent_at=NOW(), attempts=attempts+1, error_message=NULL, updated_at=NOW() WHERE id=$1`,
+          [row.id]);
+        stats.sent++;
+      } catch (sendErr) {
+        const attempts = row.attempts + 1;
+        const willRetry = attempts < row.max_attempts;
+        await client.query(
+          `UPDATE notification_outbox
+           SET attempts=$1, status=$2, error_message=$3,
+               last_attempt_at=NOW(), next_attempt_at=NOW() + INTERVAL '5 minutes' * $1, updated_at=NOW()
+           WHERE id=$4`,
+          [attempts, willRetry ? 'RETRYING' : 'FAILED', sanitizeNotificationText(sendErr.message, 500), row.id]);
+        willRetry ? stats.retrying++ : stats.failed++;
+      }
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[processNotificationOutbox] error:', err.message);
+  } finally {
+    client.release();
+    _outboxProcessorRunning = false;
+  }
+  return stats;
+}
+
 
 // ΓöÇΓöÇΓöÇ Multer Configuration ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const upload = multer({
@@ -1194,6 +1514,15 @@ app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req
       }
     }
 
+    // Batch 20: additive in-app notification (existing email above is unchanged)
+    await safeNotifyUser(pool, {
+      userId: profile.user_id, channels: ['IN_APP'],
+      templateKey: 'tutor_profile_approved', eventType: 'tutor_profile_approved',
+      refId: profile.id, refType: 'tutor_profile',
+      sourceType: 'tutor_profile', sourceId: profile.id,
+      idempotencyKey: `tutor_profile:${profile.id}:approved:${profile.user_id}`,
+    });
+
     return res.json(profile);
   } catch (error) {
     console.error("Approve error:", error);
@@ -1238,6 +1567,15 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
         console.error("[Reject] Email error (non-fatal):", emailErr.message);
       }
     }
+
+    // Batch 20: additive in-app notification (existing email above is unchanged)
+    await safeNotifyUser(pool, {
+      userId: profile.user_id, channels: ['IN_APP'],
+      templateKey: 'tutor_profile_rejected', eventType: 'tutor_profile_rejected',
+      data: { reason: reason.trim() }, refId: profile.id, refType: 'tutor_profile',
+      sourceType: 'tutor_profile', sourceId: profile.id,
+      idempotencyKey: `tutor_profile:${profile.id}:rejected:${profile.user_id}`,
+    });
 
     return res.json(profile);
   } catch (error) {
@@ -2543,6 +2881,7 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
       topTxRes,
       discountRes,
       refundRes,
+      withdrawAggRes,
     ] = await Promise.all([
       // Overall totals
       pool.query(`
@@ -2592,6 +2931,16 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
       `),
       // Refund count from resolved-refund disputes (no refund tx table exists)
       pool.query(`SELECT COUNT(*)::int AS count FROM disputes WHERE status='RESOLVED_REFUND'`),
+      // Withdrawal metrics from withdrawal_requests (Batch 19.1; safe fallback to 0)
+      pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE status IN ('PENDING','APPROVED')),0)::numeric AS pending_amount,
+          COUNT(*) FILTER (WHERE status IN ('PENDING','APPROVED'))::int                    AS pending_count,
+          COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric                    AS paid_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric                AS rejected_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric               AS cancelled_amount
+        FROM withdrawal_requests
+      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0, paid_amount: 0, rejected_amount: 0, cancelled_amount: 0 }] })),
     ]);
 
     const t = totalsRes.rows[0];
@@ -2606,6 +2955,7 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
     }
 
     const COMMISSION_RATE_EST = 10; // estimated, no commission table
+    const wd = withdrawAggRes.rows[0];
     return res.json({
       summary: {
         total_revenue:             Math.round(totalPayments),
@@ -2619,6 +2969,12 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
         transaction_count:         t.transaction_count,
         payment_count:             t.payment_count,
         deposit_count:             t.deposit_count,
+        // Batch 19.1: read-only withdrawal metrics (additive)
+        withdrawal_pending_amount:    Math.round(Number(wd.pending_amount)),
+        withdrawal_pending_count:     Number(wd.pending_count) || 0,
+        withdrawal_paid_amount:       Math.round(Number(wd.paid_amount)),
+        withdrawal_rejected_amount:   Math.round(Number(wd.rejected_amount)),
+        withdrawal_cancelled_amount:  Math.round(Number(wd.cancelled_amount)),
         generated_at:              new Date().toISOString(),
       },
       monthly: monthlyRes.rows.map(r => ({
@@ -2660,7 +3016,6 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
       walletRes,
       txAggRes,
       escrowRes,
-      withdrawRes,
       integrityRes,
       refundRes,
       largeRes,
@@ -2673,11 +3028,6 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
         FROM transactions
       `),
       pool.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(ABS(amount)),0)::numeric AS amount FROM transactions WHERE status='HELD_IN_ESCROW'`),
-      pool.query(`
-        SELECT COALESCE(SUM(amount) FILTER (WHERE status IN ('pending','PENDING')),0)::numeric AS pending_amount,
-               COUNT(*) FILTER (WHERE status IN ('pending','PENDING'))::int                     AS pending_count
-        FROM withdraw_requests
-      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0 }] })),
       pool.query(`
         SELECT
           (SELECT COUNT(*)::int FROM transactions t LEFT JOIN wallets w ON w.id=t.wallet_id WHERE w.id IS NULL) AS orphan_tx,
@@ -2697,9 +3047,46 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
     const wallet    = walletRes.rows[0];
     const txAgg     = txAggRes.rows[0];
     const escrow    = escrowRes.rows[0];
-    const withdraw  = withdrawRes.rows[0];
     const integ     = integrityRes.rows[0];
     const refundCnt = refundRes.rows[0].count;
+
+    // ── Withdrawal reconciliation (Batch 19.1): prefer new withdrawal_requests,
+    //    fall back to the legacy withdraw_requests only if the new table is absent.
+    let withdraw = { pending_amount: 0, pending_count: 0, paid_amount: 0, rejected_amount: 0, cancelled_amount: 0 };
+    let withdrawalSource = 'withdrawal_requests';
+    let withdrawalItems  = [];
+    try {
+      const wagg = await pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE status IN ('PENDING','APPROVED')),0)::numeric AS pending_amount,
+          COUNT(*) FILTER (WHERE status IN ('PENDING','APPROVED'))::int                    AS pending_count,
+          COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric                    AS paid_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric                AS rejected_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric               AS cancelled_amount
+        FROM withdrawal_requests
+      `);
+      withdraw = wagg.rows[0];
+      const witems = await pool.query(`
+        SELECT wr.id::text AS withdrawal_request_id, wr.tutor_id::text AS tutor_id,
+               wr.amount::numeric AS amount, wr.status, wr.requested_at, wr.paid_at, wr.policy_version,
+               u.full_name AS tutor_name, u.email AS tutor_email
+        FROM withdrawal_requests wr
+        LEFT JOIN users u ON u.id = wr.tutor_id
+        WHERE wr.status IN ('PENDING','APPROVED')
+        ORDER BY wr.requested_at DESC
+        LIMIT 20
+      `);
+      withdrawalItems = witems.rows;
+    } catch (e) {
+      // New table missing → fall back to legacy withdraw_requests (pending only).
+      withdrawalSource = 'legacy_withdraw_requests';
+      const leg = await pool.query(`
+        SELECT COALESCE(SUM(amount) FILTER (WHERE status IN ('pending','PENDING')),0)::numeric AS pending_amount,
+               COUNT(*) FILTER (WHERE status IN ('pending','PENDING'))::int                     AS pending_count
+        FROM withdraw_requests
+      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0 }] }));
+      withdraw = { ...withdraw, pending_amount: leg.rows[0].pending_amount, pending_count: leg.rows[0].pending_count };
+    }
 
     const walletBalance = Number(wallet.balance);
     const walletHeld    = Number(wallet.held);
@@ -2746,7 +3133,7 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
       description: `Giao dịch không có ví: ${integ.orphan_tx}; ví không có người dùng: ${integ.orphan_wallet}; số tiền null/0: ${integ.bad_amount}.`,
     });
 
-    // 4. Pending withdrawals
+    // 4. Pending withdrawals (Batch 19.1: PENDING + APPROVED from withdrawal_requests)
     checks.push({
       id: 'pending-withdrawals',
       name: 'Yêu cầu rút tiền đang chờ',
@@ -2754,7 +3141,7 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
       expected_amount: 0,
       actual_amount: Math.round(Number(withdraw.pending_amount)),
       difference: Math.round(Number(withdraw.pending_amount)),
-      description: `${withdraw.pending_count} yêu cầu rút tiền đang chờ duyệt. Chỉ xem, không duyệt.`,
+      description: `${withdraw.pending_count} yêu cầu rút tiền đang chờ/đã duyệt (nguồn: ${withdrawalSource}). Chỉ xem, không duyệt.`,
     });
 
     // 5. Refund disputes vs refund transactions
@@ -2770,6 +3157,29 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
 
     // Build review items
     const items = [];
+    // Pending/approved withdrawals awaiting manual payout (Batch 19.1)
+    for (const w of withdrawalItems) {
+      items.push({
+        id: `wd-${w.withdrawal_request_id}`,
+        type: 'withdrawal',
+        severity: Number(w.amount) >= 5000000 ? 'medium' : 'low',
+        status: 'review_only',
+        title: `Rút tiền chờ chi: ${w.tutor_name || w.tutor_email || w.tutor_id}`,
+        description: `Trạng thái ${w.status} — chờ admin chuyển khoản thủ công (${w.policy_version}).`,
+        amount: Math.round(Number(w.amount)),
+        reference_id: w.withdrawal_request_id,
+        created_at: w.requested_at,
+        // extra fields (ignored by the generic frontend table, useful for API consumers)
+        withdrawal_request_id: w.withdrawal_request_id,
+        tutor_id: w.tutor_id,
+        tutor_name: w.tutor_name,
+        tutor_email: w.tutor_email,
+        withdrawal_status: w.status,
+        requested_at: w.requested_at,
+        paid_at: w.paid_at,
+        policy_version: w.policy_version,
+      });
+    }
     for (const r of largeRes.rows) {
       const amt = Number(r.amount);
       items.push({
@@ -2796,7 +3206,14 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
         successful_payments:       Math.round(payments),
         escrow_transactions:       escrow.count,
         escrow_amount:             Math.round(escrowAmount),
-        withdraw_pending_amount:   Math.round(Number(withdraw.pending_amount)),
+        withdraw_pending_amount:   Math.round(Number(withdraw.pending_amount)), // kept for backward-compat
+        // Batch 19.1: withdrawal metrics from withdrawal_requests
+        withdrawal_source:            withdrawalSource,
+        withdrawal_pending_amount:    Math.round(Number(withdraw.pending_amount)),
+        withdrawal_pending_count:     Number(withdraw.pending_count) || 0,
+        withdrawal_paid_amount:       Math.round(Number(withdraw.paid_amount)),
+        withdrawal_rejected_amount:   Math.round(Number(withdraw.rejected_amount)),
+        withdrawal_cancelled_amount:  Math.round(Number(withdraw.cancelled_amount)),
         unmatched_count:           unmatchedCnt,
         issue_count:               issueCount,
         generated_at:              new Date().toISOString(),
@@ -2919,6 +3336,82 @@ app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) 
   } catch (err) {
     console.error("GET /api/admin/notifications error:", err);
     return res.status(500).json({ message: "Lỗi khi tải thông báo." });
+  }
+});
+
+// ── GET /api/admin/notification-outbox ────────────────────────────────────────
+// Batch 20: paginated/filterable view of the email outbox delivery status.
+app.get("/api/admin/notification-outbox", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    const conditions = [];
+    const params = [];
+    const addParam = v => { params.push(v); return `$${params.length}`; };
+    if (req.query.status)    conditions.push(`o.status = ${addParam(req.query.status)}`);
+    if (req.query.channel)   conditions.push(`o.channel = ${addParam(req.query.channel)}`);
+    if (req.query.eventType) conditions.push(`o.event_type = ${addParam(req.query.eventType)}`);
+    if (req.query.userId)    conditions.push(`o.user_id = ${addParam(req.query.userId)}::uuid`);
+    if (req.query.email)     conditions.push(`o.email ILIKE ${addParam('%' + req.query.email + '%')}`);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const total = (await pool.query(`SELECT COUNT(*)::int AS n FROM notification_outbox o ${where}`, params)).rows[0].n;
+
+    params.push(limit); params.push(offset);
+    const items = (await pool.query(`
+      SELECT o.*, u.full_name AS recipient_name
+      FROM notification_outbox o
+      LEFT JOIN users u ON u.id = o.user_id
+      ${where}
+      ORDER BY o.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params)).rows;
+
+    const sum = (await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status='PENDING')::int  AS pending,
+        COUNT(*) FILTER (WHERE status='SENT')::int     AS sent,
+        COUNT(*) FILTER (WHERE status='FAILED')::int   AS failed,
+        COUNT(*) FILTER (WHERE status='RETRYING')::int AS retrying,
+        COUNT(*) FILTER (WHERE status='SKIPPED')::int  AS skipped
+      FROM notification_outbox
+    `)).rows[0];
+
+    return res.json({
+      items,
+      pagination: { page, limit, total },
+      summary: {
+        pending:  sum.pending,
+        sent:     sum.sent,
+        failed:   sum.failed,
+        retrying: sum.retrying,
+        skipped:  sum.skipped,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/notification-outbox error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy hàng đợi email." });
+  }
+});
+
+// POST /api/admin/notification-outbox/:id/retry — re-queue FAILED/SKIPPED/RETRYING rows.
+// Does not send immediately; the outbox cron picks it up on its next run.
+app.post("/api/admin/notification-outbox/:id/retry", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `UPDATE notification_outbox
+       SET status='PENDING', next_attempt_at=NOW(), error_message=NULL, updated_at=NOW()
+       WHERE id=$1 AND status IN ('FAILED','SKIPPED','RETRYING')
+       RETURNING id`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(409).json({ message: 'Chỉ có thể thử lại email FAILED, SKIPPED, hoặc RETRYING.' });
+    return res.json({ success: true, message: 'Đã đưa email vào hàng đợi thử lại.' });
+  } catch (err) {
+    console.error("POST /api/admin/notification-outbox/:id/retry error:", err);
+    return res.status(500).json({ message: "Lỗi khi thử lại email." });
   }
 });
 
@@ -4426,14 +4919,73 @@ app.get('/api/parent/invoices', verifyToken, async (req, res) => {
 });
 
 // GET /api/notifications
+// Batch 20: additive — legacy `notifications`/`unread_count` fields are kept
+// exactly as before (NotificationDropdown.jsx depends on them); `items`,
+// `pagination`, and `summary` are new fields for pagination-aware consumers.
 app.get('/api/notifications', verifyToken, async (req, res) => {
   try {
+    const status = req.query.status || 'all'; // all|unread|read
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    // Legacy shape: unchanged query/response for existing consumers
     const notifs = await pool.query(
       `SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
       [req.user.userId]
     );
     const unreadCount = notifs.rows.filter(n => !n.is_read).length;
-    return res.json({ notifications: notifs.rows, unread_count: unreadCount });
+
+    // New paginated shape (additive)
+    const conditions = ['user_id=$1'];
+    const params = [req.user.userId];
+    if (status === 'unread') conditions.push('is_read=FALSE');
+    else if (status === 'read') conditions.push('is_read=TRUE');
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const total = (await pool.query(`SELECT COUNT(*)::int AS n FROM notifications ${where}`, params)).rows[0].n;
+    params.push(limit); params.push(offset);
+    const items = (await pool.query(
+      `SELECT * FROM notifications ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    )).rows;
+    const totalCount = (await pool.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE user_id=$1`, [req.user.userId])).rows[0].n;
+    const trueUnread  = (await pool.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE user_id=$1 AND is_read=FALSE`, [req.user.userId])).rows[0].n;
+
+    return res.json({
+      // legacy fields (kept for backward compatibility)
+      notifications: notifs.rows,
+      unread_count: unreadCount,
+      // new fields (additive)
+      items,
+      pagination: { page, limit, total },
+      summary: { unread_count: trueUnread, total_count: totalCount },
+    });
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+});
+
+// GET /api/notifications/unread-count (Batch 20)
+app.get('/api/notifications/unread-count', verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE user_id=$1 AND is_read=FALSE`, [req.user.userId]);
+    return res.json({ unread_count: r.rows[0].n });
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+});
+
+// PATCH /api/notifications/:id/read (Batch 20; existing PUT kept for compat)
+app.patch('/api/notifications/:id/read', verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query('UPDATE notifications SET is_read=TRUE WHERE id=$1 AND user_id=$2 RETURNING id', [req.params.id, req.user.userId]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Không tìm thấy thông báo.' });
+    return res.json({ message: 'OK' });
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+});
+
+// PATCH /api/notifications/mark-all-read (Batch 20; existing PUT read-all kept for compat)
+app.patch('/api/notifications/mark-all-read', verifyToken, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=TRUE WHERE user_id=$1', [req.user.userId]);
+    return res.json({ message: 'OK' });
   } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
@@ -5512,6 +6064,14 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
           idempotency_key: `commission:course:${c.id}:student:${studentId}:COURSE_PURCHASE`,
           metadata: { cart: true, discount_applied: discount > 0 },
         });
+        // Notify student (Batch 20)
+        await safeNotifyUser(client, {
+          userId: studentId, channels: ['IN_APP'],
+          templateKey: 'course_purchased', eventType: 'course_purchased',
+          data: { courseName: c.title }, refId: c.id, refType: 'course',
+          sourceType: 'course', sourceId: c.id,
+          idempotencyKey: `course:${c.id}:purchased:${studentId}`,
+        });
       }
     }
 
@@ -5688,11 +6248,14 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
        VALUES ($1, 'course_enrollment', 'Học sinh mới đăng ký khóa học', $2, 'school', $3, 'course')`,
       [course.tutor_id, `${studentName} vừa mua khóa học "${course.title}"`, courseId]
     );
-    await client.query(
-      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-       VALUES ($1, 'course_enrollment', 'Đăng ký khóa học thành công', $2, 'check_circle', $3, 'course')`,
-      [studentId, `Bạn đã đăng ký thành công khóa học "${course.title}"`, courseId]
-    );
+    // Notify student (Batch 20: fires for both free and paid enrollment, same as before)
+    await safeNotifyUser(client, {
+      userId: studentId, channels: price > 0 ? ['IN_APP', 'EMAIL'] : ['IN_APP'],
+      templateKey: 'course_purchased', eventType: 'course_purchased',
+      data: { courseName: course.title }, refId: courseId, refType: 'course',
+      sourceType: 'course', sourceId: courseId,
+      idempotencyKey: `course:${courseId}:purchased:${studentId}`,
+    });
 
     await client.query("COMMIT");
 
@@ -7341,6 +7904,44 @@ async function createCommissionLog(client, log) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// WITHDRAWAL POLICY V1 (Batch 19) — tutor manual payout. Money is HELD when a
+// request is created (balance→held_balance), released on cancel/reject, and
+// drawn down from held_balance on paid. NO real bank API is called. Every
+// wallet movement runs inside a DB transaction with setLedgerContext so the
+// wallet_ledger trigger records the correct reason_code.
+// NOTE (audited): transactions.type is an enum → use 'WITHDRAW' (not
+// 'WITHDRAWAL'); transactions.status enum has no CANCELLED/REJECTED → paid
+// maps to 'SUCCESS', cancel/reject map to 'FAILED'. wallets has CHECK
+// balance>=0 / held_balance>=0, enforced by SELECT ... FOR UPDATE + guards.
+// ═══════════════════════════════════════════════════════════════════════════
+const WITHDRAWAL_POLICY_VERSION = "WITHDRAWAL_POLICY_V1";
+const MIN_WITHDRAWAL_AMOUNT = 50000;
+
+// Return a rounded non-negative integer VND amount, or 0 if invalid.
+function normalizeWithdrawalAmount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+// Trim, strip control chars, collapse whitespace, cap length. Null-safe.
+function sanitizeBankText(value, maxLength = 120) {
+  if (value == null) return null;
+  let s = String(value).replace(/[\x00-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  return s.slice(0, maxLength);
+}
+
+// Lock the tutor's wallet row FOR UPDATE (prevents concurrent balance races).
+async function getTutorWalletForUpdate(client, tutorId) {
+  const r = await client.query(
+    'SELECT id, user_id, balance, held_balance FROM wallets WHERE user_id=$1 FOR UPDATE',
+    [tutorId]
+  );
+  return r.rows.length ? r.rows[0] : null;
+}
+
 // PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
 // Logic escrow:
 //   Approved  → hold_money_for_lesson (trừ balance, cộng held_balance)
@@ -7399,13 +8000,14 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             WHERE id=$5
           `, [status, txId, booking.payer_wallet_id_val, lessonFee, booking.id]);
 
-          // Notify học sinh: tiền đã bị hold
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'escrow_hold','Lịch học đã được xác nhận — Tiền tạm giữ',$2,'lock',$3,'booking')
-          `, [booking.student_id,
-              `Gia sư đã duyệt lịch học. ${lessonFee.toLocaleString('vi-VN')}đ đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`,
-              booking.id]);
+          // Notify học sinh: tiền đã bị hold (Batch 20)
+          await safeNotifyUser(client, {
+            userId: booking.student_id, channels: ['IN_APP'],
+            templateKey: 'booking_approved', eventType: 'booking_approved',
+            data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id,
+            idempotencyKey: `booking:${booking.id}:approved:${booking.student_id}`,
+          });
         } catch (escrowErr) {
           await client.query('ROLLBACK');
           return res.status(400).json({ message: 'Số dư ví không đủ để xác nhận lịch học. Vui lòng nạp thêm tiền.' });
@@ -7429,12 +8031,13 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
       ]);
       await client.query(`UPDATE bookings SET status=$1, escrow_released_at=NOW() WHERE id=$2`, [status, booking.id]);
 
-      await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-        VALUES ($1,'refund','Hoàn tiền lịch học bị từ chối',$2,'undo',$3,'booking')
-      `, [booking.student_id,
-          `Gia sư đã từ chối lịch học. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví của bạn.`,
-          booking.id]);
+      await safeNotifyUser(client, {
+        userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'booking_declined', eventType: 'booking_declined',
+        data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id,
+        idempotencyKey: `booking:${booking.id}:declined:${booking.student_id}`,
+      });
     }
 
     // ── CANCELLED: Refund Policy v2.1 (Batch 16) ─────────────────────────────
@@ -7509,20 +8112,27 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             ? `Hoàn ${pct}% (${refundAmount.toLocaleString('vi-VN')}đ). Phí hủy: ${nonRefunded.toLocaleString('vi-VN')}đ.`
             : `Không hoàn tiền theo chính sách (${decision.reasonCode}).`;
 
-        await client.query(`
-          INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-          VALUES ($1,'cancellation','Lịch học đã bị hủy',$2,'cancel',$3,'booking')
-        `, [booking.student_id, refundMsg, booking.id]);
+        await safeNotifyUser(client, {
+          userId: booking.student_id, channels: ['IN_APP'],
+          templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
+          data: { message: refundMsg }, refId: booking.id, refType: 'booking',
+          sourceType: 'booking', sourceId: booking.id,
+          idempotencyKey: `booking:${booking.id}:cancelled:${booking.student_id}`,
+        });
 
         // Notify the counter-party (tutor when student cancels)
         if (booking.tutor_id && !isTutor) {
           const tutorMsg = nonRefunded > 0
             ? `Học sinh đã hủy buổi học. Bạn nhận phí hủy ${Math.floor(nonRefunded * 0.9).toLocaleString('vi-VN')}đ.`
             : `Học sinh đã hủy buổi học và được hoàn tiền theo chính sách.`;
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'cancellation','Học sinh đã hủy lịch học',$2,'event_busy',$3,'booking')
-          `, [booking.tutor_id, tutorMsg, booking.id]);
+          await safeNotifyUser(client, {
+            userId: booking.tutor_id, channels: ['IN_APP'],
+            templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
+            title: 'Học sinh đã hủy lịch học', data: { message: tutorMsg },
+            refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id,
+            idempotencyKey: `booking:${booking.id}:cancelled:${booking.tutor_id}`,
+          });
         }
       } else {
         // Không có escrow: hủy bình thường
@@ -8071,6 +8681,360 @@ app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
   }
 });
 
+// =========================================================================
+// ============ TUTOR WITHDRAWAL / PAYOUT ROUTES (Batch 19) ================
+// =========================================================================
+
+// POST /api/tutor/withdrawals — tutor requests a withdrawal (holds the money)
+app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const amount = normalizeWithdrawalAmount(req.body?.amount);
+    const bankName        = sanitizeBankText(req.body?.bankName, 120);
+    const bankAccountNo   = sanitizeBankText(req.body?.bankAccountNo, 40);
+    const bankAccountName = sanitizeBankText(req.body?.bankAccountName, 120);
+    const payoutNote      = sanitizeBankText(req.body?.payoutNote, 300);
+    const clientKey       = sanitizeBankText(req.body?.idempotencyKey, 100);
+
+    if (amount < MIN_WITHDRAWAL_AMOUNT) {
+      return res.status(400).json({ message: `Số tiền rút tối thiểu là ${MIN_WITHDRAWAL_AMOUNT.toLocaleString('vi-VN')}đ.` });
+    }
+    if (!bankName || !bankAccountNo || !bankAccountName) {
+      return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin ngân hàng.' });
+    }
+
+    const idemKey = clientKey ? `withdrawal:tutor:${req.user.userId}:${clientKey}` : null;
+
+    await client.query('BEGIN');
+
+    // Idempotency: if this client key was already used, return the existing request
+    if (idemKey) {
+      const existing = await client.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1', [idemKey]);
+      if (existing.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(200).json({ success: true, duplicate: true, request: existing.rows[0] });
+      }
+    }
+
+    const wallet = await getTutorWalletForUpdate(client, req.user.userId);
+    if (!wallet) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+
+    if (Number(wallet.balance) < amount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ code: 'INSUFFICIENT_FUNDS', message: 'Số dư khả dụng không đủ để rút.', balance: Number(wallet.balance), requested: amount });
+    }
+
+    // 1) Record a PENDING WITHDRAW transaction (enum: type=WITHDRAW, status=PENDING)
+    const txRes = await client.query(
+      `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
+       VALUES ($1, $2, 'WITHDRAW', 'PENDING', 'MANUAL', $3) RETURNING id`,
+      [wallet.id, -amount, 'Yêu cầu rút tiền gia sư']
+    );
+    const holdTxId = txRes.rows[0].id;
+
+    // 2) Reserve the money: balance → held_balance (ledger reason WITHDRAWAL_HOLD)
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_HOLD', source: 'api', reference_type: 'withdrawal',
+      transaction_id: holdTxId, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    await client.query('UPDATE wallets SET balance = balance - $1, held_balance = held_balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+
+    // 3) Create the withdrawal request row
+    const wr = await client.query(
+      `INSERT INTO withdrawal_requests
+         (tutor_id, wallet_id, amount, fee_amount, net_amount, status, payout_method,
+          bank_name, bank_account_no, bank_account_name, payout_note, policy_version,
+          hold_transaction_id, idempotency_key, metadata)
+       VALUES ($1,$2,$3,0,$3,'PENDING','BANK_TRANSFER',$4,$5,$6,$7,$8,$9,$10,'{}'::jsonb)
+       RETURNING *`,
+      [req.user.userId, wallet.id, amount, bankName, bankAccountNo, bankAccountName, payoutNote, WITHDRAWAL_POLICY_VERSION, holdTxId, idemKey]
+    );
+    const request = wr.rows[0];
+
+    // Link the transaction back to the request for traceability
+    await client.query('UPDATE transactions SET reference_id=$1 WHERE id=$2', [request.id, holdTxId]);
+
+    // Notify tutor (Batch 20: in-app + email outbox, same client so rollback-safe)
+    await safeNotifyUser(client, {
+      userId: req.user.userId, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'withdrawal_created', eventType: 'withdrawal_created',
+      data: { amount }, refId: request.id, refType: 'withdrawal',
+      sourceType: 'withdrawal', sourceId: request.id,
+      idempotencyKey: `withdrawal:${request.id}:created:${req.user.userId}`,
+    });
+
+    await client.query('COMMIT');
+    return res.status(201).json({ success: true, request });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') { // unique_violation on idempotency_key (race)
+      const ex = await pool.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1',
+        [`withdrawal:tutor:${req.user.userId}:${sanitizeBankText(req.body?.idempotencyKey, 100)}`]).catch(() => ({ rows: [] }));
+      if (ex.rows.length) return res.status(200).json({ success: true, duplicate: true, request: ex.rows[0] });
+      return res.status(409).json({ message: 'Yêu cầu rút tiền trùng lặp.' });
+    }
+    console.error('POST /api/tutor/withdrawals error:', err);
+    return res.status(500).json({ message: 'Lỗi khi tạo yêu cầu rút tiền.' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/tutor/withdrawals — tutor's own withdrawal history
+app.get('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const items = (await pool.query(
+      `SELECT * FROM withdrawal_requests WHERE tutor_id=$1 ORDER BY created_at DESC LIMIT 100`,
+      [req.user.userId]
+    )).rows;
+    const wallet = (await pool.query('SELECT balance, held_balance FROM wallets WHERE user_id=$1', [req.user.userId])).rows[0] || null;
+    return res.json({
+      items,
+      wallet: wallet ? { balance: Number(wallet.balance), held_balance: Number(wallet.held_balance) } : null,
+      min_amount: MIN_WITHDRAWAL_AMOUNT,
+      policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+  } catch (err) {
+    console.error('GET /api/tutor/withdrawals error:', err);
+    return res.status(500).json({ message: 'Lỗi khi lấy lịch sử rút tiền.' });
+  }
+});
+
+// PATCH /api/tutor/withdrawals/:id/cancel — tutor cancels own PENDING request
+app.patch('/api/tutor/withdrawals/:id/cancel', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 AND tutor_id=$2 FOR UPDATE', [req.params.id, req.user.userId]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu rút tiền.' }); }
+    const wr = wrRes.rows[0];
+    if (wr.status !== 'PENDING') { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ có thể hủy yêu cầu đang chờ (PENDING).' }); }
+
+    const wallet = await getTutorWalletForUpdate(client, req.user.userId);
+    if (!wallet) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+    const amount = Number(wr.amount);
+    if (Number(wallet.held_balance) < amount) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Số dư tạm giữ không đủ để hoàn.' }); }
+
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_CANCEL_RELEASE', source: 'api', reference_type: 'withdrawal',
+      reference_id: wr.id, transaction_id: wr.hold_transaction_id, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    await client.query('UPDATE wallets SET held_balance = held_balance - $1, balance = balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+    if (wr.hold_transaction_id) await client.query(`UPDATE transactions SET status='FAILED', updated_at=NOW() WHERE id=$1`, [wr.hold_transaction_id]);
+    await client.query(`UPDATE withdrawal_requests SET status='CANCELLED', cancelled_at=NOW(), updated_at=NOW() WHERE id=$1`, [wr.id]);
+
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã hủy yêu cầu rút tiền và hoàn lại số dư khả dụng.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('PATCH /api/tutor/withdrawals/:id/cancel error:', err);
+    return res.status(500).json({ message: 'Lỗi khi hủy yêu cầu rút tiền.' });
+  } finally {
+    client.release();
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN WITHDRAWAL / PAYOUT MANAGEMENT (Batch 19) — manual payout only.
+// Money was already held when the tutor requested; approve moves no money;
+// reject releases hold back to balance; mark-paid draws down held_balance.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/admin/withdrawal-requests — list + summary (read-only)
+app.get("/api/admin/withdrawal-requests", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit)  || 50));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    const conditions = [];
+    const params = [];
+    const addParam = v => { params.push(v); return `$${params.length}`; };
+    if (req.query.status)  conditions.push(`wr.status = ${addParam(req.query.status)}`);
+    if (req.query.tutorId) conditions.push(`wr.tutor_id = ${addParam(req.query.tutorId)}::uuid`);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const total = (await pool.query(`SELECT COUNT(*)::int AS n FROM withdrawal_requests wr ${where}`, params)).rows[0].n;
+
+    params.push(limit); params.push(offset);
+    const items = (await pool.query(`
+      SELECT wr.*,
+             u.full_name AS tutor_name, u.email AS tutor_email,
+             w.balance   AS wallet_balance, w.held_balance AS wallet_held_balance
+      FROM withdrawal_requests wr
+      LEFT JOIN users   u ON u.id = wr.tutor_id
+      LEFT JOIN wallets w ON w.id = wr.wallet_id
+      ${where}
+      ORDER BY wr.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params)).rows;
+
+    const sum = (await pool.query(`
+      SELECT
+        COALESCE(SUM(amount) FILTER (WHERE status='PENDING'),0)::numeric   AS pending_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='APPROVED'),0)::numeric  AS approved_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric      AS paid_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric  AS rejected_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric AS cancelled_amount,
+        COUNT(*) FILTER (WHERE status='PENDING')::int                      AS pending_count
+      FROM withdrawal_requests
+    `)).rows[0];
+
+    return res.json({
+      items,
+      pagination: { page, limit, total },
+      summary: {
+        pending_amount:   Number(sum.pending_amount),
+        approved_amount:  Number(sum.approved_amount),
+        paid_amount:      Number(sum.paid_amount),
+        rejected_amount:  Number(sum.rejected_amount),
+        cancelled_amount: Number(sum.cancelled_amount),
+        pending_count:    sum.pending_count,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/withdrawal-requests error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách yêu cầu rút tiền." });
+  }
+});
+
+// PATCH /api/admin/withdrawal-requests/:id/approve — no money movement
+app.patch("/api/admin/withdrawal-requests/:id/approve", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const adminNote = sanitizeBankText(req.body?.adminNote, 300);
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' }); }
+    const wr = wrRes.rows[0];
+    if (wr.status !== 'PENDING') { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ duyệt được yêu cầu đang chờ (PENDING).' }); }
+
+    await client.query(
+      `UPDATE withdrawal_requests SET status='APPROVED', approved_by=$1, approved_at=NOW(), admin_note=COALESCE($2, admin_note), updated_at=NOW() WHERE id=$3`,
+      [req.user.userId, adminNote, wr.id]);
+    await safeNotifyUser(client, {
+      userId: wr.tutor_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'withdrawal_approved', eventType: 'withdrawal_approved',
+      data: { amount: Number(wr.amount) }, refId: wr.id, refType: 'withdrawal',
+      sourceType: 'withdrawal', sourceId: wr.id,
+      idempotencyKey: `withdrawal:${wr.id}:approved:${wr.tutor_id}`,
+    });
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã duyệt yêu cầu rút tiền.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("approve withdrawal error:", err);
+    return res.status(500).json({ message: 'Lỗi khi duyệt yêu cầu.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/admin/withdrawal-requests/:id/reject — release hold back to balance
+app.patch("/api/admin/withdrawal-requests/:id/reject", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const rejectReason = sanitizeBankText(req.body?.rejectReason || req.body?.adminNote, 300);
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' }); }
+    const wr = wrRes.rows[0];
+    if (!['PENDING', 'APPROVED'].includes(wr.status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ từ chối được yêu cầu PENDING hoặc APPROVED.' }); }
+
+    const walletRes = await client.query('SELECT id, balance, held_balance FROM wallets WHERE id=$1 FOR UPDATE', [wr.wallet_id]);
+    if (!walletRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+    const wallet = walletRes.rows[0];
+    const amount = Number(wr.amount);
+    if (Number(wallet.held_balance) < amount) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Số dư tạm giữ không đủ để hoàn.' }); }
+
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_REJECT_RELEASE', source: 'admin', reference_type: 'withdrawal',
+      reference_id: wr.id, transaction_id: wr.hold_transaction_id, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    await client.query('UPDATE wallets SET held_balance = held_balance - $1, balance = balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+    if (wr.hold_transaction_id) await client.query(`UPDATE transactions SET status='FAILED', updated_at=NOW() WHERE id=$1`, [wr.hold_transaction_id]);
+    await client.query(
+      `UPDATE withdrawal_requests SET status='REJECTED', rejected_by=$1, rejected_at=NOW(), reject_reason=$2, admin_note=COALESCE($2, admin_note), updated_at=NOW() WHERE id=$3`,
+      [req.user.userId, rejectReason, wr.id]);
+    await safeNotifyUser(client, {
+      userId: wr.tutor_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'withdrawal_rejected', eventType: 'withdrawal_rejected',
+      data: { amount, reason: rejectReason }, refId: wr.id, refType: 'withdrawal',
+      sourceType: 'withdrawal', sourceId: wr.id,
+      idempotencyKey: `withdrawal:${wr.id}:rejected:${wr.tutor_id}`,
+    });
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã từ chối và hoàn lại số dư cho gia sư.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("reject withdrawal error:", err);
+    return res.status(500).json({ message: 'Lỗi khi từ chối yêu cầu.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/admin/withdrawal-requests/:id/mark-paid — draw down held_balance
+app.patch("/api/admin/withdrawal-requests/:id/mark-paid", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const adminNote = sanitizeBankText(req.body?.adminNote, 300);
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' }); }
+    const wr = wrRes.rows[0];
+    if (wr.status === 'PAID') { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Yêu cầu đã được thanh toán trước đó.', request: wr }); }
+    if (!['PENDING', 'APPROVED'].includes(wr.status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ thanh toán được yêu cầu PENDING hoặc APPROVED.' }); }
+
+    const walletRes = await client.query('SELECT id, balance, held_balance FROM wallets WHERE id=$1 FOR UPDATE', [wr.wallet_id]);
+    if (!walletRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+    const wallet = walletRes.rows[0];
+    const amount = Number(wr.amount);
+    if (Number(wallet.held_balance) < amount) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Số dư tạm giữ không đủ để thanh toán.' }); }
+
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_PAID', source: 'admin', reference_type: 'withdrawal',
+      reference_id: wr.id, transaction_id: wr.hold_transaction_id, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    // Money leaves the system: held_balance decreases (no balance credit)
+    await client.query('UPDATE wallets SET held_balance = held_balance - $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+
+    // Transition the hold transaction to SUCCESS (single payout record)
+    let payoutTxId = wr.hold_transaction_id;
+    if (payoutTxId) {
+      await client.query(
+        `UPDATE transactions SET status='SUCCESS', gateway='MANUAL_BANK_TRANSFER', description=$1, updated_at=NOW() WHERE id=$2`,
+        ['Admin xác nhận đã chuyển khoản rút tiền', payoutTxId]);
+    } else {
+      const tx = await client.query(
+        `INSERT INTO transactions (wallet_id, amount, type, status, gateway, reference_id, description)
+         VALUES ($1,$2,'WITHDRAW','SUCCESS','MANUAL_BANK_TRANSFER',$3,$4) RETURNING id`,
+        [wallet.id, -amount, wr.id, 'Admin xác nhận đã chuyển khoản rút tiền']);
+      payoutTxId = tx.rows[0].id;
+    }
+
+    await client.query(
+      `UPDATE withdrawal_requests SET status='PAID', paid_by=$1, paid_at=NOW(), payout_transaction_id=$2, admin_note=COALESCE($3, admin_note), updated_at=NOW() WHERE id=$4`,
+      [req.user.userId, payoutTxId, adminNote, wr.id]);
+    await safeNotifyUser(client, {
+      userId: wr.tutor_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'withdrawal_paid', eventType: 'withdrawal_paid',
+      data: { amount }, refId: wr.id, refType: 'withdrawal',
+      sourceType: 'withdrawal', sourceId: wr.id,
+      idempotencyKey: `withdrawal:${wr.id}:paid:${wr.tutor_id}`,
+    });
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã xác nhận thanh toán rút tiền.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("mark-paid withdrawal error:", err);
+    return res.status(500).json({ message: 'Lỗi khi xác nhận thanh toán.' });
+  } finally {
+    client.release();
+  }
+});
+
 
 // =========================================================================
 // ==================== PAYMENT & ESCROW ROUTES ============================
@@ -8332,16 +9296,24 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
-      await client.query(`
-        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
-        VALUES ($1,'dispute_opened','Khiếu nại mới cần xử lý',$2,'gavel',$3,'dispute')
-      `, [admin.id, `${reporterName} báo cáo vi phạm buổi học ID: ${booking.id}. Lý do: ${reason}`, dispute.rows[0].id]);
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: true, reporterName, reason: `báo cáo vi phạm buổi học ID: ${booking.id}. Lý do: ${reason}` },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${admin.id}`,
+      });
     }
     if (booking.tutor_id) {
-      await client.query(`
-        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
-        VALUES ($1,'dispute_opened','Bạn đang bị khiếu nại',$2,'report',$3,'dispute')
-      `, [booking.tutor_id, `${reporterName} gửi khiếu nại. Admin sẽ xem xét và phán quyết.`, dispute.rows[0].id]);
+      await safeNotifyUser(client, {
+        userId: booking.tutor_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: false, reporterName },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${booking.tutor_id}`,
+      });
     }
 
     await client.query('COMMIT');
@@ -8471,8 +9443,14 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
         `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
             `Tự động hoàn ${Math.round(decision.refundRate * 100)}% theo ${REFUND_POLICY_VERSION} (tiến độ ${Math.round(progressPercent)}%, ${Math.round(hoursSincePurchase)}h).`]);
 
-        await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'course_refund','Hoàn tiền khóa học thành công',$2,'undo',$3,'course')`,
-          [enrollment.student_id, `Bạn đã được hoàn ${refundAmount.toLocaleString('vi-VN')}đ (${Math.round(decision.refundRate * 100)}%) cho khóa học "${enrollment.title}".`, enrollment.course_id]);
+        await safeNotifyUser(client, {
+          userId: enrollment.student_id, channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'course_refunded', eventType: 'course_refunded',
+          data: { amount: refundAmount, rate: decision.refundRate, courseName: enrollment.title },
+          refId: enrollment.course_id, refType: 'course',
+          sourceType: 'course', sourceId: enrollment.course_id,
+          idempotencyKey: `course:${enrollment.course_id}:student:${enrollment.student_id}:refunded`,
+        });
 
         await client.query('COMMIT');
         return res.status(200).json({
@@ -8493,16 +9471,24 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
-      await client.query(`
-        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
-        VALUES ($1,'dispute_opened','Khiếu nại khóa học mới',$2,'gavel',$3,'dispute')
-      `, [admin.id, `${reporterName} khiếu nại khóa học ID: ${enrollment.course_id}. Lý do: ${reason}`, dispute.rows[0].id]);
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: true, reporterName, reason: `khiếu nại khóa học ID: ${enrollment.course_id}. Lý do: ${reason}` },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${admin.id}`,
+      });
     }
     if (enrollment.tutor_id) {
-      await client.query(`
-        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
-        VALUES ($1,'dispute_opened','Khóa học của bạn bị khiếu nại',$2,'report',$3,'dispute')
-      `, [enrollment.tutor_id, `${reporterName} khiếu nại khóa "${enrollment.title}". Admin sẽ xem xét.`, dispute.rows[0].id]);
+      await safeNotifyUser(client, {
+        userId: enrollment.tutor_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: false, reporterName },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${enrollment.tutor_id}`,
+      });
     }
 
     await client.query('COMMIT');
@@ -8665,10 +9651,20 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
 
       await client.query("UPDATE disputes SET status='RESOLVED_REFUND', penalty_type=$1, admin_note=$2, resolved_at=NOW() WHERE id=$3", [penaltyType, adminNote, disputeId]);
 
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Đã hoàn tiền',$2,'check_circle',$3,'dispute')`,
-        [studentId, `Admin phán quyết: Hoàn ${refundAmount.toLocaleString('vi-VN')}đ (${Math.round(refundRate * 100)}%) vào ví bạn.`, disputeId]);
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Phán quyết chống lại bạn',$2,'gavel',$3,'dispute')`,
-        [tutorId, `Admin hoàn tiền cho học sinh. ${repDeduct > 0 ? 'Điểm uy tín bị trừ ' + repDeduct + '.' : ''}`, disputeId]);
+      await safeNotifyUser(client, {
+        userId: studentId, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_resolved_refund', eventType: 'dispute_resolved_refund',
+        data: { forTutor: false, amount: refundAmount, rate: refundRate },
+        refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
+        idempotencyKey: `dispute:${disputeId}:resolved:refund:${studentId}`,
+      });
+      await safeNotifyUser(client, {
+        userId: tutorId, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_resolved_refund', eventType: 'dispute_resolved_refund',
+        data: { forTutor: true, repDeduct },
+        refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
+        idempotencyKey: `dispute:${disputeId}:resolved:refund:${tutorId}`,
+      });
 
     } else if (decision === 'RELEASE_TO_TUTOR') {
       if (dispute.target_type === 'booking') {
@@ -8697,8 +9693,12 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
 
       await client.query("UPDATE disputes SET status='RESOLVED_RELEASE', penalty_type=$1, admin_note=$2, resolved_at=NOW() WHERE id=$3", [penaltyType, adminNote, disputeId]);
 
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại không được chấp nhận',$2,'gavel',$3,'dispute')`,
-        [studentId, `Admin xem xét và phán quyết gia sư không vi phạm.`, disputeId]);
+      await safeNotifyUser(client, {
+        userId: studentId, channels: ['IN_APP'],
+        templateKey: 'dispute_resolved_release', eventType: 'dispute_resolved_release',
+        refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
+        idempotencyKey: `dispute:${disputeId}:resolved:release:${studentId}`,
+      });
     }
 
     await client.query('COMMIT');
@@ -8753,8 +9753,14 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
       await client.query('UPDATE wallets SET held_balance=held_balance+$1 WHERE id=$2', [tutorAmount, tw.rows[0].id]);
       if (adminWalletId) await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
       await client.query('UPDATE transactions SET status=\'RELEASED\', updated_at=NOW() WHERE id=$1', [booking.escrow_tx_id]);
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'escrow_released','Tiền giữ trong quỹ đảm bảo',$2,'lock',$3,'booking')`,
-        [booking.tutor_id, `${tutorAmount.toLocaleString('vi-VN')}đ trong quỹ đảm bảo. Sẽ rút được sau buổi thứ 3.`, booking.id]);
+      await safeNotifyUser(client, {
+        userId: booking.tutor_id, channels: ['IN_APP'],
+        title: 'Tiền giữ trong quỹ đảm bảo', templateKey: 'escrow_released', eventType: 'escrow_released',
+        body: `${tutorAmount.toLocaleString('vi-VN')}đ trong quỹ đảm bảo. Sẽ rút được sau buổi thứ 3.`,
+        icon: 'lock', refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id,
+        idempotencyKey: `booking:${booking.id}:escrow_released:${booking.tutor_id}`,
+      });
       // Commission log: EARNED (cọc ảo path, held_balance, Batch 18)
       await createCommissionLog(client, {
         source_type: 'booking', source_id: booking.id, booking_id: booking.id,
@@ -8772,8 +9778,13 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
       await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
         booking.escrow_tx_id, booking.payer_wallet_id, tw.rows[0].id, adminWalletId, lessonFee, 0.1
       ]);
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'escrow_released','Tiền học phí đã vào ví',$2,'payments',$3,'booking')`,
-        [booking.tutor_id, `${tutorAmount.toLocaleString('vi-VN')}đ đã vào ví (sau 10% hoa hồng).`, booking.id]);
+      await safeNotifyUser(client, {
+        userId: booking.tutor_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'escrow_released', eventType: 'escrow_released',
+        data: { amount: tutorAmount }, refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id,
+        idempotencyKey: `booking:${booking.id}:escrow_released:${booking.tutor_id}`,
+      });
       // Commission log: EARNED (normal release path, Batch 18)
       await createCommissionLog(client, {
         source_type: 'booking', source_id: booking.id, booking_id: booking.id,
@@ -9134,6 +10145,125 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.error('⚠️  DB migration (commission_logs) warning:', err.message);
   }
 
+  // ── Withdrawal Policy V1: tutor manual payout requests (Batch 19) ───────────
+  // Append state machine: PENDING → APPROVED → PAID, or PENDING/APPROVED →
+  // REJECTED, or PENDING → CANCELLED. Money is HELD on create. This is a NEW
+  // table, separate from the legacy empty `withdraw_requests` (left intact).
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS withdrawal_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        wallet_id UUID NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+        amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+        fee_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        net_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'PENDING'
+          CHECK (status IN ('PENDING','APPROVED','REJECTED','CANCELLED','PAID')),
+        payout_method TEXT NOT NULL DEFAULT 'BANK_TRANSFER',
+        bank_name TEXT,
+        bank_account_no TEXT,
+        bank_account_name TEXT,
+        payout_note TEXT,
+        policy_version TEXT NOT NULL DEFAULT 'WITHDRAWAL_POLICY_V1',
+        requested_at TIMESTAMPTZ DEFAULT NOW(),
+        approved_at TIMESTAMPTZ,
+        rejected_at TIMESTAMPTZ,
+        cancelled_at TIMESTAMPTZ,
+        paid_at TIMESTAMPTZ,
+        approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        rejected_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        paid_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        admin_note TEXT,
+        reject_reason TEXT,
+        hold_transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+        payout_transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+        idempotency_key TEXT UNIQUE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_tutor   ON withdrawal_requests(tutor_id);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_wallet  ON withdrawal_requests(wallet_id);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_status  ON withdrawal_requests(status);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_created ON withdrawal_requests(created_at);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_paid    ON withdrawal_requests(paid_at);
+    `);
+    console.log('✅ DB migration: withdrawal_requests table + indexes ready (Batch 19)');
+  } catch (err) {
+    console.error('⚠️  DB migration (withdrawal_requests) warning:', err.message);
+  }
+
+  // ── Notification & Email Reliability: additive columns + outbox (Batch 20) ──
+  try {
+    await pool.query(`
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS event_type TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'normal';
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS source_type TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS source_id UUID;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_idempotency_key
+        ON notifications(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    `);
+    console.log('✅ DB migration: notifications additive columns ready (Batch 20)');
+  } catch (err) {
+    console.error('⚠️  DB migration (notifications columns) warning:', err.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notification_outbox (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        email TEXT,
+        channel TEXT NOT NULL CHECK (channel IN ('IN_APP','EMAIL')),
+        event_type TEXT NOT NULL,
+        template_key TEXT NOT NULL,
+        subject TEXT,
+        title TEXT,
+        body TEXT NOT NULL,
+        html_body TEXT,
+        status TEXT NOT NULL DEFAULT 'PENDING'
+          CHECK (status IN ('PENDING','SENT','FAILED','RETRYING','SKIPPED','CANCELLED')),
+        priority TEXT NOT NULL DEFAULT 'normal'
+          CHECK (priority IN ('low','normal','high','critical')),
+        source_type TEXT,
+        source_id UUID,
+        ref_type TEXT,
+        ref_id UUID,
+        notification_id UUID REFERENCES notifications(id) ON DELETE SET NULL,
+        attempts INT NOT NULL DEFAULT 0,
+        max_attempts INT NOT NULL DEFAULT 3,
+        last_attempt_at TIMESTAMPTZ,
+        next_attempt_at TIMESTAMPTZ DEFAULT NOW(),
+        sent_at TIMESTAMPTZ,
+        error_message TEXT,
+        idempotency_key TEXT UNIQUE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_user         ON notification_outbox(user_id);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_email        ON notification_outbox(email);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_status       ON notification_outbox(status);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_next_attempt ON notification_outbox(next_attempt_at);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_event        ON notification_outbox(event_type);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_source       ON notification_outbox(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_created      ON notification_outbox(created_at);
+    `);
+    console.log('✅ DB migration: notification_outbox table + indexes ready (Batch 20)');
+  } catch (err) {
+    console.error('⚠️  DB migration (notification_outbox) warning:', err.message);
+  }
+
+  // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
+  // Runs every minute; processNotificationOutbox() guards against overlap and
+  // never throws, so this interval can never crash the server.
+  setInterval(() => {
+    processNotificationOutbox(20).catch(err => console.error('[outbox cron] error:', err.message));
+  }, 60 * 1000);
+
   // ── Cron: Auto-release escrow sau 24h nếu không có khiếu nại ───────────────
   setInterval(async () => {
     try {
@@ -9192,10 +10322,14 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
             UPDATE tutor_profiles SET completed_lessons_count = completed_lessons_count + 1
             WHERE user_id = $1
           `, [row.tutor_id]);
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'escrow_released','Tiền học phí đã được giải ngân',$2,'payments',$3,'booking')
-          `, [row.tutor_id, `Học phí buổi học đã được chuyển vào ví của bạn (sau 24h xác nhận).`, row.id]);
+          await safeNotifyUser(client, {
+            userId: row.tutor_id, channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'escrow_released', eventType: 'escrow_released',
+            body: 'Học phí buổi học đã được chuyển vào ví của bạn (sau 24h xác nhận).',
+            data: { amount: row.lesson_fee }, refId: row.id, refType: 'booking',
+            sourceType: 'booking', sourceId: row.id,
+            idempotencyKey: `booking:${row.id}:escrow_released:${row.tutor_id}`,
+          });
           await client.query('COMMIT');
           console.log(`✅ Auto-released escrow for booking ${row.id}`);
         } catch (innerErr) {

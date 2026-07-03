@@ -300,6 +300,22 @@ export async function getTransactionHistory() {
   return request('/api/payment/transactions');
 }
 
+// ── Tutor Withdrawal / Payout APIs (Batch 19) ──────────────────────────────
+export async function getMyWithdrawals() {
+  return request('/api/tutor/withdrawals');
+}
+
+export async function createWithdrawal(payload) {
+  return request('/api/tutor/withdrawals', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function cancelWithdrawal(id) {
+  return request(`/api/tutor/withdrawals/${id}/cancel`, { method: 'PATCH' });
+}
+
 // ── Admin Dispute APIs ─────────────────────────────────────────────────────
 export async function getAdminDisputes() {
   return request('/api/admin/disputes');
