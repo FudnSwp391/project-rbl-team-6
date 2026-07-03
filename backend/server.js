@@ -519,6 +519,44 @@ const NOTIFICATION_TEMPLATES = {
     body: d.message || '',
     icon: 'warning', priority: d.priority || 'normal',
   }),
+  // ── Batch 20.1: templates for the remaining legacy direct-insert sites ──────
+  manual_hold_release: d => ({
+    subject: '[EduX] Admin đã nhả cọc', title: 'Admin đã nhả cọc',
+    body: `Admin đã thủ công nhả ${fmtVnd(d.amount)} tiền cọc vào số dư khả dụng của bạn.`,
+    icon: 'verified_user', priority: 'high',
+  }),
+  parent_leave_request: d => ({
+    subject: '[EduX] Học sinh xin nghỉ', title: 'Học sinh xin nghỉ',
+    body: `${d.studentName || 'Học sinh'} xin nghỉ buổi ${d.subject || ''} ngày ${d.dateLabel || ''}. Lý do: ${d.reason || 'Không có lý do.'}`,
+    icon: 'event_busy', priority: 'normal',
+  }),
+  tutor_periodic_review: d => ({
+    subject: `[EduX] Nhận xét mới từ gia sư — ${d.subject || ''}`, title: `Nhận xét mới từ gia sư — ${d.subject || ''}`,
+    body: `Gia sư vừa gửi nhận xét định kỳ cho ${d.studentName || 'học sinh'} (${d.periodLabel || ''}).`,
+    icon: 'rate_review', priority: 'normal',
+  }),
+  chat_new_message: d => ({
+    subject: '[EduX] Tin nhắn mới', title: `Tin nhắn mới từ ${d.senderName || 'một người dùng'}`,
+    body: d.messageText || '',
+    icon: 'chat', priority: 'low',
+  }),
+  course_enrollment_ping: d => ({
+    subject: '[EduX] Học sinh mới đăng ký khóa học', title: 'Học sinh mới đăng ký khóa học',
+    body: `${d.studentName || 'Học sinh'} vừa mua khóa học "${d.courseName || ''}"`,
+    icon: 'school', priority: 'normal',
+  }),
+  booking_auto_cancel_no_response: d => ({
+    subject: '[EduX] Lịch học đã bị hủy tự động', title: d.forTutor ? 'Lịch học bị hủy tự động' : 'Lịch học đã bị hủy do gia sư không phản hồi',
+    body: d.forTutor
+      ? 'Một lịch học đã bị hủy vì bạn không phản hồi trong 24h.'
+      : (d.refunded ? `Hệ thống đã hủy lịch học và hoàn lại ${fmtVnd(d.amount)} vì gia sư không duyệt trong 24h.` : 'Hệ thống đã hủy lịch học vì gia sư không duyệt trong 24h.'),
+    icon: d.forTutor ? 'event_busy' : 'undo', priority: 'high',
+  }),
+  reputation_auto_ban: d => ({
+    subject: '[EduX] Tài khoản bị khóa', title: 'Tài khoản bị khóa',
+    body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+    icon: 'block', priority: 'critical',
+  }),
 };
 
 // Renders a template into {subject,title,body,htmlBody,icon,priority}. Unknown
@@ -1460,10 +1498,19 @@ app.post("/api/admin/tutors/:id/release-hold", verifyToken, requireAdmin, async 
     const heldAmount = Number(walletRes.rows[0].held_balance);
     await client.query('UPDATE wallets SET balance = balance + held_balance, held_balance = 0 WHERE id=$1', [walletRes.rows[0].id]);
     
-    await client.query(`
-      INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-      VALUES ($1,'hold_released','Admin đã nhả cọc',$2,'verified_user',$1,'system')
-    `, [userId, `Admin đã thủ công nhả ${heldAmount.toLocaleString('vi-VN')}đ tiền cọc vào số dư khả dụng của bạn.`]);
+    // Batch 20.1: routed through safeNotifyUser (same client, rollback-safe).
+    // type/icon/body kept identical to the original direct insert.
+    await safeNotifyUser(client, {
+      userId, type: 'hold_released', channels: ['IN_APP'],
+      templateKey: 'manual_hold_release', eventType: 'manual_hold_release',
+      title: 'Admin đã nhả cọc',
+      body: `Admin đã thủ công nhả ${heldAmount.toLocaleString('vi-VN')}đ tiền cọc vào số dư khả dụng của bạn.`,
+      icon: 'verified_user', refId: userId, refType: 'system',
+      sourceType: 'wallet', sourceId: userId, priority: 'high',
+      // No idempotency key: this ad-hoc admin action has no natural per-event
+      // id and is legitimately repeatable for the same tutor over time (each
+      // release is a distinct event), matching the original always-insert behavior.
+    });
 
     await client.query('COMMIT');
     return res.json({ success: true, message: "Đã nhả cọc thành công." });
@@ -4832,14 +4879,16 @@ app.post('/api/parent/children/:studentId/schedule/:sessionId/leave', verifyToke
 
     const session = updated.rows[0];
     const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [studentId]);
-    await pool.query(`
-      INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-      VALUES ($1, 'student_absent', 'Học sinh xin nghỉ', $2, 'event_busy', $3, 'session')
-    `, [
-      session.tutor_id,
-      `${studentRes.rows[0]?.full_name || 'Học sinh'} xin nghỉ buổi ${session.subject} ngày ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. Lý do: ${reason || 'Không có lý do.'}`,
-      sessionId
-    ]);
+    // Batch 20.1: routed through safeNotifyUser (no transaction here originally, uses pool)
+    await safeNotifyUser(pool, {
+      userId: session.tutor_id, type: 'student_absent', channels: ['IN_APP'],
+      templateKey: 'parent_leave_request', eventType: 'parent_leave_request',
+      title: 'Học sinh xin nghỉ',
+      body: `${studentRes.rows[0]?.full_name || 'Học sinh'} xin nghỉ buổi ${session.subject} ngày ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. Lý do: ${reason || 'Không có lý do.'}`,
+      icon: 'event_busy', refId: sessionId, refType: 'session',
+      sourceType: 'leave_request', sourceId: sessionId, priority: 'normal',
+      idempotencyKey: `leave_request:${sessionId}:${session.tutor_id}`,
+    });
 
     return res.json({ message: 'Đã gửi yêu cầu nghỉ phép.' });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -4878,13 +4927,17 @@ app.post('/api/tutor/reviews', verifyToken, requireTutor, async (req, res) => {
 
     const parents = await pool.query('SELECT parent_id FROM parent_children WHERE student_id=$1', [student_id]);
     const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [student_id]);
+    // Batch 20.1: routed through safeNotifyUser (no transaction here originally, uses pool)
     for (const p of parents.rows) {
-      await pool.query(`
-        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-        VALUES ($1,'tutor_review',$2,$3,'rate_review',$4,'review')
-      `, [p.parent_id, `Nhận xét mới từ gia sư — ${subject}`,
-          `Gia sư vừa gửi nhận xét định kỳ cho ${studentRes.rows[0]?.full_name || 'học sinh'} (${period_label}).`,
-          review.rows[0].id]);
+      await safeNotifyUser(pool, {
+        userId: p.parent_id, type: 'tutor_review', channels: ['IN_APP'],
+        templateKey: 'tutor_periodic_review', eventType: 'tutor_periodic_review',
+        title: `Nhận xét mới từ gia sư — ${subject}`,
+        body: `Gia sư vừa gửi nhận xét định kỳ cho ${studentRes.rows[0]?.full_name || 'học sinh'} (${period_label}).`,
+        icon: 'rate_review', refId: review.rows[0].id, refType: 'review',
+        sourceType: 'review', sourceId: review.rows[0].id, priority: 'normal',
+        idempotencyKey: `tutor_periodic_review:${review.rows[0].id}:${p.parent_id}`,
+      });
     }
     return res.status(201).json({ review: review.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -5267,14 +5320,17 @@ app.post('/api/chat/start', verifyToken, async (req, res) => {
       );
       firstMsg = msg.rows[0];
 
-      // Thêm thông báo cho gia sư
-      try {
-        await pool.query(
-          `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-           VALUES ($1, 'new_message', $2, $3, 'chat', $4, 'chat')`,
-          [tutor_id, `Tin nhắn mới từ ${req.user.name || 'một học sinh'}`, content.trim(), senderId]
-        );
-      } catch (_) {}
+      // Thêm thông báo cho gia sư (Batch 20.1: safeNotifyUser, IN_APP only —
+      // realtime unaffected since Supabase listens at the DB/WAL level, not
+      // the insertion call site. ref_id/ref_type/type/icon kept identical.)
+      await safeNotifyUser(pool, {
+        userId: tutor_id, type: 'new_message', channels: ['IN_APP'],
+        templateKey: 'chat_new_message', eventType: 'chat_new_message',
+        title: `Tin nhắn mới từ ${req.user.name || 'một học sinh'}`,
+        body: content.trim(), icon: 'chat', refId: senderId, refType: 'chat',
+        sourceType: 'chat_message', sourceId: firstMsg.id, priority: 'low',
+        idempotencyKey: `chat_message:${firstMsg.id}:${tutor_id}`,
+      });
     }
 
     return res.status(201).json({
@@ -5354,12 +5410,15 @@ app.post('/api/chat', verifyToken, async (req, res) => {
       [senderId, receiver_id, content.trim()]
     );
 
-    // Thêm thông báo cho người nhận
-    await pool.query(
-      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-       VALUES ($1, 'new_message', $2, $3, 'chat', $4, 'chat')`,
-      [receiver_id, `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`, content.trim(), senderId]
-    );
+    // Thêm thông báo cho người nhận (Batch 20.1: safeNotifyUser, IN_APP only)
+    await safeNotifyUser(pool, {
+      userId: receiver_id, type: 'new_message', channels: ['IN_APP'],
+      templateKey: 'chat_new_message', eventType: 'chat_new_message',
+      title: `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`,
+      body: content.trim(), icon: 'chat', refId: senderId, refType: 'chat',
+      sourceType: 'chat_message', sourceId: msg.rows[0].id, priority: 'low',
+      idempotencyKey: `chat_message:${msg.rows[0].id}:${receiver_id}`,
+    });
 
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -5421,11 +5480,15 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
     if (msgType === 'image') bodyText = 'Đã gửi một hình ảnh';
     if (msgType === 'video') bodyText = 'Đã gửi một video';
 
-    await pool.query(
-      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-       VALUES ($1, 'new_message', $2, $3, 'chat', $4, 'chat')`,
-      [receiver_id, `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`, bodyText, senderId]
-    );
+    // Batch 20.1: safeNotifyUser, IN_APP only
+    await safeNotifyUser(pool, {
+      userId: receiver_id, type: 'new_message', channels: ['IN_APP'],
+      templateKey: 'chat_new_message', eventType: 'chat_new_message',
+      title: `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`,
+      body: bodyText, icon: 'chat', refId: senderId, refType: 'chat',
+      sourceType: 'chat_message', sourceId: msg.rows[0].id, priority: 'low',
+      idempotencyKey: `chat_message:${msg.rows[0].id}:${receiver_id}`,
+    });
 
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error: ' + e.message }); }
@@ -6242,12 +6305,16 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
     // Tăng enrollment_count
     await client.query(`UPDATE courses SET enrollment_count = COALESCE(enrollment_count, 0) + 1 WHERE id = $1`, [courseId]);
 
-    // Gửi thông báo
-    await client.query(
-      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-       VALUES ($1, 'course_enrollment', 'Học sinh mới đăng ký khóa học', $2, 'school', $3, 'course')`,
-      [course.tutor_id, `${studentName} vừa mua khóa học "${course.title}"`, courseId]
-    );
+    // Gửi thông báo (Batch 20.1: safeNotifyUser, same client, rollback-safe)
+    await safeNotifyUser(client, {
+      userId: course.tutor_id, type: 'course_enrollment', channels: ['IN_APP'],
+      templateKey: 'course_enrollment_ping', eventType: 'course_enrollment_ping',
+      title: 'Học sinh mới đăng ký khóa học',
+      body: `${studentName} vừa mua khóa học "${course.title}"`,
+      icon: 'school', refId: courseId, refType: 'course',
+      sourceType: 'course_enrollment', sourceId: enrollmentId, priority: 'normal',
+      idempotencyKey: `course_enrollment:${enrollmentId}:${course.tutor_id}`,
+    });
     // Notify student (Batch 20: fires for both free and paid enrollment, same as before)
     await safeNotifyUser(client, {
       userId: studentId, channels: price > 0 ? ['IN_APP', 'EMAIL'] : ['IN_APP'],
@@ -8500,21 +8567,27 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
         WHERE id = $1 AND escrow_released_at IS NULL
       `, [booking.id]);
 
-      // Notify học sinh: có 24h để khiếu nại
-      await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-        VALUES ($1,'lesson_completed','Buổi học đã hoàn thành',$2,'task_alt',$3,'booking')
-      `, [booking.student_id,
-          `Gia sư đã xác nhận hoàn thành buổi học ${booking.subject || ''}. Tiền sẽ tự động giải ngân sau 24h nếu bạn không có khiếu nại.`,
-          booking.id]);
+      // Notify học sinh: có 24h để khiếu nại (Batch 20.1: safeNotifyUser, same client)
+      await safeNotifyUser(client, {
+        userId: booking.student_id, type: 'lesson_completed', channels: ['IN_APP'],
+        templateKey: 'escrow_auto_release_pending', eventType: 'escrow_auto_release_pending',
+        title: 'Buổi học đã hoàn thành',
+        body: `Gia sư đã xác nhận hoàn thành buổi học ${booking.subject || ''}. Tiền sẽ tự động giải ngân sau 24h nếu bạn không có khiếu nại.`,
+        icon: 'task_alt', refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+        idempotencyKey: `booking:${booking.id}:lesson_completed:${booking.student_id}`,
+      });
 
       // Notify gia sư
-      await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-        VALUES ($1,'lesson_completed','Đã ghi nhận hoàn thành buổi học',$2,'how_to_reg',$3,'booking')
-      `, [booking.tutor_id,
-          `Buổi học ${booking.subject || ''} đã được ghi nhận hoàn thành. Tiền sẽ được giải ngân vào ví sau 24h.`,
-          booking.id]);
+      await safeNotifyUser(client, {
+        userId: booking.tutor_id, type: 'lesson_completed', channels: ['IN_APP'],
+        templateKey: 'escrow_auto_release_pending', eventType: 'escrow_auto_release_pending',
+        title: 'Đã ghi nhận hoàn thành buổi học',
+        body: `Buổi học ${booking.subject || ''} đã được ghi nhận hoàn thành. Tiền sẽ được giải ngân vào ví sau 24h.`,
+        icon: 'how_to_reg', refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+        idempotencyKey: `booking:${booking.id}:lesson_completed:${booking.tutor_id}`,
+      });
     }
 
     // ── ABSENT / EXCUSED: Hoàn tiền 100% cho học sinh (Batch 16.1: refund_logs) ──
@@ -8539,10 +8612,16 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
         const notifBody = status === 'absent'
           ? `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`
           : `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`;
-        await client.query(`
-          INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-          VALUES ($1,'refund',$2,$3,'undo',$4,'booking')
-        `, [booking.student_id, notifTitle, notifBody, booking.id]);
+        // Batch 20.1: safeNotifyUser, same client. logId (refund_logs) is the
+        // natural idempotency anchor — one notification per refund event.
+        await safeNotifyUser(client, {
+          userId: booking.student_id, type: 'refund', channels: ['IN_APP'],
+          templateKey: 'refund_resolved', eventType: 'refund_resolved',
+          title: notifTitle, body: notifBody, icon: 'undo',
+          refId: booking.id, refType: 'booking',
+          sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+          idempotencyKey: `refund_log:${logId}`,
+        });
       }
     }
 
@@ -9569,7 +9648,15 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
       // Auto-ban check
       if (tp.rows.length && tp.rows[0].reputation_score < 30) {
         await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
-        await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'system','Tài khoản bị khóa','Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.','block',NULL,NULL)`, [tutorId]);
+        // Batch 20.1: safeNotifyUser, same client, priority critical
+        await safeNotifyUser(client, {
+          userId: tutorId, type: 'system', channels: ['IN_APP'],
+          templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
+          title: 'Tài khoản bị khóa',
+          body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+          icon: 'block', sourceType: 'user', sourceId: tutorId, priority: 'critical',
+          idempotencyKey: `reputation_auto_ban:${tutorId}:${disputeId}`,
+        });
       }
     }
 
@@ -10385,19 +10472,29 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
             await client.query(`UPDATE bookings SET status='Cancelled' WHERE id=$1`, [row.id]);
           }
 
-          // Thông báo cho Học sinh
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'refund','Lịch học đã bị hủy do gia sư không phản hồi',$2,'undo',$3,'booking')
-          `, [row.student_id, refunded
+          // Thông báo cho Học sinh (Batch 20.1: safeNotifyUser, same client)
+          await safeNotifyUser(client, {
+            userId: row.student_id, type: 'refund', channels: ['IN_APP'],
+            templateKey: 'booking_auto_cancel_no_response', eventType: 'booking_auto_cancel_no_response',
+            title: 'Lịch học đã bị hủy do gia sư không phản hồi',
+            body: refunded
               ? `Hệ thống đã hủy lịch học và hoàn lại ${Number(row.lesson_fee || 0).toLocaleString('vi-VN')}đ vì gia sư không duyệt trong 24h.`
-              : `Hệ thống đã hủy lịch học vì gia sư không duyệt trong 24h.`, row.id]);
+              : `Hệ thống đã hủy lịch học vì gia sư không duyệt trong 24h.`,
+            icon: 'undo', refId: row.id, refType: 'booking',
+            sourceType: 'booking', sourceId: row.id, priority: 'high',
+            idempotencyKey: `booking:${row.id}:auto_cancel_no_response:${row.student_id}`,
+          });
 
           // Thông báo cho Gia sư
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'cancellation','Lịch học bị hủy tự động',$2,'event_busy',$3,'booking')
-          `, [row.tutor_id, `Một lịch học đã bị hủy vì bạn không phản hồi trong 24h.`, row.id]);
+          await safeNotifyUser(client, {
+            userId: row.tutor_id, type: 'cancellation', channels: ['IN_APP'],
+            templateKey: 'booking_auto_cancel_no_response', eventType: 'booking_auto_cancel_no_response',
+            title: 'Lịch học bị hủy tự động',
+            body: 'Một lịch học đã bị hủy vì bạn không phản hồi trong 24h.',
+            icon: 'event_busy', refId: row.id, refType: 'booking',
+            sourceType: 'booking', sourceId: row.id, priority: 'high',
+            idempotencyKey: `booking:${row.id}:auto_cancel_no_response:${row.tutor_id}`,
+          });
 
           await client.query('COMMIT');
           console.log(`✅ Auto-cancelled unapproved booking ${row.id}`);
