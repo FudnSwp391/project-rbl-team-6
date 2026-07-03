@@ -633,6 +633,336 @@ async function runPendingAiCases({ triggeredBy = 'cron', adminId = null } = {}) 
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN AI COPILOT (Batch 26) — context-aware, ADVISORY-ONLY assistant.
+// Deterministic/rule-based by default; optional LLM rewrite (off by default).
+// Read-only collectors + a rule engine. NEVER mutates money, account status,
+// or sends email. Every recommendation is advisory; admin decides.
+// ═══════════════════════════════════════════════════════════════════════════
+const ADMIN_COPILOT_LLM_ENABLED     = String(process.env.ADMIN_COPILOT_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const ADMIN_COPILOT_PROVIDER        = String(process.env.ADMIN_COPILOT_PROVIDER || 'gemini').toLowerCase();
+const ADMIN_COPILOT_MAX_CONTEXT_CHARS = Number(process.env.ADMIN_COPILOT_MAX_CONTEXT_CHARS || 12000);
+
+// Only these action/recommendation types may ever be emitted this batch.
+const COPILOT_ALLOWED_ACTIONS = new Set([
+  'WATCHLIST', 'MANUAL_REVIEW', 'SEND_WARNING_DRAFT', 'REQUEST_MORE_EVIDENCE',
+  'REVIEW_TUTOR_QUALITY', 'REVIEW_REFUND_PATTERN', 'NO_ACTION',
+]);
+
+// ── Privacy masking (never store/return raw email / phone / IP) ──────────────
+function maskEmail(email) {
+  if (!email || typeof email !== 'string' || !email.includes('@')) return null;
+  const [user, domain] = email.split('@');
+  const head = user.slice(0, 2);
+  return `${head}${'*'.repeat(Math.max(2, user.length - 2))}@${domain}`;
+}
+function maskPhone(phone) {
+  if (phone == null) return null;
+  const s = String(phone).replace(/\s+/g, '');
+  if (s.length <= 4) return '****';
+  return `${s.slice(0, 2)}****${s.slice(-3)}`;
+}
+
+// ── Defensive read-only query helpers (return safe defaults on any error) ─────
+async function copilotSafeRows(sql, params = []) {
+  try { return (await pool.query(sql, params)).rows; } catch { return []; }
+}
+async function copilotSafeCount(sql, params = []) {
+  try { const r = await pool.query(sql, params); return Number(r.rows?.[0]?.n || 0); } catch { return 0; }
+}
+async function copilotSafeSum(sql, params = []) {
+  try { const r = await pool.query(sql, params); return Number(r.rows?.[0]?.s || 0); } catch { return 0; }
+}
+
+// ── Data collectors (read-only; each sub-query degrades gracefully) ──────────
+async function collectTutorCopilotContext(tutorId) {
+  const ctx = { entity_type: 'TUTOR', entity_id: tutorId, identity: {}, metrics: {}, notes: [] };
+  const u = await copilotSafeRows(`SELECT full_name, email, phone, role, is_banned, created_at FROM users WHERE id=$1 LIMIT 1`, [tutorId]);
+  if (!u.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const user = u[0];
+  ctx.identity = {
+    name: user.full_name || '—', email_masked: maskEmail(user.email), phone_masked: maskPhone(user.phone),
+    role: user.role, is_banned: !!user.is_banned, joined_at: user.created_at,
+  };
+  const tp = await copilotSafeRows(`SELECT id, COALESCE(avg_rating,0) AS avg_rating, COALESCE(review_count,0) AS review_count, COALESCE(reputation_score,100) AS reputation_score, COALESCE(completed_lessons_count,0) AS completed_lessons FROM tutor_profiles WHERE user_id=$1 LIMIT 1`, [tutorId]);
+  const profileId = tp.length ? tp[0].id : null;
+  ctx.metrics.avg_rating       = tp.length ? Number(tp[0].avg_rating) : null;
+  ctx.metrics.review_count     = tp.length ? Number(tp[0].review_count) : 0;
+  ctx.metrics.reputation_score = tp.length ? Number(tp[0].reputation_score) : null;
+  ctx.metrics.completed_lessons = tp.length ? Number(tp[0].completed_lessons) : 0;
+
+  ctx.metrics.disputes_30d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '30 days'`, [tutorId]);
+  ctx.metrics.disputes_90d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.late_noshow_disputes_30d = await copilotSafeCount(
+    `SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '30 days'
+       AND (LOWER(reason) LIKE '%muộn%' OR LOWER(reason) LIKE '%trễ%' OR LOWER(reason) LIKE '%vắng%' OR LOWER(reason) LIKE '%không đến%' OR LOWER(reason) LIKE '%no-show%')`, [tutorId]);
+  ctx.metrics.refunds_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM refund_logs WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.refund_amount_90d  = await copilotSafeSum(`SELECT COALESCE(SUM(refund_amount),0)::numeric AS s FROM refund_logs WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.bookings_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.ai_flags_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days' AND jsonb_array_length(risk_flags) > 0`, [tutorId]);
+  const exp = await copilotSafeRows(`SELECT COALESCE(SUM(lesson_fee),0)::numeric AS s, COUNT(*)::int AS n FROM bookings WHERE tutor_id=$1 AND escrow_tx_id IS NOT NULL AND escrow_released_at IS NULL`, [tutorId]);
+  ctx.metrics.active_escrow_exposure = exp.length ? Number(exp[0].s) : 0;
+  ctx.metrics.active_escrow_count    = exp.length ? Number(exp[0].n) : 0;
+
+  if (profileId) {
+    const recent = await copilotSafeRows(`SELECT ROUND(AVG(rating)::numeric,2) AS avg, COUNT(*)::int AS n FROM reviews WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '30 days'`, [profileId]);
+    const prior  = await copilotSafeRows(`SELECT ROUND(AVG(rating)::numeric,2) AS avg FROM reviews WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days' AND created_at <= NOW() - INTERVAL '30 days'`, [profileId]);
+    ctx.metrics.rating_recent_30d = recent.length && recent[0].avg != null ? Number(recent[0].avg) : null;
+    ctx.metrics.rating_prior      = prior.length && prior[0].avg != null ? Number(prior[0].avg) : null;
+    ctx.metrics.reviews_30d       = recent.length ? Number(recent[0].n) : 0;
+  }
+  return ctx;
+}
+
+async function collectStudentCopilotContext(studentId) {
+  const ctx = { entity_type: 'STUDENT', entity_id: studentId, identity: {}, metrics: {}, notes: [] };
+  const u = await copilotSafeRows(`SELECT full_name, email, phone, role, is_banned, created_at FROM users WHERE id=$1 LIMIT 1`, [studentId]);
+  if (!u.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const user = u[0];
+  ctx.identity = {
+    name: user.full_name || '—', email_masked: maskEmail(user.email), phone_masked: maskPhone(user.phone),
+    role: user.role, is_banned: !!user.is_banned, joined_at: user.created_at,
+  };
+  ctx.metrics.disputes_raised_30d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by=$1 AND created_at > NOW() - INTERVAL '30 days'`, [studentId]);
+  ctx.metrics.disputes_raised_90d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.refunds_90d         = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM refund_logs WHERE student_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.refund_amount_90d   = await copilotSafeSum(`SELECT COALESCE(SUM(refund_amount),0)::numeric AS s FROM refund_logs WHERE student_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.auto_refunds_30d    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE student_id=$1 AND status='AUTO_RESOLVED' AND money_action='REFUND_TO_STUDENT' AND created_at > NOW() - INTERVAL '30 days'`, [studentId]);
+  ctx.metrics.bookings_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.absences_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM attendance WHERE student_id=$1 AND status='absent' AND marked_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  return ctx;
+}
+
+async function collectDisputeCopilotContext(disputeId) {
+  const ctx = { entity_type: 'DISPUTE', entity_id: disputeId, identity: {}, metrics: {}, notes: [] };
+  const d = await copilotSafeRows(
+    `SELECT di.id, di.reason, di.status, di.severity, di.target_type, di.booking_id, di.tutor_id, di.raised_by, di.created_at, di.resolved_at,
+            b.lesson_fee, b.student_id, b.escrow_tx_id, b.escrow_released_at,
+            t.full_name AS tutor_name, s.full_name AS student_name
+       FROM disputes di
+       LEFT JOIN bookings b ON b.id = di.booking_id
+       LEFT JOIN users t ON t.id = di.tutor_id
+       LEFT JOIN users s ON s.id = di.raised_by
+      WHERE di.id=$1 LIMIT 1`, [disputeId]);
+  if (!d.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const row = d[0];
+  ctx.identity = { tutor_name: row.tutor_name || '—', student_name: row.student_name || '—', status: row.status, severity: row.severity, reason: row.reason };
+  ctx.metrics.money_exposure    = Number(row.lesson_fee || 0);
+  ctx.metrics.escrow_open       = !!(row.escrow_tx_id && !row.escrow_released_at);
+  ctx.metrics.age_hours         = row.created_at ? Math.floor((Date.now() - new Date(row.created_at).getTime()) / 3600000) : null;
+  ctx.metrics.session_events    = row.booking_id ? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM lesson_session_events WHERE booking_id=$1 AND event_type IN ('JOIN','HEARTBEAT')`, [row.booking_id]) : 0;
+  ctx.metrics.telemetry_live    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM lesson_session_events WHERE created_at > NOW() - INTERVAL '7 days'`);
+  ctx.metrics.tutor_disputes_30d = row.tutor_id ? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '30 days'`, [row.tutor_id]) : 0;
+  ctx.metrics.student_disputes_30d = row.raised_by ? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by=$1 AND created_at > NOW() - INTERVAL '30 days'`, [row.raised_by]) : 0;
+  const ai = await copilotSafeRows(`SELECT status, appeal_status, risk_flags FROM ai_case_resolutions WHERE dispute_id=$1 LIMIT 1`, [disputeId]);
+  ctx.metrics.ai_case_status  = ai.length ? ai[0].status : null;
+  ctx.metrics.ai_appeal_status = ai.length ? ai[0].appeal_status : null;
+  ctx.metrics.ai_risk_flags   = ai.length ? ai[0].risk_flags : [];
+  return ctx;
+}
+
+async function collectBookingCopilotContext(bookingId) {
+  const ctx = { entity_type: 'BOOKING', entity_id: bookingId, identity: {}, metrics: {}, notes: [] };
+  const b = await copilotSafeRows(
+    `SELECT bk.id, bk.status, bk.lesson_fee, bk.lesson_date, bk.escrow_tx_id, bk.escrow_released_at, bk.created_at,
+            t.full_name AS tutor_name, s.full_name AS student_name, a.status AS attendance_status
+       FROM bookings bk
+       LEFT JOIN users t ON t.id = bk.tutor_id
+       LEFT JOIN users s ON s.id = bk.student_id
+       LEFT JOIN attendance a ON a.booking_id = bk.id
+      WHERE bk.id=$1 LIMIT 1`, [bookingId]);
+  if (!b.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const row = b[0];
+  ctx.identity = { tutor_name: row.tutor_name || '—', student_name: row.student_name || '—', status: row.status };
+  ctx.metrics.money_exposure   = Number(row.lesson_fee || 0);
+  ctx.metrics.escrow_open      = !!(row.escrow_tx_id && !row.escrow_released_at);
+  ctx.metrics.attendance_status = row.attendance_status || null;
+  ctx.metrics.session_events   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM lesson_session_events WHERE booking_id=$1 AND event_type IN ('JOIN','HEARTBEAT')`, [bookingId]);
+  ctx.metrics.related_disputes = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE booking_id=$1`, [bookingId]);
+  return ctx;
+}
+
+async function collectTransactionCopilotContext(transactionId) {
+  const ctx = { entity_type: 'TRANSACTION', entity_id: transactionId, identity: {}, metrics: {}, notes: [] };
+  const t = await copilotSafeRows(`SELECT id, amount, type, status, wallet_id, reference_id, created_at FROM transactions WHERE id=$1 LIMIT 1`, [transactionId]);
+  if (!t.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const row = t[0];
+  ctx.identity = { type: row.type, status: row.status };
+  ctx.metrics.amount           = Number(row.amount || 0);
+  ctx.metrics.related_disputes = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE transaction_id=$1`, [transactionId]);
+  ctx.metrics.wallet_failed_30d = row.wallet_id ? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE wallet_id=$1 AND status='FAILED' AND created_at > NOW() - INTERVAL '30 days'`, [row.wallet_id]) : 0;
+  return ctx;
+}
+
+async function collectPageCopilotContext(pageKey, pageContext) {
+  const ctx = { entity_type: 'PAGE', entity_id: null, page_key: pageKey || null, identity: {}, metrics: {}, notes: [] };
+  ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN'`);
+  ctx.metrics.pending_tutors   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='pending'`);
+  ctx.metrics.appealed_ai_cases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`);
+  ctx.metrics.failed_tx_24h    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE status='FAILED' AND created_at > NOW() - INTERVAL '24 hours'`);
+  // Only a small allow-list of primitive page-context hints is kept (no PII).
+  if (pageContext && typeof pageContext === 'object') {
+    ctx.notes.push(`page_hint:${String(pageKey || 'unknown').slice(0, 40)}`);
+  }
+  return ctx;
+}
+
+// ── Rule-based analysis engine (deterministic). Advisory only. ───────────────
+function copilotRiskLevelFromScore(score) {
+  if (score >= 6) return 'CRITICAL';
+  if (score >= 4) return 'HIGH';
+  if (score >= 2) return 'MEDIUM';
+  return 'LOW';
+}
+function copilotAction(type, label, reason) {
+  if (!COPILOT_ALLOWED_ACTIONS.has(type)) type = 'MANUAL_REVIEW';
+  return { type, label, reason };
+}
+function copilotVnd(n) { return Number(n || 0).toLocaleString('vi-VN') + 'đ'; }
+
+function generateAdminCopilotReport(entityType, context) {
+  const m = context.metrics || {};
+  const findings = [], evidence = [], recommendations = [], actions = [], limitations = [];
+  let score = 0;
+
+  if (context.notes?.includes('NOT_FOUND')) {
+    return {
+      summary: 'Không tìm thấy dữ liệu cho đối tượng này. Vui lòng kiểm tra lại mã đối tượng.',
+      confidence: 30, risk_level: 'LOW', key_findings: [], evidence: [],
+      recommendations: [], suggested_admin_actions: [copilotAction('NO_ACTION', 'Không cần hành động', 'Không có dữ liệu')],
+      limitations: ['Không tìm thấy bản ghi tương ứng.'], model_used: 'RULE_BASED',
+    };
+  }
+
+  if (entityType === 'TUTOR') {
+    if (m.disputes_30d >= 3) { score += 2; findings.push(`Có ${m.disputes_30d} khiếu nại trong 30 ngày gần nhất.`); evidence.push({ label: 'Khiếu nại 30 ngày', value: m.disputes_30d }); }
+    if (m.late_noshow_disputes_30d >= 2) { score += 2; findings.push(`${m.late_noshow_disputes_30d} khiếu nại liên quan đi muộn/vắng mặt.`); evidence.push({ label: 'Khiếu nại đi muộn/vắng', value: m.late_noshow_disputes_30d }); }
+    if (m.rating_recent_30d != null && m.rating_prior != null && m.rating_recent_30d < m.rating_prior - 0.5) { score += 1; findings.push(`Điểm đánh giá giảm từ ${m.rating_prior} xuống ${m.rating_recent_30d}.`); evidence.push({ label: 'Xu hướng đánh giá', value: `${m.rating_prior} → ${m.rating_recent_30d}` }); }
+    if (m.refunds_90d >= 3) { score += 1; findings.push(`Có ${m.refunds_90d} lần hoàn tiền trong 90 ngày (${copilotVnd(m.refund_amount_90d)}).`); evidence.push({ label: 'Hoàn tiền 90 ngày', value: `${m.refunds_90d} lần · ${copilotVnd(m.refund_amount_90d)}` }); }
+    if (m.ai_flags_90d >= 2) { score += 1; findings.push(`AI đã gắn cờ rủi ro ${m.ai_flags_90d} lần trong 90 ngày.`); evidence.push({ label: 'Cờ rủi ro AI', value: m.ai_flags_90d }); }
+    if (m.reputation_score != null && m.reputation_score < 70) { score += 1; findings.push(`Điểm uy tín thấp (${m.reputation_score}/100).`); evidence.push({ label: 'Điểm uy tín', value: m.reputation_score }); }
+    if (m.active_escrow_exposure > 0 && m.disputes_30d > 0) { score += 1; findings.push(`Đang giữ ${copilotVnd(m.active_escrow_exposure)} escrow trong khi có khiếu nại mở.`); evidence.push({ label: 'Escrow đang giữ', value: `${copilotVnd(m.active_escrow_exposure)} · ${m.active_escrow_count} buổi` }); }
+    if (m.is_banned) limitations.push('Tài khoản đang bị khóa.');
+    if (m.late_noshow_disputes_30d >= 2 || m.disputes_30d >= 3) recommendations.push('Xem xét gửi cảnh báo chính thức về chất lượng giảng dạy.');
+    actions.push(copilotAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Có dấu hiệu giảm chất lượng'));
+    actions.push(copilotAction('REVIEW_TUTOR_QUALITY', 'Rà soát chất lượng gia sư', 'Khiếu nại/đánh giá cần kiểm tra'));
+    if (m.late_noshow_disputes_30d >= 1) actions.push(copilotAction('SEND_WARNING_DRAFT', 'Soạn nháp cảnh báo', 'Đi muộn/vắng mặt lặp lại'));
+
+  } else if (entityType === 'STUDENT') {
+    if (m.refunds_90d >= 3) { score += 2; findings.push(`Yêu cầu hoàn tiền ${m.refunds_90d} lần trong 90 ngày.`); evidence.push({ label: 'Hoàn tiền 90 ngày', value: m.refunds_90d }); }
+    if (m.auto_refunds_30d >= 3) { score += 2; findings.push(`Được tự động hoàn tiền ${m.auto_refunds_30d} lần trong 30 ngày (tần suất cao).`); evidence.push({ label: 'Tự động hoàn 30 ngày', value: m.auto_refunds_30d }); }
+    if (m.disputes_raised_30d >= 3) { score += 1; findings.push(`Mở ${m.disputes_raised_30d} khiếu nại trong 30 ngày.`); evidence.push({ label: 'Khiếu nại đã mở 30 ngày', value: m.disputes_raised_30d }); }
+    if (m.absences_90d >= 3) { score += 1; findings.push(`Vắng mặt ${m.absences_90d} buổi trong 90 ngày.`); evidence.push({ label: 'Vắng mặt 90 ngày', value: m.absences_90d }); }
+    actions.push(copilotAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Tần suất hoàn tiền/khiếu nại bất thường'));
+    actions.push(copilotAction('REVIEW_REFUND_PATTERN', 'Rà soát mẫu hoàn tiền', 'Kiểm tra khả năng lạm dụng'));
+
+  } else if (entityType === 'DISPUTE') {
+    if (m.telemetry_live > 0 && m.session_events === 0) { score += 2; findings.push('Không có bằng chứng phiên học (JOIN/HEARTBEAT) — có thể lỗi kỹ thuật nền tảng.'); evidence.push({ label: 'Sự kiện phiên học', value: 0 }); limitations.push('Thiếu bằng chứng phiên học đáng tin cậy.'); }
+    else if (m.telemetry_live === 0) limitations.push('Hệ thống telemetry phiên học chưa hoạt động — không thể xác thực bằng dữ liệu phiên.');
+    if (m.money_exposure >= 1000000) { score += 2; findings.push(`Giá trị tranh chấp cao: ${copilotVnd(m.money_exposure)}.`); evidence.push({ label: 'Giá trị tranh chấp', value: copilotVnd(m.money_exposure) }); }
+    else if (m.money_exposure > 0) { score += 1; evidence.push({ label: 'Giá trị tranh chấp', value: copilotVnd(m.money_exposure) }); }
+    if (m.tutor_disputes_30d >= 3) { score += 1; findings.push(`Gia sư có ${m.tutor_disputes_30d} khiếu nại trong 30 ngày.`); }
+    if (m.student_disputes_30d >= 3) { score += 1; findings.push(`Học sinh mở ${m.student_disputes_30d} khiếu nại trong 30 ngày.`); }
+    if (m.ai_appeal_status === 'APPEALED_NEED_REVIEW') { score += 1; findings.push('Có kháng cáo quyết định AI đang chờ xem xét.'); evidence.push({ label: 'Kháng cáo AI', value: 'Đang chờ' }); }
+    actions.push(copilotAction('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Củng cố hồ sơ trước khi quyết định'));
+    actions.push(copilotAction('MANUAL_REVIEW', 'Chuyển xem xét thủ công', 'Quyết định cuối thuộc về admin'));
+
+  } else if (entityType === 'TRANSACTION') {
+    if (m.amount >= 2000000) { score += 2; findings.push(`Giao dịch giá trị cao: ${copilotVnd(m.amount)}.`); evidence.push({ label: 'Số tiền', value: copilotVnd(m.amount) }); }
+    else if (m.amount > 0) evidence.push({ label: 'Số tiền', value: copilotVnd(m.amount) });
+    if (m.related_disputes >= 1) { score += 1; findings.push(`Có ${m.related_disputes} khiếu nại liên quan giao dịch này.`); }
+    if (m.wallet_failed_30d >= 3) { score += 1; findings.push(`Ví liên quan có ${m.wallet_failed_30d} giao dịch thất bại trong 30 ngày.`); }
+    actions.push(copilotAction('MANUAL_REVIEW', 'Chuyển xem xét thủ công', 'Xác minh giao dịch'));
+
+  } else if (entityType === 'BOOKING') {
+    if (m.related_disputes >= 1) { score += 1; findings.push(`Buổi học có ${m.related_disputes} khiếu nại liên quan.`); evidence.push({ label: 'Khiếu nại liên quan', value: m.related_disputes }); }
+    if (m.escrow_open && m.money_exposure > 0) { findings.push(`Đang giữ ${copilotVnd(m.money_exposure)} escrow chưa giải ngân.`); evidence.push({ label: 'Escrow đang giữ', value: copilotVnd(m.money_exposure) }); }
+    if (m.attendance_status === 'absent') { score += 1; findings.push('Điểm danh của buổi học: vắng mặt.'); evidence.push({ label: 'Điểm danh', value: 'Vắng mặt' }); }
+    if (m.session_events === 0) limitations.push('Không có sự kiện phiên học (JOIN/HEARTBEAT) cho buổi này.');
+    actions.push(copilotAction('MANUAL_REVIEW', 'Chuyển xem xét thủ công', 'Xác minh buổi học'));
+
+  } else { // PAGE
+    if (m.open_disputes > 0) { findings.push(`${m.open_disputes} khiếu nại đang mở.`); evidence.push({ label: 'Khiếu nại mở', value: m.open_disputes }); if (m.open_disputes >= 5) score += 1; }
+    if (m.appealed_ai_cases > 0) { findings.push(`${m.appealed_ai_cases} kháng cáo AI chờ xem xét.`); evidence.push({ label: 'Kháng cáo AI', value: m.appealed_ai_cases }); score += 1; }
+    if (m.pending_tutors > 0) { findings.push(`${m.pending_tutors} hồ sơ gia sư chờ duyệt.`); evidence.push({ label: 'Hồ sơ chờ duyệt', value: m.pending_tutors }); }
+    if (m.failed_tx_24h >= 5) { findings.push(`${m.failed_tx_24h} giao dịch thất bại trong 24 giờ.`); score += 1; }
+    actions.push(copilotAction('MANUAL_REVIEW', 'Xử lý các mục đang chờ', 'Có mục cần admin xử lý'));
+  }
+
+  if (findings.length === 0) { findings.push('Không phát hiện dấu hiệu bất thường đáng kể.'); actions.length = 0; actions.push(copilotAction('NO_ACTION', 'Không cần hành động', 'Không có tín hiệu rủi ro')); }
+
+  const risk_level = copilotRiskLevelFromScore(score);
+  limitations.push('Phân tích dựa trên quy tắc, chỉ mang tính tham khảo. Quyết định cuối cùng thuộc về admin.');
+
+  // Confidence grows with data volume; rule-based capped at 92.
+  const dataPoints = evidence.length + findings.length;
+  const confidence = Math.max(40, Math.min(92, 55 + dataPoints * 5));
+
+  const name = context.identity?.name || context.identity?.tutor_name || context.identity?.student_name || '';
+  const head = {
+    TUTOR: name ? `Gia sư ${name}` : 'Gia sư này',
+    STUDENT: name ? `Học sinh ${name}` : 'Học sinh này',
+    DISPUTE: 'Khiếu nại này',
+    TRANSACTION: 'Giao dịch này',
+    BOOKING: 'Buổi học này',
+    PAGE: 'Trang hiện tại',
+  }[entityType] || 'Ngữ cảnh này';
+  const riskVi = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' }[risk_level];
+  const recTail = recommendations.length ? ` Đề xuất: ${recommendations.join(' ')}` : (actions.length && actions[0].type !== 'NO_ACTION' ? ` Đề xuất: ${actions.map(a => a.label.toLowerCase()).join(', ')}.` : '');
+  const summary = `${head} có mức rủi ro ${riskVi}. ${findings.join(' ')}${recTail}`.trim();
+
+  return {
+    summary, confidence, risk_level,
+    key_findings: findings, evidence, recommendations,
+    suggested_admin_actions: actions, limitations, model_used: 'RULE_BASED',
+  };
+}
+
+// Keep only masked/safe fields for persistence (no raw email/phone/IP/tokens).
+function sanitizeCopilotSnapshot(context) {
+  if (!context || typeof context !== 'object') return {};
+  return {
+    entity_type: context.entity_type || null,
+    entity_id: context.entity_id != null ? String(context.entity_id) : null,
+    page_key: context.page_key || null,
+    identity: context.identity || {},
+    metrics: context.metrics || {},
+    notes: Array.isArray(context.notes) ? context.notes : [],
+  };
+}
+
+// Optional LLM rewrite of the summary (off by default). Never invents facts;
+// receives sanitized JSON only; validates output; falls back to RULE_BASED.
+async function maybeCopilotLLMRewrite(report, context) {
+  if (!ADMIN_COPILOT_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+  try {
+    const payload = JSON.stringify({
+      risk_level: report.risk_level, key_findings: report.key_findings,
+      evidence: report.evidence, snapshot: sanitizeCopilotSnapshot(context),
+    }).slice(0, ADMIN_COPILOT_MAX_CONTEXT_CHARS);
+    const prompt = `Bạn là trợ lý cho quản trị viên nền tảng gia sư EduX. Viết lại phần TÓM TẮT bằng tiếng Việt, ngắn gọn, khách quan, CHỈ dựa trên dữ liệu JSON dưới đây và TUYỆT ĐỐI KHÔNG bịa thêm dữ kiện. Không đề xuất hành động tự động di chuyển tiền hay khóa tài khoản. Trả về đúng JSON dạng {"summary_vi":"..."}. Dữ liệu: ${payload}`;
+    if (ADMIN_COPILOT_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const text = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed && typeof parsed.summary_vi === 'string' && parsed.summary_vi.trim().length > 10) {
+              return { summary: parsed.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' };
+            }
+          } catch { /* invalid JSON -> fall through */ }
+        }
+      }
+    }
+    // provider=groq or no key configured -> deterministic fallback
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  } catch (err) {
+    console.warn('[copilot] LLM rewrite failed, falling back:', err.message);
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  }
+}
+
 // Trim, strip control chars, collapse whitespace, cap length. Null-safe.
 function sanitizeNotificationText(value, maxLength = 500) {
   if (value == null) return null;
@@ -10086,6 +10416,101 @@ app.post('/api/my/ai-case-feedback/:id/appeal', verifyToken, async (req, res) =>
   }
 });
 
+// ═══ Admin AI Copilot endpoints (Batch 26 — advisory only) ══════════════════
+
+// POST /api/admin/copilot/analyze — context-aware advisory analysis.
+app.post('/api/admin/copilot/analyze', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { entityType, entityId, pageKey, pageContext } = req.body || {};
+    const type = String(entityType || 'PAGE').toUpperCase();
+    const allowed = ['TUTOR', 'STUDENT', 'DISPUTE', 'TRANSACTION', 'BOOKING', 'PAGE'];
+    if (!allowed.includes(type)) return res.status(400).json({ message: 'entityType không hợp lệ.' });
+    if (type !== 'PAGE' && !entityId) return res.status(400).json({ message: 'Thiếu entityId cho loại đối tượng này.' });
+
+    let context;
+    if (type === 'TUTOR')            context = await collectTutorCopilotContext(entityId);
+    else if (type === 'STUDENT')     context = await collectStudentCopilotContext(entityId);
+    else if (type === 'DISPUTE')     context = await collectDisputeCopilotContext(entityId);
+    else if (type === 'BOOKING')     context = await collectBookingCopilotContext(entityId);
+    else if (type === 'TRANSACTION') context = await collectTransactionCopilotContext(entityId);
+    else                             context = await collectPageCopilotContext(pageKey, pageContext);
+
+    const report = generateAdminCopilotReport(type, context);
+    const llm = await maybeCopilotLLMRewrite(report, context);
+    report.summary = llm.summary;
+    report.model_used = llm.model_used;
+    report.created_at = new Date().toISOString();
+
+    let savedId = null;
+    try {
+      const ins = await pool.query(
+        `INSERT INTO admin_copilot_reports
+           (entity_type, entity_id, page_key, summary, confidence, risk_level,
+            key_findings, evidence, recommendations, suggested_admin_actions, limitations,
+            model_used, input_snapshot, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13::jsonb,$14)
+         RETURNING id`,
+        [
+          type, entityId ? String(entityId) : null, pageKey || null, report.summary,
+          report.confidence, report.risk_level,
+          JSON.stringify(report.key_findings), JSON.stringify(report.evidence),
+          JSON.stringify(report.recommendations), JSON.stringify(report.suggested_admin_actions),
+          JSON.stringify(report.limitations), report.model_used,
+          JSON.stringify(sanitizeCopilotSnapshot(context)), req.user.id,
+        ]
+      );
+      savedId = ins.rows[0].id;
+    } catch (e) { console.warn('[copilot] persist failed:', e.message); }
+
+    return res.json({ id: savedId, ...report });
+  } catch (err) {
+    console.error('POST /api/admin/copilot/analyze error:', err.message);
+    return res.status(500).json({ message: 'Không thể phân tích ngữ cảnh.' });
+  }
+});
+
+// GET /api/admin/copilot/history — recent analyses (filterable, paginated).
+app.get('/api/admin/copilot/history', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.entityType) { params.push(String(req.query.entityType).toUpperCase()); where.push(`entity_type = $${params.length}`); }
+    if (req.query.entityId)   { params.push(String(req.query.entityId)); where.push(`entity_id = $${params.length}`); }
+    if (req.query.riskLevel)  { params.push(String(req.query.riskLevel).toUpperCase()); where.push(`risk_level = $${params.length}`); }
+    if (req.query.from)       { params.push(req.query.from); where.push(`created_at >= $${params.length}`); }
+    if (req.query.to)         { params.push(req.query.to);   where.push(`created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_copilot_reports ${whereSql}`, params);
+    const rows = await copilotSafeRows(
+      `SELECT id, entity_type, entity_id, page_key, summary, confidence, risk_level,
+              model_used, created_at
+         FROM admin_copilot_reports ${whereSql}
+         ORDER BY created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    return res.json({ items: rows, pagination: { page, limit, total } });
+  } catch (err) {
+    console.error('GET /api/admin/copilot/history error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải lịch sử phân tích.' });
+  }
+});
+
+// GET /api/admin/copilot/history/:id — full detail of one analysis.
+app.get('/api/admin/copilot/history/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const rows = await copilotSafeRows(`SELECT * FROM admin_copilot_reports WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy bản ghi.' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/copilot/history/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
 // POST /api/escrow/resolve-dispute-v2 — Admin xử lý khiếu nại
 app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
@@ -10950,6 +11375,38 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: ai_case_resolutions + lesson_session_events ready (Batch 25)');
   } catch (err) {
     console.error('⚠️  DB migration (ai_case_resolutions Batch 25) warning:', err.message);
+  }
+
+  // ── Auto-migrate: admin_copilot_reports (Batch 26, advisory-only) ───────────
+  // created_by is UUID to match users.id (this schema uses UUID user ids). No FK
+  // to keep it decoupled/robust; the value is validated as the admin's own id.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_copilot_reports (
+        id                      BIGSERIAL PRIMARY KEY,
+        entity_type             TEXT NOT NULL,
+        entity_id               TEXT,
+        page_key                TEXT,
+        summary                 TEXT,
+        confidence              NUMERIC(5,2),
+        risk_level              TEXT CHECK (risk_level IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+        key_findings            JSONB NOT NULL DEFAULT '[]'::jsonb,
+        evidence                JSONB NOT NULL DEFAULT '[]'::jsonb,
+        recommendations         JSONB NOT NULL DEFAULT '[]'::jsonb,
+        suggested_admin_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        limitations             JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used              TEXT DEFAULT 'RULE_BASED',
+        input_snapshot          JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by              UUID,
+        created_at              TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_copilot_reports_entity ON admin_copilot_reports(entity_type, entity_id);
+      CREATE INDEX IF NOT EXISTS idx_copilot_reports_risk   ON admin_copilot_reports(risk_level, created_at);
+      CREATE INDEX IF NOT EXISTS idx_copilot_reports_author ON admin_copilot_reports(created_by, created_at);
+    `);
+    console.log('✅ DB migration: admin_copilot_reports ready (Batch 26)');
+  } catch (err) {
+    console.error('⚠️  DB migration (admin_copilot_reports Batch 26) warning:', err.message);
   }
 
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
