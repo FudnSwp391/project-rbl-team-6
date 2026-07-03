@@ -7792,8 +7792,7 @@ app.get("/api/student/bookings", verifyToken, async (req, res) => {
 });
 
 // GET /api/admin/disputes — Lấy tất cả disputes cho admin
-app.get("/api/admin/disputes", verifyToken, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT d.id, d.reason, d.status, d.admin_note, d.created_at, d.resolved_at,
