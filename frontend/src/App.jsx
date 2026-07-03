@@ -31,6 +31,7 @@ import BookingCalendar from './pages/BookingCalendar'
 import PaymentResult from './pages/PaymentResult'
 import CartPage from './pages/CartPage'
 import CompleteStudentProfile from './pages/CompleteStudentProfile'
+import MyAiCases from './pages/MyAiCases'
 import { useAuth } from './AuthContext'
 
 const subjects = [
@@ -118,6 +119,7 @@ const getRouteFromHash = () => {
   if (normalized === '/tutor')     return { name: 'tutor' }
   if (normalized === '/tutor-profile') return { name: 'tutor-profile' }
   if (normalized === '/complete-student-profile') return { name: 'complete-student-profile' }
+  if (normalized === '/my-ai-cases') return { name: 'my-ai-cases' }
   if (normalized === '/cart')      return { name: 'cart' }
 
   const tutorDetailMatch = normalized.match(/^\/tutor-detail\/([^/]+)$/)
@@ -354,6 +356,9 @@ function HomePage({ onGoSignIn }) {
                   <a href="#/dashboard" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Bảng điều khiển</a>
                   {user.role === 'student' && (
                     <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Khóa học của tôi</a>
+                  )}
+                  {(user.role === 'student' || user.role === 'tutor' || user.role === 'parent') && (
+                    <a href="#/my-ai-cases" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Khiếu nại &amp; AI</a>
                   )}
                   <a href="#" onClick={(e) => e.preventDefault()} style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Cài đặt</a>
                   <button 
@@ -822,6 +827,12 @@ function App() {
         </footer>
       </div>
     )
+  }
+
+  // ── Route: My AI Cases (protected — affected user appeal page) ──
+  if (routeName === 'my-ai-cases') {
+    if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    return <MyAiCases onGoHome={() => navigateTo('home')} />
   }
 
   // ── Route: Complete Student Profile ──
