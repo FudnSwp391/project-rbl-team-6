@@ -400,6 +400,7 @@ async function sendPasswordResetEmail(to, otp) {
 // ═══════════════════════════════════════════════════════════════════════════
 const NOTIFICATION_POLICY_VERSION = "NOTIFICATION_POLICY_V1";
 const EMAIL_RETRY_MAX_ATTEMPTS = 3;
+const EMAIL_OUTBOX_PROCESSING_TIMEOUT_MINUTES = 15;
 
 // Trim, strip control chars, collapse whitespace, cap length. Null-safe.
 function sanitizeNotificationText(value, maxLength = 500) {
@@ -408,6 +409,16 @@ function sanitizeNotificationText(value, maxLength = 500) {
   let s = String(value).replace(/[\x00-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim();
   if (!s) return null;
   return s.slice(0, maxLength);
+}
+
+// HTML-escape a value for safe insertion into email htmlBody.
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 const fmtVnd = n => Number(n || 0).toLocaleString('vi-VN') + 'đ';
@@ -570,13 +581,15 @@ function renderNotificationTemplate(templateKey, data = {}) {
   const title = sanitizeNotificationText(base.title, 200) || 'Thông báo';
   const body  = sanitizeNotificationText(base.body, 1000) || '';
   const subject = sanitizeNotificationText(base.subject, 200) || `[EduX] ${title}`;
+  const htmlTitle = escapeHtml(title);
+  const htmlBodyText = escapeHtml(body);
   const htmlBody = `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/></head>
 <body style="margin:0;padding:0;background:#f8f9fb;font-family:Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:32px 16px;"><tr><td align="center">
 <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);">
 <tr><td style="background:#00288e;padding:24px 32px;"><h1 style="margin:0;color:#fff;font-size:20px;">EduX</h1></td></tr>
-<tr><td style="padding:32px;"><h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${title}</h2>
-<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${body}</p></td></tr>
+<tr><td style="padding:32px;"><h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${htmlTitle}</h2>
+<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${htmlBodyText}</p></td></tr>
 <tr><td style="background:#f8f9fb;padding:16px 32px;border-top:1px solid #e1e2e4;"><p style="margin:0;color:#757684;font-size:12px;">EduX — support@edux.com</p></td></tr>
 </table></td></tr></table></body></html>`;
   return { subject, title, body, htmlBody, icon: base.icon || 'notifications', priority: base.priority || 'normal' };
@@ -598,7 +611,7 @@ async function createInAppNotification(clientOrPool, payload) {
     [
       payload.userId, payload.type || payload.eventType || 'system', title, body,
       payload.icon || rendered.icon, payload.refId || null, payload.refType || null,
-      payload.eventType || null, rendered.priority || payload.priority || 'normal',
+      payload.eventType || null, payload.priority || rendered.priority || 'normal',
       payload.sourceType || null, payload.sourceId || null,
       payload.idempotencyKey || null, JSON.stringify(payload.metadata || {}),
     ]
@@ -621,7 +634,7 @@ async function queueEmailNotification(clientOrPool, payload) {
     [
       payload.userId || null, payload.email || null, payload.eventType || payload.templateKey,
       payload.templateKey, rendered.subject, rendered.title, rendered.body, rendered.htmlBody,
-      rendered.priority || payload.priority || 'normal',
+      payload.priority || rendered.priority || 'normal',
       payload.sourceType || null, payload.sourceId || null,
       payload.refType || null, payload.refId || null, payload.notificationId || null,
       payload.idempotencyKey || null, JSON.stringify(payload.metadata || {}),
@@ -672,46 +685,108 @@ async function safeNotifyUser(clientOrPool, payload) {
   }
 }
 
-// ── Email outbox processor (Batch 20) ────────────────────────────────────────
-// Picks up PENDING/RETRYING EMAIL rows whose next_attempt_at has passed and
-// sends them via the existing nodemailer transporter. Never crashes the
-// server; never resends a SENT row (guarded by the status filter + FOR UPDATE
-// SKIP LOCKED so overlapping runs cannot double-send).
+// ── Email outbox processor (Batch 20.2 hardened) ─────────────────────────────
+// Claim-then-send pattern: rows are claimed into PROCESSING status in a short
+// transaction (releasing DB locks immediately), then emails are sent outside
+// any transaction. Each post-send update is guarded by (status='PROCESSING'
+// AND processor_id=<this run>), so overlapping processors cannot corrupt each
+// other's rows. Stale PROCESSING rows (older than
+// EMAIL_OUTBOX_PROCESSING_TIMEOUT_MINUTES) are recovered to RETRYING/FAILED
+// before each run. Exactly-once delivery cannot be guaranteed without
+// provider-side idempotency; this design materially reduces duplicate risk.
 let _outboxProcessorRunning = false;
 async function processNotificationOutbox(limit = 20) {
   if (_outboxProcessorRunning) return { skipped: true, reason: 'already_running' };
   _outboxProcessorRunning = true;
-  const client = await pool.connect();
-  const stats = { sent: 0, failed: 0, retrying: 0, skipped: 0 };
-  try {
-    await client.query('BEGIN');
-    const due = await client.query(
-      `SELECT * FROM notification_outbox
-       WHERE channel='EMAIL' AND status IN ('PENDING','RETRYING')
-         AND next_attempt_at <= NOW() AND attempts < max_attempts
-       ORDER BY priority = 'critical' DESC, priority = 'high' DESC, created_at ASC
-       LIMIT $1
-       FOR UPDATE SKIP LOCKED`,
-      [limit]
-    );
+  const stats = { sent: 0, failed: 0, retrying: 0, skipped: 0, recovered: 0 };
 
-    for (const row of due.rows) {
+  try {
+    // 1. Recover stale PROCESSING rows from crashed/timed-out prior runs.
+    const recov = await pool.query(
+      `UPDATE notification_outbox
+       SET status = CASE WHEN attempts >= max_attempts THEN 'FAILED' ELSE 'RETRYING' END,
+           error_message = COALESCE(error_message, 'PROCESSING_TIMEOUT'),
+           next_attempt_at = NOW(),
+           updated_at = NOW()
+       WHERE channel = 'EMAIL'
+         AND status = 'PROCESSING'
+         AND processing_started_at < NOW() - ($1 * INTERVAL '1 minute')`,
+      [EMAIL_OUTBOX_PROCESSING_TIMEOUT_MINUTES]
+    );
+    stats.recovered = recov.rowCount || 0;
+    if (stats.recovered > 0) {
+      console.log(`[processNotificationOutbox] recovered ${stats.recovered} stale PROCESSING row(s)`);
+    }
+
+    // 2. Claim due rows in a short transaction; release locks immediately after.
+    const processorId = `pid${process.pid}-${Date.now()}`;
+    let rows = [];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const due = await client.query(
+        `SELECT id FROM notification_outbox
+         WHERE channel = 'EMAIL'
+           AND status IN ('PENDING','RETRYING')
+           AND next_attempt_at <= NOW()
+           AND attempts < max_attempts
+         ORDER BY priority = 'critical' DESC, priority = 'high' DESC, created_at ASC
+         LIMIT $1
+         FOR UPDATE SKIP LOCKED`,
+        [limit]
+      );
+      if (due.rows.length) {
+        const ids = due.rows.map(r => r.id);
+        const claimed = await client.query(
+          `UPDATE notification_outbox
+           SET status = 'PROCESSING',
+               attempts = attempts + 1,
+               last_attempt_at = NOW(),
+               processing_started_at = NOW(),
+               processor_id = $1,
+               updated_at = NOW()
+           WHERE id = ANY($2::uuid[])
+           RETURNING *`,
+          [processorId, ids]
+        );
+        rows = claimed.rows;
+      }
+      await client.query('COMMIT');
+    } catch (claimErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw claimErr;
+    } finally {
+      client.release();
+    }
+
+    // 3. Send emails outside the transaction; update with processor_id guard.
+    for (const row of rows) {
       if (!row.email) {
-        await client.query(
-          `UPDATE notification_outbox SET status='SKIPPED', error_message='NO_EMAIL_ADDRESS', updated_at=NOW() WHERE id=$1`,
-          [row.id]);
+        const u = await pool.query(
+          `UPDATE notification_outbox
+           SET status='SKIPPED', error_message='NO_EMAIL_ADDRESS', updated_at=NOW()
+           WHERE id=$1 AND status='PROCESSING' AND processor_id=$2
+           RETURNING id`,
+          [row.id, processorId]
+        );
+        if (!u.rowCount) console.warn(`[processNotificationOutbox] guard miss SKIPPED(no-email) id=${row.id}`);
         stats.skipped++;
         continue;
       }
       if (!emailTransporter) {
-        await client.query(
-          `UPDATE notification_outbox SET status='SKIPPED', error_message='SMTP_NOT_CONFIGURED', updated_at=NOW() WHERE id=$1`,
-          [row.id]);
+        const u = await pool.query(
+          `UPDATE notification_outbox
+           SET status='SKIPPED', error_message='SMTP_NOT_CONFIGURED', updated_at=NOW()
+           WHERE id=$1 AND status='PROCESSING' AND processor_id=$2
+           RETURNING id`,
+          [row.id, processorId]
+        );
+        if (!u.rowCount) console.warn(`[processNotificationOutbox] guard miss SKIPPED(no-smtp) id=${row.id}`);
         stats.skipped++;
         continue;
       }
       try {
-        await emailTransporter.sendMail({
+        const info = await emailTransporter.sendMail({
           from: process.env.SMTP_FROM || process.env.SMTP_USER,
           to: row.email,
           replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
@@ -720,28 +795,43 @@ async function processNotificationOutbox(limit = 20) {
           html: row.html_body || undefined,
           headers: { 'X-Mailer': 'EduX Notification System' },
         });
-        await client.query(
-          `UPDATE notification_outbox SET status='SENT', sent_at=NOW(), attempts=attempts+1, error_message=NULL, updated_at=NOW() WHERE id=$1`,
-          [row.id]);
+        const u = await pool.query(
+          `UPDATE notification_outbox
+           SET status='SENT', sent_at=NOW(), error_message=NULL,
+               provider_message_id=$1, updated_at=NOW()
+           WHERE id=$2 AND status='PROCESSING' AND processor_id=$3
+           RETURNING id`,
+          [info?.messageId || null, row.id, processorId]
+        );
+        if (!u.rowCount) console.warn(`[processNotificationOutbox] guard miss SENT id=${row.id}`);
         stats.sent++;
       } catch (sendErr) {
-        const attempts = row.attempts + 1;
-        const willRetry = attempts < row.max_attempts;
-        await client.query(
+        const willRetry = row.attempts < row.max_attempts;
+        const u = await pool.query(
           `UPDATE notification_outbox
-           SET attempts=$1, status=$2, error_message=$3,
-               last_attempt_at=NOW(), next_attempt_at=NOW() + INTERVAL '5 minutes' * $1, updated_at=NOW()
-           WHERE id=$4`,
-          [attempts, willRetry ? 'RETRYING' : 'FAILED', sanitizeNotificationText(sendErr.message, 500), row.id]);
+           SET status = $1,
+               error_message = $2,
+               next_attempt_at = CASE WHEN $1='RETRYING'
+                 THEN NOW() + INTERVAL '5 minutes' * $3
+                 ELSE next_attempt_at END,
+               updated_at = NOW()
+           WHERE id=$4 AND status='PROCESSING' AND processor_id=$5
+           RETURNING id`,
+          [
+            willRetry ? 'RETRYING' : 'FAILED',
+            sanitizeNotificationText(sendErr.message, 500),
+            row.attempts,
+            row.id,
+            processorId,
+          ]
+        );
+        if (!u.rowCount) console.warn(`[processNotificationOutbox] guard miss RETRYING/FAILED id=${row.id}`);
         willRetry ? stats.retrying++ : stats.failed++;
       }
     }
-    await client.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
     console.error('[processNotificationOutbox] error:', err.message);
   } finally {
-    client.release();
     _outboxProcessorRunning = false;
   }
   return stats;
@@ -3418,11 +3508,12 @@ app.get("/api/admin/notification-outbox", verifyToken, requireAdmin, async (req,
 
     const sum = (await pool.query(`
       SELECT
-        COUNT(*) FILTER (WHERE status='PENDING')::int  AS pending,
-        COUNT(*) FILTER (WHERE status='SENT')::int     AS sent,
-        COUNT(*) FILTER (WHERE status='FAILED')::int   AS failed,
-        COUNT(*) FILTER (WHERE status='RETRYING')::int AS retrying,
-        COUNT(*) FILTER (WHERE status='SKIPPED')::int  AS skipped
+        COUNT(*) FILTER (WHERE status='PENDING')::int    AS pending,
+        COUNT(*) FILTER (WHERE status='PROCESSING')::int AS processing,
+        COUNT(*) FILTER (WHERE status='SENT')::int       AS sent,
+        COUNT(*) FILTER (WHERE status='FAILED')::int     AS failed,
+        COUNT(*) FILTER (WHERE status='RETRYING')::int   AS retrying,
+        COUNT(*) FILTER (WHERE status='SKIPPED')::int    AS skipped
       FROM notification_outbox
     `)).rows[0];
 
@@ -3430,11 +3521,12 @@ app.get("/api/admin/notification-outbox", verifyToken, requireAdmin, async (req,
       items,
       pagination: { page, limit, total },
       summary: {
-        pending:  sum.pending,
-        sent:     sum.sent,
-        failed:   sum.failed,
-        retrying: sum.retrying,
-        skipped:  sum.skipped,
+        pending:    sum.pending,
+        processing: sum.processing,
+        sent:       sum.sent,
+        failed:     sum.failed,
+        retrying:   sum.retrying,
+        skipped:    sum.skipped,
       },
     });
   } catch (err) {
@@ -3443,18 +3535,45 @@ app.get("/api/admin/notification-outbox", verifyToken, requireAdmin, async (req,
   }
 });
 
-// POST /api/admin/notification-outbox/:id/retry — re-queue FAILED/SKIPPED/RETRYING rows.
-// Does not send immediately; the outbox cron picks it up on its next run.
+// POST /api/admin/notification-outbox/:id/retry — re-queue FAILED/SKIPPED/RETRYING
+// or stale PROCESSING rows. Bumps max_attempts for exhausted rows so the
+// processor can pick them up again. Does not send immediately.
 app.post("/api/admin/notification-outbox/:id/retry", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const r = await pool.query(
-      `UPDATE notification_outbox
-       SET status='PENDING', next_attempt_at=NOW(), error_message=NULL, updated_at=NOW()
-       WHERE id=$1 AND status IN ('FAILED','SKIPPED','RETRYING')
-       RETURNING id`,
+    const check = await pool.query(
+      `SELECT status, processing_started_at, attempts, max_attempts
+       FROM notification_outbox WHERE id=$1`,
       [req.params.id]
     );
-    if (!r.rows.length) return res.status(409).json({ message: 'Chỉ có thể thử lại email FAILED, SKIPPED, hoặc RETRYING.' });
+    if (!check.rows.length) return res.status(404).json({ message: 'Không tìm thấy bản ghi.' });
+    const row = check.rows[0];
+
+    const isStaleProcessing = row.status === 'PROCESSING' &&
+      row.processing_started_at &&
+      new Date(row.processing_started_at) <
+        new Date(Date.now() - EMAIL_OUTBOX_PROCESSING_TIMEOUT_MINUTES * 60 * 1000);
+
+    if (row.status === 'PROCESSING' && !isStaleProcessing) {
+      return res.status(409).json({ message: 'Email đang được xử lý. Vui lòng đợi.' });
+    }
+
+    const canRetry = ['FAILED', 'SKIPPED', 'RETRYING'].includes(row.status) || isStaleProcessing;
+    if (!canRetry) {
+      return res.status(409).json({ message: 'Chỉ có thể thử lại email FAILED, SKIPPED, RETRYING hoặc PROCESSING quá thời gian.' });
+    }
+
+    await pool.query(
+      `UPDATE notification_outbox
+       SET status = 'PENDING',
+           next_attempt_at = NOW(),
+           error_message = NULL,
+           processor_id = NULL,
+           processing_started_at = NULL,
+           max_attempts = CASE WHEN attempts >= max_attempts THEN attempts + 1 ELSE max_attempts END,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [req.params.id]
+    );
     return res.json({ success: true, message: 'Đã đưa email vào hàng đợi thử lại.' });
   } catch (err) {
     console.error("POST /api/admin/notification-outbox/:id/retry error:", err);
@@ -10342,6 +10461,51 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: notification_outbox table + indexes ready (Batch 20)');
   } catch (err) {
     console.error('⚠️  DB migration (notification_outbox) warning:', err.message);
+  }
+
+  // ── DB migration: notification_outbox PROCESSING support (Batch 20.2) ────────
+  try {
+    // Add new columns needed for claim-then-send processor pattern.
+    await pool.query(`
+      ALTER TABLE notification_outbox
+        ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS processor_id          TEXT,
+        ADD COLUMN IF NOT EXISTS provider_message_id   TEXT
+    `);
+
+    // Update status CHECK constraint to include PROCESSING. The DO block finds
+    // and drops any existing status-related CHECK (regardless of auto-name),
+    // then adds a stable named constraint.
+    await pool.query(`
+      DO $$
+      DECLARE _cname TEXT;
+      BEGIN
+        FOR _cname IN
+          SELECT con.conname
+          FROM pg_constraint con
+          JOIN pg_class rel ON rel.oid = con.conrelid
+          WHERE rel.relname = 'notification_outbox'
+            AND con.contype = 'c'
+            AND pg_get_constraintdef(con.oid) ILIKE '%PENDING%'
+            AND pg_get_constraintdef(con.oid) ILIKE '%status%'
+        LOOP
+          EXECUTE format('ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS %I', _cname);
+        END LOOP;
+        ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_status_check;
+        ALTER TABLE notification_outbox ADD CONSTRAINT notification_outbox_status_check
+          CHECK (status IN ('PENDING','SENT','FAILED','RETRYING','SKIPPED','CANCELLED','PROCESSING'));
+      END $$
+    `);
+
+    // Index to accelerate stale-PROCESSING recovery query.
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_processing
+        ON notification_outbox(status, processing_started_at)
+    `);
+
+    console.log('✅ DB migration: notification_outbox PROCESSING support ready (Batch 20.2)');
+  } catch (err) {
+    console.error('⚠️  DB migration (notification_outbox Batch 20.2) warning:', err.message);
   }
 
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────

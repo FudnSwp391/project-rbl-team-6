@@ -8,12 +8,13 @@ const fmtDate = iso => iso
   : '—'
 
 const STATUS_CFG = {
-  PENDING:   { label: 'Đang chờ',    cls: 'bg-gray-100 text-gray-600' },
-  RETRYING:  { label: 'Đang thử lại', cls: 'bg-amber-100 text-amber-700' },
-  SENT:      { label: 'Đã gửi',      cls: 'bg-emerald-100 text-emerald-700' },
-  FAILED:    { label: 'Thất bại',    cls: 'bg-red-100 text-red-700' },
-  SKIPPED:   { label: 'Bỏ qua',      cls: 'bg-slate-100 text-slate-600' },
-  CANCELLED: { label: 'Đã hủy',      cls: 'bg-gray-100 text-gray-500' },
+  PENDING:    { label: 'Đang chờ',    cls: 'bg-gray-100 text-gray-600' },
+  PROCESSING: { label: 'Đang xử lý', cls: 'bg-blue-100 text-blue-700' },
+  RETRYING:   { label: 'Đang thử lại', cls: 'bg-amber-100 text-amber-700' },
+  SENT:       { label: 'Đã gửi',      cls: 'bg-emerald-100 text-emerald-700' },
+  FAILED:     { label: 'Thất bại',    cls: 'bg-red-100 text-red-700' },
+  SKIPPED:    { label: 'Bỏ qua',      cls: 'bg-slate-100 text-slate-600' },
+  CANCELLED:  { label: 'Đã hủy',      cls: 'bg-gray-100 text-gray-500' },
 }
 
 export default function NotificationOutbox({ token }) {
@@ -83,13 +84,14 @@ export default function NotificationOutbox({ token }) {
       <PageHeader title="Hàng Đợi Thông Báo / Email" subtitle="Theo dõi trạng thái gửi email — outbox với retry tự động, không gửi trùng lặp" />
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
         {[
-          { label: 'Đang chờ', value: summary?.pending, icon: 'hourglass_top', color: 'bg-gray-50 text-gray-600' },
-          { label: 'Đã gửi', value: summary?.sent, icon: 'check_circle', color: 'bg-emerald-50 text-emerald-600' },
-          { label: 'Thất bại', value: summary?.failed, icon: 'error', color: 'bg-red-50 text-red-600' },
-          { label: 'Đang thử lại', value: summary?.retrying, icon: 'autorenew', color: 'bg-amber-50 text-amber-600' },
-          { label: 'Bỏ qua', value: summary?.skipped, icon: 'block', color: 'bg-slate-50 text-slate-600' },
+          { label: 'Đang chờ',    value: summary?.pending,    icon: 'hourglass_top', color: 'bg-gray-50 text-gray-600' },
+          { label: 'Đang xử lý', value: summary?.processing, icon: 'sync',          color: 'bg-blue-50 text-blue-600' },
+          { label: 'Đã gửi',     value: summary?.sent,       icon: 'check_circle',  color: 'bg-emerald-50 text-emerald-600' },
+          { label: 'Thất bại',   value: summary?.failed,     icon: 'error',         color: 'bg-red-50 text-red-600' },
+          { label: 'Đang thử lại', value: summary?.retrying, icon: 'autorenew',     color: 'bg-amber-50 text-amber-600' },
+          { label: 'Bỏ qua',     value: summary?.skipped,    icon: 'block',         color: 'bg-slate-50 text-slate-600' },
         ].map(c => (
           <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
             <div className={`w-9 h-9 rounded-lg ${c.color} flex items-center justify-center mb-3`}>
@@ -107,6 +109,7 @@ export default function NotificationOutbox({ token }) {
           value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }}>
           <option value="">Tất cả trạng thái</option>
           <option value="PENDING">Đang chờ</option>
+          <option value="PROCESSING">Đang xử lý</option>
           <option value="RETRYING">Đang thử lại</option>
           <option value="SENT">Đã gửi</option>
           <option value="FAILED">Thất bại</option>
