@@ -7341,6 +7341,44 @@ async function createCommissionLog(client, log) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// WITHDRAWAL POLICY V1 (Batch 19) — tutor manual payout. Money is HELD when a
+// request is created (balance→held_balance), released on cancel/reject, and
+// drawn down from held_balance on paid. NO real bank API is called. Every
+// wallet movement runs inside a DB transaction with setLedgerContext so the
+// wallet_ledger trigger records the correct reason_code.
+// NOTE (audited): transactions.type is an enum → use 'WITHDRAW' (not
+// 'WITHDRAWAL'); transactions.status enum has no CANCELLED/REJECTED → paid
+// maps to 'SUCCESS', cancel/reject map to 'FAILED'. wallets has CHECK
+// balance>=0 / held_balance>=0, enforced by SELECT ... FOR UPDATE + guards.
+// ═══════════════════════════════════════════════════════════════════════════
+const WITHDRAWAL_POLICY_VERSION = "WITHDRAWAL_POLICY_V1";
+const MIN_WITHDRAWAL_AMOUNT = 50000;
+
+// Return a rounded non-negative integer VND amount, or 0 if invalid.
+function normalizeWithdrawalAmount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+// Trim, strip control chars, collapse whitespace, cap length. Null-safe.
+function sanitizeBankText(value, maxLength = 120) {
+  if (value == null) return null;
+  let s = String(value).replace(/[\x00-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  return s.slice(0, maxLength);
+}
+
+// Lock the tutor's wallet row FOR UPDATE (prevents concurrent balance races).
+async function getTutorWalletForUpdate(client, tutorId) {
+  const r = await client.query(
+    'SELECT id, user_id, balance, held_balance FROM wallets WHERE user_id=$1 FOR UPDATE',
+    [tutorId]
+  );
+  return r.rows.length ? r.rows[0] : null;
+}
+
 // PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
 // Logic escrow:
 //   Approved  → hold_money_for_lesson (trừ balance, cộng held_balance)
@@ -8068,6 +8106,356 @@ app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
   } catch (error) {
     console.error("Get tutor earnings error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// =========================================================================
+// ============ TUTOR WITHDRAWAL / PAYOUT ROUTES (Batch 19) ================
+// =========================================================================
+
+// POST /api/tutor/withdrawals — tutor requests a withdrawal (holds the money)
+app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const amount = normalizeWithdrawalAmount(req.body?.amount);
+    const bankName        = sanitizeBankText(req.body?.bankName, 120);
+    const bankAccountNo   = sanitizeBankText(req.body?.bankAccountNo, 40);
+    const bankAccountName = sanitizeBankText(req.body?.bankAccountName, 120);
+    const payoutNote      = sanitizeBankText(req.body?.payoutNote, 300);
+    const clientKey       = sanitizeBankText(req.body?.idempotencyKey, 100);
+
+    if (amount < MIN_WITHDRAWAL_AMOUNT) {
+      return res.status(400).json({ message: `Số tiền rút tối thiểu là ${MIN_WITHDRAWAL_AMOUNT.toLocaleString('vi-VN')}đ.` });
+    }
+    if (!bankName || !bankAccountNo || !bankAccountName) {
+      return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin ngân hàng.' });
+    }
+
+    const idemKey = clientKey ? `withdrawal:tutor:${req.user.userId}:${clientKey}` : null;
+
+    await client.query('BEGIN');
+
+    // Idempotency: if this client key was already used, return the existing request
+    if (idemKey) {
+      const existing = await client.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1', [idemKey]);
+      if (existing.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(200).json({ success: true, duplicate: true, request: existing.rows[0] });
+      }
+    }
+
+    const wallet = await getTutorWalletForUpdate(client, req.user.userId);
+    if (!wallet) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+
+    if (Number(wallet.balance) < amount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ code: 'INSUFFICIENT_FUNDS', message: 'Số dư khả dụng không đủ để rút.', balance: Number(wallet.balance), requested: amount });
+    }
+
+    // 1) Record a PENDING WITHDRAW transaction (enum: type=WITHDRAW, status=PENDING)
+    const txRes = await client.query(
+      `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
+       VALUES ($1, $2, 'WITHDRAW', 'PENDING', 'MANUAL', $3) RETURNING id`,
+      [wallet.id, -amount, 'Yêu cầu rút tiền gia sư']
+    );
+    const holdTxId = txRes.rows[0].id;
+
+    // 2) Reserve the money: balance → held_balance (ledger reason WITHDRAWAL_HOLD)
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_HOLD', source: 'api', reference_type: 'withdrawal',
+      transaction_id: holdTxId, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    await client.query('UPDATE wallets SET balance = balance - $1, held_balance = held_balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+
+    // 3) Create the withdrawal request row
+    const wr = await client.query(
+      `INSERT INTO withdrawal_requests
+         (tutor_id, wallet_id, amount, fee_amount, net_amount, status, payout_method,
+          bank_name, bank_account_no, bank_account_name, payout_note, policy_version,
+          hold_transaction_id, idempotency_key, metadata)
+       VALUES ($1,$2,$3,0,$3,'PENDING','BANK_TRANSFER',$4,$5,$6,$7,$8,$9,$10,'{}'::jsonb)
+       RETURNING *`,
+      [req.user.userId, wallet.id, amount, bankName, bankAccountNo, bankAccountName, payoutNote, WITHDRAWAL_POLICY_VERSION, holdTxId, idemKey]
+    );
+    const request = wr.rows[0];
+
+    // Link the transaction back to the request for traceability
+    await client.query('UPDATE transactions SET reference_id=$1 WHERE id=$2', [request.id, holdTxId]);
+
+    // Notify tutor (best-effort)
+    try {
+      await client.query(
+        `INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
+         VALUES ($1,'withdrawal','Yêu cầu rút tiền đã được tạo',$2,'account_balance',$3,'withdrawal')`,
+        [req.user.userId, `Bạn đã yêu cầu rút ${amount.toLocaleString('vi-VN')}đ. Admin sẽ xử lý và chuyển khoản thủ công.`, request.id]);
+    } catch (_) {}
+
+    await client.query('COMMIT');
+    return res.status(201).json({ success: true, request });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') { // unique_violation on idempotency_key (race)
+      const ex = await pool.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1',
+        [`withdrawal:tutor:${req.user.userId}:${sanitizeBankText(req.body?.idempotencyKey, 100)}`]).catch(() => ({ rows: [] }));
+      if (ex.rows.length) return res.status(200).json({ success: true, duplicate: true, request: ex.rows[0] });
+      return res.status(409).json({ message: 'Yêu cầu rút tiền trùng lặp.' });
+    }
+    console.error('POST /api/tutor/withdrawals error:', err);
+    return res.status(500).json({ message: 'Lỗi khi tạo yêu cầu rút tiền.' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/tutor/withdrawals — tutor's own withdrawal history
+app.get('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const items = (await pool.query(
+      `SELECT * FROM withdrawal_requests WHERE tutor_id=$1 ORDER BY created_at DESC LIMIT 100`,
+      [req.user.userId]
+    )).rows;
+    const wallet = (await pool.query('SELECT balance, held_balance FROM wallets WHERE user_id=$1', [req.user.userId])).rows[0] || null;
+    return res.json({
+      items,
+      wallet: wallet ? { balance: Number(wallet.balance), held_balance: Number(wallet.held_balance) } : null,
+      min_amount: MIN_WITHDRAWAL_AMOUNT,
+      policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+  } catch (err) {
+    console.error('GET /api/tutor/withdrawals error:', err);
+    return res.status(500).json({ message: 'Lỗi khi lấy lịch sử rút tiền.' });
+  }
+});
+
+// PATCH /api/tutor/withdrawals/:id/cancel — tutor cancels own PENDING request
+app.patch('/api/tutor/withdrawals/:id/cancel', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 AND tutor_id=$2 FOR UPDATE', [req.params.id, req.user.userId]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu rút tiền.' }); }
+    const wr = wrRes.rows[0];
+    if (wr.status !== 'PENDING') { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ có thể hủy yêu cầu đang chờ (PENDING).' }); }
+
+    const wallet = await getTutorWalletForUpdate(client, req.user.userId);
+    if (!wallet) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+    const amount = Number(wr.amount);
+    if (Number(wallet.held_balance) < amount) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Số dư tạm giữ không đủ để hoàn.' }); }
+
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_CANCEL_RELEASE', source: 'api', reference_type: 'withdrawal',
+      reference_id: wr.id, transaction_id: wr.hold_transaction_id, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    await client.query('UPDATE wallets SET held_balance = held_balance - $1, balance = balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+    if (wr.hold_transaction_id) await client.query(`UPDATE transactions SET status='FAILED', updated_at=NOW() WHERE id=$1`, [wr.hold_transaction_id]);
+    await client.query(`UPDATE withdrawal_requests SET status='CANCELLED', cancelled_at=NOW(), updated_at=NOW() WHERE id=$1`, [wr.id]);
+
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã hủy yêu cầu rút tiền và hoàn lại số dư khả dụng.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('PATCH /api/tutor/withdrawals/:id/cancel error:', err);
+    return res.status(500).json({ message: 'Lỗi khi hủy yêu cầu rút tiền.' });
+  } finally {
+    client.release();
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN WITHDRAWAL / PAYOUT MANAGEMENT (Batch 19) — manual payout only.
+// Money was already held when the tutor requested; approve moves no money;
+// reject releases hold back to balance; mark-paid draws down held_balance.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/admin/withdrawal-requests — list + summary (read-only)
+app.get("/api/admin/withdrawal-requests", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit)  || 50));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    const conditions = [];
+    const params = [];
+    const addParam = v => { params.push(v); return `$${params.length}`; };
+    if (req.query.status)  conditions.push(`wr.status = ${addParam(req.query.status)}`);
+    if (req.query.tutorId) conditions.push(`wr.tutor_id = ${addParam(req.query.tutorId)}::uuid`);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const total = (await pool.query(`SELECT COUNT(*)::int AS n FROM withdrawal_requests wr ${where}`, params)).rows[0].n;
+
+    params.push(limit); params.push(offset);
+    const items = (await pool.query(`
+      SELECT wr.*,
+             u.full_name AS tutor_name, u.email AS tutor_email,
+             w.balance   AS wallet_balance, w.held_balance AS wallet_held_balance
+      FROM withdrawal_requests wr
+      LEFT JOIN users   u ON u.id = wr.tutor_id
+      LEFT JOIN wallets w ON w.id = wr.wallet_id
+      ${where}
+      ORDER BY wr.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params)).rows;
+
+    const sum = (await pool.query(`
+      SELECT
+        COALESCE(SUM(amount) FILTER (WHERE status='PENDING'),0)::numeric   AS pending_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='APPROVED'),0)::numeric  AS approved_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric      AS paid_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric  AS rejected_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric AS cancelled_amount,
+        COUNT(*) FILTER (WHERE status='PENDING')::int                      AS pending_count
+      FROM withdrawal_requests
+    `)).rows[0];
+
+    return res.json({
+      items,
+      pagination: { page, limit, total },
+      summary: {
+        pending_amount:   Number(sum.pending_amount),
+        approved_amount:  Number(sum.approved_amount),
+        paid_amount:      Number(sum.paid_amount),
+        rejected_amount:  Number(sum.rejected_amount),
+        cancelled_amount: Number(sum.cancelled_amount),
+        pending_count:    sum.pending_count,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/withdrawal-requests error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách yêu cầu rút tiền." });
+  }
+});
+
+// PATCH /api/admin/withdrawal-requests/:id/approve — no money movement
+app.patch("/api/admin/withdrawal-requests/:id/approve", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const adminNote = sanitizeBankText(req.body?.adminNote, 300);
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' }); }
+    const wr = wrRes.rows[0];
+    if (wr.status !== 'PENDING') { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ duyệt được yêu cầu đang chờ (PENDING).' }); }
+
+    await client.query(
+      `UPDATE withdrawal_requests SET status='APPROVED', approved_by=$1, approved_at=NOW(), admin_note=COALESCE($2, admin_note), updated_at=NOW() WHERE id=$3`,
+      [req.user.userId, adminNote, wr.id]);
+    try {
+      await client.query(
+        `INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
+         VALUES ($1,'withdrawal','Yêu cầu rút tiền đã được duyệt',$2,'check_circle',$3,'withdrawal')`,
+        [wr.tutor_id, `Yêu cầu rút ${Number(wr.amount).toLocaleString('vi-VN')}đ đã được duyệt. Admin sẽ chuyển khoản.`, wr.id]);
+    } catch (_) {}
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã duyệt yêu cầu rút tiền.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("approve withdrawal error:", err);
+    return res.status(500).json({ message: 'Lỗi khi duyệt yêu cầu.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/admin/withdrawal-requests/:id/reject — release hold back to balance
+app.patch("/api/admin/withdrawal-requests/:id/reject", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const rejectReason = sanitizeBankText(req.body?.rejectReason || req.body?.adminNote, 300);
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' }); }
+    const wr = wrRes.rows[0];
+    if (!['PENDING', 'APPROVED'].includes(wr.status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ từ chối được yêu cầu PENDING hoặc APPROVED.' }); }
+
+    const walletRes = await client.query('SELECT id, balance, held_balance FROM wallets WHERE id=$1 FOR UPDATE', [wr.wallet_id]);
+    if (!walletRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+    const wallet = walletRes.rows[0];
+    const amount = Number(wr.amount);
+    if (Number(wallet.held_balance) < amount) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Số dư tạm giữ không đủ để hoàn.' }); }
+
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_REJECT_RELEASE', source: 'admin', reference_type: 'withdrawal',
+      reference_id: wr.id, transaction_id: wr.hold_transaction_id, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    await client.query('UPDATE wallets SET held_balance = held_balance - $1, balance = balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+    if (wr.hold_transaction_id) await client.query(`UPDATE transactions SET status='FAILED', updated_at=NOW() WHERE id=$1`, [wr.hold_transaction_id]);
+    await client.query(
+      `UPDATE withdrawal_requests SET status='REJECTED', rejected_by=$1, rejected_at=NOW(), reject_reason=$2, admin_note=COALESCE($2, admin_note), updated_at=NOW() WHERE id=$3`,
+      [req.user.userId, rejectReason, wr.id]);
+    try {
+      await client.query(
+        `INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
+         VALUES ($1,'withdrawal','Yêu cầu rút tiền bị từ chối',$2,'cancel',$3,'withdrawal')`,
+        [wr.tutor_id, `Yêu cầu rút ${amount.toLocaleString('vi-VN')}đ bị từ chối. Số dư đã được hoàn lại.${rejectReason ? ' Lý do: ' + rejectReason : ''}`, wr.id]);
+    } catch (_) {}
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã từ chối và hoàn lại số dư cho gia sư.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("reject withdrawal error:", err);
+    return res.status(500).json({ message: 'Lỗi khi từ chối yêu cầu.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/admin/withdrawal-requests/:id/mark-paid — draw down held_balance
+app.patch("/api/admin/withdrawal-requests/:id/mark-paid", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const adminNote = sanitizeBankText(req.body?.adminNote, 300);
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' }); }
+    const wr = wrRes.rows[0];
+    if (wr.status === 'PAID') { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Yêu cầu đã được thanh toán trước đó.', request: wr }); }
+    if (!['PENDING', 'APPROVED'].includes(wr.status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ thanh toán được yêu cầu PENDING hoặc APPROVED.' }); }
+
+    const walletRes = await client.query('SELECT id, balance, held_balance FROM wallets WHERE id=$1 FOR UPDATE', [wr.wallet_id]);
+    if (!walletRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+    const wallet = walletRes.rows[0];
+    const amount = Number(wr.amount);
+    if (Number(wallet.held_balance) < amount) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Số dư tạm giữ không đủ để thanh toán.' }); }
+
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_PAID', source: 'admin', reference_type: 'withdrawal',
+      reference_id: wr.id, transaction_id: wr.hold_transaction_id, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    // Money leaves the system: held_balance decreases (no balance credit)
+    await client.query('UPDATE wallets SET held_balance = held_balance - $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+
+    // Transition the hold transaction to SUCCESS (single payout record)
+    let payoutTxId = wr.hold_transaction_id;
+    if (payoutTxId) {
+      await client.query(
+        `UPDATE transactions SET status='SUCCESS', gateway='MANUAL_BANK_TRANSFER', description=$1, updated_at=NOW() WHERE id=$2`,
+        ['Admin xác nhận đã chuyển khoản rút tiền', payoutTxId]);
+    } else {
+      const tx = await client.query(
+        `INSERT INTO transactions (wallet_id, amount, type, status, gateway, reference_id, description)
+         VALUES ($1,$2,'WITHDRAW','SUCCESS','MANUAL_BANK_TRANSFER',$3,$4) RETURNING id`,
+        [wallet.id, -amount, wr.id, 'Admin xác nhận đã chuyển khoản rút tiền']);
+      payoutTxId = tx.rows[0].id;
+    }
+
+    await client.query(
+      `UPDATE withdrawal_requests SET status='PAID', paid_by=$1, paid_at=NOW(), payout_transaction_id=$2, admin_note=COALESCE($3, admin_note), updated_at=NOW() WHERE id=$4`,
+      [req.user.userId, payoutTxId, adminNote, wr.id]);
+    try {
+      await client.query(
+        `INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
+         VALUES ($1,'withdrawal','Rút tiền thành công',$2,'paid',$3,'withdrawal')`,
+        [wr.tutor_id, `Admin đã chuyển khoản ${amount.toLocaleString('vi-VN')}đ cho bạn.`, wr.id]);
+    } catch (_) {}
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã xác nhận thanh toán rút tiền.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("mark-paid withdrawal error:", err);
+    return res.status(500).json({ message: 'Lỗi khi xác nhận thanh toán.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -9132,6 +9520,55 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: commission_logs table + indexes ready (Batch 18)');
   } catch (err) {
     console.error('⚠️  DB migration (commission_logs) warning:', err.message);
+  }
+
+  // ── Withdrawal Policy V1: tutor manual payout requests (Batch 19) ───────────
+  // Append state machine: PENDING → APPROVED → PAID, or PENDING/APPROVED →
+  // REJECTED, or PENDING → CANCELLED. Money is HELD on create. This is a NEW
+  // table, separate from the legacy empty `withdraw_requests` (left intact).
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS withdrawal_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        wallet_id UUID NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+        amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+        fee_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        net_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'PENDING'
+          CHECK (status IN ('PENDING','APPROVED','REJECTED','CANCELLED','PAID')),
+        payout_method TEXT NOT NULL DEFAULT 'BANK_TRANSFER',
+        bank_name TEXT,
+        bank_account_no TEXT,
+        bank_account_name TEXT,
+        payout_note TEXT,
+        policy_version TEXT NOT NULL DEFAULT 'WITHDRAWAL_POLICY_V1',
+        requested_at TIMESTAMPTZ DEFAULT NOW(),
+        approved_at TIMESTAMPTZ,
+        rejected_at TIMESTAMPTZ,
+        cancelled_at TIMESTAMPTZ,
+        paid_at TIMESTAMPTZ,
+        approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        rejected_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        paid_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        admin_note TEXT,
+        reject_reason TEXT,
+        hold_transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+        payout_transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+        idempotency_key TEXT UNIQUE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_tutor   ON withdrawal_requests(tutor_id);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_wallet  ON withdrawal_requests(wallet_id);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_status  ON withdrawal_requests(status);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_created ON withdrawal_requests(created_at);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_paid    ON withdrawal_requests(paid_at);
+    `);
+    console.log('✅ DB migration: withdrawal_requests table + indexes ready (Batch 19)');
+  } catch (err) {
+    console.error('⚠️  DB migration (withdrawal_requests) warning:', err.message);
   }
 
   // ── Cron: Auto-release escrow sau 24h nếu không có khiếu nại ───────────────
