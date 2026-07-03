@@ -2543,6 +2543,7 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
       topTxRes,
       discountRes,
       refundRes,
+      withdrawAggRes,
     ] = await Promise.all([
       // Overall totals
       pool.query(`
@@ -2592,6 +2593,16 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
       `),
       // Refund count from resolved-refund disputes (no refund tx table exists)
       pool.query(`SELECT COUNT(*)::int AS count FROM disputes WHERE status='RESOLVED_REFUND'`),
+      // Withdrawal metrics from withdrawal_requests (Batch 19.1; safe fallback to 0)
+      pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE status IN ('PENDING','APPROVED')),0)::numeric AS pending_amount,
+          COUNT(*) FILTER (WHERE status IN ('PENDING','APPROVED'))::int                    AS pending_count,
+          COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric                    AS paid_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric                AS rejected_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric               AS cancelled_amount
+        FROM withdrawal_requests
+      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0, paid_amount: 0, rejected_amount: 0, cancelled_amount: 0 }] })),
     ]);
 
     const t = totalsRes.rows[0];
@@ -2606,6 +2617,7 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
     }
 
     const COMMISSION_RATE_EST = 10; // estimated, no commission table
+    const wd = withdrawAggRes.rows[0];
     return res.json({
       summary: {
         total_revenue:             Math.round(totalPayments),
@@ -2619,6 +2631,12 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
         transaction_count:         t.transaction_count,
         payment_count:             t.payment_count,
         deposit_count:             t.deposit_count,
+        // Batch 19.1: read-only withdrawal metrics (additive)
+        withdrawal_pending_amount:    Math.round(Number(wd.pending_amount)),
+        withdrawal_pending_count:     Number(wd.pending_count) || 0,
+        withdrawal_paid_amount:       Math.round(Number(wd.paid_amount)),
+        withdrawal_rejected_amount:   Math.round(Number(wd.rejected_amount)),
+        withdrawal_cancelled_amount:  Math.round(Number(wd.cancelled_amount)),
         generated_at:              new Date().toISOString(),
       },
       monthly: monthlyRes.rows.map(r => ({
@@ -2660,7 +2678,6 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
       walletRes,
       txAggRes,
       escrowRes,
-      withdrawRes,
       integrityRes,
       refundRes,
       largeRes,
@@ -2673,11 +2690,6 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
         FROM transactions
       `),
       pool.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(ABS(amount)),0)::numeric AS amount FROM transactions WHERE status='HELD_IN_ESCROW'`),
-      pool.query(`
-        SELECT COALESCE(SUM(amount) FILTER (WHERE status IN ('pending','PENDING')),0)::numeric AS pending_amount,
-               COUNT(*) FILTER (WHERE status IN ('pending','PENDING'))::int                     AS pending_count
-        FROM withdraw_requests
-      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0 }] })),
       pool.query(`
         SELECT
           (SELECT COUNT(*)::int FROM transactions t LEFT JOIN wallets w ON w.id=t.wallet_id WHERE w.id IS NULL) AS orphan_tx,
@@ -2697,9 +2709,46 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
     const wallet    = walletRes.rows[0];
     const txAgg     = txAggRes.rows[0];
     const escrow    = escrowRes.rows[0];
-    const withdraw  = withdrawRes.rows[0];
     const integ     = integrityRes.rows[0];
     const refundCnt = refundRes.rows[0].count;
+
+    // ── Withdrawal reconciliation (Batch 19.1): prefer new withdrawal_requests,
+    //    fall back to the legacy withdraw_requests only if the new table is absent.
+    let withdraw = { pending_amount: 0, pending_count: 0, paid_amount: 0, rejected_amount: 0, cancelled_amount: 0 };
+    let withdrawalSource = 'withdrawal_requests';
+    let withdrawalItems  = [];
+    try {
+      const wagg = await pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE status IN ('PENDING','APPROVED')),0)::numeric AS pending_amount,
+          COUNT(*) FILTER (WHERE status IN ('PENDING','APPROVED'))::int                    AS pending_count,
+          COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric                    AS paid_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric                AS rejected_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric               AS cancelled_amount
+        FROM withdrawal_requests
+      `);
+      withdraw = wagg.rows[0];
+      const witems = await pool.query(`
+        SELECT wr.id::text AS withdrawal_request_id, wr.tutor_id::text AS tutor_id,
+               wr.amount::numeric AS amount, wr.status, wr.requested_at, wr.paid_at, wr.policy_version,
+               u.full_name AS tutor_name, u.email AS tutor_email
+        FROM withdrawal_requests wr
+        LEFT JOIN users u ON u.id = wr.tutor_id
+        WHERE wr.status IN ('PENDING','APPROVED')
+        ORDER BY wr.requested_at DESC
+        LIMIT 20
+      `);
+      withdrawalItems = witems.rows;
+    } catch (e) {
+      // New table missing → fall back to legacy withdraw_requests (pending only).
+      withdrawalSource = 'legacy_withdraw_requests';
+      const leg = await pool.query(`
+        SELECT COALESCE(SUM(amount) FILTER (WHERE status IN ('pending','PENDING')),0)::numeric AS pending_amount,
+               COUNT(*) FILTER (WHERE status IN ('pending','PENDING'))::int                     AS pending_count
+        FROM withdraw_requests
+      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0 }] }));
+      withdraw = { ...withdraw, pending_amount: leg.rows[0].pending_amount, pending_count: leg.rows[0].pending_count };
+    }
 
     const walletBalance = Number(wallet.balance);
     const walletHeld    = Number(wallet.held);
@@ -2746,7 +2795,7 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
       description: `Giao dịch không có ví: ${integ.orphan_tx}; ví không có người dùng: ${integ.orphan_wallet}; số tiền null/0: ${integ.bad_amount}.`,
     });
 
-    // 4. Pending withdrawals
+    // 4. Pending withdrawals (Batch 19.1: PENDING + APPROVED from withdrawal_requests)
     checks.push({
       id: 'pending-withdrawals',
       name: 'Yêu cầu rút tiền đang chờ',
@@ -2754,7 +2803,7 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
       expected_amount: 0,
       actual_amount: Math.round(Number(withdraw.pending_amount)),
       difference: Math.round(Number(withdraw.pending_amount)),
-      description: `${withdraw.pending_count} yêu cầu rút tiền đang chờ duyệt. Chỉ xem, không duyệt.`,
+      description: `${withdraw.pending_count} yêu cầu rút tiền đang chờ/đã duyệt (nguồn: ${withdrawalSource}). Chỉ xem, không duyệt.`,
     });
 
     // 5. Refund disputes vs refund transactions
@@ -2770,6 +2819,29 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
 
     // Build review items
     const items = [];
+    // Pending/approved withdrawals awaiting manual payout (Batch 19.1)
+    for (const w of withdrawalItems) {
+      items.push({
+        id: `wd-${w.withdrawal_request_id}`,
+        type: 'withdrawal',
+        severity: Number(w.amount) >= 5000000 ? 'medium' : 'low',
+        status: 'review_only',
+        title: `Rút tiền chờ chi: ${w.tutor_name || w.tutor_email || w.tutor_id}`,
+        description: `Trạng thái ${w.status} — chờ admin chuyển khoản thủ công (${w.policy_version}).`,
+        amount: Math.round(Number(w.amount)),
+        reference_id: w.withdrawal_request_id,
+        created_at: w.requested_at,
+        // extra fields (ignored by the generic frontend table, useful for API consumers)
+        withdrawal_request_id: w.withdrawal_request_id,
+        tutor_id: w.tutor_id,
+        tutor_name: w.tutor_name,
+        tutor_email: w.tutor_email,
+        withdrawal_status: w.status,
+        requested_at: w.requested_at,
+        paid_at: w.paid_at,
+        policy_version: w.policy_version,
+      });
+    }
     for (const r of largeRes.rows) {
       const amt = Number(r.amount);
       items.push({
@@ -2796,7 +2868,14 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
         successful_payments:       Math.round(payments),
         escrow_transactions:       escrow.count,
         escrow_amount:             Math.round(escrowAmount),
-        withdraw_pending_amount:   Math.round(Number(withdraw.pending_amount)),
+        withdraw_pending_amount:   Math.round(Number(withdraw.pending_amount)), // kept for backward-compat
+        // Batch 19.1: withdrawal metrics from withdrawal_requests
+        withdrawal_source:            withdrawalSource,
+        withdrawal_pending_amount:    Math.round(Number(withdraw.pending_amount)),
+        withdrawal_pending_count:     Number(withdraw.pending_count) || 0,
+        withdrawal_paid_amount:       Math.round(Number(withdraw.paid_amount)),
+        withdrawal_rejected_amount:   Math.round(Number(withdraw.rejected_amount)),
+        withdrawal_cancelled_amount:  Math.round(Number(withdraw.cancelled_amount)),
         unmatched_count:           unmatchedCnt,
         issue_count:               issueCount,
         generated_at:              new Date().toISOString(),
