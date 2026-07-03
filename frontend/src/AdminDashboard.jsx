@@ -20,6 +20,7 @@ import NotificationCenter    from './admin/transactions/NotificationCenter'
 import AuditLogs             from './admin/transactions/AuditLogs'
 import WalletLedger          from './admin/transactions/WalletLedger'
 import CommissionLogs        from './admin/transactions/CommissionLogs'
+import NotificationOutbox     from './admin/transactions/NotificationOutbox'
 import WithdrawalRequests     from './admin/transactions/WithdrawalRequests'
 
 import Violations from './admin/services/Violations'
@@ -65,6 +66,7 @@ const TX_SUB_ITEMS = [
   { id: 'tx-notifications', label: 'Trung Tâm Thông Báo',  icon: 'notifications' },
   { id: 'tx-wallet-ledger',    label: 'Sổ Cái Ví',            icon: 'account_balance_wallet' },
   { id: 'tx-commission-logs', label: 'Nhật Ký Hoa Hồng',    icon: 'receipt_long' },
+  { id: 'notifications-outbox', label: 'Email / Hàng Đợi Thông Báo', icon: 'mark_email_read' },
   { id: 'tx-audit',        label: 'Nhật Ký Admin',            icon: 'history_edu' },
 ]
 
@@ -465,6 +467,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-notifications' && <NotificationCenter token={token} />}
           {activeView === 'tx-wallet-ledger'    && <WalletLedger token={token} />}
           {activeView === 'tx-commission-logs' && <CommissionLogs token={token} />}
+          {activeView === 'notifications-outbox' && <NotificationOutbox token={token} />}
           {activeView === 'tx-audit'         && <AuditLogs token={token} />}
           
           {/* ── Service Management Module ── */}
