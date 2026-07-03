@@ -259,7 +259,7 @@ export default function AdminDashboard() {
   const initials    = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 
   return (
-    <div className="bg-background text-on-surface min-h-screen flex antialiased">
+    <div className="bg-background text-on-surface min-h-screen flex antialiased overflow-x-hidden">
 
       {/* Toast */}
       {toast && (
@@ -378,11 +378,11 @@ export default function AdminDashboard() {
       </aside>
 
       {/* ══ MAIN ══ */}
-      <main className="flex-1 ml-64 min-h-screen flex flex-col overflow-x-hidden">
+      <main className="ml-64 w-[calc(100%-16rem)] max-w-[calc(100vw-16rem)] min-w-0 min-h-screen flex flex-col overflow-x-hidden">
 
         {/* Top bar */}
-        <header className="h-16 fixed top-0 right-0 left-64 z-10 bg-white shadow-sm flex justify-between items-center px-10">
-          <div className="relative w-96">
+        <header className="h-16 fixed top-0 right-0 left-64 z-10 bg-white shadow-sm flex justify-between items-center px-6 lg:px-10 min-w-0 overflow-hidden">
+          <div className="relative w-full max-w-md min-w-0">
             <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span>
             <input
               className="w-full pl-10 pr-4 py-2 rounded-lg border border-outline-variant bg-gray-50 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all"
@@ -596,7 +596,7 @@ function DashboardView({
   const rangeLabel    = chartRange === '30d' ? '30 ngày gần đây' : chartRange === '6m' ? '6 tháng gần đây' : 'Năm nay'
 
   return (
-    <div className="p-10 max-w-[1280px] mx-auto w-full">
+    <div className="p-6 lg:p-10 max-w-[1280px] mx-auto w-full min-w-0">
       <div className="mb-8 flex items-start justify-between">
         <div>
           <h2 className="text-3xl font-bold text-on-background">Tổng quan hệ thống</h2>
@@ -667,7 +667,7 @@ function DashboardView({
       </div>
 
       {/* ── CAP-1.1: Live KPI Cards (3 × 2 grid) ── */}
-      <div className="grid grid-cols-3 gap-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
         <OverviewCard
           icon="group"       iconBg="bg-gray-100"   iconColor="text-on-surface-variant"
           label="Tổng người dùng"
@@ -707,9 +707,9 @@ function DashboardView({
       </div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
         {/* Bar Chart — CAP-1.2: live data, dynamic Y-axis, range selector */}
-        <div className="col-span-8 bg-white rounded-xl p-6 shadow-sm flex flex-col h-[380px]">
+        <div className="xl:col-span-8 bg-white rounded-xl p-6 shadow-sm flex flex-col h-[380px] overflow-hidden min-w-0">
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-lg font-semibold text-on-background">Xu hướng tăng trưởng người dùng</h3>
@@ -751,7 +751,7 @@ function DashboardView({
                   <div key={i} className="flex flex-col items-center gap-1 flex-1">
                     <div className="w-full flex items-end justify-center" style={{ height: '200px' }}>
                       <div
-                        className="w-10 bg-gray-200 rounded-t-sm animate-pulse"
+                        className="w-full bg-gray-200 rounded-t-sm animate-pulse"
                         style={{ height: `${20 + (i % 5) * 15}%` }}
                       />
                     </div>
@@ -777,7 +777,7 @@ function DashboardView({
                   <div key={i} className="flex flex-col items-center gap-1 flex-1">
                     <div className="w-full flex items-end justify-center" style={{ height: '200px' }}>
                       <div
-                        className="w-10 bg-primary rounded-t-sm bar-grow"
+                        className="w-full bg-primary rounded-t-sm bar-grow"
                         style={{ height: `${b.h}%`, animationDelay: `${b.animDelay}ms` }}
                       />
                     </div>
@@ -797,7 +797,7 @@ function DashboardView({
         </div>
 
         {/* Recent Activity — CAP-1.2: live data from chart endpoint + KPI stats */}
-        <div className="col-span-4 bg-white rounded-xl p-6 shadow-sm">
+        <div className="xl:col-span-4 bg-white rounded-xl p-6 shadow-sm">
           <h3 className="text-lg font-semibold text-on-background mb-5">Hoạt động gần đây</h3>
           <div className="space-y-4">
             {/* Item 1: new tutor profiles today (chartData.today) */}
@@ -853,7 +853,7 @@ function DashboardView({
       </div>
 
       {/* Quick access row */}
-      <div className="grid grid-cols-3 gap-6 mt-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
         {[
           { id: 'tutor-approval',  icon: 'how_to_reg',  label: 'Duyệt gia sư',      desc: 'Xem xét hồ sơ chờ duyệt', count: null, accent: 'border-blue-500' },
           { id: 'sm-complaints',   icon: 'report_problem', label: 'Khiếu nại',    desc: 'Xem và xử lý khiếu nại tranh chấp', count: null, accent: 'border-amber-500' },
