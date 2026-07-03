@@ -22,6 +22,7 @@ import WalletLedger          from './admin/transactions/WalletLedger'
 import CommissionLogs        from './admin/transactions/CommissionLogs'
 import NotificationOutbox     from './admin/transactions/NotificationOutbox'
 import WithdrawalRequests     from './admin/transactions/WithdrawalRequests'
+import AICaseResolutions      from './admin/transactions/AICaseResolutions'
 
 import Violations from './admin/services/Violations'
 import Moderation from './admin/services/Moderation'
@@ -54,6 +55,7 @@ const TX_SUB_ITEMS = [
   { id: 'tx-withdrawals',  label: 'Duyệt Rút Tiền',      icon: 'account_balance' },
   { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
   { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
+  { id: 'tx-ai-cases',     label: 'Xử Lý AI Khiếu Nại',    icon: 'smart_toy' },
   { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
   { id: 'tx-gateways',     label: 'Cổng Thanh Toán',      icon: 'credit_card' },
   { id: 'tx-commissions',  label: 'Quản Lý Hoa Hồng',       icon: 'percent' },
@@ -455,6 +457,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-withdrawals'   && <WithdrawalRequests token={token} />}
           {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
           {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
+          {activeView === 'tx-ai-cases'      && <AICaseResolutions token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
           {activeView === 'tx-gateways'      && <PaymentGateways token={token} />}
           {activeView === 'tx-commissions'   && <CommissionManagement token={token} />}

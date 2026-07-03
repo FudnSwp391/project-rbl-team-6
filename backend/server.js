@@ -402,6 +402,237 @@ const NOTIFICATION_POLICY_VERSION = "NOTIFICATION_POLICY_V1";
 const EMAIL_RETRY_MAX_ATTEMPTS = 3;
 const EMAIL_OUTBOX_PROCESSING_TIMEOUT_MINUTES = 15;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AI CASE RESOLUTION (Batch 25) — DRY-RUN scaffolding.
+// Generates AI_SUGGESTED reports for open disputes with safety gates
+// (anti-abuse velocity + platform-technical-issue detection) and an appeal
+// mechanism. Money movement is intentionally NOT executed anywhere in this
+// scaffold — it never touches refund / commission / wallet_ledger logic.
+// Everything is gated OFF by default via environment flags.
+// ═══════════════════════════════════════════════════════════════════════════
+const AUTO_AI_CRON_ENABLED       = String(process.env.AUTO_AI_CRON_ENABLED ?? 'false').toLowerCase() === 'true';
+const AUTO_AI_RESOLUTION_ENABLED = String(process.env.AUTO_AI_RESOLUTION_ENABLED ?? 'false').toLowerCase() === 'true';
+// Dry-run defaults to true whenever auto-resolution is disabled (spec default).
+const AUTO_AI_DRY_RUN = process.env.AUTO_AI_DRY_RUN != null
+  ? String(process.env.AUTO_AI_DRY_RUN).toLowerCase() === 'true'
+  : !AUTO_AI_RESOLUTION_ENABLED;
+
+const AI_CASE_POLICY_VERSION = 'REFUND_POLICY_V2_1';
+const AI_CASE_CONFIG = {
+  minCaseAgeHours:                 Number(process.env.AUTO_AI_PENDING_CASE_MIN_AGE_HOURS || 12),
+  autoResolveRefundThreshold30d:   3,   // student auto-refunds  -> HIGH_REFUND_FREQUENCY
+  tutorPenaltyThreshold30d:        3,   // tutor auto-penalties  -> HABITUAL_LATE_NOSHOW
+  studentDisputeAbnormalThreshold: 5,   // disputes raised by same student in 30d
+  tutorDisputeAbnormalThreshold:   5,   // disputes against same tutor in 30d
+  criticalKeywords: ['lừa đảo', 'quấy rối', 'tống tiền', 'đe dọa', 'bạo lực'],
+  refundKeywords:   ['muộn', 'trễ', 'không đến', 'vắng', 'no-show', 'noshow', 'bỏ buổi'],
+  reviewKeywords:   ['lỗi hệ thống', 'thanh toán', 'giao dịch'],
+  scanLimit: 50,
+};
+
+// Deterministic mock AI evaluation for a dispute. Mirrors the frontend mock
+// engine (frontend/src/admin/ai/engine). Returns a SUGGESTION only — the
+// caller never moves money based on it in this scaffold.
+function evaluateDisputeWithAI(dispute) {
+  const desc = String(dispute.reason || '').toLowerCase();
+
+  if (AI_CASE_CONFIG.criticalKeywords.some(kw => desc.includes(kw))) {
+    return {
+      severity: 'CRITICAL', confidence: 100, autoResolvable: false, moneyAction: 'NONE',
+      recommendation: 'Ngừng tự động hóa. Chuyển admin xử lý ngay (vi phạm nghiêm trọng).',
+      reasoning: 'Hard rule: phát hiện từ khóa nghiêm trọng trong nội dung khiếu nại.',
+      actionCode: 'ESCALATE_CRITICAL_REVIEW',
+    };
+  }
+  if (AI_CASE_CONFIG.refundKeywords.some(kw => desc.includes(kw))) {
+    return {
+      severity: 'LOW', confidence: 85, autoResolvable: true, moneyAction: 'REFUND_TO_STUDENT',
+      recommendation: 'Đề xuất hoàn 100% học phí cho học sinh và cảnh cáo gia sư.',
+      reasoning: 'Gia sư có dấu hiệu đi trễ / vắng mặt theo nội dung khiếu nại.',
+      actionCode: 'AUTO_REFUND_100',
+    };
+  }
+  if (AI_CASE_CONFIG.reviewKeywords.some(kw => desc.includes(kw))) {
+    return {
+      severity: 'MEDIUM', confidence: 65, autoResolvable: false, moneyAction: 'NONE',
+      recommendation: 'Cần con người đối soát giao dịch thanh toán.',
+      reasoning: 'Liên quan lỗi hệ thống / thanh toán — cần kiểm tra thủ công.',
+      actionCode: 'MANUAL_REVIEW',
+    };
+  }
+  return {
+    severity: 'LOW', confidence: 90, autoResolvable: false, moneyAction: 'NONE',
+    recommendation: 'Nhắc nhở hai bên, chưa cần hành động tài chính.',
+    reasoning: 'Vấn đề nhỏ, không đủ căn cứ để tự động hoàn tiền.',
+    actionCode: 'WARN_TUTOR_LEVEL_1',
+  };
+}
+
+// Detect a possible platform outage / technical issue for a lesson window using
+// lesson_session_events (JOIN / HEARTBEAT telemetry). Conservative: only flags
+// when telemetry is generally live system-wide but this lesson has zero events,
+// so a fresh install with no telemetry never false-positives.
+async function detectPlatformIssue(db, { bookingId }) {
+  if (!bookingId) return null;
+  try {
+    const live = await db.query(
+      `SELECT COUNT(*)::int AS n FROM lesson_session_events
+        WHERE created_at > NOW() - INTERVAL '7 days'`);
+    if (!live.rows[0].n) return null; // telemetry not in use -> cannot infer an issue
+
+    const ev = await db.query(
+      `SELECT COUNT(*)::int AS n FROM lesson_session_events
+        WHERE booking_id = $1 AND event_type IN ('JOIN','HEARTBEAT')`, [bookingId]);
+    if (ev.rows[0].n === 0) return 'POSSIBLE_PLATFORM_TECHNICAL_ISSUE';
+    return null;
+  } catch {
+    return null; // table missing / query error -> do not infer a platform issue
+  }
+}
+
+// Compute anti-abuse / platform risk flags for a case. Reads only the new
+// ai_case_resolutions + disputes + (optional) lesson_session_events tables.
+// Never reads or writes any financial table.
+async function computeAiRiskFlags(db, { studentId, tutorId, bookingId }) {
+  const flags = [];
+  let forceHumanReview = false;
+
+  // 1. Anti-abuse velocity — student auto-refund frequency (last 30 days)
+  if (studentId) {
+    const r = await db.query(
+      `SELECT COUNT(*)::int AS n FROM ai_case_resolutions
+        WHERE student_id = $1 AND status = 'AUTO_RESOLVED'
+          AND money_action = 'REFUND_TO_STUDENT'
+          AND created_at > NOW() - INTERVAL '30 days'`, [studentId]);
+    if (r.rows[0].n >= AI_CASE_CONFIG.autoResolveRefundThreshold30d) {
+      flags.push('HIGH_REFUND_FREQUENCY'); forceHumanReview = true;
+    }
+  }
+  // 2. Anti-abuse velocity — tutor auto-penalty frequency (last 30 days)
+  if (tutorId) {
+    const r = await db.query(
+      `SELECT COUNT(*)::int AS n FROM ai_case_resolutions
+        WHERE tutor_id = $1 AND status = 'AUTO_RESOLVED'
+          AND money_action = 'REFUND_TO_STUDENT'
+          AND created_at > NOW() - INTERVAL '30 days'`, [tutorId]);
+    if (r.rows[0].n >= AI_CASE_CONFIG.tutorPenaltyThreshold30d) {
+      flags.push('HABITUAL_LATE_NOSHOW'); forceHumanReview = true;
+    }
+  }
+  // 3. Abnormal dispute patterns (last 30 days) — too many from/against a party
+  const [sd, td] = await Promise.all([
+    studentId ? db.query(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by = $1 AND created_at > NOW() - INTERVAL '30 days'`, [studentId]) : Promise.resolve({ rows: [{ n: 0 }] }),
+    tutorId   ? db.query(`SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id  = $1 AND created_at > NOW() - INTERVAL '30 days'`, [tutorId])   : Promise.resolve({ rows: [{ n: 0 }] }),
+  ]);
+  if (sd.rows[0].n >= AI_CASE_CONFIG.studentDisputeAbnormalThreshold ||
+      td.rows[0].n >= AI_CASE_CONFIG.tutorDisputeAbnormalThreshold) {
+    flags.push('ABNORMAL_DISPUTE_PATTERN'); forceHumanReview = true;
+  }
+
+  // 4. Platform technical-issue edge case (no reliable session evidence)
+  const plat = await detectPlatformIssue(db, { bookingId });
+  if (plat) { flags.push(plat); forceHumanReview = true; }
+
+  return { flags, forceHumanReview };
+}
+
+// Shared logic used by BOTH POST /api/admin/ai-cases/run-pending AND the hourly
+// cron. Scans eligible OPEN disputes older than the min age and writes one
+// ai_case_resolutions row per case. DRY-RUN: produces AI_SUGGESTED /
+// NEED_HUMAN_REVIEW rows only and NEVER moves money (no refund / commission /
+// wallet calls anywhere in this function).
+async function runPendingAiCases({ triggeredBy = 'cron', adminId = null } = {}) {
+  const startedAt = new Date();
+  const stats = { scanned: 0, suggested: 0, autoResolved: 0, needsReview: 0, skipped: 0, failed: 0 };
+  console.log(`[ai-cases] run start by=${triggeredBy} resolutionEnabled=${AUTO_AI_RESOLUTION_ENABLED} dryRun=${AUTO_AI_DRY_RUN} at=${startedAt.toISOString()}`);
+
+  let cases;
+  try {
+    cases = await pool.query(
+      `SELECT d.id, d.reason, d.status, d.target_type, d.booking_id, d.raised_by,
+              d.tutor_id, d.course_id, d.created_at,
+              b.student_id AS b_student_id, b.tutor_id AS b_tutor_id,
+              b.lesson_fee, b.lesson_date
+         FROM disputes d
+         LEFT JOIN bookings b ON b.id = d.booking_id
+        WHERE d.status = 'OPEN'
+          AND d.created_at <= NOW() - make_interval(hours => $1::int)
+          AND NOT EXISTS (SELECT 1 FROM ai_case_resolutions r WHERE r.dispute_id = d.id)
+        ORDER BY d.created_at ASC
+        LIMIT $2`,
+      [AI_CASE_CONFIG.minCaseAgeHours, AI_CASE_CONFIG.scanLimit]
+    );
+  } catch (err) {
+    console.error('[ai-cases] scan failed:', err.message);
+    return { ...stats, error: err.message, started_at: startedAt.toISOString() };
+  }
+  stats.scanned = cases.rows.length;
+
+  for (const d of cases.rows) {
+    try {
+      const studentId = d.b_student_id || d.raised_by || null;
+      const tutorId   = d.tutor_id || d.b_tutor_id || null;
+      const bookingId = d.booking_id || null;
+
+      const ai = evaluateDisputeWithAI(d);
+      const { flags, forceHumanReview } = await computeAiRiskFlags(pool, { studentId, tutorId, bookingId });
+
+      // Decide final status. Money never moves in this scaffold regardless.
+      let status;
+      if (forceHumanReview || !ai.autoResolvable) {
+        status = 'NEED_HUMAN_REVIEW';
+      } else if (AUTO_AI_RESOLUTION_ENABLED && !AUTO_AI_DRY_RUN) {
+        // Live auto-resolution WOULD move money here. Intentionally left as a
+        // marker with executed=false — no financial logic is invoked in this
+        // scaffold (see Batch 25 scope: dry-run only).
+        status = 'AUTO_RESOLVED';
+      } else {
+        status = 'AI_SUGGESTED';
+      }
+
+      const reasonSummary = forceHumanReview
+        ? `${ai.reasoning} | Chuyển admin do cờ rủi ro: ${flags.join(', ')}.`
+        : ai.reasoning;
+
+      await pool.query(
+        `INSERT INTO ai_case_resolutions
+           (dispute_id, booking_id, student_id, tutor_id, status, severity, confidence,
+            money_action, recommendation, reason_summary, risk_flags, ai_evidence,
+            policy_version, dry_run, executed, resolved_transaction_id, financial_trace,
+            resolved_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14,$15,$16,$17::jsonb,
+                 CASE WHEN $5 = 'AI_SUGGESTED' THEN NULL ELSE NOW() END)`,
+        [
+          d.id, bookingId, studentId, tutorId, status, ai.severity, ai.confidence,
+          ai.moneyAction, ai.recommendation, reasonSummary,
+          JSON.stringify(flags),
+          JSON.stringify({
+            action_code: ai.actionCode, auto_resolvable: ai.autoResolvable,
+            target_type: d.target_type, dispute_reason: d.reason,
+            lesson_fee: d.lesson_fee != null ? Number(d.lesson_fee) : null,
+          }),
+          AI_CASE_POLICY_VERSION, AUTO_AI_DRY_RUN, false, null, JSON.stringify({}),
+        ]
+      );
+
+      if (status === 'AI_SUGGESTED') stats.suggested++;
+      else if (status === 'AUTO_RESOLVED') stats.autoResolved++;
+      else stats.needsReview++;
+    } catch (err) {
+      stats.failed++;
+      console.error(`[ai-cases] case ${d.id} failed:`, err.message);
+    }
+  }
+
+  const finishedAt = new Date();
+  console.log(`[ai-cases] run done by=${triggeredBy} scanned=${stats.scanned} suggested=${stats.suggested} autoResolved=${stats.autoResolved} needsReview=${stats.needsReview} skipped=${stats.skipped} failed=${stats.failed} ms=${finishedAt - startedAt}`);
+  return {
+    ...stats, triggered_by: triggeredBy, admin_id: adminId,
+    dry_run: AUTO_AI_DRY_RUN, resolution_enabled: AUTO_AI_RESOLUTION_ENABLED,
+    started_at: startedAt.toISOString(), finished_at: finishedAt.toISOString(),
+  };
+}
+
 // Trim, strip control chars, collapse whitespace, cap length. Null-safe.
 function sanitizeNotificationText(value, maxLength = 500) {
   if (value == null) return null;
@@ -9699,6 +9930,162 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
   }
 });
 
+// ═══ AI Case Resolution endpoints (Batch 25 — dry-run scaffolding) ══════════
+
+// POST /api/admin/ai-cases/run-pending — manually trigger a scan of pending cases.
+app.post('/api/admin/ai-cases/run-pending', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await runPendingAiCases({ triggeredBy: 'admin', adminId: req.user.id });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('POST /api/admin/ai-cases/run-pending error:', err.message);
+    return res.status(500).json({ message: 'Không thể chạy xử lý AI cho các khiếu nại.' });
+  }
+});
+
+// GET /api/admin/ai-cases — list AI case resolutions (filter + paginate).
+app.get('/api/admin/ai-cases', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.status)       { params.push(req.query.status);       where.push(`r.status = $${params.length}`); }
+    if (req.query.appealStatus) { params.push(req.query.appealStatus); where.push(`r.appeal_status = $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const totalRes = await pool.query(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions r ${whereSql}`, params);
+    const rows = (await pool.query(
+      `SELECT r.*, s.full_name AS student_name, s.email AS student_email,
+              t.full_name AS tutor_name, t.email AS tutor_email,
+              d.reason AS dispute_reason, d.status AS dispute_status
+         FROM ai_case_resolutions r
+         LEFT JOIN users s    ON s.id = r.student_id
+         LEFT JOIN users t    ON t.id = r.tutor_id
+         LEFT JOIN disputes d ON d.id = r.dispute_id
+         ${whereSql}
+         ORDER BY r.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    )).rows;
+
+    const summary = { ai_suggested: 0, auto_resolved: 0, need_human_review: 0, appealed: 0 };
+    for (const s of (await pool.query(`SELECT status, COUNT(*)::int AS n FROM ai_case_resolutions GROUP BY status`)).rows) {
+      if (s.status === 'AI_SUGGESTED')      summary.ai_suggested      = s.n;
+      else if (s.status === 'AUTO_RESOLVED') summary.auto_resolved     = s.n;
+      else if (s.status === 'NEED_HUMAN_REVIEW') summary.need_human_review = s.n;
+    }
+    summary.appealed = (await pool.query(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`)).rows[0].n;
+
+    return res.json({
+      items: rows,
+      pagination: { page, limit, total: totalRes.rows[0].n },
+      summary,
+      config: {
+        resolution_enabled: AUTO_AI_RESOLUTION_ENABLED, dry_run: AUTO_AI_DRY_RUN,
+        cron_enabled: AUTO_AI_CRON_ENABLED, min_case_age_hours: AI_CASE_CONFIG.minCaseAgeHours,
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/admin/ai-cases error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách xử lý AI.' });
+  }
+});
+
+// GET /api/admin/ai-cases/:id — full detail for the admin modal.
+app.get('/api/admin/ai-cases/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT r.*, s.full_name AS student_name, s.email AS student_email,
+              t.full_name AS tutor_name, t.email AS tutor_email, ab.full_name AS appeal_by_name,
+              d.reason AS dispute_reason, d.status AS dispute_status, d.created_at AS dispute_created_at
+         FROM ai_case_resolutions r
+         LEFT JOIN users s    ON s.id = r.student_id
+         LEFT JOIN users t    ON t.id = r.tutor_id
+         LEFT JOIN users ab   ON ab.id = r.appeal_by
+         LEFT JOIN disputes d ON d.id = r.dispute_id
+        WHERE r.id = $1`, [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Không tìm thấy bản ghi.' });
+    return res.json(r.rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/ai-cases/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
+// GET /api/my/ai-cases — the current user's own AI case resolutions.
+app.get('/api/my/ai-cases', verifyToken, async (req, res) => {
+  try {
+    const rows = (await pool.query(
+      `SELECT r.id, r.status, r.severity, r.money_action, r.recommendation, r.reason_summary,
+              r.risk_flags, r.appeal_status, r.appeal_reason, r.appealed_at, r.created_at, r.resolved_at,
+              d.reason AS dispute_reason,
+              (r.student_id = $1) AS is_student, (r.tutor_id = $1) AS is_tutor
+         FROM ai_case_resolutions r
+         LEFT JOIN disputes d ON d.id = r.dispute_id
+        WHERE r.student_id = $1 OR r.tutor_id = $1
+        ORDER BY r.created_at DESC
+        LIMIT 100`, [req.user.id])).rows;
+    return res.json({ items: rows });
+  } catch (err) {
+    console.error('GET /api/my/ai-cases error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách.' });
+  }
+});
+
+// POST /api/my/ai-case-feedback/:id/appeal — affected user appeals an AUTO_RESOLVED case.
+app.post('/api/my/ai-case-feedback/:id/appeal', verifyToken, async (req, res) => {
+  try {
+    const reason = sanitizeNotificationText(req.body?.appealReason || req.body?.reason, 1000);
+    if (!reason) return res.status(400).json({ message: 'Vui lòng nhập lý do kháng cáo.' });
+
+    const r = await pool.query('SELECT * FROM ai_case_resolutions WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Không tìm thấy quyết định AI.' });
+    const rec = r.rows[0];
+
+    // Only the affected student or tutor may appeal.
+    if (![rec.student_id, rec.tutor_id].includes(req.user.id)) {
+      return res.status(403).json({ message: 'Bạn không có quyền kháng cáo quyết định này.' });
+    }
+    // Only AUTO_RESOLVED decisions can be appealed.
+    if (rec.status !== 'AUTO_RESOLVED') {
+      return res.status(409).json({ message: 'Chỉ có thể kháng cáo quyết định đã tự động xử lý.' });
+    }
+    // Appeal window: within 24 hours after resolution.
+    const base = rec.resolved_at || rec.created_at;
+    if (base && (Date.now() - new Date(base).getTime()) > 24 * 60 * 60 * 1000) {
+      return res.status(409).json({ message: 'Đã quá thời hạn kháng cáo (24 giờ).' });
+    }
+    if (rec.appeal_status !== 'NONE') {
+      return res.status(409).json({ message: 'Kháng cáo đã được gửi trước đó.' });
+    }
+
+    await pool.query(
+      `UPDATE ai_case_resolutions
+          SET appeal_status='APPEALED_NEED_REVIEW', appeal_reason=$1, appeal_by=$2, appealed_at=NOW()
+        WHERE id=$3`, [reason, req.user.id, req.params.id]);
+
+    // Notify all admins (in-app). Never blocks the response on notification failure.
+    try {
+      const admins = await pool.query("SELECT id FROM users WHERE role='admin'");
+      for (const a of admins.rows) {
+        await createInAppNotification(pool, {
+          userId: a.id, type: 'system', eventType: 'ai_case_appealed',
+          title: 'Có kháng cáo quyết định AI cần xem xét',
+          body: `Một người dùng đã kháng cáo quyết định AI (case ${req.params.id}).`,
+          icon: 'gavel', refId: req.params.id, refType: 'ai_case', priority: 'high',
+          idempotencyKey: `ai_case_appeal:${req.params.id}:${a.id}`,
+        });
+      }
+    } catch (nErr) { console.warn('[ai-case appeal] admin notify failed:', nErr.message); }
+
+    return res.json({ ok: true, message: 'Kháng cáo đã được gửi. Admin sẽ xem xét lại quyết định.' });
+  } catch (err) {
+    console.error('POST /api/my/ai-case-feedback/:id/appeal error:', err.message);
+    return res.status(500).json({ message: 'Không thể gửi kháng cáo.' });
+  }
+});
+
 // POST /api/escrow/resolve-dispute-v2 — Admin xử lý khiếu nại
 app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
@@ -10507,6 +10894,64 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.error('⚠️  DB migration (notification_outbox Batch 20.2) warning:', err.message);
   }
 
+  // ── Auto-migrate: AI case resolution (Batch 25, dry-run scaffolding) ─────────
+  // NOTE: resolved_transaction_id matches transactions.id (UUID) so the FK is
+  // type-safe. appeal_by / appeal_reviewed_by are UUID to match users.id (this
+  // schema uses UUID user ids, not INTEGER).
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ai_case_resolutions (
+        id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        dispute_id              UUID REFERENCES disputes(id) ON DELETE CASCADE,
+        booking_id              UUID,
+        student_id              UUID REFERENCES users(id) ON DELETE SET NULL,
+        tutor_id                UUID REFERENCES users(id) ON DELETE SET NULL,
+        status                  TEXT NOT NULL DEFAULT 'AI_SUGGESTED'
+                                CHECK (status IN ('AI_SUGGESTED','AUTO_RESOLVED','NEED_HUMAN_REVIEW','SKIPPED','FAILED')),
+        severity                TEXT,
+        confidence              INT,
+        money_action            TEXT,
+        recommendation          TEXT,
+        reason_summary          TEXT,
+        risk_flags              JSONB NOT NULL DEFAULT '[]'::jsonb,
+        ai_evidence             JSONB NOT NULL DEFAULT '{}'::jsonb,
+        policy_version          TEXT DEFAULT 'REFUND_POLICY_V2_1',
+        dry_run                 BOOLEAN NOT NULL DEFAULT TRUE,
+        executed                BOOLEAN NOT NULL DEFAULT FALSE,
+        resolved_transaction_id UUID REFERENCES transactions(id),
+        financial_trace         JSONB NOT NULL DEFAULT '{}'::jsonb,
+        appealed_at             TIMESTAMPTZ,
+        appeal_reason           TEXT,
+        appeal_status           TEXT NOT NULL DEFAULT 'NONE'
+                                CHECK (appeal_status IN ('NONE','APPEALED_NEED_REVIEW','REVIEWED','REJECTED','ACCEPTED')),
+        appeal_by               UUID REFERENCES users(id),
+        appeal_reviewed_at      TIMESTAMPTZ,
+        appeal_reviewed_by      UUID REFERENCES users(id),
+        created_at              TIMESTAMPTZ DEFAULT NOW(),
+        resolved_at             TIMESTAMPTZ
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_case_res_dispute ON ai_case_resolutions(dispute_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_case_res_status  ON ai_case_resolutions(status);
+      CREATE INDEX IF NOT EXISTS idx_ai_case_res_appeal  ON ai_case_resolutions(appeal_status);
+      CREATE INDEX IF NOT EXISTS idx_ai_case_res_student ON ai_case_resolutions(student_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_case_res_tutor   ON ai_case_resolutions(tutor_id);
+
+      CREATE TABLE IF NOT EXISTS lesson_session_events (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id  UUID,
+        user_id     UUID,
+        role        TEXT,
+        event_type  TEXT NOT NULL CHECK (event_type IN ('JOIN','LEAVE','HEARTBEAT')),
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lesson_session_events_booking ON lesson_session_events(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_lesson_session_events_created ON lesson_session_events(created_at);
+    `);
+    console.log('✅ DB migration: ai_case_resolutions + lesson_session_events ready (Batch 25)');
+  } catch (err) {
+    console.error('⚠️  DB migration (ai_case_resolutions Batch 25) warning:', err.message);
+  }
+
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
   // Runs every minute; processNotificationOutbox() guards against overlap and
   // never throws, so this interval can never crash the server.
@@ -10674,6 +11119,18 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
       }
     }
   }, 10 * 60 * 1000); // chạy mỗi 10 phút
+
+  // ── Cron: AI case resolution (Batch 25) — hourly, gated OFF by default ───────
+  // Uses the SAME runPendingAiCases() logic as POST /api/admin/ai-cases/run-pending.
+  // Never moves money (dry-run scaffolding). Disabled unless AUTO_AI_CRON_ENABLED=true.
+  if (AUTO_AI_CRON_ENABLED) {
+    setInterval(() => {
+      runPendingAiCases({ triggeredBy: 'cron' }).catch(err => console.error('[ai-cases cron] error:', err.message));
+    }, 60 * 60 * 1000);
+    console.log(`🕐 AI case cron ENABLED (hourly). resolutionEnabled=${AUTO_AI_RESOLUTION_ENABLED} dryRun=${AUTO_AI_DRY_RUN}`);
+  } else {
+    console.log('⏸️  AI case cron disabled (AUTO_AI_CRON_ENABLED=false).');
+  }
 
   app.listen(port, () => {
     console.log(`🚀 Server is running on http://localhost:${port}`);
