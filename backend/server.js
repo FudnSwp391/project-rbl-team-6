@@ -720,6 +720,12 @@ async function collectTutorCopilotContext(tutorId) {
   const semRep = (await copilotSafeRows(`SELECT overall_reputation_score, external_payment_risk_score, toxicity_risk_score FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC LIMIT 1`, [tutorId]))[0] || null;
   ctx.metrics.semantic_overall_reputation = semRep ? Number(semRep.overall_reputation_score) : null;
 
+  // Batch 28: fraud intel signals (safe if tables empty/absent).
+  ctx.metrics.fraud_reports_90d          = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (tutor_id=$1 OR primary_user_id=$1) AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.fraud_high_risk_reports    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (tutor_id=$1 OR primary_user_id=$1) AND severity IN ('HIGH','CRITICAL') AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.fraud_external_payment_reports = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE tutor_id=$1 AND report_type='EXTERNAL_PAYMENT_COLLUSION' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.fraud_withdrawal_risk_reports  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE tutor_id=$1 AND report_type='WITHDRAWAL_RISK' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+
   return ctx;
 }
 
@@ -739,6 +745,9 @@ async function collectStudentCopilotContext(studentId) {
   ctx.metrics.auto_refunds_30d    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE student_id=$1 AND status='AUTO_RESOLVED' AND money_action='REFUND_TO_STUDENT' AND created_at > NOW() - INTERVAL '30 days'`, [studentId]);
   ctx.metrics.bookings_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
   ctx.metrics.absences_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM attendance WHERE student_id=$1 AND status='absent' AND marked_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  // Batch 28: fraud intel signals (safe if tables empty/absent).
+  ctx.metrics.fraud_reports_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (student_id=$1 OR primary_user_id=$1) AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.fraud_high_risk_reports = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (student_id=$1 OR primary_user_id=$1) AND severity IN ('HIGH','CRITICAL') AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
   return ctx;
 }
 
@@ -855,6 +864,10 @@ function generateAdminCopilotReport(entityType, context) {
     if (m.semantic_external_payment >= 1) { score += 2; findings.push(`AI kiểm duyệt phát hiện ${m.semantic_external_payment} dấu hiệu rủ giao dịch ngoài nền tảng.`); evidence.push({ label: 'Rủi ro giao dịch ngoài (AI)', value: m.semantic_external_payment }); }
     if (m.semantic_toxicity >= 1) { score += 1; findings.push(`Có ${m.semantic_toxicity} nội dung bị gắn cờ ngôn từ tiêu cực.`); }
     if (m.semantic_low_teaching >= 2) { score += 1; findings.push(`Có ${m.semantic_low_teaching} phản hồi bị gắn cờ chất lượng giảng dạy thấp.`); }
+    // Batch 28: fraud intel signals (0 when tables empty — never breaks)
+    if (m.fraud_high_risk_reports >= 1) { score += 2; findings.push(`Có ${m.fraud_high_risk_reports} báo cáo gian lận AI mức cao liên quan đến gia sư này.`); evidence.push({ label: 'Báo cáo gian lận (cao)', value: m.fraud_high_risk_reports }); }
+    else if (m.fraud_reports_90d >= 1) { score += 1; findings.push(`Có ${m.fraud_reports_90d} báo cáo gian lận AI liên quan đến gia sư này.`); }
+    if (m.fraud_withdrawal_risk_reports >= 1) { score += 1; findings.push(`Có ${m.fraud_withdrawal_risk_reports} báo cáo rủi ro rút tiền.`); }
     if (m.is_banned) limitations.push('Tài khoản đang bị khóa.');
     if (m.late_noshow_disputes_30d >= 2 || m.disputes_30d >= 3) recommendations.push('Xem xét gửi cảnh báo chính thức về chất lượng giảng dạy.');
     actions.push(copilotAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Có dấu hiệu giảm chất lượng'));
@@ -866,6 +879,9 @@ function generateAdminCopilotReport(entityType, context) {
     if (m.auto_refunds_30d >= 3) { score += 2; findings.push(`Được tự động hoàn tiền ${m.auto_refunds_30d} lần trong 30 ngày (tần suất cao).`); evidence.push({ label: 'Tự động hoàn 30 ngày', value: m.auto_refunds_30d }); }
     if (m.disputes_raised_30d >= 3) { score += 1; findings.push(`Mở ${m.disputes_raised_30d} khiếu nại trong 30 ngày.`); evidence.push({ label: 'Khiếu nại đã mở 30 ngày', value: m.disputes_raised_30d }); }
     if (m.absences_90d >= 3) { score += 1; findings.push(`Vắng mặt ${m.absences_90d} buổi trong 90 ngày.`); evidence.push({ label: 'Vắng mặt 90 ngày', value: m.absences_90d }); }
+    // Batch 28: fraud intel signals (0 when tables empty — never breaks)
+    if (m.fraud_high_risk_reports >= 1) { score += 2; findings.push(`Có ${m.fraud_high_risk_reports} báo cáo gian lận AI mức cao liên quan đến học sinh này.`); evidence.push({ label: 'Báo cáo gian lận (cao)', value: m.fraud_high_risk_reports }); }
+    else if (m.fraud_reports_90d >= 1) { score += 1; findings.push(`Có ${m.fraud_reports_90d} báo cáo gian lận AI liên quan đến học sinh này.`); }
     actions.push(copilotAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Tần suất hoàn tiền/khiếu nại bất thường'));
     actions.push(copilotAction('REVIEW_REFUND_PATTERN', 'Rà soát mẫu hoàn tiền', 'Kiểm tra khả năng lạm dụng'));
 
@@ -1353,6 +1369,378 @@ async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_
 
   console.log(`[semantic] run by=${triggeredBy} reviews=${stats.reviews_scanned} chat=${stats.chat_scanned} created=${stats.created} skipped=${stats.skipped} failed=${stats.failed} tutorsScored=${stats.tutors_scored}`);
   return { ...stats, limitations, triggered_by: triggeredBy, rule_version: SEMANTIC_MODERATION_RULE_VERSION };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI FRAUD RING DETECTION — THREAT INTEL (Batch 28) — ADVISORY-ONLY.
+// Deterministic, read-only analyzers that build fraud intelligence reports for
+// admin review. NEVER bans/suspends/refunds/releases/holds/cancels/blocks or
+// mutates any account/money/booking/transaction. Optional LLM (off by default).
+// ═══════════════════════════════════════════════════════════════════════════
+const FRAUD_INTEL_LLM_ENABLED     = String(process.env.FRAUD_INTEL_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const FRAUD_INTEL_PROVIDER        = String(process.env.FRAUD_INTEL_PROVIDER || 'gemini').toLowerCase();
+const FRAUD_INTEL_MAX_CONTEXT_CHARS = Number(process.env.FRAUD_INTEL_MAX_CONTEXT_CHARS || 12000);
+const FRAUD_INTEL_WORKER_ENABLED  = String(process.env.FRAUD_INTEL_WORKER_ENABLED ?? 'false').toLowerCase() === 'true';
+const FRAUD_INTEL_INTERVAL_MINUTES = Number(process.env.FRAUD_INTEL_INTERVAL_MINUTES || 360);
+const FRAUD_INTEL_PERIOD_DAYS     = Number(process.env.FRAUD_INTEL_PERIOD_DAYS || 30);
+const FRAUD_INTEL_BATCH_LIMIT     = Number(process.env.FRAUD_INTEL_BATCH_LIMIT || 100);
+const FRAUD_INTEL_RULE_VERSION    = 'FRAUD_INTEL_V1';
+
+const FRAUD_ALLOWED_ACTIONS = new Set([
+  'MANUAL_REVIEW', 'WATCHLIST', 'REQUEST_MORE_EVIDENCE', 'REVIEW_WITHDRAWAL_MANUALLY',
+  'REVIEW_REFUND_PATTERN', 'REVIEW_TUTOR_QUALITY', 'REVIEW_EXTERNAL_PAYMENT_SIGNAL',
+  'NO_ACTION', 'MARK_FALSE_POSITIVE',
+]);
+
+function buildFraudPeriod(days) {
+  const d = Math.max(1, Math.min(365, Number(days) || 30));
+  return { days: d, start: new Date(Date.now() - d * 86400000), end: new Date() };
+}
+function buildEntityKey(type, ...ids) { return `${type}:${ids.filter(Boolean).join(':')}`; }
+function calculateSeverityFromRiskScore(score, flags = []) {
+  const s = Number(score) || 0;
+  if (s >= 85 && (flags?.length || 0) >= 2) return 'CRITICAL';
+  if (s >= 70) return 'HIGH';
+  if (s >= 45) return 'MEDIUM';
+  return 'LOW';
+}
+function maskFraudSensitiveText(text) { return maskSensitiveText(text); }
+function fraudAction(type, label, reason) { if (!FRAUD_ALLOWED_ACTIONS.has(type)) type = 'MANUAL_REVIEW'; return { type, label, reason }; }
+function buildFraudActions(severity, flags = []) {
+  const a = [];
+  if (severity === 'CRITICAL' || severity === 'HIGH') a.push(fraudAction('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Rủi ro cao'));
+  a.push(fraudAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm'));
+  if (flags.some(f => f.includes('EXTERNAL_PAYMENT') || f.includes('PLATFORM_FEE') || f.includes('OFF_PLATFORM') || f.includes('CONTACT_SHARING'))) a.push(fraudAction('REVIEW_EXTERNAL_PAYMENT_SIGNAL', 'Rà soát giao dịch ngoài', 'Nghi ngờ né phí nền tảng'));
+  if (flags.some(f => f.includes('REFUND'))) a.push(fraudAction('REVIEW_REFUND_PATTERN', 'Rà soát mẫu hoàn tiền', 'Tần suất bất thường'));
+  if (flags.some(f => f.includes('WITHDRAW') || f.includes('CASH_OUT'))) a.push(fraudAction('REVIEW_WITHDRAWAL_MANUALLY', 'Rà soát rút tiền thủ công', 'Rủi ro rút tiền'));
+  a.push(fraudAction('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Củng cố hồ sơ'));
+  a.push(fraudAction('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai'));
+  return a;
+}
+function normalizeFraudReport(r) {
+  return {
+    ...r,
+    risk_score:  Math.max(0, Math.min(100, Number(r.risk_score) || 0)),
+    confidence:  Math.max(0, Math.min(100, Number(r.confidence) || 0)),
+    severity:    ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(r.severity) ? r.severity : 'LOW',
+    risk_flags:  Array.isArray(r.risk_flags) ? r.risk_flags : [],
+    suggested_actions: (r.suggested_actions || []).filter(a => FRAUD_ALLOWED_ACTIONS.has(a.type)),
+  };
+}
+async function fraudTableExists(table) {
+  try { await pool.query(`SELECT 1 FROM ${table} LIMIT 1`); return true; } catch { return false; }
+}
+async function getFraudSignalAvailability() {
+  const tables = ['bookings', 'transactions', 'refund_logs', 'commission_logs', 'withdrawal_requests', 'disputes', 'ai_case_resolutions', 'semantic_moderation_reports', 'tutor_reputation_semantic_scores', 'reviews', 'chat_messages', 'wallet_ledger', 'lesson_session_events', 'coupon_usages'];
+  const avail = {};
+  for (const t of tables) avail[t] = await fraudTableExists(t);
+  return avail;
+}
+async function fraudUserName(id) {
+  const r = await copilotSafeRows(`SELECT full_name FROM users WHERE id=$1 LIMIT 1`, [id]);
+  return r.length ? (r[0].full_name || 'Người dùng') : 'Không rõ';
+}
+
+// ── Analyzer: student↔tutor pair collusion ──────────────────────────────────
+async function analyzeStudentTutorPair(studentId, tutorId, period, hint = {}) {
+  const flags = [], evidence = []; let risk = 0;
+  const bookingCount = hint.bookingCount ?? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  const bookingTotal = hint.bookingTotal ?? await copilotSafeSum(`SELECT COALESCE(SUM(lesson_fee),0)::numeric AS s FROM bookings WHERE student_id=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  if (bookingCount >= 5) { risk += 25; flags.push('REPEATED_PAIR_BOOKINGS'); }
+  else if (bookingCount >= 3) { risk += 15; flags.push('REPEATED_PAIR_BOOKINGS'); }
+  evidence.push({ label: 'Số buổi đặt giữa cặp', value: bookingCount });
+
+  const releases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND tutor_id=$2 AND escrow_released_at IS NOT NULL AND escrow_released_at > $3`, [studentId, tutorId, period.start]);
+  const disputes = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  const refunds  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM refund_logs WHERE student_id=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  if (disputes + refunds >= 2) { risk += 20; flags.push('REPEATED_REFUND_DISPUTE_PAIR'); evidence.push({ label: 'Khiếu nại/hoàn tiền giữa cặp', value: `${disputes} + ${refunds}` }); }
+  if (bookingTotal >= 3000000) { risk += 15; flags.push('HIGH_PAIR_FINANCIAL_EXPOSURE'); evidence.push({ label: 'Tổng giá trị giữa cặp', value: copilotVnd(bookingTotal) }); }
+
+  const extPay = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
+  if (extPay > 0) { risk += 25; flags.push('EXTERNAL_PAYMENT_SIGNAL'); evidence.push({ label: 'Báo cáo giao dịch ngoài (semantic)', value: extPay }); }
+
+  const sessionEvents = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM lesson_session_events lse JOIN bookings b ON b.id=lse.booking_id WHERE b.student_id=$1 AND b.tutor_id=$2`, [studentId, tutorId]);
+  if (bookingCount >= 3 && sessionEvents === 0) { risk += 15; flags.push('LOW_SESSION_ACTIVITY'); }
+  if (flags.length >= 3) flags.push('SAME_PAIR_ABNORMAL_PATTERN');
+
+  if (risk < 45 && !flags.includes('EXTERNAL_PAYMENT_SIGNAL')) return null;
+  const severity = calculateSeverityFromRiskScore(risk, flags);
+  const [sName, tName] = await Promise.all([fraudUserName(studentId), fraudUserName(tutorId)]);
+  return normalizeFraudReport({
+    report_type: 'USER_PAIR', entity_key: buildEntityKey('pair', studentId, tutorId),
+    primary_user_id: studentId, secondary_user_id: tutorId, student_id: studentId, tutor_id: tutorId,
+    title: `Cặp học sinh–gia sư nghi vấn: ${sName} ↔ ${tName}`,
+    summary: `Cặp có ${bookingCount} buổi đặt, ${disputes} khiếu nại, ${refunds} hoàn tiền${extPay > 0 ? ', có dấu hiệu giao dịch ngoài nền tảng' : ''}.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(95, 40 + flags.length * 12), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'student', id: studentId, name: sName }, { type: 'tutor', id: tutorId, name: tName }],
+    financial_trace: { pair_booking_total: bookingTotal, releases }, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: refund abuse (per student) ────────────────────────────────────
+async function analyzeRefundAbuse(studentId, period) {
+  const flags = [], evidence = []; let risk = 0;
+  const refunds30 = await copilotSafeCount(`SELECT COUNT(*)::int n FROM refund_logs WHERE student_id=$1 AND created_at > NOW()-INTERVAL '30 days'`, [studentId]);
+  const refunds90 = await copilotSafeCount(`SELECT COUNT(*)::int n FROM refund_logs WHERE student_id=$1 AND created_at > NOW()-INTERVAL '90 days'`, [studentId]);
+  const autoRefunds = await copilotSafeCount(`SELECT COUNT(*)::int n FROM ai_case_resolutions WHERE student_id=$1 AND money_action='REFUND_TO_STUDENT' AND created_at > NOW()-INTERVAL '30 days'`, [studentId]);
+  const disputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE raised_by=$1 AND created_at > NOW()-INTERVAL '90 days'`, [studentId]);
+  if (refunds30 >= 3) { risk += 30; flags.push('HIGH_REFUND_FREQUENCY'); }
+  else if (refunds30 >= 2) { risk += 18; flags.push('HIGH_REFUND_FREQUENCY'); }
+  if (autoRefunds >= 3) { risk += 20; flags.push('ABNORMAL_REFUND_RATE'); }
+  if (disputes >= 4) { risk += 18; flags.push('REPEATED_WEAK_EVIDENCE_DISPUTES'); }
+  evidence.push({ label: 'Hoàn tiền 30/90 ngày', value: `${refunds30} / ${refunds90}` });
+  if (autoRefunds) evidence.push({ label: 'Tự động hoàn (AI) 30 ngày', value: autoRefunds });
+  if (risk < 45) return null;
+  const severity = calculateSeverityFromRiskScore(risk, flags);
+  const name = await fraudUserName(studentId);
+  return normalizeFraudReport({
+    report_type: 'REFUND_ABUSE', entity_key: buildEntityKey('student', studentId),
+    primary_user_id: studentId, student_id: studentId,
+    title: `Nghi vấn lạm dụng hoàn tiền: ${name}`,
+    summary: `Học sinh có ${refunds30} hoàn tiền trong 30 ngày (${refunds90} trong 90 ngày), ${autoRefunds} lần tự động hoàn.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(90, 45 + flags.length * 12), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'student', id: studentId, name }],
+    financial_trace: {}, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: tutor withdrawal risk ─────────────────────────────────────────
+async function analyzeWithdrawalRisk(tutorId, period) {
+  const flags = [], evidence = []; let risk = 0;
+  const wr = await copilotSafeRows(`SELECT COUNT(*)::int n, COALESCE(SUM(amount),0)::numeric total FROM withdrawal_requests WHERE tutor_id=$1 AND requested_at > $2`, [tutorId, period.start]);
+  const wcount = wr.length ? Number(wr[0].n) : 0, wtotal = wr.length ? Number(wr[0].total) : 0;
+  if (!wcount) return null;
+  const activeDisputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE tutor_id=$1 AND status='OPEN'`, [tutorId]);
+  const releases = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND escrow_released_at > $2`, [tutorId, period.start]);
+  const extPay = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
+  const distinctStudents = await copilotSafeCount(`SELECT COUNT(DISTINCT student_id)::int n FROM bookings WHERE tutor_id=$1 AND created_at > $2`, [tutorId, period.start]);
+  if (releases >= 5 && wcount >= 2) { risk += 25; flags.push('RAPID_WITHDRAW_AFTER_RELEASE'); }
+  if (activeDisputes >= 1 && wcount >= 1) { risk += 25; flags.push('WITHDRAWAL_WITH_ACTIVE_DISPUTES'); }
+  if (activeDisputes >= 3) { risk += 15; flags.push('HIGH_DISPUTE_TUTOR'); }
+  if (extPay > 0) { risk += 20; flags.push('EXTERNAL_PAYMENT_TUTOR_RISK'); }
+  if (distinctStudents > 0 && distinctStudents <= 2 && releases >= 4) { risk += 15; flags.push('CONCENTRATED_STUDENT_SOURCE'); }
+  evidence.push({ label: 'Yêu cầu rút / tổng', value: `${wcount} · ${copilotVnd(wtotal)}` });
+  evidence.push({ label: 'Khiếu nại đang mở', value: activeDisputes });
+  if (risk < 45) return null;
+  const severity = calculateSeverityFromRiskScore(risk, flags);
+  const name = await fraudUserName(tutorId);
+  return normalizeFraudReport({
+    report_type: 'WITHDRAWAL_RISK', entity_key: buildEntityKey('tutor', tutorId),
+    primary_user_id: tutorId, tutor_id: tutorId,
+    title: `Rủi ro rút tiền: ${name}`,
+    summary: `Gia sư có ${wcount} yêu cầu rút (${copilotVnd(wtotal)})${activeDisputes ? `, ${activeDisputes} khiếu nại đang mở` : ''}${extPay ? ', có báo cáo giao dịch ngoài' : ''}.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(90, 45 + flags.length * 11), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'tutor', id: tutorId, name }],
+    financial_trace: { withdrawal_total: wtotal, releases }, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: external payment collusion (per tutor) ─────────────────────────
+async function analyzeExternalPaymentCollusion(tutorId, period) {
+  const flags = [], evidence = []; let risk = 0;
+  const extReports = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
+  if (!extReports) return null;
+  const privacyReports = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'PRIVACY_RISK' AND created_at > $2`, [tutorId, period.start]);
+  const repRow = (await copilotSafeRows(`SELECT external_payment_risk_score FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC LIMIT 1`, [tutorId]))[0];
+  risk += 30 + Math.min(30, extReports * 10);
+  flags.push('EXTERNAL_PAYMENT_ATTEMPT');
+  if (privacyReports > 0) { risk += 15; flags.push('CONTACT_SHARING_PATTERN'); }
+  if (repRow && Number(repRow.external_payment_risk_score) >= 50) { risk += 15; flags.push('PLATFORM_FEE_AVOIDANCE'); }
+  const recentBookings = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND created_at > NOW()-INTERVAL '30 days'`, [tutorId]);
+  const priorBookings  = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND created_at > NOW()-INTERVAL '90 days' AND created_at <= NOW()-INTERVAL '30 days'`, [tutorId]);
+  if (priorBookings >= 3 && recentBookings < priorBookings / 2) { risk += 15; flags.push('OFF_PLATFORM_MIGRATION_RISK'); }
+  evidence.push({ label: 'Báo cáo giao dịch ngoài', value: extReports });
+  if (privacyReports) evidence.push({ label: 'Báo cáo lộ thông tin', value: privacyReports });
+  const severity = calculateSeverityFromRiskScore(Math.min(100, risk), flags);
+  const name = await fraudUserName(tutorId);
+  return normalizeFraudReport({
+    report_type: 'EXTERNAL_PAYMENT_COLLUSION', entity_key: buildEntityKey('tutor', tutorId),
+    primary_user_id: tutorId, tutor_id: tutorId,
+    title: `Nghi vấn né phí nền tảng: ${name}`,
+    summary: `Gia sư có ${extReports} báo cáo giao dịch ngoài nền tảng${privacyReports ? `, ${privacyReports} báo cáo lộ thông tin` : ''}.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(92, 50 + flags.length * 11), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'tutor', id: tutorId, name }],
+    financial_trace: {}, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: transaction ring / money-flow concentration (per tutor) ────────
+async function analyzeTransactionRing(period, { limit = 50 } = {}) {
+  const out = [];
+  let rows = [];
+  try {
+    rows = (await pool.query(
+      `SELECT tutor_id, COUNT(*)::int releases, COUNT(DISTINCT student_id)::int students, COALESCE(SUM(lesson_fee),0)::numeric total
+         FROM bookings WHERE escrow_released_at > $1 AND tutor_id IS NOT NULL
+         GROUP BY tutor_id HAVING COUNT(*) >= 4
+         ORDER BY SUM(lesson_fee) DESC LIMIT $2`, [period.start, Math.min(limit, 50)])).rows;
+  } catch { return out; }
+  for (const r of rows) {
+    const flags = [], evidence = []; let risk = 0;
+    const releases = Number(r.releases), students = Number(r.students), total = Number(r.total);
+    if (students > 0 && releases / students >= 3) { risk += 25; flags.push('MONEY_FLOW_CONCENTRATION'); }
+    if (students <= 2 && releases >= 5) { risk += 20; flags.push('REPEATED_RELEASE_WITH_LOW_ACTIVITY'); }
+    const sessionEvents = await copilotSafeCount(`SELECT COUNT(*)::int n FROM lesson_session_events lse JOIN bookings b ON b.id=lse.booking_id WHERE b.tutor_id=$1`, [r.tutor_id]);
+    if (releases >= 4 && sessionEvents === 0) { risk += 20; flags.push('LOW_ACTIVITY_HIGH_VALUE'); }
+    const withdrawFast = await copilotSafeCount(`SELECT COUNT(*)::int n FROM withdrawal_requests WHERE tutor_id=$1 AND requested_at > $2`, [r.tutor_id, period.start]);
+    if (withdrawFast >= 2 && total >= 2000000) { risk += 20; flags.push('RAPID_CASH_OUT'); }
+    if (risk < 45) continue;
+    const severity = calculateSeverityFromRiskScore(Math.min(100, risk), flags);
+    const name = await fraudUserName(r.tutor_id);
+    out.push(normalizeFraudReport({
+      report_type: 'TRANSACTION_RING', entity_key: buildEntityKey('txring', r.tutor_id),
+      primary_user_id: r.tutor_id, tutor_id: r.tutor_id,
+      title: `Dòng tiền tập trung bất thường: ${name}`,
+      summary: `Gia sư nhận ${releases} lần giải ngân từ ${students} học sinh (${copilotVnd(total)}) với hoạt động học thấp.`,
+      reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+      risk_score: risk, confidence: Math.min(85, 40 + flags.length * 12), severity, risk_flags: flags,
+      evidence: [{ label: 'Giải ngân / học sinh', value: `${releases} / ${students}` }, { label: 'Tổng tiền', value: copilotVnd(total) }],
+      timeline: [], related_entities: [{ type: 'tutor', id: r.tutor_id, name }],
+      financial_trace: { release_total: total, releases, distinct_students: students },
+      suggested_actions: buildFraudActions(severity, flags), limitations: [],
+    }));
+  }
+  return out;
+}
+
+// ── Analyzer: voucher abuse (best-effort; no coupon-usage table in schema) ───
+async function analyzeVoucherAbuse(period) {
+  const has = await fraudTableExists('coupon_usages');
+  if (!has) return { skipped: true, limitation: 'VOUCHER_SCHEMA_NOT_FOUND: không có bảng lượt dùng voucher.' };
+  return { skipped: true, limitation: 'VOUCHER_ABUSE: analyzer chưa triển khai cho schema hiện tại.' };
+}
+
+// ── Aggregate signal helpers (used by entity lookup + Copilot) ──────────────
+async function analyzeTutorFraudSignals(tutorId, period) {
+  const reports = [await analyzeWithdrawalRisk(tutorId, period), await analyzeExternalPaymentCollusion(tutorId, period)].filter(Boolean);
+  const maxRisk = reports.reduce((m, r) => Math.max(m, r.risk_score), 0);
+  const flags = [...new Set(reports.flatMap(r => r.risk_flags))];
+  return { risk_score: maxRisk, severity: calculateSeverityFromRiskScore(maxRisk, flags), risk_flags: flags, reports };
+}
+async function analyzeStudentFraudSignals(studentId, period) {
+  const reports = [await analyzeRefundAbuse(studentId, period)].filter(Boolean);
+  const maxRisk = reports.reduce((m, x) => Math.max(m, x.risk_score), 0);
+  const flags = [...new Set(reports.flatMap(x => x.risk_flags))];
+  return { risk_score: maxRisk, severity: calculateSeverityFromRiskScore(maxRisk, flags), risk_flags: flags, reports };
+}
+
+// Persist a fraud report; idempotent per (report_type+entity+day) via detection_window_key.
+async function saveFraudIntelReport(rep) {
+  try {
+    const r = normalizeFraudReport(rep);
+    const dayBucket = new Date().toISOString().slice(0, 10);
+    const dwk = `${r.report_type}|${r.entity_key}|${dayBucket}`;
+    const res = await pool.query(
+      `INSERT INTO fraud_intel_reports
+        (report_type, status, severity, risk_score, confidence, primary_user_id, secondary_user_id,
+         tutor_id, student_id, entity_key, detection_window_key, title, summary, reason_summary,
+         risk_flags, evidence, timeline, related_entities, financial_trace, suggested_actions, limitations,
+         model_used, rule_version, period_start, period_end)
+       VALUES ($1,'OPEN',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+               $14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,$21,$22,$23,$24)
+       ON CONFLICT (detection_window_key) DO UPDATE SET
+         severity=EXCLUDED.severity, risk_score=EXCLUDED.risk_score, confidence=EXCLUDED.confidence,
+         summary=EXCLUDED.summary, reason_summary=EXCLUDED.reason_summary, risk_flags=EXCLUDED.risk_flags,
+         evidence=EXCLUDED.evidence, timeline=EXCLUDED.timeline, related_entities=EXCLUDED.related_entities,
+         financial_trace=EXCLUDED.financial_trace, suggested_actions=EXCLUDED.suggested_actions,
+         limitations=EXCLUDED.limitations, period_start=EXCLUDED.period_start, period_end=EXCLUDED.period_end, updated_at=NOW()
+       RETURNING (xmax = 0) AS inserted`,
+      [r.report_type, r.severity, r.risk_score, r.confidence,
+       asUuidOrNull(r.primary_user_id), asUuidOrNull(r.secondary_user_id), asUuidOrNull(r.tutor_id), asUuidOrNull(r.student_id),
+       r.entity_key, dwk, r.title || null, r.summary || null, r.reason_summary || null,
+       JSON.stringify(r.risk_flags || []), JSON.stringify(r.evidence || []), JSON.stringify(r.timeline || []),
+       JSON.stringify(r.related_entities || []), JSON.stringify(r.financial_trace || {}), JSON.stringify(r.suggested_actions || []),
+       JSON.stringify(r.limitations || []), r.model_used || 'RULE_BASED', FRAUD_INTEL_RULE_VERSION, r.period_start || null, r.period_end || null]
+    );
+    return res.rows[0].inserted ? 'created' : 'updated';
+  } catch (e) { console.warn('[fraud] save failed:', e.message); return 'failed'; }
+}
+
+// Optional LLM rewrite of summary only (off by default). Never invents evidence.
+async function maybeFraudLLMRewrite(report) {
+  if (!FRAUD_INTEL_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+  try {
+    const payload = JSON.stringify({ report_type: report.report_type, severity: report.severity, risk_flags: report.risk_flags, evidence: report.evidence }).slice(0, FRAUD_INTEL_MAX_CONTEXT_CHARS);
+    const prompt = `Bạn là chuyên viên phân tích gian lận cho nền tảng gia sư EduX. Viết lại TÓM TẮT bằng tiếng Việt ngắn gọn, khách quan, CHỈ dựa trên JSON dưới đây, KHÔNG bịa thêm bằng chứng, KHÔNG đề xuất khóa/cấm/hoàn tiền tự động. Trả về JSON {"summary_vi":"..."}. Dữ liệu: ${payload}`;
+    if (FRAUD_INTEL_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try { const p = JSON.parse(t); if (p && typeof p.summary_vi === 'string' && p.summary_vi.trim().length > 10) return { summary: p.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' }; } catch { /* ignore */ }
+        }
+      }
+    }
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  } catch (err) { console.warn('[fraud] LLM rewrite failed:', err.message); return { summary: report.summary, model_used: 'RULE_BASED' }; }
+}
+
+// Orchestrator — shared by POST run and the worker. Advisory only; bounded scans.
+async function runFraudRingDetection({ periodDays = FRAUD_INTEL_PERIOD_DAYS, limit = FRAUD_INTEL_BATCH_LIMIT, dryRun = false, analyzers = null, triggeredBy = 'worker' } = {}) {
+  const startedAt = new Date();
+  const period = buildFraudPeriod(periodDays);
+  const cap = Math.min(Math.max(1, Number(limit) || 100), 200);
+  const want = new Set((analyzers && analyzers.length ? analyzers : ['PAIR', 'VOUCHER', 'REFUND', 'WITHDRAWAL', 'EXTERNAL_PAYMENT', 'TRANSACTION_RING']).map(a => String(a).toUpperCase()));
+  const stats = { scanned_pairs: 0, scanned_users: 0, scanned_transactions: 0, reports_created: 0, reports_updated: 0, skipped: 0, failed: 0 };
+  const limitations = [], generated = [];
+  const avail = await getFraudSignalAvailability();
+  if (!avail.coupon_usages) limitations.push('VOUCHER_SCHEMA_NOT_FOUND');
+
+  const persist = async (rep) => {
+    if (!rep) { stats.skipped++; return; }
+    if (dryRun) { generated.push(rep); return; }
+    const r = await saveFraudIntelReport({ ...rep, period_start: period.start, period_end: period.end });
+    if (r === 'created') stats.reports_created++; else if (r === 'updated') stats.reports_updated++; else stats.failed++;
+    generated.push(rep);
+  };
+
+  if (want.has('PAIR')) {
+    try {
+      const pairs = (await pool.query(
+        `SELECT student_id, tutor_id, COUNT(*)::int AS n, COALESCE(SUM(lesson_fee),0)::numeric AS total
+           FROM bookings WHERE created_at > $1 AND student_id IS NOT NULL AND tutor_id IS NOT NULL
+          GROUP BY student_id, tutor_id HAVING COUNT(*) >= 3 ORDER BY COUNT(*) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const p of pairs) { stats.scanned_pairs++; try { await persist(await analyzeStudentTutorPair(p.student_id, p.tutor_id, period, { bookingCount: p.n, bookingTotal: Number(p.total) })); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('PAIR: ' + e.message); }
+  }
+  if (want.has('REFUND')) {
+    try {
+      const students = (await pool.query(`SELECT student_id, COUNT(*)::int AS n FROM refund_logs WHERE created_at > $1 AND student_id IS NOT NULL GROUP BY student_id HAVING COUNT(*) >= 2 ORDER BY COUNT(*) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const s of students) { stats.scanned_users++; try { await persist(await analyzeRefundAbuse(s.student_id, period)); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('REFUND: ' + e.message); }
+  }
+  if (want.has('WITHDRAWAL')) {
+    try {
+      const tutors = (await pool.query(`SELECT tutor_id, COUNT(*)::int AS n FROM withdrawal_requests WHERE requested_at > $1 GROUP BY tutor_id ORDER BY SUM(amount) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const t of tutors) { stats.scanned_users++; try { await persist(await analyzeWithdrawalRisk(t.tutor_id, period)); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('WITHDRAWAL: ' + e.message); }
+  }
+  if (want.has('EXTERNAL_PAYMENT')) {
+    try {
+      const tutors = (await pool.query(`SELECT tutor_id, COUNT(*)::int AS n FROM semantic_moderation_reports WHERE created_at > $1 AND tutor_id IS NOT NULL AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' GROUP BY tutor_id ORDER BY COUNT(*) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const t of tutors) { stats.scanned_users++; try { await persist(await analyzeExternalPaymentCollusion(t.tutor_id, period)); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('EXTERNAL_PAYMENT: ' + e.message); }
+  }
+  if (want.has('TRANSACTION_RING')) {
+    try { const reps = await analyzeTransactionRing(period, { limit: Math.min(cap, 50) }); for (const r of reps) { stats.scanned_transactions++; await persist(r); } }
+    catch (e) { limitations.push('TRANSACTION_RING: ' + e.message); }
+  }
+  if (want.has('VOUCHER')) { const v = await analyzeVoucherAbuse(period); if (v?.limitation) limitations.push(v.limitation); }
+
+  const finishedAt = new Date();
+  try {
+    await pool.query(
+      `INSERT INTO fraud_intel_run_logs (triggered_by, scanned_pairs, scanned_users, scanned_transactions, reports_created, reports_updated, skipped, failed, limitations, finished_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)`,
+      [triggeredBy, stats.scanned_pairs, stats.scanned_users, stats.scanned_transactions, stats.reports_created, stats.reports_updated, stats.skipped, stats.failed, JSON.stringify(limitations), finishedAt]);
+  } catch { /* run-log best-effort */ }
+
+  console.log(`[fraud] run by=${triggeredBy} pairs=${stats.scanned_pairs} users=${stats.scanned_users} tx=${stats.scanned_transactions} created=${stats.reports_created} updated=${stats.reports_updated} failed=${stats.failed} dryRun=${dryRun}`);
+  return { ...stats, limitations, period_days: period.days, dry_run: dryRun, triggered_by: triggeredBy, generated: dryRun ? generated : undefined, started_at: startedAt.toISOString(), finished_at: finishedAt.toISOString() };
 }
 
 // Trim, strip control chars, collapse whitespace, cap length. Null-safe.
@@ -11081,6 +11469,148 @@ app.get('/api/admin/tutors/:id/semantic-reputation', verifyToken, requireAdmin, 
   }
 });
 
+// ═══ AI Fraud Intel endpoints (Batch 28 — advisory only) ════════════════════
+
+// POST /api/admin/fraud-intel/run — run bounded fraud detection.
+app.post('/api/admin/fraud-intel/run', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { periodDays, limit, dryRun, analyzers } = req.body || {};
+    const result = await runFraudRingDetection({
+      periodDays: Number(periodDays) || FRAUD_INTEL_PERIOD_DAYS,
+      limit: Number(limit) || FRAUD_INTEL_BATCH_LIMIT,
+      dryRun: !!dryRun,
+      analyzers: Array.isArray(analyzers) ? analyzers : null,
+      triggeredBy: 'admin',
+    });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('POST /api/admin/fraud-intel/run error:', err.message);
+    return res.status(500).json({ message: 'Không thể chạy phân tích gian lận.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/reports — list (filters + pagination + KPIs).
+app.get('/api/admin/fraud-intel/reports', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.reportType) { params.push(String(req.query.reportType).toUpperCase()); where.push(`f.report_type=$${params.length}`); }
+    if (req.query.severity)   { params.push(String(req.query.severity).toUpperCase());   where.push(`f.severity=$${params.length}`); }
+    if (req.query.status)     { params.push(String(req.query.status).toUpperCase());     where.push(`f.status=$${params.length}`); }
+    if (req.query.riskFlag)   { params.push(String(req.query.riskFlag).toUpperCase());   where.push(`f.risk_flags ? $${params.length}`); }
+    if (req.query.tutorId && asUuidOrNull(req.query.tutorId))     { params.push(asUuidOrNull(req.query.tutorId));   where.push(`f.tutor_id=$${params.length}`); }
+    if (req.query.studentId && asUuidOrNull(req.query.studentId)) { params.push(asUuidOrNull(req.query.studentId)); where.push(`f.student_id=$${params.length}`); }
+    if (req.query.from) { params.push(req.query.from); where.push(`f.created_at >= $${params.length}`); }
+    if (req.query.to)   { params.push(req.query.to);   where.push(`f.created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports f ${whereSql}`, params);
+    const items = await copilotSafeRows(
+      `SELECT f.id, f.report_type, f.severity, f.status, f.risk_score, f.confidence,
+              f.tutor_id, f.student_id, f.primary_user_id, f.title, f.summary, f.risk_flags,
+              f.model_used, f.created_at,
+              pu.full_name AS primary_name, tu.full_name AS tutor_name
+         FROM fraud_intel_reports f
+         LEFT JOIN users pu ON pu.id = f.primary_user_id
+         LEFT JOIN users tu ON tu.id = f.tutor_id
+         ${whereSql}
+         ORDER BY f.risk_score DESC, f.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    const summary = {
+      open:             await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE status='OPEN'`),
+      critical:         await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE severity='CRITICAL'`),
+      high:             await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE severity='HIGH'`),
+      external_payment: await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE report_type='EXTERNAL_PAYMENT_COLLUSION'`),
+      withdrawal_risk:  await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE report_type='WITHDRAWAL_RISK'`),
+      reviewed:         await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE status <> 'OPEN'`),
+    };
+    return res.json({ items, summary, pagination: { page, limit, total } });
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/reports error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách báo cáo gian lận.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/reports/:id — detail.
+app.get('/api/admin/fraud-intel/reports/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const rows = await copilotSafeRows(
+      `SELECT f.*, pu.full_name AS primary_name, tu.full_name AS tutor_name, su.full_name AS student_name
+         FROM fraud_intel_reports f
+         LEFT JOIN users pu ON pu.id = f.primary_user_id
+         LEFT JOIN users tu ON tu.id = f.tutor_id
+         LEFT JOIN users su ON su.id = f.student_id
+        WHERE f.id=$1`, [idNum]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/reports/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
+// PATCH /api/admin/fraud-intel/reports/:id/status — status + note only.
+app.patch('/api/admin/fraud-intel/reports/:id/status', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, adminNote } = req.body || {};
+    const st = String(status || '').toUpperCase();
+    if (!['REVIEWED', 'DISMISSED', 'ACTION_REQUIRED', 'ESCALATED'].includes(st)) return res.status(400).json({ message: 'status không hợp lệ.' });
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const note = adminNote ? sanitizeModerationText(adminNote, 2000) : null;
+    const upd = await pool.query(
+      `UPDATE fraud_intel_reports SET status=$1, admin_note=$2, reviewed_at=NOW(), reviewed_by=$3, updated_at=NOW()
+        WHERE id=$4 RETURNING id, status, reviewed_at`,
+      [st, note, asUuidOrNull(req.user.id), idNum]);
+    if (!upd.rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    return res.json({ ok: true, ...upd.rows[0] });
+  } catch (err) {
+    console.error('PATCH /api/admin/fraud-intel/reports/:id/status error:', err.message);
+    return res.status(500).json({ message: 'Không thể cập nhật trạng thái.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/entity/:entityType/:entityId — reports + fresh risk.
+app.get('/api/admin/fraud-intel/entity/:entityType/:entityId', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const uid = asUuidOrNull(req.params.entityId);
+    if (!uid) return res.status(400).json({ message: 'entityId không hợp lệ.' });
+    const type = String(req.params.entityType || '').toLowerCase();
+    const reports = await copilotSafeRows(
+      `SELECT id, report_type, severity, status, risk_score, confidence, title, summary, risk_flags, created_at
+         FROM fraud_intel_reports
+        WHERE primary_user_id=$1 OR secondary_user_id=$1 OR tutor_id=$1 OR student_id=$1
+        ORDER BY created_at DESC LIMIT 50`, [uid]);
+    const period = buildFraudPeriod(90);
+    let risk = null;
+    try {
+      if (type === 'tutor') risk = await analyzeTutorFraudSignals(uid, period);
+      else if (type === 'student') risk = await analyzeStudentFraudSignals(uid, period);
+      else risk = { tutor: await analyzeTutorFraudSignals(uid, period), student: await analyzeStudentFraudSignals(uid, period) };
+    } catch { risk = null; }
+    return res.json({ entity_type: type, entity_id: uid, reports, risk_summary: risk });
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/entity error:', err.message);
+    return res.status(500).json({ message: 'Không thể tra cứu rủi ro người dùng.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/run-logs — recent run logs.
+app.get('/api/admin/fraud-intel/run-logs', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const rows = await copilotSafeRows(`SELECT * FROM fraud_intel_run_logs ORDER BY started_at DESC LIMIT 30`);
+    return res.json({ items: rows });
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/run-logs error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải nhật ký chạy.' });
+  }
+});
+
 // POST /api/escrow/resolve-dispute-v2 — Admin xử lý khiếu nại
 app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
@@ -12042,6 +12572,74 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.error('⚠️  DB migration (semantic moderation Batch 27) warning:', err.message);
   }
 
+  // ── Auto-migrate: fraud intel (Batch 28, advisory-only) ─────────────────────
+  // User-id columns UUID (matches users.id), no FK. detection_window_key gives
+  // per-(type+entity+day) idempotency via ON CONFLICT upsert.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS fraud_intel_reports (
+        id                   BIGSERIAL PRIMARY KEY,
+        report_type          TEXT NOT NULL CHECK (report_type IN ('USER_PAIR','TUTOR_CLUSTER','STUDENT_CLUSTER','TRANSACTION_RING','VOUCHER_ABUSE','REFUND_ABUSE','WITHDRAWAL_RISK','EXTERNAL_PAYMENT_COLLUSION','MIXED')),
+        status               TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','REVIEWED','DISMISSED','ACTION_REQUIRED','ESCALATED')),
+        severity             TEXT NOT NULL DEFAULT 'LOW' CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+        risk_score           NUMERIC(5,2) DEFAULT 0,
+        confidence           NUMERIC(5,2) DEFAULT 0,
+        primary_user_id      UUID,
+        secondary_user_id    UUID,
+        tutor_id             UUID,
+        student_id           UUID,
+        entity_key           TEXT NOT NULL,
+        detection_window_key TEXT UNIQUE,
+        title                TEXT,
+        summary              TEXT,
+        reason_summary       TEXT,
+        risk_flags           JSONB NOT NULL DEFAULT '[]'::jsonb,
+        evidence             JSONB NOT NULL DEFAULT '[]'::jsonb,
+        timeline             JSONB NOT NULL DEFAULT '[]'::jsonb,
+        related_entities     JSONB NOT NULL DEFAULT '[]'::jsonb,
+        financial_trace      JSONB NOT NULL DEFAULT '{}'::jsonb,
+        suggested_actions    JSONB NOT NULL DEFAULT '[]'::jsonb,
+        limitations          JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used           TEXT DEFAULT 'RULE_BASED',
+        rule_version         TEXT DEFAULT 'FRAUD_INTEL_V1',
+        period_start         TIMESTAMPTZ,
+        period_end           TIMESTAMPTZ,
+        reviewed_at          TIMESTAMPTZ,
+        reviewed_by          UUID,
+        admin_note           TEXT,
+        created_at           TIMESTAMPTZ DEFAULT NOW(),
+        updated_at           TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_fraud_status   ON fraud_intel_reports(status, severity, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_type     ON fraud_intel_reports(report_type, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_entity   ON fraud_intel_reports(entity_key, period_start, period_end);
+      CREATE INDEX IF NOT EXISTS idx_fraud_tutor    ON fraud_intel_reports(tutor_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_student  ON fraud_intel_reports(student_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_primary  ON fraud_intel_reports(primary_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_secondary ON fraud_intel_reports(secondary_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_flags    ON fraud_intel_reports USING GIN (risk_flags);
+
+      CREATE TABLE IF NOT EXISTS fraud_intel_run_logs (
+        id                   BIGSERIAL PRIMARY KEY,
+        triggered_by         TEXT,
+        scanned_pairs        INTEGER DEFAULT 0,
+        scanned_users        INTEGER DEFAULT 0,
+        scanned_transactions INTEGER DEFAULT 0,
+        reports_created      INTEGER DEFAULT 0,
+        reports_updated      INTEGER DEFAULT 0,
+        skipped              INTEGER DEFAULT 0,
+        failed               INTEGER DEFAULT 0,
+        limitations          JSONB DEFAULT '[]'::jsonb,
+        started_at           TIMESTAMPTZ DEFAULT NOW(),
+        finished_at          TIMESTAMPTZ,
+        error_message        TEXT
+      );
+    `);
+    console.log('✅ DB migration: fraud_intel_reports + fraud_intel_run_logs ready (Batch 28)');
+  } catch (err) {
+    console.error('⚠️  DB migration (fraud intel Batch 28) warning:', err.message);
+  }
+
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
   // Runs every minute; processNotificationOutbox() guards against overlap and
   // never throws, so this interval can never crash the server.
@@ -12233,6 +12831,19 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log(`🕐 Semantic moderation worker ENABLED (every ${SEMANTIC_MODERATION_INTERVAL_MINUTES}m).`);
   } else {
     console.log('⏸️  Semantic moderation worker disabled (SEMANTIC_MODERATION_WORKER_ENABLED=false).');
+  }
+
+  // ── Worker: Fraud intel (Batch 28) — gated OFF by default ───────────────────
+  // Same runFraudRingDetection() as POST run. Only writes fraud reports + run
+  // logs; never emails/bans/moves money/changes account or transaction status.
+  if (FRAUD_INTEL_WORKER_ENABLED) {
+    setInterval(() => {
+      runFraudRingDetection({ periodDays: FRAUD_INTEL_PERIOD_DAYS, limit: FRAUD_INTEL_BATCH_LIMIT, triggeredBy: 'worker' })
+        .catch(err => console.error('[fraud worker] error:', err.message));
+    }, Math.max(10, FRAUD_INTEL_INTERVAL_MINUTES) * 60 * 1000);
+    console.log(`🕐 Fraud intel worker ENABLED (every ${FRAUD_INTEL_INTERVAL_MINUTES}m).`);
+  } else {
+    console.log('⏸️  Fraud intel worker disabled (FRAUD_INTEL_WORKER_ENABLED=false).');
   }
 
   app.listen(port, () => {
