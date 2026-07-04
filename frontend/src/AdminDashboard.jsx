@@ -27,6 +27,7 @@ import AdminCopilot           from './admin/copilot/AdminCopilot'
 
 import Violations from './admin/services/Violations'
 import Moderation from './admin/services/Moderation'
+import SemanticModeration from './admin/semantic/SemanticModeration'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -80,6 +81,7 @@ const SM_SUB_ITEMS = [
   { id: 'sm-reviews',      label: 'Đánh giá',              icon: 'reviews' },
   { id: 'sm-violations',   label: 'Báo cáo vi phạm',       icon: 'gavel' },
   { id: 'sm-moderation',   label: 'Kiểm duyệt nội dung',   icon: 'policy' },
+  { id: 'sm-semantic',     label: 'AI Kiểm duyệt Nội dung', icon: 'smart_toy' },
 ]
 const SM_VIEW_IDS = new Set(SM_SUB_ITEMS.map(i => i.id))
 
@@ -479,6 +481,7 @@ export default function AdminDashboard() {
           {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
           {activeView === 'sm-violations'    && <Violations token={token} />}
           {activeView === 'sm-moderation'    && <Moderation token={token} />}
+          {activeView === 'sm-semantic'      && <SemanticModeration token={token} />}
 
           {activeView === 'reports'          && <FinancialReports token={token} />}
           {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
