@@ -23,6 +23,7 @@ import CommissionLogs        from './admin/transactions/CommissionLogs'
 import NotificationOutbox     from './admin/transactions/NotificationOutbox'
 import WithdrawalRequests     from './admin/transactions/WithdrawalRequests'
 import AICaseResolutions      from './admin/transactions/AICaseResolutions'
+import AdminCopilot           from './admin/copilot/AdminCopilot'
 
 import Violations from './admin/services/Violations'
 import Moderation from './admin/services/Moderation'
@@ -565,6 +566,9 @@ export default function AdminDashboard() {
         @keyframes growUp { from { transform: scaleY(0); } to { transform: scaleY(1); } }
         .bar-grow { transform-origin: bottom; animation: growUp 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
       `}</style>
+
+      {/* ══ AI COPILOT (Batch 26 — advisory only) ══ */}
+      <AdminCopilot token={token} pageKey={activeView} />
     </div>
   )
 }
@@ -2975,12 +2979,20 @@ function ComplaintsView({ token }) {
                     <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${statusColor[d.status]||'bg-gray-100 text-gray-600'}`}>{statusLabel[d.status]||d.status}</span>
                   </td>
                   <td className="py-3 px-4 text-right">
-                    {d.status === 'OPEN' ? (
-                      <button onClick={() => { setResolveModal(d); setAdminNote(''); setRefundRate(1) }}
-                        className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 flex items-center gap-1 ml-auto">
-                        <span className="material-symbols-outlined text-[14px]">gavel</span>Phán quyết
+                    <div className="flex items-center gap-2 justify-end">
+                      <button
+                        onClick={() => window.dispatchEvent(new CustomEvent('admin-copilot:analyze', { detail: { entityType: 'DISPUTE', entityId: d.id } }))}
+                        title="Phân tích bằng AI Copilot"
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-blue-200 text-blue-600 hover:bg-blue-50 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[14px]">smart_toy</span>AI
                       </button>
-                    ) : <span className="text-xs text-on-surface-variant italic">Đã xử lý</span>}
+                      {d.status === 'OPEN' ? (
+                        <button onClick={() => { setResolveModal(d); setAdminNote(''); setRefundRate(1) }}
+                          className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[14px]">gavel</span>Phán quyết
+                        </button>
+                      ) : <span className="text-xs text-on-surface-variant italic">Đã xử lý</span>}
+                    </div>
                   </td>
                 </tr>
               ))}
