@@ -711,6 +711,15 @@ async function collectTutorCopilotContext(tutorId) {
     ctx.metrics.rating_prior      = prior.length && prior[0].avg != null ? Number(prior[0].avg) : null;
     ctx.metrics.reviews_30d       = recent.length ? Number(recent[0].n) : 0;
   }
+
+  // Batch 27: semantic moderation signals (safe if tables empty/absent).
+  ctx.metrics.semantic_reports_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.semantic_external_payment  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.semantic_toxicity          = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'TOXIC_LANGUAGE' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.semantic_low_teaching      = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'LOW_TEACHING_QUALITY' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  const semRep = (await copilotSafeRows(`SELECT overall_reputation_score, external_payment_risk_score, toxicity_risk_score FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC LIMIT 1`, [tutorId]))[0] || null;
+  ctx.metrics.semantic_overall_reputation = semRep ? Number(semRep.overall_reputation_score) : null;
+
   return ctx;
 }
 
@@ -842,6 +851,10 @@ function generateAdminCopilotReport(entityType, context) {
     if (m.ai_flags_90d >= 2) { score += 1; findings.push(`AI đã gắn cờ rủi ro ${m.ai_flags_90d} lần trong 90 ngày.`); evidence.push({ label: 'Cờ rủi ro AI', value: m.ai_flags_90d }); }
     if (m.reputation_score != null && m.reputation_score < 70) { score += 1; findings.push(`Điểm uy tín thấp (${m.reputation_score}/100).`); evidence.push({ label: 'Điểm uy tín', value: m.reputation_score }); }
     if (m.active_escrow_exposure > 0 && m.disputes_30d > 0) { score += 1; findings.push(`Đang giữ ${copilotVnd(m.active_escrow_exposure)} escrow trong khi có khiếu nại mở.`); evidence.push({ label: 'Escrow đang giữ', value: `${copilotVnd(m.active_escrow_exposure)} · ${m.active_escrow_count} buổi` }); }
+    // Batch 27: semantic moderation signals (0 when tables empty — never breaks)
+    if (m.semantic_external_payment >= 1) { score += 2; findings.push(`AI kiểm duyệt phát hiện ${m.semantic_external_payment} dấu hiệu rủ giao dịch ngoài nền tảng.`); evidence.push({ label: 'Rủi ro giao dịch ngoài (AI)', value: m.semantic_external_payment }); }
+    if (m.semantic_toxicity >= 1) { score += 1; findings.push(`Có ${m.semantic_toxicity} nội dung bị gắn cờ ngôn từ tiêu cực.`); }
+    if (m.semantic_low_teaching >= 2) { score += 1; findings.push(`Có ${m.semantic_low_teaching} phản hồi bị gắn cờ chất lượng giảng dạy thấp.`); }
     if (m.is_banned) limitations.push('Tài khoản đang bị khóa.');
     if (m.late_noshow_disputes_30d >= 2 || m.disputes_30d >= 3) recommendations.push('Xem xét gửi cảnh báo chính thức về chất lượng giảng dạy.');
     actions.push(copilotAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Có dấu hiệu giảm chất lượng'));
@@ -961,6 +974,385 @@ async function maybeCopilotLLMRewrite(report, context) {
     console.warn('[copilot] LLM rewrite failed, falling back:', err.message);
     return { summary: report.summary, model_used: 'RULE_BASED' };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEMANTIC REVIEW & CHAT MODERATION (Batch 27) — ADVISORY-ONLY.
+// Deterministic/rule-based keyword classifier for reviews & chat messages.
+// Detects external-payment attempts, toxicity, spam/scam, teaching quality,
+// positive signals, and privacy risk. NEVER bans/suspends/refunds/emails or
+// mutates account/money. Optional LLM rewrite (off by default).
+// ═══════════════════════════════════════════════════════════════════════════
+const SEMANTIC_MODERATION_LLM_ENABLED   = String(process.env.SEMANTIC_MODERATION_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const SEMANTIC_MODERATION_PROVIDER      = String(process.env.SEMANTIC_MODERATION_PROVIDER || 'gemini').toLowerCase();
+const SEMANTIC_MODERATION_MAX_TEXT_CHARS = Number(process.env.SEMANTIC_MODERATION_MAX_TEXT_CHARS || 8000);
+const SEMANTIC_MODERATION_WORKER_ENABLED = String(process.env.SEMANTIC_MODERATION_WORKER_ENABLED ?? 'false').toLowerCase() === 'true';
+const SEMANTIC_MODERATION_INTERVAL_MINUTES = Number(process.env.SEMANTIC_MODERATION_INTERVAL_MINUTES || 60);
+const SEMANTIC_MODERATION_BATCH_LIMIT   = Number(process.env.SEMANTIC_MODERATION_BATCH_LIMIT || 50);
+const SEMANTIC_MODERATION_RULE_VERSION  = 'SEMANTIC_MODERATION_V1';
+
+const SEMANTIC_ALLOWED_ACTIONS = new Set([
+  'MANUAL_REVIEW', 'COPY_WARNING_DRAFT', 'WATCHLIST', 'REQUEST_MORE_EVIDENCE',
+  'REVIEW_TUTOR_QUALITY', 'NO_ACTION', 'MARK_FALSE_POSITIVE',
+]);
+
+const SEMANTIC_KEYWORDS = {
+  paymentProviders: ['momo', 'zalopay', 'viettel money', 'vietcombank', 'techcombank', 'vietinbank', 'bidv', 'vcb', 'stk', 'số tài khoản', 'so tai khoan', 'bank transfer', 'internet banking', 'ngân hàng', 'ngan hang'],
+  transferVerbs:    ['chuyển khoản', 'chuyen khoan', 'chuyển tiền', 'chuyen tien', 'pay me directly', 'direct payment', 'pay directly', 'thanh toán riêng', 'trả riêng', 'tra rieng'],
+  avoidPlatform:    ['khỏi đặt trên web', 'khoi dat tren web', 'học ngoài app', 'hoc ngoai app', 'ngoài app', 'ngoai app', 'né phí', 'ne phi', 'đỡ mất phí', 'do mat phi', 'outside platform', 'không qua app', 'khong qua app', 'nhắn zalo riêng', 'nhan zalo rieng', 'liên hệ riêng', 'lien he rieng', 'khỏi đặt', 'khoi dat'],
+  toxic:            ['đồ ngu', 'thằng ngu', 'con ngu', 'óc chó', 'oc cho', 'im mồm', 'câm mồm', 'cam mom', 'đồ rác', 'do rac', 'vô dụng', 'vo dung', 'khốn nạn', 'khon nan', 'mất dạy', 'mat day', 'con điên', 'stupid', 'idiot', 'shut up', 'moron', 'asshole', 'loser', 'trash tutor'],
+  threat:           ['tao giết', 'giết mày', 'giet may', 'đánh cho', 'danh cho', 'cho mày biết tay', 'đe dọa', 'de doa', 'kill you', 'beat you up'],
+  lowQuality:       ['không giải thích', 'khong giai thich', 'khó hiểu', 'kho hieu', 'dạy qua loa', 'day qua loa', 'không chuẩn bị', 'khong chuan bi', 'không nhiệt tình', 'khong nhiet tinh', 'thiếu kiên nhẫn', 'thieu kien nhan', 'vào trễ', 'vao tre', 'đi muộn', 'di muon', 'hủy liên tục', 'huy lien tuc', 'no-show', 'no show', 'unprepared', 'bỏ buổi', 'bo buoi'],
+  positive:         ['kiên nhẫn', 'kien nhan', 'thân thiện', 'than thien', 'dễ hiểu', 'de hieu', 'chuẩn bị tốt', 'chuan bi tot', 'nhiệt tình', 'nhiet tinh', 'đúng giờ', 'dung gio', 'tận tâm', 'tan tam', 'punctual', 'helpful', 'clear explanation', 'patient', 'friendly'],
+  spamPromo:        ['khuyến mãi', 'khuyen mai', 'giảm giá sốc', 'giam gia soc', 'đăng ký ngay', 'dang ky ngay', 'click here', 'freeship', 'trúng thưởng', 'trung thuong'],
+};
+
+const SEM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function asUuidOrNull(v) { return (v && SEM_UUID_RE.test(String(v))) ? String(v) : null; }
+
+// Trim, strip control chars, collapse whitespace, cap length.
+function sanitizeModerationText(text, maxChars = SEMANTIC_MODERATION_MAX_TEXT_CHARS) {
+  if (text == null) return '';
+  // eslint-disable-next-line no-control-regex
+  const s = String(text).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s.slice(0, maxChars);
+}
+
+// Mask emails, long digit runs (phones / bank accounts), and IPs inside a string.
+function maskSensitiveText(text) {
+  if (text == null) return text;
+  let s = String(text);
+  s = s.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP]');
+  s = s.replace(/([a-zA-Z0-9._%+-]{1,2})[a-zA-Z0-9._%+-]*(@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, (m, a, b) => `${a}***${b}`);
+  s = s.replace(/\d[\d\s.\-]{6,}\d/g, (m) => {
+    const digits = m.replace(/\D/g, '');
+    if (digits.length < 8) return m;
+    if (digits.length >= 12) return '****' + digits.slice(-4);
+    return digits.slice(0, 2) + '****' + digits.slice(-3);
+  });
+  return s;
+}
+
+function hashModerationInput(text, sourceType, sourceId) {
+  return crypto.createHash('sha256')
+    .update(`${sourceType || ''}|${sourceId || ''}|${String(text || '').trim().toLowerCase()}`)
+    .digest('hex');
+}
+
+// Core deterministic classifier. Returns the full analysis object.
+function classifyTextModeration(rawText, context = {}) {
+  const original = sanitizeModerationText(rawText);
+  const lower = original.toLowerCase();
+  const categories = new Set();
+  const evidence = [];
+  const highlighted = [];
+  const limitations = [];
+  const clamp = v => Math.max(0, Math.min(100, Math.round(v)));
+  const find = list => list.filter(kw => lower.includes(kw));
+
+  const phoneMatches   = original.match(/\d[\d\s.\-]{6,}\d/g) || [];
+  const emailMatches   = original.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+  const linkMatches    = original.match(/(https?:\/\/|www\.)\S+/gi) || [];
+  const accountMatches = original.match(/\b\d{9,19}\b/g) || [];
+
+  // 1. External payment attempt
+  const provHits = find(SEMANTIC_KEYWORDS.paymentProviders);
+  const verbHits = find(SEMANTIC_KEYWORDS.transferVerbs);
+  const avoidHits = find(SEMANTIC_KEYWORDS.avoidPlatform);
+  const directInstruction = verbHits.length > 0 && (provHits.length > 0 || accountMatches.length > 0);
+  let externalPaymentRisk = 0;
+  if (provHits.length || verbHits.length || avoidHits.length) {
+    categories.add('EXTERNAL_PAYMENT_ATTEMPT');
+    externalPaymentRisk = clamp(25 + provHits.length * 20 + verbHits.length * 20 + avoidHits.length * 18 + (directInstruction ? 30 : 0));
+    [...new Set([...provHits, ...verbHits, ...avoidHits])].forEach(kw => highlighted.push({ text: kw, reason: 'external_payment' }));
+    evidence.push({ label: 'Dấu hiệu giao dịch ngoài nền tảng', value: [...new Set([...provHits, ...verbHits, ...avoidHits])].join(', ') });
+  }
+
+  // 2. Toxic language
+  const toxicHits = find(SEMANTIC_KEYWORDS.toxic);
+  const threatHits = find(SEMANTIC_KEYWORDS.threat);
+  let toxicityRisk = 0;
+  if (toxicHits.length || threatHits.length) {
+    categories.add('TOXIC_LANGUAGE');
+    toxicityRisk = clamp(toxicHits.length * 25 + threatHits.length * 45);
+    [...new Set([...toxicHits, ...threatHits])].forEach(kw => highlighted.push({ text: kw, reason: 'toxic' }));
+    evidence.push({ label: 'Ngôn từ tiêu cực/đe dọa', value: [...new Set([...toxicHits, ...threatHits])].join(', ') });
+  }
+
+  // 3. Spam / scam
+  const spamHits = find(SEMANTIC_KEYWORDS.spamPromo);
+  const repeatedContact = phoneMatches.length >= 2 || linkMatches.length >= 2;
+  let spamRisk = clamp(spamHits.length * 15 + linkMatches.length * 20 + (repeatedContact ? 30 : 0));
+  if (spamHits.length >= 2 || repeatedContact) {
+    categories.add('SPAM_OR_SCAM');
+    evidence.push({ label: 'Dấu hiệu spam/quảng cáo', value: `từ khóa=${spamHits.length}, links=${linkMatches.length}, sđt=${phoneMatches.length}` });
+  }
+
+  // 4. Privacy risk (mask in highlights)
+  if (phoneMatches.length || emailMatches.length || accountMatches.length) {
+    categories.add('PRIVACY_RISK');
+    [...phoneMatches, ...emailMatches].forEach(t => highlighted.push({ text: maskSensitiveText(t), reason: 'privacy' }));
+    evidence.push({ label: 'Chia sẻ thông tin cá nhân (đã che)', value: `sđt=${phoneMatches.length}, email=${emailMatches.length}, stk=${accountMatches.length}` });
+  }
+
+  // 5. Low teaching quality
+  const negHits = find(SEMANTIC_KEYWORDS.lowQuality);
+  if (negHits.length) {
+    categories.add('LOW_TEACHING_QUALITY');
+    [...new Set(negHits)].forEach(kw => highlighted.push({ text: kw, reason: 'low_quality' }));
+    evidence.push({ label: 'Phàn nàn chất lượng giảng dạy', value: [...new Set(negHits)].join(', ') });
+  }
+
+  // 6. Positive teaching signal
+  const posHits = find(SEMANTIC_KEYWORDS.positive);
+  if (posHits.length) {
+    categories.add('POSITIVE_TEACHING_SIGNAL');
+    evidence.push({ label: 'Tín hiệu tích cực', value: [...new Set(posHits)].join(', ') });
+  }
+
+  // Teaching-quality dimension scores (neutral baseline 70)
+  const posN = posHits.length, negN = negHits.length;
+  const scores = {
+    patience:         clamp(70 + posN * 8 - negN * 12 - toxicityRisk * 0.1),
+    friendliness:     clamp(70 + posN * 8 - negN * 6 - toxicityRisk * 0.2),
+    teaching_quality: clamp(70 + posN * 8 - negN * 14),
+    professionalism:  clamp(70 + posN * 5 - negN * 8 - externalPaymentRisk * 0.2 - toxicityRisk * 0.2),
+    external_payment_risk: clamp(externalPaymentRisk),
+    toxicity_risk:    clamp(toxicityRisk),
+    spam_risk:        clamp(spamRisk),
+  };
+
+  // Severity
+  let severity = 'LOW';
+  if (directInstruction || threatHits.length || (categories.has('SPAM_OR_SCAM') && externalPaymentRisk >= 50)) severity = 'CRITICAL';
+  else if (externalPaymentRisk >= 60 || toxicityRisk >= 50 || repeatedContact || (phoneMatches.length + emailMatches.length) >= 2) severity = 'HIGH';
+  else if (externalPaymentRisk >= 30 || toxicityRisk >= 25 || negN >= 2 || categories.has('EXTERNAL_PAYMENT_ATTEMPT') || categories.has('TOXIC_LANGUAGE') || categories.has('PRIVACY_RISK')) severity = 'MEDIUM';
+
+  // Suggested actions (allowed set only)
+  const actions = [];
+  const add = (type, label, reason) => { if (SEMANTIC_ALLOWED_ACTIONS.has(type)) actions.push({ type, label, reason }); };
+  if (severity === 'CRITICAL' || severity === 'HIGH') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Tín hiệu rủi ro cao');
+    if (categories.has('EXTERNAL_PAYMENT_ATTEMPT')) add('REVIEW_TUTOR_QUALITY', 'Rà soát gia sư', 'Nghi ngờ giao dịch ngoài nền tảng');
+    add('COPY_WARNING_DRAFT', 'Soạn nháp cảnh báo', 'Chuẩn bị nhắc nhở');
+    add('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm');
+  } else if (severity === 'MEDIUM') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Cần xác minh thêm');
+    add('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Tín hiệu chưa rõ ràng');
+  } else {
+    add('NO_ACTION', 'Không cần hành động', categories.has('POSITIVE_TEACHING_SIGNAL') ? 'Nội dung tích cực' : 'Tín hiệu yếu/trung tính');
+  }
+  add('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai');
+
+  // Vietnamese summary
+  const catVi = {
+    EXTERNAL_PAYMENT_ATTEMPT: 'giao dịch ngoài nền tảng', TOXIC_LANGUAGE: 'ngôn từ tiêu cực',
+    SPAM_OR_SCAM: 'spam/lừa đảo', LOW_TEACHING_QUALITY: 'chất lượng giảng dạy thấp',
+    POSITIVE_TEACHING_SIGNAL: 'tín hiệu tích cực', PRIVACY_RISK: 'lộ thông tin cá nhân',
+  };
+  const catList = [...categories];
+  const sevVi = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' }[severity];
+  let summary;
+  if (catList.length === 0) summary = 'Không phát hiện dấu hiệu bất thường. Nội dung trung tính.';
+  else if (catList.length === 1 && catList[0] === 'POSITIVE_TEACHING_SIGNAL') summary = 'Nội dung tích cực về gia sư, không có rủi ro. Mức rủi ro thấp.';
+  else summary = `Phát hiện: ${catList.map(c => catVi[c] || c).join(', ')}. Mức rủi ro ${sevVi}.`;
+
+  limitations.push('Phân tích dựa trên quy tắc từ khóa, chỉ mang tính tham khảo. Admin quyết định cuối cùng.');
+
+  return {
+    severity, categories: catList, scores, summary,
+    evidence, highlighted_text: highlighted, suggested_actions: actions, limitations,
+    model_used: 'RULE_BASED',
+  };
+}
+
+function analyzeReviewSemantic(review) {
+  const text = review.text || review.comment || review.content || '';
+  return { ...classifyTextModeration(text, { sourceType: 'REVIEW' }), source_type: 'REVIEW', source_id: review.id || null, text };
+}
+function analyzeChatMessageSemantic(message) {
+  const text = message.text || message.content || '';
+  return { ...classifyTextModeration(text, { sourceType: 'CHAT_MESSAGE' }), source_type: 'CHAT_MESSAGE', source_id: message.id || null, text };
+}
+
+// Optional LLM rewrite of summary only (off by default). Never invents evidence.
+async function maybeSemanticLLMRewrite(report, sanitizedText) {
+  if (!SEMANTIC_MODERATION_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+  try {
+    const payload = JSON.stringify({ categories: report.categories, severity: report.severity, scores: report.scores, text: sanitizeModerationText(sanitizedText, 2000) }).slice(0, SEMANTIC_MODERATION_MAX_TEXT_CHARS);
+    const prompt = `Bạn là trợ lý kiểm duyệt nội dung cho nền tảng gia sư EduX. Viết lại TÓM TẮT bằng tiếng Việt ngắn gọn, khách quan, CHỈ dựa trên dữ liệu JSON dưới đây, KHÔNG bịa thêm bằng chứng, KHÔNG đề xuất khóa/cấm tài khoản. Trả về JSON {"summary_vi":"..."}. Dữ liệu: ${payload}`;
+    if (SEMANTIC_MODERATION_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try {
+            const parsed = JSON.parse(t);
+            if (parsed && typeof parsed.summary_vi === 'string' && parsed.summary_vi.trim().length > 10) {
+              return { summary: parsed.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' };
+            }
+          } catch { /* invalid -> fall through */ }
+        }
+      }
+    }
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  } catch (err) {
+    console.warn('[semantic] LLM rewrite failed, falling back:', err.message);
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  }
+}
+
+async function saveSemanticModerationReport(r) {
+  try {
+    const ins = await pool.query(
+      `INSERT INTO semantic_moderation_reports
+        (source_type, source_id, tutor_id, student_id, target_user_id, severity, status,
+         categories, scores, summary, evidence, highlighted_text, suggested_actions, limitations,
+         model_used, rule_version, input_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,'OPEN',$7::jsonb,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16)
+       RETURNING id`,
+      [
+        r.source_type, r.source_id != null ? String(r.source_id) : null,
+        asUuidOrNull(r.tutor_id), asUuidOrNull(r.student_id), asUuidOrNull(r.target_user_id),
+        r.severity, JSON.stringify(r.categories || []), JSON.stringify(r.scores || {}), r.summary || null,
+        JSON.stringify(r.evidence || []), JSON.stringify(r.highlighted_text || []),
+        JSON.stringify(r.suggested_actions || []), JSON.stringify(r.limitations || []),
+        r.model_used || 'RULE_BASED', SEMANTIC_MODERATION_RULE_VERSION, r.input_hash || null,
+      ]
+    );
+    return ins.rows[0].id;
+  } catch (e) { console.warn('[semantic] save report failed:', e.message); return null; }
+}
+
+// Aggregate a tutor's review texts into semantic reputation scores (read-only).
+async function analyzeTutorSemanticReputation(tutorUserId, { days = 90 } = {}) {
+  const rows = await copilotSafeRows(
+    `SELECT COALESCE(r.comment, r.content) AS text
+       FROM reviews r JOIN tutor_profiles tp ON tp.id = r.tutor_id
+      WHERE tp.user_id = $1 AND r.created_at > NOW() - make_interval(days => $2::int)
+        AND COALESCE(r.comment, r.content) IS NOT NULL
+      ORDER BY r.created_at DESC LIMIT 200`, [tutorUserId, days]);
+  const dims = { patience: [], friendliness: [], teaching_quality: [], professionalism: [] };
+  const risk = { external_payment_risk: 0, toxicity_risk: 0, spam_risk: 0 };
+  let count = 0;
+  for (const row of rows) {
+    if (!row.text) continue;
+    const a = classifyTextModeration(row.text, { sourceType: 'REVIEW' });
+    dims.patience.push(a.scores.patience);
+    dims.friendliness.push(a.scores.friendliness);
+    dims.teaching_quality.push(a.scores.teaching_quality);
+    dims.professionalism.push(a.scores.professionalism);
+    risk.external_payment_risk = Math.max(risk.external_payment_risk, a.scores.external_payment_risk);
+    risk.toxicity_risk = Math.max(risk.toxicity_risk, a.scores.toxicity_risk);
+    risk.spam_risk = Math.max(risk.spam_risk, a.scores.spam_risk);
+    count++;
+  }
+  const avg = arr => arr.length ? Math.round(arr.reduce((s, x) => s + x, 0) / arr.length) : 70;
+  const patience = avg(dims.patience), friendliness = avg(dims.friendliness);
+  const teaching_quality = avg(dims.teaching_quality), professionalism = avg(dims.professionalism);
+  const overall = Math.max(0, Math.min(100, Math.round(
+    (patience + friendliness + teaching_quality + professionalism) / 4
+    - (risk.external_payment_risk + risk.toxicity_risk + risk.spam_risk) / 6
+  )));
+  return {
+    tutor_id: tutorUserId, report_count: count,
+    patience_score: patience, friendliness_score: friendliness,
+    teaching_quality_score: teaching_quality, professionalism_score: professionalism,
+    external_payment_risk_score: risk.external_payment_risk, toxicity_risk_score: risk.toxicity_risk,
+    spam_risk_score: risk.spam_risk, overall_reputation_score: overall,
+    summary: count ? `Dựa trên ${count} đánh giá trong ${days} ngày gần nhất.` : 'Chưa đủ dữ liệu đánh giá để chấm điểm.',
+  };
+}
+
+async function upsertTutorReputationSemanticScore(tutorUserId, { days = 90 } = {}) {
+  const uid = asUuidOrNull(tutorUserId);
+  if (!uid) return null;
+  const rep = await analyzeTutorSemanticReputation(uid, { days });
+  try {
+    await pool.query(
+      `INSERT INTO tutor_reputation_semantic_scores
+        (tutor_id, period_start, period_end, patience_score, friendliness_score, teaching_quality_score,
+         professionalism_score, external_payment_risk_score, toxicity_risk_score, spam_risk_score,
+         overall_reputation_score, summary, report_count, updated_at)
+       VALUES ($1, (CURRENT_DATE - make_interval(days => $2::int))::date, CURRENT_DATE,
+               $3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW())
+       ON CONFLICT (tutor_id, period_start, period_end) DO UPDATE SET
+         patience_score=EXCLUDED.patience_score, friendliness_score=EXCLUDED.friendliness_score,
+         teaching_quality_score=EXCLUDED.teaching_quality_score, professionalism_score=EXCLUDED.professionalism_score,
+         external_payment_risk_score=EXCLUDED.external_payment_risk_score, toxicity_risk_score=EXCLUDED.toxicity_risk_score,
+         spam_risk_score=EXCLUDED.spam_risk_score, overall_reputation_score=EXCLUDED.overall_reputation_score,
+         summary=EXCLUDED.summary, report_count=EXCLUDED.report_count, updated_at=NOW()`,
+      [uid, days, rep.patience_score, rep.friendliness_score, rep.teaching_quality_score, rep.professionalism_score,
+       rep.external_payment_risk_score, rep.toxicity_risk_score, rep.spam_risk_score, rep.overall_reputation_score,
+       rep.summary, rep.report_count]
+    );
+  } catch (e) { console.warn('[semantic] reputation upsert failed:', e.message); }
+  return rep;
+}
+
+// Shared scan used by POST run-pending and the optional worker. Advisory only.
+async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_LIMIT, triggeredBy = 'worker' } = {}) {
+  const stats = { reviews_scanned: 0, chat_scanned: 0, created: 0, skipped: 0, failed: 0, tutors_scored: 0 };
+  const limitations = [];
+  const touchedTutors = new Set();
+
+  let reviews = [];
+  try {
+    reviews = (await pool.query(
+      `SELECT r.id, COALESCE(r.comment, r.content) AS text, tp.user_id AS tutor_user_id
+         FROM reviews r LEFT JOIN tutor_profiles tp ON tp.id = r.tutor_id
+        WHERE COALESCE(r.comment, r.content) IS NOT NULL AND TRIM(COALESCE(r.comment, r.content)) <> ''
+          AND NOT EXISTS (SELECT 1 FROM semantic_moderation_reports s WHERE s.source_type='REVIEW' AND s.source_id = r.id::text)
+        ORDER BY r.created_at DESC LIMIT $1`, [limit])).rows;
+  } catch (e) { limitations.push('Không quét được reviews: ' + e.message); }
+
+  for (const rv of reviews) {
+    stats.reviews_scanned++;
+    try {
+      const a = classifyTextModeration(rv.text, { sourceType: 'REVIEW' });
+      const suspicious = a.severity !== 'LOW' || a.categories.some(c => c !== 'POSITIVE_TEACHING_SIGNAL');
+      if (suspicious) {
+        const id = await saveSemanticModerationReport({
+          ...a, source_type: 'REVIEW', source_id: rv.id,
+          tutor_id: asUuidOrNull(rv.tutor_user_id), input_hash: hashModerationInput(rv.text, 'REVIEW', rv.id),
+        });
+        if (id) stats.created++; else stats.failed++;
+      } else stats.skipped++;
+      if (rv.tutor_user_id) touchedTutors.add(rv.tutor_user_id);
+    } catch { stats.failed++; }
+  }
+
+  let chats = [];
+  try {
+    chats = (await pool.query(
+      `SELECT cm.id, cm.content AS text, cm.sender_id
+         FROM chat_messages cm
+        WHERE cm.content IS NOT NULL AND TRIM(cm.content) <> ''
+          AND NOT EXISTS (SELECT 1 FROM semantic_moderation_reports s WHERE s.source_type='CHAT_MESSAGE' AND s.source_id = cm.id::text)
+        ORDER BY cm.created_at DESC LIMIT $1`, [limit])).rows;
+  } catch (e) { limitations.push('Bỏ qua chat: bảng chat_messages không khả dụng hoặc lỗi truy vấn.'); }
+
+  for (const c of chats) {
+    stats.chat_scanned++;
+    try {
+      const a = classifyTextModeration(c.text, { sourceType: 'CHAT_MESSAGE' });
+      const suspicious = a.severity !== 'LOW' && a.categories.some(cat => ['EXTERNAL_PAYMENT_ATTEMPT', 'TOXIC_LANGUAGE', 'SPAM_OR_SCAM', 'PRIVACY_RISK'].includes(cat));
+      if (suspicious) {
+        const id = await saveSemanticModerationReport({
+          ...a, source_type: 'CHAT_MESSAGE', source_id: c.id,
+          target_user_id: asUuidOrNull(c.sender_id), input_hash: hashModerationInput(c.text, 'CHAT_MESSAGE', c.id),
+        });
+        if (id) stats.created++; else stats.failed++;
+      } else stats.skipped++;
+    } catch { stats.failed++; }
+  }
+
+  for (const t of [...touchedTutors].slice(0, 50)) {
+    try { await upsertTutorReputationSemanticScore(t, { days: 90 }); stats.tutors_scored++; } catch { /* best-effort */ }
+  }
+
+  console.log(`[semantic] run by=${triggeredBy} reviews=${stats.reviews_scanned} chat=${stats.chat_scanned} created=${stats.created} skipped=${stats.skipped} failed=${stats.failed} tutorsScored=${stats.tutors_scored}`);
+  return { ...stats, limitations, triggered_by: triggeredBy, rule_version: SEMANTIC_MODERATION_RULE_VERSION };
 }
 
 // Trim, strip control chars, collapse whitespace, cap length. Null-safe.
@@ -10511,6 +10903,184 @@ app.get('/api/admin/copilot/history/:id', verifyToken, requireAdmin, async (req,
   }
 });
 
+// ═══ Semantic Moderation endpoints (Batch 27 — advisory only) ═══════════════
+
+// POST /api/admin/semantic-moderation/analyze — analyze one item / manual text.
+app.post('/api/admin/semantic-moderation/analyze', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { sourceType, sourceId, text, tutorId, studentId } = req.body || {};
+    const type = String(sourceType || 'TEXT').toUpperCase();
+    const allowed = ['REVIEW', 'CHAT_MESSAGE', 'CHAT_THREAD', 'TUTOR_PROFILE', 'TEXT'];
+    if (!allowed.includes(type)) return res.status(400).json({ message: 'sourceType không hợp lệ.' });
+
+    let analyzeText = typeof text === 'string' ? text : '';
+    let resolvedTutorId = asUuidOrNull(tutorId);
+    let resolvedStudentId = asUuidOrNull(studentId);
+    let targetUserId = null;
+
+    if ((!analyzeText || !analyzeText.trim()) && sourceId) {
+      if (type === 'REVIEW') {
+        const r = await copilotSafeRows(`SELECT COALESCE(comment, content) AS text, tutor_id FROM reviews WHERE id=$1 LIMIT 1`, [sourceId]);
+        if (r.length) {
+          analyzeText = r[0].text || '';
+          const tp = await copilotSafeRows(`SELECT user_id FROM tutor_profiles WHERE id=$1 LIMIT 1`, [r[0].tutor_id]);
+          if (tp.length) resolvedTutorId = resolvedTutorId || asUuidOrNull(tp[0].user_id);
+        }
+      } else if (type === 'CHAT_MESSAGE') {
+        const r = await copilotSafeRows(`SELECT content, sender_id FROM chat_messages WHERE id=$1 LIMIT 1`, [sourceId]);
+        if (r.length) { analyzeText = r[0].content || ''; targetUserId = asUuidOrNull(r[0].sender_id); }
+      } else if (type === 'TUTOR_PROFILE') {
+        const r = await copilotSafeRows(`SELECT bio, headline FROM tutor_profiles WHERE user_id=$1 LIMIT 1`, [sourceId]);
+        if (r.length) analyzeText = [r[0].headline, r[0].bio].filter(Boolean).join('. ');
+        resolvedTutorId = resolvedTutorId || asUuidOrNull(sourceId);
+      }
+    }
+
+    if (!analyzeText || !analyzeText.trim()) return res.status(400).json({ message: 'Không có nội dung để phân tích.' });
+
+    const base = classifyTextModeration(analyzeText, { sourceType: type });
+    const llm = await maybeSemanticLLMRewrite(base, analyzeText);
+    base.summary = llm.summary; base.model_used = llm.model_used;
+
+    const report = {
+      ...base, source_type: type, source_id: sourceId || null,
+      tutor_id: resolvedTutorId, student_id: resolvedStudentId, target_user_id: targetUserId,
+      input_hash: hashModerationInput(analyzeText, type, sourceId),
+    };
+    const id = await saveSemanticModerationReport(report);
+    if (resolvedTutorId) { try { await upsertTutorReputationSemanticScore(resolvedTutorId, { days: 90 }); } catch { /* best-effort */ } }
+
+    return res.json({ id, created_at: new Date().toISOString(), ...report });
+  } catch (err) {
+    console.error('POST /api/admin/semantic-moderation/analyze error:', err.message);
+    return res.status(500).json({ message: 'Không thể phân tích nội dung.' });
+  }
+});
+
+// POST /api/admin/semantic-moderation/run-pending — scan recent reviews/chat.
+app.post('/api/admin/semantic-moderation/run-pending', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(200, Math.max(1, parseInt(req.body?.limit, 10) || SEMANTIC_MODERATION_BATCH_LIMIT));
+    const result = await runPendingSemanticModeration({ limit, triggeredBy: 'admin' });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('POST /api/admin/semantic-moderation/run-pending error:', err.message);
+    return res.status(500).json({ message: 'Không thể chạy quét kiểm duyệt.' });
+  }
+});
+
+// GET /api/admin/semantic-moderation/reports — list (filters + pagination).
+app.get('/api/admin/semantic-moderation/reports', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.sourceType) { params.push(String(req.query.sourceType).toUpperCase()); where.push(`s.source_type=$${params.length}`); }
+    if (req.query.severity)   { params.push(String(req.query.severity).toUpperCase());   where.push(`s.severity=$${params.length}`); }
+    if (req.query.status)     { params.push(String(req.query.status).toUpperCase());     where.push(`s.status=$${params.length}`); }
+    if (req.query.category)   { params.push(String(req.query.category).toUpperCase());   where.push(`s.categories ? $${params.length}`); }
+    if (req.query.tutorId && asUuidOrNull(req.query.tutorId)) { params.push(asUuidOrNull(req.query.tutorId)); where.push(`s.tutor_id=$${params.length}`); }
+    if (req.query.from)       { params.push(req.query.from); where.push(`s.created_at >= $${params.length}`); }
+    if (req.query.to)         { params.push(req.query.to);   where.push(`s.created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports s ${whereSql}`, params);
+    const rows = await copilotSafeRows(
+      `SELECT s.id, s.source_type, s.source_id, s.tutor_id, s.target_user_id, s.severity, s.status,
+              s.categories, s.summary, s.model_used, s.created_at,
+              tu.full_name AS tutor_name, xu.full_name AS target_name
+         FROM semantic_moderation_reports s
+         LEFT JOIN users tu ON tu.id = s.tutor_id
+         LEFT JOIN users xu ON xu.id = s.target_user_id
+         ${whereSql}
+         ORDER BY s.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    const summary = {
+      open:             await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE status='OPEN'`),
+      high_risk:        await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE severity IN ('HIGH','CRITICAL')`),
+      external_payment: await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE categories ? 'EXTERNAL_PAYMENT_ATTEMPT'`),
+      toxic_spam:       await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE categories ? 'TOXIC_LANGUAGE' OR categories ? 'SPAM_OR_SCAM'`),
+      handled:          await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE status <> 'OPEN'`),
+    };
+    return res.json({ items: rows, pagination: { page, limit, total }, summary });
+  } catch (err) {
+    console.error('GET /api/admin/semantic-moderation/reports error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách báo cáo.' });
+  }
+});
+
+// GET /api/admin/semantic-moderation/reports/:id — detail.
+app.get('/api/admin/semantic-moderation/reports/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const rows = await copilotSafeRows(
+      `SELECT s.*, tu.full_name AS tutor_name, tu.email AS tutor_email, xu.full_name AS target_name
+         FROM semantic_moderation_reports s
+         LEFT JOIN users tu ON tu.id = s.tutor_id
+         LEFT JOIN users xu ON xu.id = s.target_user_id
+        WHERE s.id=$1`, [idNum]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    const r = rows[0];
+    if (r.tutor_email) r.tutor_email = maskEmail(r.tutor_email); // never expose raw email
+    return res.json(r);
+  } catch (err) {
+    console.error('GET /api/admin/semantic-moderation/reports/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết báo cáo.' });
+  }
+});
+
+// PATCH /api/admin/semantic-moderation/reports/:id/status — status + admin note only.
+app.patch('/api/admin/semantic-moderation/reports/:id/status', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, adminNote } = req.body || {};
+    const st = String(status || '').toUpperCase();
+    if (!['REVIEWED', 'DISMISSED', 'ACTION_REQUIRED'].includes(st)) return res.status(400).json({ message: 'status không hợp lệ.' });
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const note = adminNote ? sanitizeModerationText(adminNote, 2000) : null;
+    const upd = await pool.query(
+      `UPDATE semantic_moderation_reports
+          SET status=$1, admin_note=$2, reviewed_at=NOW(), reviewed_by=$3
+        WHERE id=$4 RETURNING id, status, reviewed_at`,
+      [st, note, asUuidOrNull(req.user.id), idNum]
+    );
+    if (!upd.rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    return res.json({ ok: true, ...upd.rows[0] });
+  } catch (err) {
+    console.error('PATCH /api/admin/semantic-moderation/reports/:id/status error:', err.message);
+    return res.status(500).json({ message: 'Không thể cập nhật trạng thái.' });
+  }
+});
+
+// GET /api/admin/tutors/:id/semantic-reputation — latest score + radar data.
+app.get('/api/admin/tutors/:id/semantic-reputation', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const uid = asUuidOrNull(req.params.id);
+    if (!uid) return res.status(400).json({ message: 'ID gia sư không hợp lệ.' });
+    let latest = (await copilotSafeRows(
+      `SELECT * FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC, updated_at DESC LIMIT 1`, [uid]))[0] || null;
+    if (!latest) {
+      const rep = await analyzeTutorSemanticReputation(uid, { days: 90 });
+      latest = { ...rep, period_start: null, period_end: null, computed_on_the_fly: true };
+    }
+    const radar = [
+      { label: 'Kiên nhẫn',              value: Number(latest.patience_score ?? 0) },
+      { label: 'Thân thiện',             value: Number(latest.friendliness_score ?? 0) },
+      { label: 'Sư phạm',                value: Number(latest.teaching_quality_score ?? 0) },
+      { label: 'Chuyên nghiệp',          value: Number(latest.professionalism_score ?? 0) },
+      { label: 'Rủi ro giao dịch ngoài', value: Number(latest.external_payment_risk_score ?? 0) },
+      { label: 'Rủi ro toxic',           value: Number(latest.toxicity_risk_score ?? 0) },
+    ];
+    return res.json({ tutor_id: uid, latest_score: latest, radar });
+  } catch (err) {
+    console.error('GET /api/admin/tutors/:id/semantic-reputation error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải điểm uy tín.' });
+  }
+});
+
 // POST /api/escrow/resolve-dispute-v2 — Admin xử lý khiếu nại
 app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
@@ -11409,6 +11979,69 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.error('⚠️  DB migration (admin_copilot_reports Batch 26) warning:', err.message);
   }
 
+  // ── Auto-migrate: semantic moderation (Batch 27, advisory-only) ─────────────
+  // User-id columns are UUID (matches users.id). No FK to stay decoupled and to
+  // allow storing analysis for manual/edge cases; values validated in code.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS semantic_moderation_reports (
+        id             BIGSERIAL PRIMARY KEY,
+        source_type    TEXT NOT NULL CHECK (source_type IN ('REVIEW','CHAT_MESSAGE','CHAT_THREAD','TUTOR_PROFILE','TEXT','MIXED')),
+        source_id      TEXT,
+        tutor_id       UUID,
+        student_id     UUID,
+        target_user_id UUID,
+        severity       TEXT CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')) DEFAULT 'LOW',
+        status         TEXT CHECK (status IN ('OPEN','REVIEWED','DISMISSED','ACTION_REQUIRED')) DEFAULT 'OPEN',
+        categories        JSONB NOT NULL DEFAULT '[]'::jsonb,
+        scores            JSONB NOT NULL DEFAULT '{}'::jsonb,
+        summary           TEXT,
+        evidence          JSONB NOT NULL DEFAULT '[]'::jsonb,
+        highlighted_text  JSONB NOT NULL DEFAULT '[]'::jsonb,
+        suggested_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        limitations       JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used     TEXT DEFAULT 'RULE_BASED',
+        rule_version   TEXT NOT NULL DEFAULT 'SEMANTIC_MODERATION_V1',
+        input_hash     TEXT,
+        created_at     TIMESTAMPTZ DEFAULT NOW(),
+        reviewed_at    TIMESTAMPTZ,
+        reviewed_by    UUID,
+        admin_note     TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_source   ON semantic_moderation_reports(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_tutor    ON semantic_moderation_reports(tutor_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_target   ON semantic_moderation_reports(target_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_sev      ON semantic_moderation_reports(severity, status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_hash     ON semantic_moderation_reports(input_hash);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_cat      ON semantic_moderation_reports USING GIN (categories);
+
+      CREATE TABLE IF NOT EXISTS tutor_reputation_semantic_scores (
+        id                          BIGSERIAL PRIMARY KEY,
+        tutor_id                    UUID,
+        period_start                DATE NOT NULL,
+        period_end                  DATE NOT NULL,
+        patience_score              NUMERIC(5,2),
+        friendliness_score          NUMERIC(5,2),
+        teaching_quality_score      NUMERIC(5,2),
+        professionalism_score       NUMERIC(5,2),
+        external_payment_risk_score NUMERIC(5,2),
+        toxicity_risk_score         NUMERIC(5,2),
+        spam_risk_score             NUMERIC(5,2),
+        overall_reputation_score    NUMERIC(5,2),
+        summary                     TEXT,
+        evidence                    JSONB NOT NULL DEFAULT '[]'::jsonb,
+        report_count                INTEGER DEFAULT 0,
+        created_at                  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at                  TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (tutor_id, period_start, period_end)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tutor_rep_sem_tutor ON tutor_reputation_semantic_scores(tutor_id, period_end);
+    `);
+    console.log('✅ DB migration: semantic_moderation_reports + tutor_reputation_semantic_scores ready (Batch 27)');
+  } catch (err) {
+    console.error('⚠️  DB migration (semantic moderation Batch 27) warning:', err.message);
+  }
+
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
   // Runs every minute; processNotificationOutbox() guards against overlap and
   // never throws, so this interval can never crash the server.
@@ -11587,6 +12220,19 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log(`🕐 AI case cron ENABLED (hourly). resolutionEnabled=${AUTO_AI_RESOLUTION_ENABLED} dryRun=${AUTO_AI_DRY_RUN}`);
   } else {
     console.log('⏸️  AI case cron disabled (AUTO_AI_CRON_ENABLED=false).');
+  }
+
+  // ── Worker: Semantic moderation (Batch 27) — gated OFF by default ───────────
+  // Uses the SAME runPendingSemanticModeration() as POST run-pending. Only writes
+  // moderation reports + tutor semantic scores; never emails/bans/changes money.
+  if (SEMANTIC_MODERATION_WORKER_ENABLED) {
+    setInterval(() => {
+      runPendingSemanticModeration({ limit: SEMANTIC_MODERATION_BATCH_LIMIT, triggeredBy: 'worker' })
+        .catch(err => console.error('[semantic worker] error:', err.message));
+    }, Math.max(5, SEMANTIC_MODERATION_INTERVAL_MINUTES) * 60 * 1000);
+    console.log(`🕐 Semantic moderation worker ENABLED (every ${SEMANTIC_MODERATION_INTERVAL_MINUTES}m).`);
+  } else {
+    console.log('⏸️  Semantic moderation worker disabled (SEMANTIC_MODERATION_WORKER_ENABLED=false).');
   }
 
   app.listen(port, () => {
