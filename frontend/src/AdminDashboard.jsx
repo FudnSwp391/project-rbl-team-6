@@ -29,6 +29,7 @@ import Violations from './admin/services/Violations'
 import Moderation from './admin/services/Moderation'
 import SemanticModeration from './admin/semantic/SemanticModeration'
 import FraudIntel from './admin/fraud/FraudIntel'
+import SafeAnalytics from './admin/analytics/SafeAnalytics'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -84,6 +85,7 @@ const SM_SUB_ITEMS = [
   { id: 'sm-moderation',   label: 'Kiểm duyệt nội dung',   icon: 'policy' },
   { id: 'sm-semantic',     label: 'AI Kiểm duyệt Nội dung', icon: 'smart_toy' },
   { id: 'sm-fraud',        label: 'AI Phát hiện Gian lận', icon: 'security' },
+  { id: 'sm-analytics',    label: 'AI Phân tích Dữ liệu',  icon: 'query_stats' },
 ]
 const SM_VIEW_IDS = new Set(SM_SUB_ITEMS.map(i => i.id))
 
@@ -485,6 +487,7 @@ export default function AdminDashboard() {
           {activeView === 'sm-moderation'    && <Moderation token={token} />}
           {activeView === 'sm-semantic'      && <SemanticModeration token={token} />}
           {activeView === 'sm-fraud'         && <FraudIntel token={token} />}
+          {activeView === 'sm-analytics'     && <SafeAnalytics token={token} />}
 
           {activeView === 'reports'          && <FinancialReports token={token} />}
           {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
