@@ -818,6 +818,8 @@ async function collectPageCopilotContext(pageKey, pageContext) {
   ctx.metrics.pending_tutors   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='pending'`);
   ctx.metrics.appealed_ai_cases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`);
   ctx.metrics.failed_tx_24h    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE status='FAILED' AND created_at > NOW() - INTERVAL '24 hours'`);
+  // Batch 29A: recent admin analytics activity (safe; Copilot never depends on it)
+  ctx.metrics.analytics_queries_7d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_analytics_queries WHERE created_at > NOW() - INTERVAL '7 days'`);
   // Only a small allow-list of primitive page-context hints is kept (no PII).
   if (pageContext && typeof pageContext === 'object') {
     ctx.notes.push(`page_hint:${String(pageKey || 'unknown').slice(0, 40)}`);
@@ -1741,6 +1743,330 @@ async function runFraudRingDetection({ periodDays = FRAUD_INTEL_PERIOD_DAYS, lim
 
   console.log(`[fraud] run by=${triggeredBy} pairs=${stats.scanned_pairs} users=${stats.scanned_users} tx=${stats.scanned_transactions} created=${stats.reports_created} updated=${stats.reports_updated} failed=${stats.failed} dryRun=${dryRun}`);
   return { ...stats, limitations, period_days: period.days, dry_run: dryRun, triggered_by: triggeredBy, generated: dryRun ? generated : undefined, started_at: startedAt.toISOString(), finished_at: finishedAt.toISOString() };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SAFE NATURAL-LANGUAGE ANALYTICS (Batch 29A) — template allowlist only.
+// Admin asks in VN/EN; deterministic intent detection maps to a VETTED,
+// parameterized, SELECT-only template. NEVER executes free-form or LLM-generated
+// SQL. Read-only; no mutation of any business table. Optional LLM only classifies
+// intent into an allowlisted template key (never writes SQL).
+// ═══════════════════════════════════════════════════════════════════════════
+const ADMIN_ANALYTICS_LLM_ENABLED    = String(process.env.ADMIN_ANALYTICS_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const ADMIN_ANALYTICS_PROVIDER       = String(process.env.ADMIN_ANALYTICS_PROVIDER || 'gemini').toLowerCase();
+const ADMIN_ANALYTICS_MAX_QUESTION_CHARS = Number(process.env.ADMIN_ANALYTICS_MAX_QUESTION_CHARS || 1000);
+const ADMIN_ANALYTICS_DEFAULT_DAYS   = Number(process.env.ADMIN_ANALYTICS_DEFAULT_DAYS || 30);
+const ADMIN_ANALYTICS_DEFAULT_LIMIT  = Number(process.env.ADMIN_ANALYTICS_DEFAULT_LIMIT || 50);
+const ADMIN_ANALYTICS_MAX_LIMIT      = Number(process.env.ADMIN_ANALYTICS_MAX_LIMIT || 200);
+
+const ANALYTICS_BLOCKED_RE   = /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|copy|execute|exec|merge)\b|;|--|\/\*|\bpg_|information_schema/i;
+const ANALYTICS_SENSITIVE_RE = /(password|mat khau|token|otp|secret|reset|api[ _]?key|private key|raw ip|dia chi ip)/i;
+
+function stripDiacritics(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+}
+function normalizeAnalyticsQuestion(q) {
+  return stripDiacritics(String(q || '').toLowerCase()).replace(/\s+/g, ' ').trim();
+}
+function maskAnalyticsSensitiveValue(value, col) {
+  if (value == null) return value;
+  const c = String(col).toLowerCase();
+  if (/(password|token|otp|secret|reset|api_key|apikey|hash|private)/.test(c)) return '[REDACTED]';
+  if (c.includes('email')) return maskEmail(String(value));
+  if (c.includes('phone')) return maskPhone(String(value));
+  if (c.includes('ip')) return '[IP]';
+  return value;
+}
+function maskAnalyticsRow(row) { const out = {}; for (const k of Object.keys(row)) out[k] = maskAnalyticsSensitiveValue(row[k], k); return out; }
+
+// ── Template registry (the primary security boundary). Static, parameterized. ─
+const ANALYTICS_TEMPLATES = [
+  {
+    key: 'top_refund_tutors_30d', label: 'Top gia sư bị hoàn tiền nhiều nhất',
+    description: 'Xếp hạng gia sư theo số lần và tổng tiền bị hoàn trong N ngày.',
+    exampleQuestions: ['Top gia sư có nhiều refund nhất 30 ngày', 'Gia sư nào bị hoàn tiền nhiều nhất tháng này'],
+    keywords: [['refund', 2], ['hoan tien', 2], ['gia su', 1], ['tutor', 1], ['nhieu nhat', 1], ['top', 1], ['most', 1]],
+    requiredTables: ['refund_logs', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'refund_count',
+    columns: ['tutor_id', 'tutor_name', 'refund_count', 'refund_amount', 'dispute_count'],
+    sql: `SELECT rl.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS refund_count,
+                 COALESCE(SUM(rl.refund_amount),0)::numeric AS refund_amount,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=rl.tutor_id AND d.created_at > NOW()-make_interval(days=>$1::int)) AS dispute_count
+            FROM refund_logs rl LEFT JOIN users u ON u.id=rl.tutor_id
+           WHERE rl.tutor_id IS NOT NULL AND rl.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY rl.tutor_id, u.full_name ORDER BY refund_count DESC, refund_amount DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, gia sư bị hoàn tiền nhiều nhất là ${rows[0].tutor_name || 'N/A'} với ${rows[0].refund_count} lần (${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ). Tổng ${rows.length} gia sư có hoàn tiền.` : `Không có gia sư nào bị hoàn tiền trong ${p.days} ngày.`,
+  },
+  {
+    key: 'top_dispute_students_30d', label: 'Top học sinh khiếu nại nhiều nhất',
+    description: 'Xếp hạng học sinh theo số khiếu nại đã mở trong N ngày.',
+    exampleQuestions: ['Học sinh nào khiếu nại nhiều nhất', 'Top học sinh tạo dispute nhiều nhất tháng này'],
+    keywords: [['hoc sinh', 2], ['student', 2], ['khieu nai', 2], ['dispute', 2], ['nhieu nhat', 1], ['top', 1]],
+    requiredTables: ['disputes', 'users'], chartType: 'bar', labelKey: 'student_name', valueKey: 'dispute_count',
+    columns: ['student_id', 'student_name', 'dispute_count', 'refund_count'],
+    sql: `SELECT d.raised_by AS student_id, u.full_name AS student_name, COUNT(*)::int AS dispute_count,
+                 (SELECT COUNT(*)::int FROM refund_logs rl WHERE rl.student_id=d.raised_by AND rl.created_at > NOW()-make_interval(days=>$1::int)) AS refund_count
+            FROM disputes d LEFT JOIN users u ON u.id=d.raised_by
+           WHERE d.raised_by IS NOT NULL AND d.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY d.raised_by, u.full_name ORDER BY dispute_count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Học sinh mở nhiều khiếu nại nhất trong ${p.days} ngày: ${rows[0].student_name || 'N/A'} (${rows[0].dispute_count} khiếu nại).` : `Không có khiếu nại nào trong ${p.days} ngày.`,
+  },
+  {
+    key: 'fraud_high_risk_tutors', label: 'Gia sư rủi ro gian lận cao',
+    description: 'Gia sư có báo cáo gian lận mức HIGH/CRITICAL (Batch 28).',
+    exampleQuestions: ['Gia sư nào có rủi ro gian lận cao nhất', 'Top fraud tutor high risk'],
+    keywords: [['gian lan', 2], ['fraud', 2], ['rui ro', 1], ['gia su', 1], ['tutor', 1], ['cao nhat', 1], ['high risk', 2]],
+    requiredTables: ['fraud_intel_reports', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'max_risk_score',
+    columns: ['tutor_id', 'tutor_name', 'report_count', 'max_risk_score', 'latest_summary'],
+    sql: `SELECT f.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS report_count,
+                 MAX(f.risk_score)::numeric AS max_risk_score, (ARRAY_AGG(f.summary ORDER BY f.created_at DESC))[1] AS latest_summary
+            FROM fraud_intel_reports f LEFT JOIN users u ON u.id=f.tutor_id
+           WHERE f.tutor_id IS NOT NULL AND f.severity IN ('HIGH','CRITICAL') AND f.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY f.tutor_id, u.full_name ORDER BY max_risk_score DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư bị gắn cờ gian lận cao trong ${p.days} ngày. Cao nhất: ${rows[0].tutor_name || 'N/A'} (điểm ${Math.round(Number(rows[0].max_risk_score))}).` : `Không có báo cáo gian lận mức cao trong ${p.days} ngày.`,
+  },
+  {
+    key: 'external_payment_signals', label: 'Dấu hiệu giao dịch ngoài nền tảng',
+    description: 'Người dùng có báo cáo kiểm duyệt EXTERNAL_PAYMENT_ATTEMPT (Batch 27).',
+    exampleQuestions: ['Ai có dấu hiệu giao dịch ngoài nền tảng', 'Top gia sư rủ chuyển khoản ngoài app'],
+    keywords: [['giao dich ngoai', 3], ['ngoai nen tang', 2], ['ngoai app', 2], ['chuyen khoan', 2], ['external payment', 3], ['off platform', 2], ['ne phi', 1]],
+    requiredTables: ['semantic_moderation_reports', 'users'], chartType: 'bar', labelKey: 'user_name', valueKey: 'semantic_report_count',
+    columns: ['user_id', 'user_name', 'semantic_report_count', 'fraud_report_count', 'latest_summary'],
+    sql: `SELECT s.tutor_id AS user_id, u.full_name AS user_name, COUNT(*)::int AS semantic_report_count,
+                 (SELECT COUNT(*)::int FROM fraud_intel_reports f WHERE f.tutor_id=s.tutor_id AND f.report_type='EXTERNAL_PAYMENT_COLLUSION' AND f.created_at > NOW()-make_interval(days=>$1::int)) AS fraud_report_count,
+                 (ARRAY_AGG(s.summary ORDER BY s.created_at DESC))[1] AS latest_summary
+            FROM semantic_moderation_reports s LEFT JOIN users u ON u.id=s.tutor_id
+           WHERE s.tutor_id IS NOT NULL AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND s.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY s.tutor_id, u.full_name ORDER BY semantic_report_count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Phát hiện ${rows.length} người dùng có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.` : `Không có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.`,
+  },
+  {
+    key: 'withdrawal_pending_risk', label: 'Gia sư chờ rút tiền có rủi ro',
+    description: 'Yêu cầu rút tiền PENDING kèm khiếu nại/gian lận/giao dịch ngoài.',
+    exampleQuestions: ['Gia sư đang chờ rút tiền có rủi ro cao', 'Withdrawal pending risky tutors'],
+    keywords: [['rut tien', 3], ['withdrawal', 3], ['cho rut', 2], ['pending', 1], ['rui ro', 1]],
+    requiredTables: ['withdrawal_requests', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'pending_amount',
+    columns: ['tutor_id', 'tutor_name', 'pending_amount', 'active_disputes', 'fraud_reports', 'external_payment_reports'],
+    sql: `SELECT w.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(w.amount),0)::numeric AS pending_amount,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=w.tutor_id AND d.status='OPEN') AS active_disputes,
+                 (SELECT COUNT(*)::int FROM fraud_intel_reports f WHERE f.tutor_id=w.tutor_id AND f.created_at > NOW()-make_interval(days=>$1::int)) AS fraud_reports,
+                 (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=w.tutor_id AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT') AS external_payment_reports
+            FROM withdrawal_requests w LEFT JOIN users u ON u.id=w.tutor_id
+           WHERE w.status='PENDING'
+           GROUP BY w.tutor_id, u.full_name ORDER BY pending_amount DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư đang chờ rút tiền; ưu tiên rà soát: ${rows[0].tutor_name || 'N/A'} (${Number(rows[0].pending_amount).toLocaleString('vi-VN')}đ, ${rows[0].active_disputes} khiếu nại mở).` : `Không có yêu cầu rút tiền đang chờ.`,
+  },
+  {
+    key: 'monthly_revenue_summary', label: 'Doanh thu theo tháng',
+    description: 'Tổng hoa hồng/doanh thu ghi nhận (commission_logs EARNED) theo tháng.',
+    exampleQuestions: ['Doanh thu theo tháng', 'Revenue by month'],
+    keywords: [['doanh thu', 3], ['revenue', 3], ['theo thang', 2], ['by month', 2], ['thang', 1]],
+    requiredTables: ['commission_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'gross_revenue',
+    columns: ['month', 'gross_revenue', 'commission_amount', 'transaction_count'],
+    sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month,
+                 COALESCE(SUM(gross_amount),0)::numeric AS gross_revenue,
+                 COALESCE(SUM(commission_amount),0)::numeric AS commission_amount, COUNT(*)::int AS transaction_count
+            FROM commission_logs WHERE event_type='EARNED' AND created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
+    summarize: (rows) => rows.length ? `Doanh thu ghi nhận theo ${rows.length} tháng gần nhất. Tháng mới nhất (${rows[0].month}): ${Number(rows[0].gross_revenue).toLocaleString('vi-VN')}đ (hoa hồng ${Number(rows[0].commission_amount).toLocaleString('vi-VN')}đ).` : `Chưa có dữ liệu doanh thu (commission_logs EARNED).`,
+  },
+  {
+    key: 'monthly_refund_summary', label: 'Hoàn tiền theo tháng',
+    description: 'Số lần và tổng tiền hoàn theo tháng.',
+    exampleQuestions: ['Refund theo tháng', 'Hoàn tiền theo tháng'],
+    keywords: [['refund', 2], ['hoan tien', 2], ['theo thang', 3], ['by month', 3], ['thang', 1]],
+    requiredTables: ['refund_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'refund_amount',
+    columns: ['month', 'refund_count', 'refund_amount'],
+    sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month, COUNT(*)::int AS refund_count,
+                 COALESCE(SUM(refund_amount),0)::numeric AS refund_amount
+            FROM refund_logs WHERE created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
+    summarize: (rows) => rows.length ? `Hoàn tiền theo ${rows.length} tháng. Tháng mới nhất (${rows[0].month}): ${rows[0].refund_count} lần, ${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ.` : `Chưa có dữ liệu hoàn tiền.`,
+  },
+  {
+    key: 'dispute_status_summary', label: 'Khiếu nại theo trạng thái',
+    description: 'Phân bố khiếu nại theo trạng thái trong N ngày.',
+    exampleQuestions: ['Thống kê khiếu nại theo trạng thái', 'Dispute status summary'],
+    keywords: [['khieu nai', 2], ['dispute', 2], ['trang thai', 3], ['status', 2], ['thong ke', 1]],
+    requiredTables: ['disputes'], chartType: 'bar', labelKey: 'status', valueKey: 'count',
+    columns: ['status', 'count', 'latest_created_at'],
+    sql: `SELECT status, COUNT(*)::int AS count, MAX(created_at) AS latest_created_at
+            FROM disputes WHERE created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY status ORDER BY count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày có ${rows.reduce((s, r) => s + Number(r.count), 0)} khiếu nại; nhiều nhất ở trạng thái "${rows[0].status}" (${rows[0].count}).` : `Không có khiếu nại trong ${p.days} ngày.`,
+  },
+  {
+    key: 'semantic_high_risk_reports', label: 'Kiểm duyệt nội dung rủi ro cao',
+    description: 'Báo cáo kiểm duyệt ngữ nghĩa mức HIGH/CRITICAL theo mức độ.',
+    exampleQuestions: ['Nội dung kiểm duyệt rủi ro cao', 'Semantic moderation high risk'],
+    keywords: [['kiem duyet', 2], ['semantic', 2], ['noi dung', 1], ['rui ro cao', 2], ['high risk', 2]],
+    requiredTables: ['semantic_moderation_reports'], chartType: 'bar', labelKey: 'severity', valueKey: 'report_count',
+    columns: ['severity', 'report_count', 'latest_summary'],
+    sql: `SELECT severity, COUNT(*)::int AS report_count, (ARRAY_AGG(summary ORDER BY created_at DESC))[1] AS latest_summary
+            FROM semantic_moderation_reports WHERE severity IN ('HIGH','CRITICAL') AND created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY severity ORDER BY report_count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.reduce((s, r) => s + Number(r.report_count), 0)} báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.` : `Không có báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.`,
+  },
+  {
+    key: 'fraud_critical_reports', label: 'Báo cáo gian lận CRITICAL',
+    description: 'Danh sách báo cáo gian lận mức CRITICAL (Batch 28).',
+    exampleQuestions: ['Báo cáo gian lận critical', 'Fraud critical reports'],
+    keywords: [['gian lan', 2], ['fraud', 2], ['critical', 3], ['nghiem trong', 2]],
+    requiredTables: ['fraud_intel_reports'], chartType: 'none', labelKey: 'report_type', valueKey: 'risk_score',
+    columns: ['report_type', 'severity', 'risk_score', 'summary', 'status'],
+    sql: `SELECT report_type, severity, risk_score::numeric AS risk_score, summary, status
+            FROM fraud_intel_reports WHERE severity='CRITICAL' AND created_at > NOW()-make_interval(days=>$1::int)
+           ORDER BY risk_score DESC, created_at DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} báo cáo gian lận CRITICAL trong ${p.days} ngày cần ưu tiên xử lý.` : `Không có báo cáo gian lận CRITICAL trong ${p.days} ngày.`,
+  },
+  {
+    key: 'ai_case_manual_review', label: 'AI case cần admin review',
+    description: 'Các quyết định AI ở trạng thái NEED_HUMAN_REVIEW (Batch 25).',
+    exampleQuestions: ['AI case nào cần admin review', 'Khiếu nại AI cần xử lý thủ công'],
+    keywords: [['ai case', 3], ['case', 1], ['admin review', 2], ['xu ly thu cong', 2], ['manual review', 2], ['khieu nai ai', 2]],
+    requiredTables: ['ai_case_resolutions'], chartType: 'none', labelKey: 'status', valueKey: 'confidence',
+    columns: ['case_type', 'status', 'recommendation', 'confidence', 'reason_summary'],
+    sql: `SELECT money_action AS case_type, status, recommendation, confidence::numeric AS confidence, reason_summary
+            FROM ai_case_resolutions WHERE status='NEED_HUMAN_REVIEW' AND created_at > NOW()-make_interval(days=>$1::int)
+           ORDER BY created_at DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} quyết định AI cần admin xem xét thủ công trong ${p.days} ngày.` : `Không có AI case nào cần review trong ${p.days} ngày.`,
+  },
+  {
+    key: 'tutor_quality_decline', label: 'Gia sư giảm chất lượng',
+    description: 'Gia sư có báo cáo chất lượng thấp / khiếu nại / hoàn tiền tăng.',
+    exampleQuestions: ['Gia sư có dấu hiệu giảm chất lượng', 'Tutor quality decline'],
+    keywords: [['giam chat luong', 3], ['chat luong', 1], ['quality decline', 3], ['gia su', 1], ['tutor', 1]],
+    requiredTables: ['tutor_profiles', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'dispute_count',
+    columns: ['tutor_id', 'tutor_name', 'avg_rating', 'low_teaching_reports', 'dispute_count', 'refund_count'],
+    sql: `SELECT tp.user_id AS tutor_id, u.full_name AS tutor_name, COALESCE(tp.avg_rating,0)::numeric AS avg_rating,
+                 (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=tp.user_id AND s.categories ? 'LOW_TEACHING_QUALITY' AND s.created_at > NOW()-make_interval(days=>$1::int)) AS low_teaching_reports,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=tp.user_id AND d.created_at > NOW()-make_interval(days=>$1::int)) AS dispute_count,
+                 (SELECT COUNT(*)::int FROM refund_logs rl WHERE rl.tutor_id=tp.user_id AND rl.created_at > NOW()-make_interval(days=>$1::int)) AS refund_count
+            FROM tutor_profiles tp LEFT JOIN users u ON u.id=tp.user_id
+           WHERE tp.status='approved' AND (
+                 (SELECT COUNT(*) FROM semantic_moderation_reports s WHERE s.tutor_id=tp.user_id AND s.categories ? 'LOW_TEACHING_QUALITY' AND s.created_at > NOW()-make_interval(days=>$1::int)) > 0
+              OR (SELECT COUNT(*) FROM disputes d WHERE d.tutor_id=tp.user_id AND d.created_at > NOW()-make_interval(days=>$1::int)) >= 2)
+           ORDER BY dispute_count DESC, low_teaching_reports DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư có dấu hiệu giảm chất lượng trong ${p.days} ngày.` : `Không phát hiện gia sư giảm chất lượng rõ rệt trong ${p.days} ngày.`,
+  },
+];
+const ANALYTICS_TEMPLATE_MAP = Object.fromEntries(ANALYTICS_TEMPLATES.map(t => [t.key, t]));
+
+function getAnalyticsTemplate(key) { return ANALYTICS_TEMPLATE_MAP[key] || null; }
+function listAnalyticsTemplates() {
+  return ANALYTICS_TEMPLATES.map(t => ({ key: t.key, label: t.label, description: t.description, exampleQuestions: t.exampleQuestions, params: ['days', 'limit'], chartType: t.chartType, columns: t.columns }));
+}
+// Secondary defense: assert our own template SQL is a single bounded SELECT/WITH.
+function validateAnalyticsTemplate(t) {
+  if (!t || typeof t.sql !== 'string') return { ok: false, reason: 'NO_TEMPLATE' };
+  const sql = t.sql.trim();
+  if (!/^(select|with)\b/i.test(sql)) return { ok: false, reason: 'NOT_SELECT' };
+  if (!/\blimit\b/i.test(sql)) return { ok: false, reason: 'NO_LIMIT' };
+  if (ANALYTICS_BLOCKED_RE.test(sql.replace(/\$\d+/g, '')) && /\b(insert|update|delete|drop|alter|truncate|grant|revoke)\b/i.test(sql)) return { ok: false, reason: 'BLOCKED_KEYWORD' };
+  return { ok: true };
+}
+// Deterministic intent detection (rule-based). Returns { key, score } or null.
+function detectAnalyticsIntent(question) {
+  const q = normalizeAnalyticsQuestion(question);
+  let best = null, bestScore = 0;
+  for (const t of ANALYTICS_TEMPLATES) {
+    let score = 0;
+    for (const [kw, w] of t.keywords) if (q.includes(kw)) score += w;
+    if (score > bestScore) { bestScore = score; best = t; }
+  }
+  return best && bestScore >= 3 ? { key: best.key, score: bestScore } : null;
+}
+// Optional LLM intent classification (never writes SQL; must return a known key).
+async function maybeAnalyticsLLMIntent(question) {
+  if (!ADMIN_ANALYTICS_LLM_ENABLED) return null;
+  try {
+    const keys = ANALYTICS_TEMPLATES.map(t => t.key).join(', ');
+    const prompt = `Bạn phân loại câu hỏi phân tích dữ liệu của admin nền tảng gia sư vào ĐÚNG MỘT template key trong danh sách sau (hoặc "NONE"): ${keys}. TUYỆT ĐỐI KHÔNG sinh SQL. Trả về JSON {"template_key":"..."}. Câu hỏi: ${String(question).slice(0, 500)}`;
+    if (ADMIN_ANALYTICS_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try { const p = JSON.parse(t); if (p && ANALYTICS_TEMPLATE_MAP[p.template_key]) return { key: p.template_key, score: 99 }; } catch { /* ignore */ }
+        }
+      }
+    }
+    return null;
+  } catch { return null; }
+}
+
+function clampAnalyticsParams(params = {}) {
+  let days = parseInt(params.days, 10); if (!Number.isFinite(days)) days = ADMIN_ANALYTICS_DEFAULT_DAYS;
+  days = Math.max(1, Math.min(365, days));
+  let limit = parseInt(params.limit, 10); if (!Number.isFinite(limit)) limit = ADMIN_ANALYTICS_DEFAULT_LIMIT;
+  limit = Math.max(1, Math.min(ADMIN_ANALYTICS_MAX_LIMIT, limit));
+  return { days, limit };
+}
+
+function buildChartData(t, rows) {
+  if (!t || t.chartType === 'none' || !rows.length) return {};
+  const labels = rows.slice(0, 20).map(r => String(r[t.labelKey] ?? ''));
+  const values = rows.slice(0, 20).map(r => Number(r[t.valueKey]) || 0);
+  return { type: t.chartType, labels, values, value_label: t.valueKey };
+}
+
+// Run a vetted template with a transaction-scoped statement_timeout (read-only).
+async function runAnalyticsTemplate(templateKey, params, adminId) {
+  const t = getAnalyticsTemplate(templateKey);
+  if (!t) return { status: 'NO_MATCH', limitations: ['TEMPLATE_NOT_FOUND'] };
+  const v = validateAnalyticsTemplate(t);
+  if (!v.ok) return { status: 'BLOCKED', limitations: [v.reason], safety_flags: ['TEMPLATE_VALIDATION_FAILED'] };
+
+  const { days, limit } = clampAnalyticsParams(params);
+  const limitations = [];
+  for (const tbl of t.requiredTables) { if (!(await fraudTableExists(tbl))) limitations.push(`TABLE_NOT_FOUND:${tbl}`); }
+  if (limitations.length) {
+    return { status: 'SUCCESS', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Không đủ dữ liệu: một số bảng chưa sẵn sàng.', limitations, sql_preview: t.sql, params: { days, limit } };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL statement_timeout = 8000');
+    const r = await client.query(t.sql, [days, limit]);
+    await client.query('COMMIT');
+    const rows = r.rows.map(maskAnalyticsRow);
+    return {
+      status: 'SUCCESS', template_key: t.key, columns: t.columns, rows,
+      chart: buildChartData(t, rows), summary: t.summarize(rows, { days, limit }),
+      limitations, sql_preview: t.sql, params: { days, limit },
+    };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.warn(`[analytics] template ${t.key} failed:`, e.message);
+    return { status: 'FAILED', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Truy vấn thất bại.', limitations: ['QUERY_FAILED'], error_message: e.message, sql_preview: t.sql, params: { days, limit } };
+  } finally { client.release(); }
+}
+
+function buildAnalyticsSummary(templateKey, rows, params, limitations) {
+  const t = getAnalyticsTemplate(templateKey);
+  if (!t) return 'Không có mẫu phù hợp.';
+  return t.summarize(rows, params) + (limitations?.length ? ` (Giới hạn: ${limitations.join(', ')})` : '');
+}
+
+async function saveAnalyticsAuditLog(log) {
+  try {
+    const r = await pool.query(
+      `INSERT INTO admin_analytics_queries
+        (question, normalized_question, detected_intent, template_key, status, summary, sql_preview,
+         parameters, result_count, result_preview, chart_data, limitations, safety_flags, model_used, created_by, error_message)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16)
+       RETURNING id`,
+      [
+        String(log.question || '').slice(0, ADMIN_ANALYTICS_MAX_QUESTION_CHARS), log.normalized_question || null,
+        log.detected_intent || null, log.template_key || null, log.status || 'SUCCESS', log.summary || null,
+        log.sql_preview || null, JSON.stringify(log.parameters || {}), Number(log.result_count) || 0,
+        JSON.stringify((log.result_preview || []).slice(0, 20)), JSON.stringify(log.chart_data || {}),
+        JSON.stringify(log.limitations || []), JSON.stringify(log.safety_flags || []),
+        log.model_used || 'TEMPLATE_RULE_BASED', asUuidOrNull(log.created_by), log.error_message || null,
+      ]
+    );
+    return r.rows[0].id;
+  } catch (e) { console.warn('[analytics] audit save failed:', e.message); return null; }
 }
 
 // Trim, strip control chars, collapse whitespace, cap length. Null-safe.
@@ -11469,6 +11795,130 @@ app.get('/api/admin/tutors/:id/semantic-reputation', verifyToken, requireAdmin, 
   }
 });
 
+// ═══ Safe NL Analytics endpoints (Batch 29A — template allowlist, SELECT-only) ═
+
+// POST /api/admin/analytics/ask — map question -> vetted template -> run SELECT.
+app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const question = String(req.body?.question || '').trim();
+    const params = req.body?.params || {};
+    if (!question) return res.status(400).json({ message: 'Vui lòng nhập câu hỏi.' });
+    if (question.length > ADMIN_ANALYTICS_MAX_QUESTION_CHARS) return res.status(400).json({ message: `Câu hỏi quá dài (tối đa ${ADMIN_ANALYTICS_MAX_QUESTION_CHARS} ký tự).` });
+    if (params.limit != null && parseInt(params.limit, 10) > ADMIN_ANALYTICS_MAX_LIMIT) return res.status(400).json({ message: `limit tối đa là ${ADMIN_ANALYTICS_MAX_LIMIT}.` });
+
+    const normalized = normalizeAnalyticsQuestion(question);
+
+    // Secondary guard: reject dangerous SQL keywords / sensitive-data requests.
+    if (ANALYTICS_BLOCKED_RE.test(question)) {
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'BLOCKED', summary: 'Câu hỏi chứa từ khóa bị chặn.', safety_flags: ['BLOCKED_SQL_KEYWORD'], created_by: req.user.id });
+      return res.json({ status: 'BLOCKED', intent: null, summary: 'Câu hỏi chứa từ khóa không được phép. Hệ thống chỉ chạy các mẫu phân tích an toàn (chỉ đọc).', safety_flags: ['BLOCKED_SQL_KEYWORD'], limitations: [], columns: [], rows: [], chart: {}, sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().slice(0, 6).map(t => t.exampleQuestions[0]) });
+    }
+    if (ANALYTICS_SENSITIVE_RE.test(normalized)) {
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'BLOCKED', summary: 'Yêu cầu dữ liệu nhạy cảm bị từ chối.', safety_flags: ['SENSITIVE_REQUEST'], created_by: req.user.id });
+      return res.json({ status: 'BLOCKED', intent: null, summary: 'Không thể truy xuất dữ liệu nhạy cảm (mật khẩu/token/OTP/IP...). Vui lòng dùng câu hỏi phân tích an toàn.', safety_flags: ['SENSITIVE_REQUEST'], limitations: [], columns: [], rows: [], chart: {}, sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().slice(0, 6).map(t => t.exampleQuestions[0]) });
+    }
+
+    // Intent detection: rule-based first, optional LLM classify as fallback.
+    let intent = detectAnalyticsIntent(question);
+    let modelUsed = 'TEMPLATE_RULE_BASED';
+    if (!intent) { const llm = await maybeAnalyticsLLMIntent(question); if (llm) { intent = llm; modelUsed = 'LLM_INTENT_' + ADMIN_ANALYTICS_PROVIDER.toUpperCase(); } }
+
+    if (!intent) {
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'NO_MATCH', summary: 'Không có mẫu phân tích phù hợp.', model_used: modelUsed, created_by: req.user.id });
+      return res.json({ status: 'NO_MATCH', intent: null, summary: 'Hiện hệ thống chưa hỗ trợ câu hỏi này ở chế độ an toàn.', columns: [], rows: [], chart: {}, limitations: [], safety_flags: [], sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().map(t => t.exampleQuestions[0]) });
+    }
+
+    const result = await runAnalyticsTemplate(intent.key, params, req.user.id);
+    const auditId = await saveAnalyticsAuditLog({
+      question, normalized_question: normalized, detected_intent: intent.key, template_key: intent.key,
+      status: result.status, summary: result.summary, sql_preview: result.sql_preview, parameters: result.params,
+      result_count: (result.rows || []).length, result_preview: result.rows, chart_data: result.chart,
+      limitations: result.limitations, safety_flags: result.safety_flags || [], model_used: modelUsed,
+      created_by: req.user.id, error_message: result.error_message,
+    });
+
+    return res.json({
+      status: result.status, template_key: intent.key, intent: intent.key, summary: result.summary,
+      columns: result.columns || [], rows: result.rows || [], chart: result.chart || {},
+      sql_preview: result.sql_preview, limitations: result.limitations || [], safety_flags: result.safety_flags || [],
+      model_used: modelUsed, audit_id: auditId,
+    });
+  } catch (err) {
+    console.error('POST /api/admin/analytics/ask error:', err.message);
+    return res.status(500).json({ message: 'Không thể xử lý câu hỏi phân tích.' });
+  }
+});
+
+// GET /api/admin/analytics/templates — list supported templates.
+app.get('/api/admin/analytics/templates', verifyToken, requireAdmin, async (req, res) => {
+  try { return res.json({ items: listAnalyticsTemplates() }); }
+  catch (err) { console.error('GET /api/admin/analytics/templates error:', err.message); return res.status(500).json({ message: 'Không thể tải danh sách mẫu.' }); }
+});
+
+// GET /api/admin/analytics/history — previous queries (filters + pagination).
+app.get('/api/admin/analytics/history', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.status) { params.push(String(req.query.status).toUpperCase()); where.push(`status=$${params.length}`); }
+    if (req.query.templateKey) { params.push(String(req.query.templateKey)); where.push(`template_key=$${params.length}`); }
+    if (req.query.from) { params.push(req.query.from); where.push(`created_at >= $${params.length}`); }
+    if (req.query.to) { params.push(req.query.to); where.push(`created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_analytics_queries ${whereSql}`, params);
+    const items = await copilotSafeRows(
+      `SELECT id, question, template_key, detected_intent, status, result_count, summary, model_used, created_at
+         FROM admin_analytics_queries ${whereSql} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]);
+    return res.json({ items, pagination: { page, limit, total } });
+  } catch (err) {
+    console.error('GET /api/admin/analytics/history error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải lịch sử.' });
+  }
+});
+
+// GET /api/admin/analytics/history/:id — detail audit log.
+app.get('/api/admin/analytics/history/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const rows = await copilotSafeRows(`SELECT * FROM admin_analytics_queries WHERE id=$1`, [idNum]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy.' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/analytics/history/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
+// POST /api/admin/analytics/explain-template — describe a template (no query run).
+app.post('/api/admin/analytics/explain-template', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const t = getAnalyticsTemplate(String(req.body?.templateKey || ''));
+    if (!t) return res.status(404).json({ message: 'Không tìm thấy mẫu.' });
+    return res.json({
+      key: t.key, label: t.label,
+      calculates: t.description,
+      data_sources: t.requiredTables,
+      example_questions: t.exampleQuestions,
+      params: ['days (1-365)', `limit (<= ${ADMIN_ANALYTICS_MAX_LIMIT})`],
+      chart_type: t.chartType,
+      sql_preview: t.sql,
+      safety_notes: [
+        'Chỉ chạy truy vấn SELECT đã được kiểm duyệt trong allowlist.',
+        'Tham số hóa hoàn toàn — không ghép chuỗi đầu vào người dùng.',
+        'Có LIMIT và giới hạn theo khoảng ngày; timeout 8 giây.',
+        'Chỉ đọc — không thay đổi bất kỳ dữ liệu nào.',
+      ],
+    });
+  } catch (err) {
+    console.error('POST /api/admin/analytics/explain-template error:', err.message);
+    return res.status(500).json({ message: 'Không thể giải thích mẫu.' });
+  }
+});
+
 // ═══ AI Fraud Intel endpoints (Batch 28 — advisory only) ════════════════════
 
 // POST /api/admin/fraud-intel/run — run bounded fraud detection.
@@ -12638,6 +13088,40 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: fraud_intel_reports + fraud_intel_run_logs ready (Batch 28)');
   } catch (err) {
     console.error('⚠️  DB migration (fraud intel Batch 28) warning:', err.message);
+  }
+
+  // ── Auto-migrate: admin_analytics_queries (Batch 29A audit log) ─────────────
+  // created_by UUID (matches users.id), no FK. Stores only capped result preview.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_analytics_queries (
+        id                  BIGSERIAL PRIMARY KEY,
+        question            TEXT NOT NULL,
+        normalized_question TEXT,
+        detected_intent     TEXT,
+        template_key        TEXT,
+        status              TEXT CHECK (status IN ('SUCCESS','NO_MATCH','BLOCKED','FAILED')) DEFAULT 'SUCCESS',
+        summary             TEXT,
+        sql_preview         TEXT,
+        parameters          JSONB NOT NULL DEFAULT '{}'::jsonb,
+        result_count        INTEGER DEFAULT 0,
+        result_preview      JSONB NOT NULL DEFAULT '[]'::jsonb,
+        chart_data          JSONB NOT NULL DEFAULT '{}'::jsonb,
+        limitations         JSONB NOT NULL DEFAULT '[]'::jsonb,
+        safety_flags        JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used          TEXT DEFAULT 'TEMPLATE_RULE_BASED',
+        created_by          UUID,
+        created_at          TIMESTAMPTZ DEFAULT NOW(),
+        error_message       TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_author   ON admin_analytics_queries(created_by, created_at);
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_intent   ON admin_analytics_queries(detected_intent, created_at);
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_template ON admin_analytics_queries(template_key, created_at);
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_status   ON admin_analytics_queries(status, created_at);
+    `);
+    console.log('✅ DB migration: admin_analytics_queries ready (Batch 29A)');
+  } catch (err) {
+    console.error('⚠️  DB migration (admin_analytics_queries Batch 29A) warning:', err.message);
   }
 
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
