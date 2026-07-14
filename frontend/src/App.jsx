@@ -722,7 +722,13 @@ function App() {
   if (routeName === 'dashboard') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     if (user.role === 'admin') return <AdminDashboard />
-    if (user.role === 'tutor') return <TutorDashboard />
+    if (user.role === 'tutor') {
+      if (user.tutor_status === 'pending' || user.tutor_status === 'rejected' || !user.tutor_status) {
+        window.location.hash = '/tutor';
+        return null;
+      }
+      return <TutorDashboard />
+    }
     if (user.role === 'parent') return <ParentDashboard />
     return <StudentDashboard />
   }
@@ -730,6 +736,118 @@ function App() {
   // ── Route: Tutor Dashboard ──
   if (routeName === 'tutor') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    
+    // Gia sư đang chờ duyệt
+    if (user.role === 'tutor' && user.tutor_status === 'pending') {
+      return (
+        <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div style={{ maxWidth: 520, width: '100%', background: 'white', borderRadius: 20, boxShadow: '0 20px 60px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)', padding: '40px 32px', textAlign: 'center' }}>
+              <div style={{ width: 80, height: 80, background: 'rgba(255,255,255,0.2)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 36 }}>
+                ⏳
+              </div>
+              <h1 style={{ color: 'white', fontSize: 24, fontWeight: 700, margin: 0 }}>Hồ Sơ Đang Chờ Duyệt</h1>
+              <p style={{ color: 'rgba(255,255,255,0.85)', marginTop: 8, fontSize: 15 }}>
+                Cảm ơn bạn đã đăng ký làm gia sư tại EduX!
+              </p>
+            </div>
+            {/* Body */}
+            <div style={{ padding: '32px' }}>
+              <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 12, padding: '16px 20px', marginBottom: 24 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <span style={{ fontSize: 20, flexShrink: 0 }}>📋</span>
+                  <div>
+                    <p style={{ fontWeight: 600, color: '#0369a1', margin: '0 0 4px' }}>Trạng thái: Đang chờ xét duyệt</p>
+                    <p style={{ color: '#0c4a6e', fontSize: 14, margin: 0, lineHeight: 1.6 }}>
+                      Hồ sơ của bạn đã được ghi nhận và đang trong hàng đợi xem xét. Quản trị viên sẽ xét duyệt trong <strong>3–5 ngày làm việc</strong>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 28 }}>
+                {[
+                  { icon: '✅', text: 'Hồ sơ đã được nộp thành công' },
+                  { icon: '🔍', text: 'Quản trị viên đang xem xét tài liệu của bạn' },
+                  { icon: '📧', text: 'Bạn sẽ nhận email thông báo kết quả duyệt' },
+                  { icon: '🚀', text: 'Sau khi được duyệt, bạn có thể bắt đầu dạy học' },
+                ].map((item, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#f8fafc', borderRadius: 8, padding: '10px 14px' }}>
+                    <span style={{ fontSize: 18 }}>{item.icon}</span>
+                    <span style={{ color: '#374151', fontSize: 14 }}>{item.text}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={() => { window.location.hash = '/tutor-profile' }}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10, border: '2px solid #1e40af', background: 'white', color: '#1e40af', fontWeight: 600, cursor: 'pointer', fontSize: 14, transition: 'all 0.2s' }}
+                  onMouseEnter={e => e.target.style.background = '#eff6ff'}
+                  onMouseLeave={e => e.target.style.background = 'white'}
+                >
+                  Cập Nhật Hồ Sơ
+                </button>
+                <button
+                  onClick={() => { localStorage.removeItem('token'); localStorage.removeItem('user'); window.location.hash = '/' }}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10, border: 'none', background: '#1e40af', color: 'white', fontWeight: 600, cursor: 'pointer', fontSize: 14, transition: 'all 0.2s' }}
+                  onMouseEnter={e => e.target.style.background = '#1d4ed8'}
+                  onMouseLeave={e => e.target.style.background = '#1e40af'}
+                >
+                  Về Trang Chủ
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // Gia sư bị từ chối
+    if (user.role === 'tutor' && user.tutor_status === 'rejected') {
+      return (
+        <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div style={{ maxWidth: 520, width: '100%', background: 'white', borderRadius: 20, boxShadow: '0 20px 60px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            <div style={{ background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)', padding: '40px 32px', textAlign: 'center' }}>
+              <div style={{ width: 80, height: 80, background: 'rgba(255,255,255,0.2)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 36 }}>
+                ❌
+              </div>
+              <h1 style={{ color: 'white', fontSize: 24, fontWeight: 700, margin: 0 }}>Hồ Sơ Bị Từ Chối</h1>
+              <p style={{ color: 'rgba(255,255,255,0.85)', marginTop: 8, fontSize: 15 }}>Rất tiếc, hồ sơ của bạn chưa đáp ứng yêu cầu lần này.</p>
+            </div>
+            <div style={{ padding: '32px' }}>
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '16px 20px', marginBottom: 24 }}>
+                <p style={{ fontWeight: 600, color: '#dc2626', margin: '0 0 4px' }}>Lý do từ chối:</p>
+                <p style={{ color: '#7f1d1d', fontSize: 14, margin: 0 }}>Vui lòng cập nhật lại hồ sơ và nộp lại để được xem xét.</p>
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={() => { window.location.hash = '/tutor-profile' }}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10, border: 'none', background: '#dc2626', color: 'white', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}
+                >
+                  Nộp Lại Hồ Sơ
+                </button>
+                <button
+                  onClick={() => { localStorage.removeItem('token'); localStorage.removeItem('user'); window.location.hash = '/' }}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10, border: '2px solid #dc2626', background: 'white', color: '#dc2626', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}
+                >
+                  Về Trang Chủ
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    if (user.role !== 'tutor' && user.role !== 'admin') {
+      return <AccessDenied isLoggedIn={true} />
+    }
+    
+    if (user.role === 'tutor' && !user.tutor_status) {
+      window.location.hash = '/tutor-profile';
+      return null;
+    }
+
     return <TutorDashboard />
   }
 
@@ -801,9 +919,7 @@ function App() {
 
   // ── Route: Tutor Profile (protected) ──
   if (routeName === 'tutor-profile') {
-    const hasPendingReg = !!sessionStorage.getItem('pendingTutorReg')
-    // Cho phép truy cập nếu: đã đăng nhập (tutor cũ) HOẶC đang trong luồng đăng ký mới
-    if (!user && !hasPendingReg) {
+    if (!user) {
       return (
         <AccessDenied
           isLoggedIn={false}
@@ -816,7 +932,7 @@ function App() {
         <header className="bg-surface-container-lowest shadow-sm sticky top-0 z-50">
           <div className="flex justify-between items-center w-full px-6 md:px-10 max-w-[1280px] mx-auto h-16">
             <div className="font-bold text-2xl text-primary tracking-tight">EduX</div>
-            {user && !hasPendingReg && (
+            {user && (
               <button
                 onClick={() => window.location.hash = '/tutor'}
                 className="text-on-surface-variant font-semibold text-sm hover:bg-surface-container px-3 py-2 rounded-lg transition-all duration-200"

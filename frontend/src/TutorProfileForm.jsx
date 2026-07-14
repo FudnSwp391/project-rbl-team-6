@@ -255,12 +255,7 @@ function selectCls(hasError) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function TutorProfileForm() {
-  const { token, loginSilent } = useAuth()
-
-  // Detect new-registration mode (tutor chưa có tài khoản)
-  const pendingRegRaw = sessionStorage.getItem('pendingTutorReg')
-  const pendingReg = pendingRegRaw ? (() => { try { return JSON.parse(pendingRegRaw) } catch { return null } })() : null
-  const isNewRegistration = !!pendingReg
+  const { token, updateUser } = useAuth()
 
   // ── Step state ──────────────────────────────────────────────────────────────
   const [step, setStep] = useState(1)
@@ -296,7 +291,8 @@ export default function TutorProfileForm() {
   const [profilePhotoFile, setProfilePhotoFile] = useState(null)
   const [certificateFiles, setCertificateFiles] = useState([])
   const [certMetadata, setCertMetadata] = useState([])
-  const [cccdFile, setCccdFile] = useState(null)
+  const [cccdFrontFile, setCccdFrontFile] = useState(null)
+  const [cccdBackFile, setCccdBackFile] = useState(null)
 
   // ── Errors ──────────────────────────────────────────────────────────────────
   const [errors, setErrors] = useState({})
@@ -408,7 +404,8 @@ export default function TutorProfileForm() {
     const e = {}
     if (!profilePhotoFile) e.profilePhoto = 'Ảnh đại diện là bắt buộc.'
     if (certificateFiles.length === 0) e.certificate = 'Bắt buộc tải lên ít nhất 1 chứng chỉ.'
-    if (!cccdFile) e.cccd = 'Ảnh CCCD / CMND là bắt buộc.'
+    if (!cccdFrontFile) e.cccdFront = 'Ảnh mặt trước CCCD / CMND là bắt buộc.'
+    if (!cccdBackFile) e.cccdBack = 'Ảnh mặt sau CCCD / CMND là bắt buộc.'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -440,38 +437,25 @@ export default function TutorProfileForm() {
     setSubmitMessage({ text: '', type: '' })
 
     try {
-      let activeToken = token
-
-      // ── Luồng đăng ký mới: tạo tài khoản trước, rồi mới tạo profile ────────
-      if (isNewRegistration) {
-        const regRes = await fetch(`${API}/api/auth/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fullName: `${firstName.trim()} ${lastName.trim()}`,
-            email: pendingReg.email,
-            password: pendingReg.password,
-            role: 'tutor',
-          }),
-        })
-        const regData = await regRes.json()
-        if (!regRes.ok) throw new Error(regData.message || 'Registration failed.')
-        activeToken = regData.token
-        // Lưu user vào auth context (không redirect)
-        loginSilent(regData.token, regData.user)
-        // Xoá pending data khỏi sessionStorage
-        sessionStorage.removeItem('pendingTutorReg')
-      }
-
       // ── Upload file lên Supabase trước khi gọi lưu profile ────────────────
       let profile_photo_url = null
-      let cccd_url = null
+      let cccd_front_url = null
+      let cccd_back_url = null
+      let certificate_urls = []
 
       if (profilePhotoFile) {
         profile_photo_url = await uploadAvatarFile(profilePhotoFile)
       }
-      if (cccdFile) {
-        cccd_url = await uploadProofFile(cccdFile)
+      if (cccdFrontFile) {
+        cccd_front_url = await uploadProofFile(cccdFrontFile, 'cccd-front')
+      }
+      if (cccdBackFile) {
+        cccd_back_url = await uploadProofFile(cccdBackFile, 'cccd-back')
+      }
+      // Upload từng chứng chỉ
+      if (certificateFiles.length > 0) {
+        const uploadPromises = certificateFiles.map(f => uploadProofFile(f, 'certificates'))
+        certificate_urls = await Promise.all(uploadPromises)
       }
 
       // ── Chuẩn bị JSON Payload ──────────────────────────────────────────────
@@ -494,8 +478,11 @@ export default function TutorProfileForm() {
         teaching_methods: JSON.stringify(teachingMethods.filter(m => m.trim())),
         suitable_students: JSON.stringify(suitableStudents),
         cert_metadata: JSON.stringify(certMetadata),
+        certificate_urls: JSON.stringify(certificate_urls),
         profile_photo_url,
-        cccd_url
+        cccd_url: cccd_front_url,         // backward compat: gửi mặt trước làm cccd_url chính
+        cccd_front_url,
+        cccd_back_url,
       }
 
       if (birthDay && birthMonth && birthYear) {
@@ -508,7 +495,7 @@ export default function TutorProfileForm() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${activeToken}` 
+          Authorization: `Bearer ${token}` 
         },
         body: JSON.stringify(payload),
       })
@@ -519,6 +506,9 @@ export default function TutorProfileForm() {
         text: 'Hồ sơ đã được nộp thành công! Trạng thái của bạn hiện đang chờ xét duyệt.',
         type: 'success',
       })
+
+      // Cập nhật state AuthContext để App.jsx biết tutor này đang pending
+      updateUser({ role: 'tutor', tutor_status: 'pending' })
 
       // Sau 2 giây redirect về tutor dashboard
       setTimeout(() => {
@@ -1120,17 +1110,39 @@ export default function TutorProfileForm() {
                     )}
                   </div>
 
-                  {/* CCCD */}
-                  <ImageUploadCard
-                    id="upload-cccd"
-                    label="Ảnh CCCD / CMND"
-                    description="Ảnh CCCD / CMND. Định dạng chấp nhận: JPG, JPEG, PNG, WEBP. Tối đa 5MB."
-                    file={cccdFile}
-                    onFileChange={e => handleImageChange(e, setCccdFile, 'cccd')}
-                    onRemove={() => { setCccdFile(null); setErrors(prev => ({ ...prev, cccd: '' })) }}
-                    error={errors.cccd}
-                    required
-                  />
+                  {/* CCCD — 2 mặt */}
+                  <div className="rounded-xl border border-outline-variant bg-surface-container-low p-md">
+                    <div className="mb-sm">
+                      <p className="font-label-md text-label-md text-on-surface">
+                        Ảnh CCCD / CMND <span className="text-error">*</span>
+                      </p>
+                      <p className="font-label-sm text-label-sm text-on-surface-variant mt-0.5">
+                        Yêu cầu tải lên cả 2 mặt của CCCD / CMND. Định dạng: JPG, JPEG, PNG, WEBP. Tối đa 5MB mỗi ảnh.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+                      <ImageUploadCard
+                        id="upload-cccd-front"
+                        label="Mặt Trước"
+                        description="Mặt có ảnh chân dung và thông tin cá nhân"
+                        file={cccdFrontFile}
+                        onFileChange={e => handleImageChange(e, setCccdFrontFile, 'cccdFront')}
+                        onRemove={() => { setCccdFrontFile(null); setErrors(prev => ({ ...prev, cccdFront: '' })) }}
+                        error={errors.cccdFront}
+                        required
+                      />
+                      <ImageUploadCard
+                        id="upload-cccd-back"
+                        label="Mặt Sau"
+                        description="Mặt có mã QR và thông tin bổ sung"
+                        file={cccdBackFile}
+                        onFileChange={e => handleImageChange(e, setCccdBackFile, 'cccdBack')}
+                        onRemove={() => { setCccdBackFile(null); setErrors(prev => ({ ...prev, cccdBack: '' })) }}
+                        error={errors.cccdBack}
+                        required
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1242,7 +1254,8 @@ export default function TutorProfileForm() {
                   <div className="p-md grid grid-cols-1 sm:grid-cols-3 gap-md">
                     {[
                       { label: 'Ảnh Đại Diện', file: profilePhotoFile },
-                      { label: 'Ảnh CCCD / CMND', file: cccdFile },
+                      { label: 'CCCD Mặt Trước', file: cccdFrontFile },
+                      { label: 'CCCD Mặt Sau', file: cccdBackFile },
                     ].map(({ label, file }) => {
                       const url = file ? createObjectURL(file) : null
                       return (

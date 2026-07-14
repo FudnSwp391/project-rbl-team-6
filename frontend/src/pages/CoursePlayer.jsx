@@ -45,10 +45,16 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const completed = course?.lessons?.filter((lesson) => lesson.isCompleted).length || 0
   const totalLessons = course?.lessons?.length || 0
   const progress = totalLessons ? Math.round((completed / totalLessons) * 100) : 0
+  const canBuyCourse = user && ['student', 'parent'].includes(user.role)
+  const isStaffView = user?.role === 'tutor' || user?.role === 'admin'
 
   const handleEnroll = async () => {
     if (!user) {
       window.location.hash = '/signin'
+      return
+    }
+    if (!canBuyCourse) {
+      setError('Tài khoản gia sư/quản trị không cần mua khóa học. Vui lòng quay lại trang quản lý khóa học.')
       return
     }
     setBuying(true)
@@ -134,13 +140,48 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                 <div style={S.locked}>
                   <span className="material-symbols-outlined" style={{ fontSize: 54 }}>lock</span>
                   <h2>This lesson is locked</h2>
-                  <p>Buy the course to unlock every lesson, documents, and progress tracking.</p>
-                  <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
-                    {buying ? 'Processing...' : `Buy course ${money(course.price)}`}
-                  </button>
+                  {canBuyCourse ? (
+                    <>
+                      <p>Buy the course to unlock every lesson, documents, and progress tracking.</p>
+                      <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
+                        {buying ? 'Processing...' : `Buy course ${money(course.price)}`}
+                      </button>
+                    </>
+                  ) : (
+                    <p>{isStaffView ? 'This is a management preview. Purchase actions are only available for students and parents.' : 'Please sign in as a student or parent to buy this course.'}</p>
+                  )}
                 </div>
               ) : selectedLesson?.videoUrl ? (
-                <video src={selectedLesson.videoUrl} controls preload="metadata" style={S.video} />
+                (() => {
+                  const url = selectedLesson.videoUrl;
+                  const ytMatch = url.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/);
+                  const ytId = ytMatch && ytMatch[2].length === 11 ? ytMatch[2] : null;
+                  
+                  if (ytId) {
+                    return (
+                      <iframe 
+                        key={selectedLesson.id}
+                        src={`https://www.youtube.com/embed/${ytId}`}
+                        style={{...S.video, border: 'none'}}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    );
+                  }
+                  
+                  const isValidUrl = url.startsWith('http') || url.startsWith('/');
+                  if (!isValidUrl) {
+                    return (
+                      <div style={S.locked}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 54, color: '#e53935' }}>link_off</span>
+                        <h2>Đường dẫn video không hợp lệ</h2>
+                        <p>Link: "{url}" không phải là link video hợp lệ.</p>
+                      </div>
+                    );
+                  }
+
+                  return <video key={selectedLesson.id} src={url} controls preload="metadata" style={S.video} />;
+                })()
               ) : (
                 <div style={S.locked}>
                   <span className="material-symbols-outlined" style={{ fontSize: 54 }}>play_disabled</span>
@@ -184,11 +225,16 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                   <span className="material-symbols-outlined icon-fill">verified</span>
                   Enrolled
                 </span>
-              ) : (
+              ) : canBuyCourse ? (
                 <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
                   <span className="material-symbols-outlined">shopping_cart</span>
                   {buying ? 'Processing...' : 'Buy and start learning'}
                 </button>
+              ) : (
+                <span style={S.staffBadge}>
+                  <span className="material-symbols-outlined">visibility</span>
+                  {isStaffView ? 'Management preview' : 'Sign in to buy'}
+                </span>
               )}
             </div>
 
@@ -282,6 +328,7 @@ const S = {
   secondaryBtn: { height: 44, padding: '0 16px', borderRadius: 13, border: '1px solid #cbd5e1', color: '#334155', background: '#fff', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none' },
   doneBtn: { height: 48, padding: '0 18px', border: '1px solid #86efac', borderRadius: 14, background: '#dcfce7', color: '#15803d', fontWeight: 900, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer', fontFamily: 'inherit' },
   enrolledBadge: { height: 44, borderRadius: 14, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontWeight: 900 },
+  staffBadge: { minHeight: 44, borderRadius: 14, background: '#eef3ff', color: '#00288e', border: '1px solid #c8d6ff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontWeight: 900, padding: '0 14px', textAlign: 'center' },
   noticeError: { background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 14, padding: '12px 14px', marginBottom: 16, fontWeight: 800 },
   errorCard: { background: '#fff', borderRadius: 22, border: '1px solid #e5e7eb', padding: 32, textAlign: 'center', maxWidth: 420, boxShadow: '0 16px 40px rgba(15,23,42,0.08)' },
   backBtn: { display: 'flex', alignItems: 'center', gap: 6, height: 40, padding: '0 16px', background: 'transparent', color: '#4b5563', border: '1px solid #d1d5db', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
