@@ -14695,5 +14695,10 @@ app.get('/api/tutor/session-eval-stats', verifyToken, requireTutor, async (req, 
 //  END SESSION EVALUATION APIs
 // ══════════════════════════════════════════════════════════════════════════════
 
-startServer();
+if (require.main === module) {
+  startServer();
+} else {
+  startServer().catch(() => {});
+  module.exports = app;
+}
 
