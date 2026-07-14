@@ -88,6 +88,18 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
         <p className="text-on-surface-variant">Quản lý thu nhập, lịch sử giao dịch và rút tiền một cách thuận tiện.</p>
       </div>
 
+      {/* Payout policy banner */}
+      <div className="mb-6 flex items-start gap-3 bg-green-50 border border-green-200 rounded-2xl px-5 py-4">
+        <span className="material-symbols-outlined text-green-600 text-[22px] mt-0.5" style={{fontVariationSettings:"'FILL' 1"}}>bolt</span>
+        <div>
+          <p className="text-sm font-bold text-green-800">Giải ngân tức thì sau mỗi buổi dạy</p>
+          <p className="text-xs text-green-700 mt-0.5">
+            Sau khi bạn xác nhận hoàn thành buổi học (mark "Đã dạy"), học phí sẽ được chuyển vào ví của bạn <span className="font-bold">ngay lập tức</span> — không cần chờ 24h.
+            Nền tảng giữ lại 10% hoa hồng, bạn nhận 90%.
+          </p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-12 gap-6">
         {/* Balance Highlight Card */}
         <div className="col-span-12 lg:col-span-8 bg-gradient-to-br from-primary to-primary-container p-8 rounded-[2rem] text-on-primary shadow-xl flex flex-col md:flex-row items-center justify-between relative overflow-hidden group">

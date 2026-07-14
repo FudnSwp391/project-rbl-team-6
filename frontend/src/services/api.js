@@ -439,15 +439,16 @@ export async function deleteTutorCredential(id) {
  * Cáºp nháºt lá»‹ch dáº¡y (replace toĂ n bá»™).
  * Fallback: lÆ°u vĂ o localStorage.
  */
-export async function updateTutorAvailability(availability) {
+export async function updateTutorAvailability(availability, slot_duration_mins = 60) {
   try {
     return await request('/api/tutor/availability', {
       method: 'PUT',
-      body: JSON.stringify({ availability }),
+      body: JSON.stringify({ availability, slot_duration_mins }),
     });
   } catch (error) {
     console.warn(`[API] updateTutorAvailability failed: ${error.message}. Saving locally.`);
     localStorage.setItem('tutor_availability_local', JSON.stringify(availability));
+    localStorage.setItem('tutor_slot_duration_local', String(slot_duration_mins));
     return { message: 'Saved locally.', slots: Object.values(availability).flat().length };
   }
 }

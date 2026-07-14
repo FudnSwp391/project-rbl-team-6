@@ -2918,12 +2918,15 @@ app.post("/api/auth/google", async (req, res) => {
 // PUT /api/tutor/availability
 app.put("/api/tutor/availability", verifyToken, async (req, res) => {
   try {
-    const { availability } = req.body;
+    const { availability, slot_duration_mins } = req.body;
+    // Validate slot_duration_mins: chỉ chấp nhận 60, 120, 180
+    const validDurations = [60, 120, 180];
+    const duration = validDurations.includes(Number(slot_duration_mins)) ? Number(slot_duration_mins) : 60;
     await pool.query(
-      "UPDATE tutor_profiles SET availability = $1 WHERE user_id = $2",
-      [availability, req.user.userId]
+      "UPDATE tutor_profiles SET availability = $1, slot_duration_mins = $2 WHERE user_id = $3",
+      [availability, duration, req.user.userId]
     );
-    return res.json({ message: "Cập nhật lịch trống thành công." });
+    return res.json({ message: "Cập nhật lịch trống thành công.", slot_duration_mins: duration });
   } catch (error) {
     console.error("PUT /api/tutor/availability error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
@@ -2937,19 +2940,20 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
     const tutorId = req.params.id;
     const { from, to } = req.query; // date range: YYYY-MM-DD
 
-    // Get availability from tutor_profiles (try both user_id and profile id)
+    // Get availability + slot_duration_mins from tutor_profiles (try both user_id and profile id)
     let result = await pool.query(
-      "SELECT availability FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
+      "SELECT availability, slot_duration_mins FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
       [tutorId]
     );
     if (!result.rows.length) {
       result = await pool.query(
-        "SELECT availability FROM tutor_profiles WHERE id::text = $1 LIMIT 1",
+        "SELECT availability, slot_duration_mins FROM tutor_profiles WHERE id::text = $1 LIMIT 1",
         [tutorId]
       );
     }
 
     const availability = result.rows.length ? (result.rows[0].availability || {}) : {};
+    const slot_duration_mins = result.rows.length ? (result.rows[0].slot_duration_mins || 60) : 60;
 
     // Get booked slots for the date range
     let bookedSlots = {};
@@ -2971,7 +2975,7 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
       }
     }
 
-    return res.json({ availability, bookedSlots });
+    return res.json({ availability, bookedSlots, slot_duration_mins });
   } catch (error) {
     console.error("GET /api/tutors/:id/availability error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
@@ -9879,11 +9883,18 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     const finalNote = notes || note || null;
     const createdBookings = [];
 
-    // Lấy hourly_rate của gia sư để set lesson_fee ngay từ đầu
+    // Lấy hourly_rate và slot_duration_mins của gia sư để tính lesson_fee theo thời lượng
     let lessonFeeForBooking = 0;
+    let slotDurationMins = 60;
     if (tutorId) {
-      const rateRes = await pool.query('SELECT hourly_rate FROM tutor_profiles WHERE user_id=$1 LIMIT 1', [tutorId]);
-      lessonFeeForBooking = Number(rateRes.rows[0]?.hourly_rate || 0);
+      const rateRes = await pool.query(
+        'SELECT hourly_rate, slot_duration_mins FROM tutor_profiles WHERE user_id=$1 LIMIT 1',
+        [tutorId]
+      );
+      const hourlyRate = Number(rateRes.rows[0]?.hourly_rate || 0);
+      slotDurationMins = Number(rateRes.rows[0]?.slot_duration_mins || 60);
+      // Tính học phí = giá/giờ × số giờ của slot
+      lessonFeeForBooking = Math.round(hourlyRate * (slotDurationMins / 60));
     }
 
     const totalFee = lessonFeeForBooking * bookingSessions.length;
@@ -9926,10 +9937,10 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         }
 
         const result = await client.query(
-          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, created_at`,
-          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking]
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, created_at`,
+          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins]
         );
         const booking = result.rows[0];
 
@@ -10743,19 +10754,81 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
       [booking.id, booking.tutor_id, booking.student_id, status, note?.trim() || null]
     );
 
-    // ── PRESENT: Set auto-release timer (24h window cho student khiếu nại) ──
+    // ── PRESENT: Giải ngân ngay lập tức vào ví gia sư ──
     if (status === 'present' && booking.escrow_tx_id && lessonFee > 0) {
-      await client.query(`
-        UPDATE bookings SET auto_release_at = NOW() + INTERVAL '24 hours'
-        WHERE id = $1 AND escrow_released_at IS NULL
-      `, [booking.id]);
+      // Lấy ví gia sư và admin
+      const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+      const tutorWalletId = tw.rows[0]?.id || null;
+      let adminWalletId = process.env.ADMIN_WALLET_ID;
+      if (!adminWalletId) {
+        const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
+        if (aw.rows.length) adminWalletId = aw.rows[0].id;
+      }
 
-      // Notify học sinh: có 24h để khiếu nại (Batch 20.1: safeNotifyUser, same client)
+      if (tutorWalletId && adminWalletId) {
+        // Kiểm tra logic cọc ảo: 2 buổi đầu → held_balance gia sư
+        const completedRes = await client.query(
+          'SELECT completed_lessons_count FROM tutor_profiles WHERE user_id=$1', [booking.tutor_id]
+        );
+        const completedCount = completedRes.rows[0]?.completed_lessons_count || 0;
+        const tutorAmount = Math.floor(lessonFee * 0.9);
+        const adminAmount = lessonFee - tutorAmount;
+
+        await setLedgerContext(client, {
+          reason_code: 'INSTANT_RELEASE_ON_PRESENT',
+          source: 'api', reference_type: 'booking', reference_id: booking.id,
+          transaction_id: booking.escrow_tx_id, actor_id: req.user.userId,
+        });
+
+        if (completedCount < 2) {
+          // Cọc ảo: tiền vào held_balance gia sư (chưa rút được)
+          await client.query('UPDATE wallets SET held_balance=held_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query('UPDATE wallets SET held_balance=held_balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId]);
+          if (adminWalletId) await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
+          await client.query('UPDATE transactions SET status=\'RELEASED\', updated_at=NOW() WHERE id=$1', [booking.escrow_tx_id]);
+        } else {
+          // Buổi 3+: giải ngân thẳng vào balance khả dụng
+          await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+            booking.escrow_tx_id, booking.payer_wallet_id, tutorWalletId, adminWalletId, lessonFee, 0.1
+          ]);
+        }
+
+        // Commission log
+        const _split = calculateCommissionSplit(lessonFee);
+        await createCommissionLog(client, {
+          source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+          transaction_id: booking.escrow_tx_id,
+          student_id: booking.student_id, tutor_id: booking.tutor_id,
+          gross_amount: _split.grossAmount, commission_rate: _split.commissionRate,
+          commission_amount: _split.commissionAmount, tutor_amount: _split.tutorAmount,
+          event_type: 'EARNED', reason_code: 'INSTANT_RELEASE_ON_PRESENT',
+          decision_by: 'tutor', actor_id: req.user.userId,
+          idempotency_key: `commission:booking:${booking.id}:INSTANT_RELEASE_ON_PRESENT`,
+          metadata: { virtual_deposit: completedCount < 2, completed_count: completedCount },
+        });
+
+        await client.query(
+          `UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`,
+          [booking.id]
+        );
+        await client.query(
+          `UPDATE tutor_profiles SET completed_lessons_count=completed_lessons_count+1 WHERE user_id=$1`,
+          [booking.tutor_id]
+        );
+      } else {
+        // Fallback nếu thiếu ví: đặt auto_release_at = NOW() (cron sẽ xử lý ngay)
+        await client.query(
+          `UPDATE bookings SET auto_release_at = NOW() WHERE id=$1 AND escrow_released_at IS NULL`,
+          [booking.id]
+        );
+      }
+
+      // Notify học sinh
       await safeNotifyUser(client, {
         userId: booking.student_id, type: 'lesson_completed', channels: ['IN_APP'],
-        templateKey: 'escrow_auto_release_pending', eventType: 'escrow_auto_release_pending',
+        templateKey: 'escrow_released', eventType: 'escrow_released',
         title: 'Buổi học đã hoàn thành',
-        body: `Gia sư đã xác nhận hoàn thành buổi học ${booking.subject || ''}. Tiền sẽ tự động giải ngân sau 24h nếu bạn không có khiếu nại.`,
+        body: `Gia sư đã xác nhận hoàn thành buổi học ${booking.subject || ''}. Học phí đã được thanh toán cho gia sư.`,
         icon: 'task_alt', refId: booking.id, refType: 'booking',
         sourceType: 'booking', sourceId: booking.id, priority: 'normal',
         idempotencyKey: `booking:${booking.id}:lesson_completed:${booking.student_id}`,
@@ -10763,11 +10836,12 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
 
       // Notify gia sư
       await safeNotifyUser(client, {
-        userId: booking.tutor_id, type: 'lesson_completed', channels: ['IN_APP'],
-        templateKey: 'escrow_auto_release_pending', eventType: 'escrow_auto_release_pending',
-        title: 'Đã ghi nhận hoàn thành buổi học',
-        body: `Buổi học ${booking.subject || ''} đã được ghi nhận hoàn thành. Tiền sẽ được giải ngân vào ví sau 24h.`,
-        icon: 'how_to_reg', refId: booking.id, refType: 'booking',
+        userId: booking.tutor_id, type: 'lesson_completed', channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'escrow_released', eventType: 'escrow_released',
+        title: 'Học phí đã vào ví!',
+        body: `Buổi học ${booking.subject || ''} hoàn thành. ${Math.floor(lessonFee * 0.9).toLocaleString('vi-VN')}đ đã được chuyển vào ví của bạn.`,
+        data: { amount: Math.floor(lessonFee * 0.9) },
+        icon: 'account_balance_wallet', refId: booking.id, refType: 'booking',
         sourceType: 'booking', sourceId: booking.id, priority: 'normal',
         idempotencyKey: `booking:${booking.id}:lesson_completed:${booking.tutor_id}`,
       });
@@ -12824,6 +12898,10 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS escrow_released_at TIMESTAMPTZ`);
     // bookings: thêm auto_release_at (thời điểm tự động giải ngân nếu không khiếu nại)
     await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS auto_release_at TIMESTAMPTZ`);
+    // bookings: thêm duration_mins (thời lượng slot học — 60/120/180)
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS duration_mins INT NOT NULL DEFAULT 60`);
+    // tutor_profiles: thêm slot_duration_mins (thời lượng mỗi slot gia sư đăng ký — 60/120/180)
+    await pool.query(`ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS slot_duration_mins INT NOT NULL DEFAULT 60`);
     // tutor_profiles: reputation_score
     await pool.query(`ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS reputation_score INT NOT NULL DEFAULT 100`);
     // tutor_profiles: completed_lessons_count (cho logic cọc ảo)
