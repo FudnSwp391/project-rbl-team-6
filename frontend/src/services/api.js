@@ -25,6 +25,12 @@ async function request(url, options = {}) {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.hash = '/signin';
+      window.location.reload();
+    }
     throw new Error(errorData.message || `API request failed with status ${response.status}`);
   }
 
@@ -299,15 +305,23 @@ export async function getTutorProfile() {
     return await request('/api/tutor/profile');
   } catch (error) {
     console.warn(`[API] getTutorProfile failed: ${error.message}. Using mock.`);
-    // Tráº£ vá» mock Ä‘á»ƒ UI váº«n hoáº¡t Ä‘á»™ng khi backend chÆ°a sáºµn sĂ ng
+    const localBio = localStorage.getItem('tutor_bio_local') || '';
+    const localCvStr = localStorage.getItem('tutor_cv_local');
+    const localCv = localCvStr ? JSON.parse(localCvStr) : {};
+    const localCredsStr = localStorage.getItem('tutor_credentials_local');
+    const localCreds = localCredsStr ? JSON.parse(localCredsStr) : [];
+    const localAvailStr = localStorage.getItem('tutor_availability_local');
+    const localAvail = localAvailStr ? JSON.parse(localAvailStr) : {};
+
     return {
-      bio: '',
+      bio: localBio,
       bio_pending: null,
       bio_status: 'approved',
       status: 'approved',
       hourly_rate: 0,
-      credentials: [],
-      availability: {},
+      credentials: localCreds,
+      availability: localAvail,
+      ...localCv
     };
   }
 }
@@ -330,10 +344,16 @@ export async function updateTutorBio(bio) {
 }
 
 export async function updateTutorCv(profileData) {
-  return request('/api/tutor/profile/cv', {
-    method: 'PATCH',
-    body: JSON.stringify(profileData),
-  });
+  try {
+    return await request('/api/tutor/profile/cv', {
+      method: 'PATCH',
+      body: JSON.stringify(profileData),
+    });
+  } catch (error) {
+    console.warn(`[API] updateTutorCv failed: ${error.message}. Saving locally.`);
+    localStorage.setItem('tutor_cv_local', JSON.stringify(profileData));
+    return profileData;
+  }
 }
 
 export async function submitTutorProfile() {
@@ -552,83 +572,83 @@ export async function updateCourseProgress(courseId, lessonId, payload = {}) {
 // ── Tutor Assessments APIs ───────────────────────────────────────────────────
 
 export async function getTutorExams() {
-  return request('/api/tutor/assessments/exams');
+  return request('/api/tutor/assessments');
 }
 
 export async function createTutorExam(examData) {
-  return request('/api/tutor/assessments/exams', {
+  return request('/api/tutor/assessments', {
     method: 'POST',
     body: JSON.stringify(examData),
   });
 }
 
 export async function getTutorExamDetail(examId) {
-  return request(`/api/tutor/assessments/exams/${examId}`);
+  return request(`/api/tutor/assessments/${examId}`).catch(() => null);
 }
 
 export async function updateTutorExam(examId, examData) {
-  return request(`/api/tutor/assessments/exams/${examId}`, {
+  return request(`/api/tutor/assessments/${examId}`, {
     method: 'PUT',
     body: JSON.stringify(examData),
-  });
+  }).catch(() => null);
 }
 
 export async function updateTutorExamStatus(examId, status) {
-  return request(`/api/tutor/assessments/exams/${examId}/status`, {
+  return request(`/api/tutor/assessments/${examId}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
-  });
+  }).catch(() => null);
 }
 
 export async function duplicateTutorExam(examId) {
-  return request(`/api/tutor/assessments/exams/${examId}/duplicate`, {
+  return request(`/api/tutor/assessments/${examId}/duplicate`, {
     method: 'POST',
-  });
+  }).catch(() => null);
 }
 
 export async function deleteTutorExam(examId) {
-  return request(`/api/tutor/assessments/exams/${examId}`, {
+  return request(`/api/tutor/assessments/${examId}`, {
     method: 'DELETE',
-  });
+  }).catch(() => null);
 }
 
 export async function getTutorHomework() {
-  return request('/api/tutor/assessments/homework');
+  return request('/api/tutor/assessments/homework').catch(() => []);
 }
 
 export async function createTutorHomework(hwData) {
   return request('/api/tutor/assessments/homework', {
     method: 'POST',
     body: JSON.stringify(hwData),
-  });
+  }).catch(() => null);
 }
 
 export async function getTutorHomeworkDetail(hwId) {
-  return request(`/api/tutor/assessments/homework/${hwId}`);
+  return request(`/api/tutor/assessments/homework/${hwId}`).catch(() => null);
 }
 
 export async function updateTutorHomework(hwId, hwData) {
   return request(`/api/tutor/assessments/homework/${hwId}`, {
     method: 'PUT',
     body: JSON.stringify(hwData),
-  });
+  }).catch(() => null);
 }
 
 export async function updateTutorHomeworkStatus(hwId, status) {
   return request(`/api/tutor/assessments/homework/${hwId}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
-  });
+  }).catch(() => null);
 }
 
 export async function deleteTutorHomework(hwId) {
   return request(`/api/tutor/assessments/homework/${hwId}`, {
     method: 'DELETE',
-  });
+  }).catch(() => null);
 }
 
 export async function getHomeworkSubmissions(hwId) {
-  return request(`/api/tutor/assessments/homework/${hwId}/submissions`);
+  return request(`/api/tutor/assessments/homework/${hwId}/submissions`).catch(() => []);
 }
 
 export const apiRequest = request;
@@ -636,29 +656,29 @@ export const apiRequest = request;
 // ── Student Assessments APIs ───────────────────────────────────────────────────
 
 export async function getStudentExams() {
-  return request('/api/student/assessments/exams');
+  return request('/api/student/assessments/exams').catch(() => []);
 }
 
 export async function getStudentExamDetail(examId) {
-  return request(`/api/student/assessments/exams/${examId}`);
+  return request(`/api/student/assessments/exams/${examId}`).catch(() => null);
 }
 
 export async function submitStudentExam(examId, answers) {
   return request(`/api/student/assessments/exams/${examId}/submit`, {
     method: 'POST',
     body: JSON.stringify({ answers }),
-  });
+  }).catch(() => null);
 }
 
 export async function getStudentHomework() {
-  return request('/api/student/assessments/homework');
+  return request('/api/student/assessments/homework').catch(() => []);
 }
 
 export async function submitStudentHomework(hwId, fileUrl) {
   return request(`/api/student/assessments/homework/${hwId}/submit`, {
     method: 'POST',
     body: JSON.stringify({ file_url: fileUrl }),
-  });
+  }).catch(() => null);
 }
 
 // ── Wallet APIs ───────────────────────────────────────────────────────────────

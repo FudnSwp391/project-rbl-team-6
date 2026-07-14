@@ -13,7 +13,7 @@ function fileToDataUrl(file) {
   })
 }
 
-async function uploadViaBackend(file, folder) {
+async function uploadViaBackend(file, folder, targetBucket = 'edux-media') {
   const token = localStorage.getItem('token')
 
   // Xin quyền upload từ Backend (Lấy Presigned URL)
@@ -25,7 +25,7 @@ async function uploadViaBackend(file, folder) {
     },
     body: JSON.stringify({
       filename: file.name,
-      bucket: 'tutor-documents',
+      bucket: targetBucket,
       folder
     })
   })
@@ -94,7 +94,7 @@ export function validateVideoFile(file) {
 export async function uploadProofFile(file, folder = 'proofs') {
   const err = validateProofFile(file)
   if (err) throw new Error(err)
-  const uploaded = await uploadViaBackend(file, folder)
+  const uploaded = await uploadViaBackend(file, folder, 'tutor-documents')
   return uploaded.previewUrl || uploaded.url
 }
 

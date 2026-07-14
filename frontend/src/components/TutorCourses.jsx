@@ -5,6 +5,16 @@ import { getSignedStorageUrl, uploadCourseThumbnail, uploadCourseVideo } from '.
 const SUBJECTS = ['Toán học', 'Tiếng Anh', 'Lập trình', 'Ngữ văn', 'Khoa học', 'Nghệ thuật']
 const LEVELS = ['Mất gốc', 'Cơ bản', 'Nâng cao', 'Luyện thi']
 const LANGUAGES = ['Tiếng Việt', 'Tiếng Anh', 'Song ngữ']
+const TARGET_STUDENTS = [
+  'Học sinh Tiểu học (lớp 1–5)',
+  'Học sinh THCS (lớp 6–9)',
+  'Học sinh THPT (lớp 10–12)',
+  'Sinh viên Đại học / Cao đẳng',
+  'Người đi làm / Học viên tự do',
+  'Trẻ mầm non (dưới 6 tuổi)',
+  'Học sinh luyện thi chuyên đề',
+  'Học sinh mất gốc / cần bổ trợ',
+]
 
 const steps = [
   { key: 'basic', label: 'Thông tin chung', icon: 'check' },
@@ -451,7 +461,7 @@ function ContentStep({ form, validation, onField, onUpdateLesson, onAddLesson, o
   return (
     <>
       <Panel title="Đối tượng và nội dung" icon="school">
-        <Field label="Đối tượng học sinh" value={form.targetStudents} onChange={(value) => onField('targetStudents', value)} placeholder="Ví dụ: Học sinh lớp 12 chuẩn bị thi THPTQG" error={validation.targetStudents} />
+        <SelectField label="Đối tượng học sinh" value={form.targetStudents} onChange={(value) => onField('targetStudents', value)} options={TARGET_STUDENTS} error={validation.targetStudents} />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <SelectField label="Trình độ đầu vào" value={form.entryLevel} onChange={(value) => onField('entryLevel', value)} options={LEVELS} />
           <Field label="Mục tiêu khóa học" value={form.courseGoal} onChange={(value) => onField('courseGoal', value)} placeholder="Mục tiêu chính của khóa học" />

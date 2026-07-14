@@ -9,7 +9,7 @@ import { useAuth } from './AuthContext'
 import AIChatBox from './AIChatBox'
 import TutorFeedbackModal from './components/MicroFeedback/TutorFeedbackModal'
 import { getBookings, updateBookingStatus,
-         getTutorProfile, updateTutorBio, updateTutorAvatar, updateTutorCv, submitTutorProfile,
+         getTutorProfile, updateTutorBio, updateTutorAvatar, updateTutorCv,
          addTutorCredential, deleteTutorCredential,
          updateTutorAvailability, getUnreadCount, getTutorStudents, markBookingAttendance, getTutorEarnings } from './services/api'
 import ProofUploader from './components/ProofUploader'
@@ -40,7 +40,7 @@ const NAV_ITEMS = [
 export default function TutorDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState('Tổng quan')
+  const [activeTab, setActiveTab] = useState('Overview')
   const [requests, setRequests] = useState([])
   const [scheduleToday, setScheduleToday] = useState([])
   const [overviewStats, setOverviewStats] = useState({
@@ -222,7 +222,7 @@ export default function TutorDashboard() {
         <div className="flex flex-col gap-2 px-sm flex-1 mt-4">
           {NAV_ITEMS.map((item) => {
             const isActive = item.label === activeTab
-            const isMessages = item.label === 'Tin nhắn'
+            const isMessages = item.label === 'Messages'
             return (
               <a
                 key={item.label}
@@ -339,7 +339,7 @@ export default function TutorDashboard() {
           {/* Decorative background glow */}
           <div className="fixed top-0 right-0 w-1/2 h-1/2 bg-gradient-to-bl from-primary-fixed-dim/20 to-transparent pointer-events-none -z-10 blur-3xl rounded-full" />
 
-          {activeTab === 'Tổng quan' && (
+          {activeTab === 'Overview' && (
             <>
           {/* Ă¢â€â‚¬Ă¢â€â‚¬ Welcome Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <div className="space-y-1">
@@ -465,7 +465,7 @@ export default function TutorDashboard() {
                   )}
                 </div>
                 <button
-                  onClick={() => setActiveTab('Lịch trình')}
+                  onClick={() => setActiveTab('My Schedule')}
                   className="mt-6 w-full h-10 border border-outline-variant rounded-lg font-label-md text-on-surface-variant hover:bg-surface-container-high transition-colors"
                 >
                   Open Full Calendar
@@ -477,35 +477,35 @@ export default function TutorDashboard() {
             </>
           )}
 
-          {activeTab === 'Hồ sơ' && (
+          {activeTab === 'My Profile' && (
             <TutorProfileTab user={user} displayName={displayName} initials={initials} />
           )}
 
-          {activeTab === 'Lịch trình' && (
+          {activeTab === 'My Schedule' && (
             <MyScheduleTab />
           )}
 
-          {activeTab === 'Học viên' && (
+          {activeTab === 'Students' && (
             <TutorStudentsTab />
           )}
 
-          {activeTab === 'Khóa học' && (
+          {activeTab === 'Courses' && (
             <TutorCoursesTab user={user} />
           )}
 
-          {activeTab === 'Bài kiểm tra' && (
+          {activeTab === 'Assessments' && (
             <TutorAssessmentManager token={token} />
           )}
 
-          {activeTab === 'Chấm điểm & Nhận xét' && (
+          {activeTab === 'Review & Grade' && (
             <TutorGradingDashboard token={token} />
           )}
 
-          {activeTab === 'Thu nhập' && (
+          {activeTab === 'Earnings' && (
             <TutorEarningsTab />
           )}
 
-          {activeTab === 'Tin nhắn' && (
+          {activeTab === 'Messages' && (
             <MessagesSection token={token} user={user} />
           )}
 
@@ -1687,8 +1687,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const [cvSaving, setCvSaving]         = useState(false)
   const [videoUploading, setVideoUploading] = useState(false)
   const [cvError, setCvError]           = useState('')
-  const [submitLoading, setSubmitLoading] = useState(false)
-  const [submitError, setSubmitError]   = useState('')
 
   // Credential add modal
   const [credModal, setCredModal]       = useState(null) // 'education' | 'certificate' | 'experience' | null
@@ -1730,11 +1728,9 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     load()
   }, [])
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Bio save Ă¢â‚¬â€ khÄ‚Â´ng cĂ¡ÂºÂ§n duyĂ¡Â»â€¡t, lĂ†Â°u thĂ¡ÂºÂ³ng Ă¢â€â‚¬Ă¢â€â‚¬
   const handleBioSave = async () => {
     setBioSaving(true)
     try {
-      // GĂ¡Â»Âi API cĂ¡ÂºÂ­p nhĂ¡ÂºÂ­t bio trĂ¡Â»Â±c tiĂ¡ÂºÂ¿p (khÄ‚Â´ng qua pending)
       await updateTutorBio(bioValue)
       setProfile(p => ({ ...p, bio: bioValue, bio_pending: null, bio_status: 'approved' }))
       setBioEdit(false)
@@ -1742,7 +1738,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     finally { setBioSaving(false) }
   }
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Avatar save Ă¢â€â‚¬Ă¢â€â‚¬
   const handleAvatarSave = async () => {
     if (!avatarInput.trim()) return
     setAvatarSaving(true)
@@ -1804,40 +1799,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     }
   }
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Add credential Ă¢â€â‚¬Ă¢â€â‚¬
-  const handleSubmitProfile = async () => {
-    setSubmitError('')
-    setCvError('')
-    const source = cvEdit ? cvForm : profile
-
-    if (!source?.bio?.trim()) {
-      setSubmitError('Vui long dien phan gioi thieu ban than truoc khi nop.')
-      return
-    }
-    if (!source?.subjects?.trim()) {
-      setSubmitError('Vui long dien mon day truoc khi nop.')
-      return
-    }
-
-    setSubmitLoading(true)
-    try {
-      if (cvEdit) {
-        const saved = await updateTutorCv(cvForm)
-        setProfile(p => ({ ...p, ...saved }))
-        setBioValue(cvForm.bio)
-        updateUser({ name: cvForm.full_name })
-        setCvEdit(false)
-      }
-      const updated = await submitTutorProfile()
-      setProfile(p => ({ ...p, ...updated }))
-      alert('Da nop ho so cho admin duyet.')
-    } catch (e) {
-      setSubmitError(e.message || 'Nop ho so that bai.')
-    } finally {
-      setSubmitLoading(false)
-    }
-  }
-
   const handleAddCredential = async () => {
     setCredError('')
     if (!credForm.title.trim()) { setCredError('Title is required.'); return }
@@ -1859,7 +1820,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     finally { setCredSaving(false) }
   }
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Delete credential Ă¢â€â‚¬Ă¢â€â‚¬
   const handleDeleteCred = async (id, status) => {
     try {
       await deleteTutorCredential(id)
@@ -1867,7 +1827,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     } catch { /* ignore */ }
   }
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Availability toggle slot Ă¢â€â‚¬Ă¢â€â‚¬
   const toggleSlot = (day, slot) => {
     setAvailData(prev => {
       const current = prev[day] || []
@@ -1913,35 +1872,22 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   )
   const isPending = profileStatus === 'pending'
   const isRejected = profileStatus === 'rejected'
-  const submitButtonText = isPending
-    ? 'Dang cho admin duyet'
-    : isVerified
-      ? 'Nop lai ho so sau khi chinh sua'
-      : 'Nop ho so cho Admin duyet'
   const statusConfig = isVerified
     ? { icon: 'verified_user', title: 'Account Verified', box: 'bg-[#f0fdf4] border-[#bbf7d0]', iconColor: 'text-[#16a34a]', titleColor: 'text-[#16a34a]', textColor: 'text-[#166534]', text: 'Ho so da duoc admin duyet. Hoc sinh va phu huynh se thay tick xanh tren ten gia su.' }
     : isRejected
-      ? { icon: 'cancel', title: 'Profile Rejected', box: 'bg-red-50 border-red-200', iconColor: 'text-red-600', titleColor: 'text-red-700', textColor: 'text-red-700', text: profile?.reject_reason ? `Ly do: ${profile.reject_reason}` : 'Ho so bi tu choi. Hay chinh sua thong tin va nop lai.' }
+      ? { icon: 'cancel', title: 'Profile Rejected', box: 'bg-red-50 border-red-200', iconColor: 'text-red-600', titleColor: 'text-red-700', textColor: 'text-red-700', text: profile?.reject_reason ? `Ly do: ${profile.reject_reason}` : 'Ho so bi tu choi. Hay chinh sua thong tin va luu lai.' }
       : isPending
-        ? { icon: 'pending', title: 'Verification Pending', box: 'bg-amber-50 border-amber-200', iconColor: 'text-amber-500', titleColor: 'text-amber-700', textColor: 'text-amber-700', text: 'Ho so dang cho admin duyet. Ban van co the chinh sua va nop lai neu can.' }
-        : { icon: 'edit_note', title: 'Draft Profile', box: 'bg-surface-container-low border-outline-variant/40', iconColor: 'text-on-surface-variant', titleColor: 'text-on-surface', textColor: 'text-on-surface-variant', text: 'Day la ban nhap. Hay dien du thong tin, luu lai, roi bam nut nop o cuoi trang.' }
-  const submitStatus = isVerified
-    ? { icon: 'verified', text: 'Ho so da duoc admin xac nhan thanh cong.', classes: 'bg-[#f0fdf4] text-[#16a34a] border-[#bbf7d0]' }
-    : isRejected
-      ? { icon: 'cancel', text: 'Ho so cua ban khong duoc thong qua.', classes: 'bg-red-50 text-red-700 border-red-200' }
-      : isPending
-        ? { icon: 'pending', text: 'Pending - ho so dang cho admin duyet.', classes: 'bg-amber-50 text-amber-700 border-amber-200' }
-        : { icon: 'edit_note', text: 'Chua nop ho so cho admin.', classes: 'bg-surface-container-low text-on-surface-variant border-outline-variant/40' }
+        ? { icon: 'pending', title: 'Verification Pending', box: 'bg-amber-50 border-amber-200', iconColor: 'text-amber-500', titleColor: 'text-amber-700', textColor: 'text-amber-700', text: 'Ho so dang cho admin duyet.' }
+        : { icon: 'edit_note', title: 'Draft Profile', box: 'bg-surface-container-low border-outline-variant/40', iconColor: 'text-on-surface-variant', titleColor: 'text-on-surface', textColor: 'text-on-surface-variant', text: 'Day la ban nhap. Hay dien du thong tin va luu lai.' }
 
   return (
     <div className="space-y-6 pb-10">
 
-      {/* Ă¢â€â‚¬Ă¢â€â‚¬ Header Ă¢â€â‚¬Ă¢â€â‚¬ */}
       <div className="flex justify-between items-center flex-wrap gap-3">
         <div>
           <h2 className="font-headline-lg text-headline-lg text-on-surface">My Profile</h2>
           <p className="font-body-md text-body-md text-on-surface-variant">
-            Manage your public profile. Submit the completed profile for admin approval when ready.
+            Manage your public profile.
           </p>
         </div>
         <a href="#/" className="h-10 px-4 border border-outline-variant text-on-surface-variant font-label-md text-label-md rounded-xl hover:bg-surface-container-high transition-colors flex items-center gap-1.5">
@@ -1949,9 +1895,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         </a>
       </div>
 
-      {/* Ă¢â€â‚¬Ă¢â€â‚¬ Hero: Avatar + name Ă¢â€â‚¬Ă¢â€â‚¬ */}
       <div className="bg-gradient-to-br from-[#eef1ff] to-[#eaf3ff] rounded-2xl p-6 border border-primary/10 shadow-sm flex flex-wrap gap-5 items-center">
-        {/* Avatar with change button */}
         <div className="relative flex-shrink-0 group">
           {avatarUrl ? (
             <img src={avatarUrl} alt={displayName}
@@ -1964,7 +1908,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
           {isVerified && (
             <span className="material-symbols-outlined icon-fill absolute -bottom-2 -right-2 text-[22px] bg-white rounded-full p-0.5 shadow" style={{ color: '#16a34a' }} title="Verified by EduX">verified</span>
           )}
-          {/* Change avatar overlay */}
           <button
             onClick={() => setAvatarEdit(true)}
             className="absolute inset-0 rounded-2xl bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
@@ -1990,7 +1933,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
           <p className="text-[13px] text-on-surface-variant">{user?.email}</p>
         </div>
 
-        {/* Avatar change prompt */}
         <button onClick={() => setAvatarEdit(true)}
           className="h-9 px-4 bg-white border border-outline-variant text-on-surface-variant font-label-sm text-label-sm rounded-xl hover:bg-surface-container-high transition-colors flex items-center gap-1.5 shadow-sm">
           <span className="material-symbols-outlined text-[16px]">photo_camera</span>
@@ -1998,7 +1940,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         </button>
       </div>
 
-      {/* Ă¢â€â‚¬Ă¢â€â‚¬ Avatar URL dialog Ă¢â€â‚¬Ă¢â€â‚¬ */}
       {avatarEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
@@ -2055,7 +1996,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                   <span className="material-symbols-outlined text-primary">badge</span>
                   Tutor CV
                 </h4>
-                <p className="text-[12px] text-on-surface-variant mt-1">Gia su tu dien CV, upload video demo va gui admin duyet.</p>
+                <p className="text-[12px] text-on-surface-variant mt-1">Gia su tu dien CV va upload video demo.</p>
               </div>
               {!cvEdit && (
                 <button onClick={() => setCvEdit(true)}
@@ -2094,7 +2035,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                 <div className="flex gap-2">
                   <button onClick={() => setCvEdit(false)} className="h-10 px-4 border border-outline-variant text-on-surface-variant rounded-xl font-label-md text-label-md hover:bg-surface-container transition-colors">Cancel</button>
                   <button onClick={handleCvSave} disabled={cvSaving || videoUploading} className="h-10 px-5 bg-primary text-on-primary rounded-xl font-label-md text-label-md hover:bg-primary/90 transition-colors disabled:opacity-50">
-                    {cvSaving ? 'Saving...' : 'Save Draft'}
+                    {cvSaving ? 'Saving...' : 'Save'}
                   </button>
                 </div>
               </div>
@@ -2112,7 +2053,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             )}
           </div>
 
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ About Me Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-sm rounded-2xl p-6">
             <div className="flex items-center justify-between mb-3">
               <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
@@ -2156,7 +2096,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             )}
           </div>
 
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ Education Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <CredentialSection
             title="Education & Degrees"
             icon="school"
@@ -2167,7 +2106,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             proofLabel="Degree Certificate / Transcript image URL"
           />
 
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ Certificates Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <CredentialSection
             title="Certificates & Qualifications"
             icon="workspace_premium"
@@ -2178,19 +2116,8 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             proofLabel="Certificate image URL"
           />
 
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ Experience Ă¢â€â‚¬Ă¢â€â‚¬ */}
-          <CredentialSection
-            title="Teaching Experience"
-            icon="work_history"
-            items={experience}
-            type="experience"
-            onAdd={() => { setCredModal('experience'); setCredForm({ title:'', description:'', proof_url:'' }) }}
-            onDelete={handleDeleteCred}
-            noProof
-          />
         </div>
 
-        {/* Ă¢â€â‚¬Ă¢â€â‚¬ RIGHT: Availability Ă¢â€â‚¬Ă¢â€â‚¬ */}
         <div className="space-y-5">
           <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-sm rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
@@ -2277,31 +2204,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
       </div>
 
       {/* Ă¢â€â‚¬Ă¢â€â‚¬ Add Credential Modal Ă¢â€â‚¬Ă¢â€â‚¬ */}
-      <div className="bg-white/80 backdrop-blur-md border border-primary/15 shadow-sm rounded-2xl p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary">approval_delegation</span>
-            Nop ho so cho admin
-          </h4>
-          <p className="text-[13px] text-on-surface-variant mt-1">
-            Sau khi luu day du CV, bang cap, chung chi, kinh nghiem va lich day, bam nut nay de admin duyet ho so.
-          </p>
-          <div className={`mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[12px] font-semibold ${submitStatus.classes}`}>
-            <span className="material-symbols-outlined icon-fill text-[15px]">{submitStatus.icon}</span>
-            {submitStatus.text}
-          </div>
-          {submitError && <p className="mt-2 text-[12px] text-red-600">{submitError}</p>}
-        </div>
-        <button
-          type="button"
-          onClick={handleSubmitProfile}
-          disabled={submitLoading || isPending}
-          className="h-11 px-5 bg-primary text-on-primary rounded-xl font-label-md text-label-md hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          <span className="material-symbols-outlined text-[18px]">{isPending ? 'hourglass_top' : 'send'}</span>
-          {submitLoading ? 'Dang nop...' : submitButtonText}
-        </button>
-      </div>
 
       {credModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">

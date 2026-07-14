@@ -7,7 +7,6 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  const [showDepositModal, setShowDepositModal] = useState(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
 
   const fetchWalletData = async () => {
@@ -118,13 +117,6 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
               <span className="material-symbols-outlined mr-2">account_balance</span>
               Rút tiền
             </button>
-            <button 
-              onClick={onDepositClick}
-              className="bg-white/10 backdrop-blur-md border border-white/30 text-white px-8 py-4 rounded-xl font-bold flex items-center justify-center hover:bg-white/20 transition-all hover:-translate-y-1 active:scale-95"
-            >
-              <span className="material-symbols-outlined mr-2">add</span>
-              Nạp tiền
-            </button>
           </div>
         </div>
 
@@ -139,16 +131,7 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
         </div>
 
         {/* Stat Cards Row */}
-        <div className="col-span-12 grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white p-6 rounded-2xl border border-outline-variant shadow-sm flex items-center space-x-4">
-            <div className="p-3 bg-green-50 rounded-xl">
-              <span className="material-symbols-outlined text-green-600">arrow_downward</span>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-on-surface-variant">Tổng tiền đã nạp</p>
-              <p className="text-xl font-bold text-on-surface">{stats.totalDeposited.toLocaleString()}đ</p>
-            </div>
-          </div>
+        <div className="col-span-12 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-outline-variant shadow-sm flex items-center space-x-4">
             <div className="p-3 bg-red-50 rounded-xl">
               <span className="material-symbols-outlined text-red-600">arrow_upward</span>
@@ -174,7 +157,7 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
           <div className="flex justify-between items-center mb-8">
             <div>
               <h3 className="font-headline-lg text-headline-lg text-on-surface">Dòng tiền</h3>
-              <p className="text-sm text-on-surface-variant">Phân tích nạp và rút 6 tháng qua</p>
+              <p className="text-sm text-on-surface-variant">Phân tích rút tiền 6 tháng qua</p>
             </div>
             <div className="flex space-x-2">
               <button className="px-4 py-2 text-xs font-bold rounded-lg border border-outline-variant hover:bg-surface-container transition-colors">Tháng</button>
@@ -199,18 +182,13 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
             ].map((col) => (
               <div key={col.m} className="flex flex-col items-center flex-1 z-10 group">
                 <div className="flex items-end space-x-1 h-48 w-full justify-center">
-                  <div className="w-3 bg-primary rounded-t-sm transition-all duration-500 group-hover:w-4 group-hover:bg-primary-container" style={{height: col.d}}></div>
-                  <div className="w-3 bg-secondary-container rounded-t-sm transition-all duration-500 group-hover:w-4 group-hover:bg-secondary" style={{height: col.w}}></div>
+                  <div className="w-4 bg-secondary-container rounded-t-sm transition-all duration-500 group-hover:w-5 group-hover:bg-secondary" style={{height: col.w}}></div>
                 </div>
                 <span className="text-xs mt-3 text-on-surface-variant">{col.m}</span>
               </div>
             ))}
           </div>
           <div className="mt-8 flex justify-center space-x-8">
-            <div className="flex items-center">
-              <span className="w-3 h-3 bg-primary rounded-full mr-2"></span>
-              <span className="text-xs font-medium text-on-surface-variant">Nạp tiền</span>
-            </div>
             <div className="flex items-center">
               <span className="w-3 h-3 bg-secondary-container rounded-full mr-2"></span>
               <span className="text-xs font-medium text-on-surface-variant">Rút tiền</span>

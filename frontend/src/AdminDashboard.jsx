@@ -36,7 +36,15 @@ async function authFetch(url, token, options = {}) {
     },
   })
   const data = await res.json()
-  if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`)
+  if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      window.location.hash = '/signin'
+      window.location.reload()
+    }
+    throw new Error(data?.message || `HTTP ${res.status}`)
+  }
   return data
 }
 

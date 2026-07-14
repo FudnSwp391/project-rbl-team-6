@@ -866,12 +866,12 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
 // POST /api/tutor/presigned-url
 app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
   try {
-    const { filename, bucket } = req.body;
+    const { filename, bucket, folder } = req.body;
     if (!filename) return res.status(400).json({ message: "Tên file là bắt buộc." });
     
     const targetBucket = bucket || 'tutor-documents';
     const ext = filename.split('.').pop();
-    const safePath = `${req.user.userId}_${Date.now()}.${ext}`;
+    const safePath = folder ? `${folder}/${req.user.userId}_${Date.now()}.${ext}` : `${req.user.userId}_${Date.now()}.${ext}`;
 
     const { data, error } = await supabaseAdmin.storage
       .from(targetBucket)
