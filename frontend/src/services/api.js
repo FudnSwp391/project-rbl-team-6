@@ -25,6 +25,12 @@ async function request(url, options = {}) {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.hash = '/signin';
+      window.location.reload();
+    }
     throw new Error(errorData.message || `API request failed with status ${response.status}`);
   }
 
@@ -131,23 +137,7 @@ export async function getTutorAvailability(tutorId, params = {}) {
  * Fallback: Read from LocalStorage.
  */
 export async function getBookings() {
-  try {
-    return await request('/api/bookings');
-  } catch (error) {
-    console.warn(`[API] getBookings failed: ${error.message}. Falling back to LocalStorage.`);
-    try {
-      const stored = localStorage.getItem('edux_bookings');
-      const bookings = stored ? JSON.parse(stored) : [];
-      // Sanitize: only return valid booking objects (must have id and status string)
-      return Array.isArray(bookings)
-        ? bookings.filter(b => b && typeof b === 'object' && typeof b.status === 'string')
-        : [];
-    } catch {
-      // Corrupted localStorage â€” clear it and return empty
-      localStorage.removeItem('edux_bookings');
-      return [];
-    }
-  }
+  return await request('/api/bookings');
 }
 
 /**
@@ -173,6 +163,8 @@ export async function createBooking(bookingData) {
     tutor_name,
     studentId,
     childName,
+    teachingMethod,
+    teaching_method,
   } = bookingData || {};
 
   // Resolve tutorId — accept both camelCase and snake_case
@@ -191,28 +183,22 @@ export async function createBooking(bookingData) {
     throw new Error('Cần chọn gia sư, ngày học và khung giờ.');
   }
 
-  // Send one POST per session (backend handles single bookings)
-  const results = [];
-  for (const session of sessionList) {
-    const payload = {
-      tutor_id:    String(resolvedTutorId),
-      lesson_date: session.date,
-      time_slot:   session.timeSlot || session.time_slot,
-      tutor_name:  resolvedTutorName,
-      subject:     subject || null,
-      note:        resolvedNote,
-    };
-    console.log('[createBooking] Sending payload to /api/bookings:', payload);
-    const result = await request('/api/bookings', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    results.push(result);
-  }
-
-  // Return a unified response compatible with the caller
-  if (results.length === 1) return results[0];
-  return { bookings: results, count: results.length };
+  // Send a single batch POST request (backend inserts all sessions in one transaction)
+  const payload = {
+    tutorId: String(resolvedTutorId),
+    tutorName: resolvedTutorName,
+    subject: subject || null,
+    sessions: sessionList.map(s => ({ date: s.date, timeSlot: s.timeSlot || s.time_slot })),
+    notes: resolvedNote,
+    childName: childName || null,
+    teaching_method: teachingMethod || teaching_method || null,
+  };
+  console.log('[createBooking] Sending payload to /api/bookings:', payload);
+  const result = await request('/api/bookings', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return result;
 }
 
 export async function createTrialBooking(bookingData) {
@@ -245,17 +231,14 @@ export async function updateBookingStatus(bookingId, status) {
     });
   } catch (error) {
     console.warn(`[API] updateBookingStatus failed: ${error.message}. Updating in LocalStorage.`);
-    
     const stored = localStorage.getItem('edux_bookings');
     const bookings = stored ? JSON.parse(stored) : [];
-    
     const index = bookings.findIndex(b => b.id === bookingId);
     if (index !== -1) {
       bookings[index].status = status;
       localStorage.setItem('edux_bookings', JSON.stringify(bookings));
       return bookings[index];
     }
-    
     throw new Error(`Booking with ID ${bookingId} not found.`, { cause: error });
   }
 }
@@ -263,6 +246,33 @@ export async function updateBookingStatus(bookingId, status) {
 
 export async function getTutorStudents() {
   return request('/api/tutor/students');
+}
+
+/**
+ * Gia sư lưu thông tin buổi học (hình thức, link Meet/Zoom, địa điểm, chủ đề...).
+ * Lưu vào DB để học sinh nhìn thấy — thay cho localStorage cũ.
+ */
+export async function saveSessionInfo(bookingId, info) {
+  return request(`/api/bookings/${bookingId}/session-info`, {
+    method: 'PATCH',
+    body: JSON.stringify(info),
+  });
+}
+
+/** Học sinh xin đổi hình thức học (online/offline) cho một buổi học. */
+export async function requestMethodChange(bookingId, requestedMethod, reason = '') {
+  return request(`/api/bookings/${bookingId}/request-method-change`, {
+    method: 'POST',
+    body: JSON.stringify({ requestedMethod, reason }),
+  });
+}
+
+/** Gia sư chấp nhận / từ chối yêu cầu đổi hình thức. */
+export async function resolveMethodChange(bookingId, decision) {
+  return request(`/api/bookings/${bookingId}/method-change`, {
+    method: 'PATCH',
+    body: JSON.stringify({ decision }),
+  });
 }
 
 export async function markBookingAttendance(bookingId, status, note = '') {
@@ -341,15 +351,23 @@ export async function getTutorProfile() {
     return await request('/api/tutor/profile');
   } catch (error) {
     console.warn(`[API] getTutorProfile failed: ${error.message}. Using mock.`);
-    // Tráº£ vá» mock Ä‘á»ƒ UI váº«n hoáº¡t Ä‘á»™ng khi backend chÆ°a sáºµn sĂ ng
+    const localBio = localStorage.getItem('tutor_bio_local') || '';
+    const localCvStr = localStorage.getItem('tutor_cv_local');
+    const localCv = localCvStr ? JSON.parse(localCvStr) : {};
+    const localCredsStr = localStorage.getItem('tutor_credentials_local');
+    const localCreds = localCredsStr ? JSON.parse(localCredsStr) : [];
+    const localAvailStr = localStorage.getItem('tutor_availability_local');
+    const localAvail = localAvailStr ? JSON.parse(localAvailStr) : {};
+
     return {
-      bio: '',
+      bio: localBio,
       bio_pending: null,
       bio_status: 'approved',
       status: 'approved',
       hourly_rate: 0,
-      credentials: [],
-      availability: {},
+      credentials: localCreds,
+      availability: localAvail,
+      ...localCv
     };
   }
 }
@@ -372,10 +390,16 @@ export async function updateTutorBio(bio) {
 }
 
 export async function updateTutorCv(profileData) {
-  return request('/api/tutor/profile/cv', {
-    method: 'PATCH',
-    body: JSON.stringify(profileData),
-  });
+  try {
+    return await request('/api/tutor/profile/cv', {
+      method: 'PATCH',
+      body: JSON.stringify(profileData),
+    });
+  } catch (error) {
+    console.warn(`[API] updateTutorCv failed: ${error.message}. Saving locally.`);
+    localStorage.setItem('tutor_cv_local', JSON.stringify(profileData));
+    return profileData;
+  }
 }
 
 export async function submitTutorProfile() {
@@ -445,15 +469,16 @@ export async function deleteTutorCredential(id) {
  * Cáºp nháºt lá»‹ch dáº¡y (replace toĂ n bá»™).
  * Fallback: lÆ°u vĂ o localStorage.
  */
-export async function updateTutorAvailability(availability) {
+export async function updateTutorAvailability(availability, slot_duration_mins = 60) {
   try {
     return await request('/api/tutor/availability', {
       method: 'PUT',
-      body: JSON.stringify({ availability }),
+      body: JSON.stringify({ availability, slot_duration_mins }),
     });
   } catch (error) {
     console.warn(`[API] updateTutorAvailability failed: ${error.message}. Saving locally.`);
     localStorage.setItem('tutor_availability_local', JSON.stringify(availability));
+    localStorage.setItem('tutor_slot_duration_local', String(slot_duration_mins));
     return { message: 'Saved locally.', slots: Object.values(availability).flat().length };
   }
 }
@@ -594,83 +619,83 @@ export async function updateCourseProgress(courseId, lessonId, payload = {}) {
 // ── Tutor Assessments APIs ───────────────────────────────────────────────────
 
 export async function getTutorExams() {
-  return request('/api/tutor/assessments/exams');
+  return request('/api/tutor/assessments');
 }
 
 export async function createTutorExam(examData) {
-  return request('/api/tutor/assessments/exams', {
+  return request('/api/tutor/assessments', {
     method: 'POST',
     body: JSON.stringify(examData),
   });
 }
 
 export async function getTutorExamDetail(examId) {
-  return request(`/api/tutor/assessments/exams/${examId}`);
+  return request(`/api/tutor/assessments/${examId}`).catch(() => null);
 }
 
 export async function updateTutorExam(examId, examData) {
-  return request(`/api/tutor/assessments/exams/${examId}`, {
+  return request(`/api/tutor/assessments/${examId}`, {
     method: 'PUT',
     body: JSON.stringify(examData),
-  });
+  }).catch(() => null);
 }
 
 export async function updateTutorExamStatus(examId, status) {
-  return request(`/api/tutor/assessments/exams/${examId}/status`, {
+  return request(`/api/tutor/assessments/${examId}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
-  });
+  }).catch(() => null);
 }
 
 export async function duplicateTutorExam(examId) {
-  return request(`/api/tutor/assessments/exams/${examId}/duplicate`, {
+  return request(`/api/tutor/assessments/${examId}/duplicate`, {
     method: 'POST',
-  });
+  }).catch(() => null);
 }
 
 export async function deleteTutorExam(examId) {
-  return request(`/api/tutor/assessments/exams/${examId}`, {
+  return request(`/api/tutor/assessments/${examId}`, {
     method: 'DELETE',
-  });
+  }).catch(() => null);
 }
 
 export async function getTutorHomework() {
-  return request('/api/tutor/assessments/homework');
+  return request('/api/tutor/assessments/homework').catch(() => []);
 }
 
 export async function createTutorHomework(hwData) {
   return request('/api/tutor/assessments/homework', {
     method: 'POST',
     body: JSON.stringify(hwData),
-  });
+  }).catch(() => null);
 }
 
 export async function getTutorHomeworkDetail(hwId) {
-  return request(`/api/tutor/assessments/homework/${hwId}`);
+  return request(`/api/tutor/assessments/homework/${hwId}`).catch(() => null);
 }
 
 export async function updateTutorHomework(hwId, hwData) {
   return request(`/api/tutor/assessments/homework/${hwId}`, {
     method: 'PUT',
     body: JSON.stringify(hwData),
-  });
+  }).catch(() => null);
 }
 
 export async function updateTutorHomeworkStatus(hwId, status) {
   return request(`/api/tutor/assessments/homework/${hwId}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
-  });
+  }).catch(() => null);
 }
 
 export async function deleteTutorHomework(hwId) {
   return request(`/api/tutor/assessments/homework/${hwId}`, {
     method: 'DELETE',
-  });
+  }).catch(() => null);
 }
 
 export async function getHomeworkSubmissions(hwId) {
-  return request(`/api/tutor/assessments/homework/${hwId}/submissions`);
+  return request(`/api/tutor/assessments/homework/${hwId}/submissions`).catch(() => []);
 }
 
 export const apiRequest = request;
@@ -678,28 +703,42 @@ export const apiRequest = request;
 // ── Student Assessments APIs ───────────────────────────────────────────────────
 
 export async function getStudentExams() {
-  return request('/api/student/assessments/exams');
+  return request('/api/student/assessments/exams').catch(() => []);
 }
 
 export async function getStudentExamDetail(examId) {
-  return request(`/api/student/assessments/exams/${examId}`);
+  return request(`/api/student/assessments/exams/${examId}`).catch(() => null);
 }
 
 export async function submitStudentExam(examId, answers) {
   return request(`/api/student/assessments/exams/${examId}/submit`, {
     method: 'POST',
     body: JSON.stringify({ answers }),
-  });
+  }).catch(() => null);
 }
 
 export async function getStudentHomework() {
-  return request('/api/student/assessments/homework');
+  return request('/api/student/assessments/homework').catch(() => []);
 }
 
 export async function submitStudentHomework(hwId, fileUrl) {
   return request(`/api/student/assessments/homework/${hwId}/submit`, {
     method: 'POST',
     body: JSON.stringify({ file_url: fileUrl }),
-  });
+  }).catch(() => null);
 }
 
+// ── Wallet APIs ───────────────────────────────────────────────────────────────
+
+export const getWalletOverview = async () => request('/api/wallet');
+export const getWalletTransactions = async () => request('/api/wallet/transactions');
+export const depositRequest = async (data) => request('/api/wallet/deposit-request', { method: 'POST', body: JSON.stringify(data) });
+export const withdrawRequest = async (data) => request('/api/wallet/withdraw-request', { method: 'POST', body: JSON.stringify(data) });
+export const getWithdrawRequests = async () => request('/api/wallet/withdraw-requests');
+export const confirmWithdrawRequest = async (id) => request(`/api/wallet/withdraw-requests/${id}/confirm`, { method: 'PATCH' });
+export const getAdminDepositRequests = async () => request('/api/admin/wallet/deposit-requests');
+export const getAdminWithdrawRequests = async () => request('/api/admin/wallet/withdraw-requests');
+export const approveDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const rejectDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const approveWithdrawRequest = async (id, note) => request(`/api/admin/wallet/withdraw-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const rejectWithdrawRequest = async (id, note) => request(`/api/admin/wallet/withdraw-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ note }) });

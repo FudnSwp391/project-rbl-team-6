@@ -44,7 +44,15 @@ async function authFetch(url, token, options = {}) {
     },
   })
   const data = await res.json()
-  if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`)
+  if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      window.location.hash = '/signin'
+      window.location.reload()
+    }
+    throw new Error(data?.message || `HTTP ${res.status}`)
+  }
   return data
 }
 
@@ -52,6 +60,8 @@ function fmtDate(iso) {
   if (!iso) return '—'
   return new Date(iso).toLocaleDateString('vi-VN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
+
+import AdminWalletDashboard from './components/AdminWalletDashboard'
 
 const TX_SUB_ITEMS = [
   { id: 'tx-overview',     label: 'Tổng Quan Tài Chính',    icon: 'bar_chart' },
@@ -98,6 +108,7 @@ const NAV_ITEMS = [
   { id: 'lessons',         label: 'Khóa học',              icon: 'school' },
   { id: 'transactions',    label: 'Giao dịch',             icon: 'payments', hasSubmenu: true },
   { id: 'services',        label: 'Quản lý dịch vụ',       icon: 'support_agent', hasSubmenu: true },
+  { id: 'wallet-management', label: 'Duyệt giao dịch Ví',  icon: 'account_balance_wallet' },
   { id: 'reports',         label: 'Báo cáo',               icon: 'assessment' },
   { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology' },
   { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu' },
@@ -437,6 +448,9 @@ export default function AdminDashboard() {
               onRangeChange={setChartRange}
               onRefreshChart={fetchChartData}
             />
+          )}
+          {activeView === 'wallet-management' && (
+            <AdminWalletDashboard />
           )}
           {activeView === 'tutor-approval' && (
             <TutorApprovalView
@@ -1048,8 +1062,8 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
                             <button
                               className="p-1.5 text-primary hover:bg-primary-fixed rounded-full transition-colors disabled:opacity-30"
                               title="Xem chứng chỉ"
-                              onClick={e => { e.stopPropagation(); onViewDoc(tutor.certificate_url) }}
-                              disabled={!tutor.certificate_url}
+                              onClick={e => { e.stopPropagation(); onViewDoc((tutor.certificates && tutor.certificates.length > 0) ? tutor.certificates[0].url : tutor.certificate_url) }}
+                              disabled={!(tutor.certificates && tutor.certificates.length > 0) && !tutor.certificate_url}
                             >
                               <span className="material-symbols-outlined text-[20px]">workspace_premium</span>
                             </button>
@@ -1196,6 +1210,18 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
                     verified: !!selectedTutor.hourly_rate,
                   },
                   {
+                    icon: 'history_edu', bgClass: 'bg-surface-container-highest', iconClass: 'text-on-surface',
+                    label: 'Học vấn',
+                    value: selectedTutor.education || 'Chưa cập nhật',
+                    verified: !!selectedTutor.education,
+                  },
+                  {
+                    icon: 'phone', bgClass: 'bg-surface-container-highest', iconClass: 'text-on-surface',
+                    label: 'Số điện thoại',
+                    value: selectedTutor.phone || 'Chưa cập nhật',
+                    verified: !!selectedTutor.phone,
+                  },
+                  {
                     icon: 'mail', bgClass: 'bg-surface-container-highest', iconClass: 'text-on-surface',
                     label: 'Địa chỉ liên hệ',
                     value: selectedTutor.email,
@@ -1228,25 +1254,47 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
               {/* ── CCCD row ── */}
               <div>
                 <p className="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide mb-xs">Giấy tờ tùy thân</p>
-                <button
-                  className="w-full flex items-center gap-md p-md border rounded-xl transition-all bg-surface text-left disabled:opacity-40 disabled:cursor-not-allowed
-                    border-outline-variant hover:border-primary/50 hover:shadow-sm"
-                  onClick={() => onViewDoc(selectedTutor.cccd_url)}
-                  disabled={!selectedTutor.cccd_url}
-                >
-                  <div className="w-11 h-11 rounded-xl bg-primary-fixed/30 flex items-center justify-center shrink-0">
-                    <span className="material-symbols-outlined text-primary text-2xl">badge</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-label-md font-label-md text-on-surface">CCCD / Giấy tờ tùy thân</p>
-                    <p className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">
-                      {selectedTutor.cccd_url ? 'Đã tải lên — Nhấn để xem' : 'Chưa nộp'}
-                    </p>
-                  </div>
-                  {selectedTutor.cccd_url && (
-                    <span className="material-symbols-outlined text-primary text-[20px] shrink-0">open_in_new</span>
-                  )}
-                </button>
+                <div className="flex flex-col gap-sm">
+                  <button
+                    className="w-full flex items-center gap-md p-md border rounded-xl transition-all bg-surface text-left disabled:opacity-40 disabled:cursor-not-allowed
+                      border-outline-variant hover:border-primary/50 hover:shadow-sm"
+                    onClick={() => onViewDoc(selectedTutor.cccd_url)}
+                    disabled={!selectedTutor.cccd_url}
+                  >
+                    <div className="w-11 h-11 rounded-xl bg-primary-fixed/30 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-primary text-2xl">badge</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-label-md font-label-md text-on-surface">CCCD / Giấy tờ tùy thân (Mặt trước)</p>
+                      <p className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">
+                        {selectedTutor.cccd_url ? 'Đã tải lên — Nhấn để xem' : 'Chưa nộp'}
+                      </p>
+                    </div>
+                    {selectedTutor.cccd_url && (
+                      <span className="material-symbols-outlined text-primary text-[20px] shrink-0">open_in_new</span>
+                    )}
+                  </button>
+
+                  <button
+                    className="w-full flex items-center gap-md p-md border rounded-xl transition-all bg-surface text-left disabled:opacity-40 disabled:cursor-not-allowed
+                      border-outline-variant hover:border-primary/50 hover:shadow-sm"
+                    onClick={() => onViewDoc(selectedTutor.cccd_back_url)}
+                    disabled={!selectedTutor.cccd_back_url}
+                  >
+                    <div className="w-11 h-11 rounded-xl bg-primary-fixed/30 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-primary text-2xl">badge</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-label-md font-label-md text-on-surface">CCCD / Giấy tờ tùy thân (Mặt sau)</p>
+                      <p className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">
+                        {selectedTutor.cccd_back_url ? 'Đã tải lên — Nhấn để xem' : 'Chưa nộp'}
+                      </p>
+                    </div>
+                    {selectedTutor.cccd_back_url && (
+                      <span className="material-symbols-outlined text-primary text-[20px] shrink-0">open_in_new</span>
+                    )}
+                  </button>
+                </div>
               </div>
 
               {/* ── Certificates grid ── */}

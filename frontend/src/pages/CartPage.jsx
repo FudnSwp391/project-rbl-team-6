@@ -172,8 +172,21 @@ export default function CartPage({ onGoSignIn, user }) {
         return;
       }
       const data = await res.json();
-      if (data.success && data.url) window.location.href = data.url;
-      else { showToast('error', data.message || 'Lỗi tạo thanh toán VNPAY.'); setLoadingPayment(false); }
+      if (data.success && data.vnpUrl && data.params) {
+        // Dùng form redirect để tránh browser re-encode URL (gây sai chữ ký)
+        const form = document.createElement('form');
+        form.method = 'GET';
+        form.action = data.vnpUrl;
+        for (const [key, value] of Object.entries(data.params)) {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = key;
+          input.value = value;
+          form.appendChild(input);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      } else { showToast('error', data.message || 'Lỗi tạo thanh toán VNPAY.'); setLoadingPayment(false); }
     } catch (e) {
       showToast('error', 'Không thể kết nối cổng VNPAY.');
       setLoadingPayment(false);

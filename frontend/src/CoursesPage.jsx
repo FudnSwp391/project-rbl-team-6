@@ -55,9 +55,14 @@ function CourseCover({ course }) {
 function CourseCard({ course, onAdd, onFav, user }) {
   const discount = course.original_price && course.original_price > course.price
     ? Math.round((1 - course.price / course.original_price) * 100) : 0;
+  const openDetail = () => { window.location.hash = `#/course/${course.id}`; };
+  const handleKeyDown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(); } };
   return (
-    <div onClick={() => window.location.hash = `#/course/${course.id}`} style={{ cursor: 'pointer' }}
-      className="group flex gap-4 bg-white border border-[#e5e7eb] rounded-2xl overflow-hidden shadow-sm hover:border-[#00288e]/40 hover:shadow-[0_12px_40px_-12px_rgba(0,40,142,0.25)] transition-all">
+    <article
+      role="button" tabIndex={0}
+      onClick={openDetail} onKeyDown={handleKeyDown}
+      className="group flex gap-4 bg-white border border-[#e5e7eb] rounded-2xl overflow-hidden shadow-sm hover:border-[#00288e]/40 hover:shadow-[0_12px_40px_-12px_rgba(0,40,142,0.25)] transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#00288e]/30"
+    >
       <div className="w-[200px] min-w-[200px] h-[150px] shrink-0"><CourseCover course={course} /></div>
       <div className="flex-grow py-4 pr-2 min-w-0">
         <h3 className="text-[#191c1e] font-bold text-lg leading-snug group-hover:text-[#00288e] transition-colors">{course.title}</h3>
@@ -68,8 +73,22 @@ function CourseCard({ course, onAdd, onFav, user }) {
           {course.reviews ? <span className="text-[#757684] text-xs">({course.reviews})</span> : null}
           <span className="text-[#757684] text-xs ml-2 inline-flex items-center gap-1"><span className="material-symbols-outlined" style={{ fontSize: 14 }}>play_lesson</span>{course.lessons || 0} bài</span>
         </div>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            openDetail();
+          }}
+          className="mt-4 inline-flex items-center gap-1.5 text-sm font-bold text-[#00288e] hover:text-[#1e40af]"
+        >
+          Xem chi tiết
+          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>arrow_forward</span>
+        </button>
       </div>
-      <div className="flex flex-col items-end justify-between py-4 pr-4 shrink-0">
+      <div
+        onClick={(event) => event.stopPropagation()}
+        className="flex flex-col items-end justify-between py-4 pr-4 shrink-0"
+      >
         <div className="text-right">
           {course.original_price > course.price && (
             <div className="text-[#9aa3b8] text-sm line-through">{fmtVnd(course.original_price)}</div>
@@ -90,7 +109,7 @@ function CourseCard({ course, onAdd, onFav, user }) {
           </div>
         )}
       </div>
-    </div>
+    </article>
   );
 }
 

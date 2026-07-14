@@ -9,9 +9,10 @@ import { useAuth } from './AuthContext'
 import AIChatBox from './AIChatBox'
 import TutorFeedbackModal from './components/MicroFeedback/TutorFeedbackModal'
 import { getBookings, updateBookingStatus,
-         getTutorProfile, updateTutorBio, updateTutorAvatar, updateTutorCv, submitTutorProfile,
+         getTutorProfile, updateTutorBio, updateTutorAvatar, updateTutorCv,
          addTutorCredential, deleteTutorCredential,
-         updateTutorAvailability, getUnreadCount, getTutorStudents, markBookingAttendance, getTutorEarnings } from './services/api'
+         updateTutorAvailability, getUnreadCount, getTutorStudents, markBookingAttendance, getTutorEarnings,
+         saveSessionInfo, resolveMethodChange } from './services/api'
 import ProofUploader from './components/ProofUploader'
 import TutorCoursesTab from './components/TutorCourses'
 import { uploadAvatarFile, uploadDemoVideo } from './services/upload'
@@ -21,23 +22,27 @@ import TutorGradingDashboard from './components/TutorGradingDashboard'
 import WalletWidget from './components/WalletWidget'
 import TutorWithdrawalPanel from './components/TutorWithdrawalPanel'
 import NotificationDropdown from './components/NotificationDropdown'
+import WalletDashboard from './components/Wallet/WalletDashboard'
+import WalletDeposit from './components/Wallet/WalletDeposit'
+import WalletWithdraw from './components/Wallet/WalletWithdraw'
 
 const NAV_ITEMS = [
-  { icon: 'dashboard', label: 'Tổng quan' },
-  { icon: 'calendar_today', label: 'Lịch trình' },
-  { icon: 'group', label: 'Học viên' },
-  { icon: 'video_library', label: 'Khóa học' },
-  { icon: 'description', label: 'Bài kiểm tra' },
-  { icon: 'fact_check', label: 'Chấm điểm & Nhận xét' },
-  { icon: 'payments', label: 'Thu nhập' },
-  { icon: 'chat', label: 'Tin nhắn' },
-  { icon: 'account_circle', label: 'Hồ sơ' },
+  { icon: 'dashboard', label: 'Overview' },
+  { icon: 'calendar_today', label: 'My Schedule' },
+  { icon: 'group', label: 'Students' },
+  { icon: 'video_library', label: 'Courses' },
+  { icon: 'description', label: 'Assessments' },
+  { icon: 'fact_check', label: 'Review & Grade' },
+  { icon: 'payments', label: 'Earnings' },
+  { icon: 'account_balance_wallet', label: 'Wallet' },
+  { icon: 'chat', label: 'Messages' },
+  { icon: 'account_circle', label: 'My Profile' },
 ]
 
 export default function TutorDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState('Tổng quan')
+  const [activeTab, setActiveTab] = useState('Overview')
   const [requests, setRequests] = useState([])
   const [scheduleToday, setScheduleToday] = useState([])
   const [overviewStats, setOverviewStats] = useState({
@@ -47,6 +52,7 @@ export default function TutorDashboard() {
   })
   const [loading, setLoading] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [profileStatus, setProfileStatus] = useState('loading')
 
   const displayName = user?.name || user?.email?.split('@')[0] || 'Tutor'
   const initials = displayName
@@ -67,6 +73,20 @@ export default function TutorDashboard() {
   useEffect(() => {
     async function loadTutorData() {
       try {
+        let profile = null;
+        try {
+          profile = await getTutorProfile()
+          setProfileStatus(profile.status)
+        } catch (e) {
+          console.warn('Profile fetch error or not found:', e)
+          setProfileStatus('missing')
+        }
+
+        if (!profile || profile.status !== 'approved') {
+          setLoading(false)
+          return
+        }
+
         const [bookingsList, earningsData] = await Promise.all([
           getBookings(),
           getTutorEarnings().catch(() => null),
@@ -219,7 +239,7 @@ export default function TutorDashboard() {
         <div className="flex flex-col gap-2 px-sm flex-1 mt-4">
           {NAV_ITEMS.map((item) => {
             const isActive = item.label === activeTab
-            const isMessages = item.label === 'Tin nhắn'
+            const isMessages = item.label === 'Messages'
             return (
               <a
                 key={item.label}
@@ -336,7 +356,36 @@ export default function TutorDashboard() {
           {/* Decorative background glow */}
           <div className="fixed top-0 right-0 w-1/2 h-1/2 bg-gradient-to-bl from-primary-fixed-dim/20 to-transparent pointer-events-none -z-10 blur-3xl rounded-full" />
 
-          {activeTab === 'Tổng quan' && (
+          {['pending', 'rejected', 'missing'].includes(profileStatus) && activeTab !== 'My Profile' ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center z-20 bg-surface/90 backdrop-blur-sm animate-fade-in min-h-[500px]">
+              <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+                <span className="material-symbols-outlined text-primary text-[48px]">
+                  {profileStatus === 'rejected' ? 'cancel' : profileStatus === 'missing' ? 'post_add' : 'hourglass_empty'}
+                </span>
+              </div>
+              <h2 className="text-[28px] font-bold text-on-surface mb-3">
+                {profileStatus === 'rejected' ? 'Hồ sơ của bạn đã bị từ chối' : 
+                 profileStatus === 'missing' ? 'Bạn chưa có hồ sơ gia sư' : 
+                 'Hồ sơ của bạn đang chờ duyệt'}
+              </h2>
+              <p className="text-on-surface-variant max-w-md text-[15px] mb-8 leading-relaxed">
+                {profileStatus === 'rejected' 
+                  ? 'Vui lòng kiểm tra lại thông tin trên hồ sơ của bạn hoặc liên hệ với bộ phận hỗ trợ để biết thêm chi tiết.' 
+                  : profileStatus === 'missing'
+                  ? 'Vui lòng chuyển sang tab "My Profile" để điền thông tin và nộp đơn đăng ký làm gia sư.'
+                  : 'Cảm ơn bạn đã đăng ký làm gia sư tại EduX. Quản trị viên đang xem xét hồ sơ của bạn. Quá trình này có thể mất từ 1-2 ngày làm việc.'}
+              </p>
+              <button 
+                onClick={() => setActiveTab('My Profile')}
+                className="h-12 px-8 bg-primary text-on-primary font-bold rounded-xl hover:bg-primary/90 transition-all flex items-center gap-2 shadow-sm"
+              >
+                <span className="material-symbols-outlined text-[20px]">manage_accounts</span>
+                {profileStatus === 'missing' ? 'Tạo hồ sơ ngay' : 'Xem & Cập nhật hồ sơ'}
+              </button>
+            </div>
+          ) : null}
+
+          {(profileStatus === 'approved' || activeTab === 'My Profile') && activeTab === 'Overview' && (
             <>
           {/* Ă¢â€â‚¬Ă¢â€â‚¬ Welcome Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <div className="space-y-1">
@@ -462,7 +511,7 @@ export default function TutorDashboard() {
                   )}
                 </div>
                 <button
-                  onClick={() => setActiveTab('Lịch trình')}
+                  onClick={() => setActiveTab('My Schedule')}
                   className="mt-6 w-full h-10 border border-outline-variant rounded-lg font-label-md text-on-surface-variant hover:bg-surface-container-high transition-colors"
                 >
                   Open Full Calendar
@@ -474,36 +523,51 @@ export default function TutorDashboard() {
             </>
           )}
 
-          {activeTab === 'Hồ sơ' && (
+          {activeTab === 'My Profile' && (
             <TutorProfileTab user={user} displayName={displayName} initials={initials} />
           )}
 
-          {activeTab === 'Lịch trình' && (
+          {profileStatus === 'approved' && activeTab === 'My Schedule' && (
             <MyScheduleTab />
           )}
 
-          {activeTab === 'Học viên' && (
+          {profileStatus === 'approved' && activeTab === 'Students' && (
             <TutorStudentsTab />
           )}
 
-          {activeTab === 'Khóa học' && (
+          {profileStatus === 'approved' && activeTab === 'Courses' && (
             <TutorCoursesTab user={user} />
           )}
 
-          {activeTab === 'Bài kiểm tra' && (
+          {profileStatus === 'approved' && activeTab === 'Assessments' && (
             <TutorAssessmentManager token={token} />
           )}
 
-          {activeTab === 'Chấm điểm & Nhận xét' && (
+          {profileStatus === 'approved' && activeTab === 'Review & Grade' && (
             <TutorGradingDashboard token={token} />
           )}
 
-          {activeTab === 'Thu nhập' && (
+          {profileStatus === 'approved' && activeTab === 'Earnings' && (
             <TutorEarningsTab />
           )}
 
-          {activeTab === 'Tin nhắn' && (
+          {profileStatus === 'approved' && activeTab === 'Messages' && (
             <MessagesSection token={token} user={user} />
+          )}
+
+          {activeTab === 'Wallet' && (
+            <WalletDashboard 
+              onDepositClick={() => setActiveTab('WalletDeposit')} 
+              onWithdrawClick={() => setActiveTab('WalletWithdraw')}
+            />
+          )}
+
+          {activeTab === 'WalletDeposit' && (
+            <WalletDeposit onBack={() => setActiveTab('Wallet')} />
+          )}
+
+          {activeTab === 'WalletWithdraw' && (
+            <WalletWithdraw onBack={() => setActiveTab('Wallet')} />
           )}
 
         </main>
@@ -1067,6 +1131,22 @@ function normalizeBookingDate(value) {
   return Number.isNaN(parsed.getTime()) ? '' : toDateKey(parsed)
 }
 
+// ── Hình thức dạy: chuẩn hóa từ teaching_methods (mảng text tự do) ──────────
+function methodSupportOf(methods) {
+  const txt = (Array.isArray(methods) ? methods : []).join(' ').toLowerCase()
+  const online  = /online|trực tuyến|truc tuyen/.test(txt)
+  const offline = /offline|trực tiếp|truc tiep|tại nhà|tai nha|tại địa điểm/.test(txt)
+  return { online, offline }
+}
+function methodChoiceOf(methods) {
+  const s = methodSupportOf(methods)
+  if (s.online && s.offline) return 'both'
+  if (s.online) return 'online'
+  if (s.offline) return 'offline'
+  return ''
+}
+const METHOD_LABELS = { online: 'Online', offline: 'Offline (truc tiep)', both: 'Ca hai (Online + Offline)' }
+
 function MyScheduleTab() {
   const [view, setView] = useState('week')
   const [cursor, setCursor] = useState(new Date())
@@ -1098,12 +1178,22 @@ function MyScheduleTab() {
     return () => { active = false }
   }, [])
 
+  // Thông tin buổi học đọc từ DB (bookings) — học sinh cũng thấy được, thay cho localStorage cũ
   useEffect(() => {
     const map = {}
     bookings.filter(b => String(b.status).toLowerCase() === 'approved').forEach(b => {
-      const saved = localStorage.getItem(`session_info_booking-${b.id}`)
-      if (saved) {
-        try { map[`booking-${b.id}`] = JSON.parse(saved) } catch {}
+      if (b.teaching_method || b.meeting_link || b.location || b.session_topic) {
+        map[`booking-${b.id}`] = {
+          mode: b.teaching_method || (b.meeting_link ? 'online' : 'offline'),
+          meetLink: b.meeting_link || '',
+          meetPassword: b.meeting_password || '',
+          location: b.location || '',
+          locationNote: b.location_note || '',
+          topic: b.session_topic || '',
+          duration: b.session_duration ? String(b.session_duration) : '60',
+          materials: b.session_materials || '',
+          homework: b.session_homework || '',
+        }
       }
     })
     setSessionInfoMap(map)
@@ -1191,17 +1281,14 @@ function MyScheduleTab() {
       {sessionModal && (
         <SessionInfoModal
           event={sessionModal}
-          onClose={() => {
-            const map = {}
-            bookings.filter(b => String(b.status).toLowerCase() === 'approved').forEach(b => {
-              const saved = localStorage.getItem(`session_info_booking-${b.id}`)
-              if (saved) {
-                try { map[`booking-${b.id}`] = JSON.parse(saved) } catch {}
-              }
-            })
-            setSessionInfoMap(map)
-            setSessionModal(null)
+          booking={bookings.find(b => `booking-${b.id}` === sessionModal.id) || null}
+          onSaved={async () => {
+            try {
+              const fresh = await getBookings()
+              setBookings(Array.isArray(fresh) ? fresh : [])
+            } catch {}
           }}
+          onClose={() => setSessionModal(null)}
         />
       )}
     </div>
@@ -1306,28 +1393,33 @@ function ScheduleEventPill({ event, onClick, hasInfo }) {
 }
 
 // ─── Session Info Modal ─────────────────────────────────────────────────────
-function SessionInfoModal({ event, onClose }) {
-  const storageKey = `session_info_${event.id}`
-  const [form, setForm] = useState(() => {
-    try {
-      const saved = localStorage.getItem(storageKey)
-      return saved ? JSON.parse(saved) : {
-        mode: 'online', meetLink: '', meetPassword: '',
-        location: '', locationNote: '',
-        topic: '', duration: '60', materials: '', homework: '',
-        notifyStudent: true,
-      }
-    } catch {
-      return { mode: 'online', meetLink: '', meetPassword: '', location: '', locationNote: '', topic: '', duration: '60', materials: '', homework: '', notifyStudent: true }
-    }
-  })
+function SessionInfoModal({ event, booking, onClose, onSaved }) {
+  const [form, setForm] = useState(() => ({
+    mode: booking?.teaching_method || (booking?.meeting_link ? 'online' : 'online'),
+    meetLink: booking?.meeting_link || '',
+    meetPassword: booking?.meeting_password || '',
+    location: booking?.location || '',
+    locationNote: booking?.location_note || '',
+    topic: booking?.session_topic || '',
+    duration: booking?.session_duration ? String(booking.session_duration) : '60',
+    materials: booking?.session_materials || '',
+    homework: booking?.session_homework || '',
+    notifyStudent: true,
+  }))
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [changeStatus, setChangeStatus] = useState(booking?.method_change_status || null)
+  const [resolving, setResolving] = useState(false)
 
   const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setError('')
+    if (!booking?.id) {
+      setError('Không tìm thấy buổi học tương ứng. Vui lòng tải lại trang.')
+      return
+    }
     if (form.mode === 'online' && !form.meetLink.trim()) {
       setError('Vui lòng nhập link phòng học online.')
       return
@@ -1336,9 +1428,33 @@ function SessionInfoModal({ event, onClose }) {
       setError('Vui lòng nhập địa điểm học offline.')
       return
     }
-    localStorage.setItem(storageKey, JSON.stringify(form))
-    setSaved(true)
-    setTimeout(() => { setSaved(false); onClose() }, 900)
+    setSaving(true)
+    try {
+      await saveSessionInfo(booking.id, form)
+      if (onSaved) await onSaved()
+      setSaved(true)
+      setTimeout(() => { setSaved(false); onClose() }, 900)
+    } catch (e) {
+      setError(e.message || 'Lưu thông tin buổi học thất bại.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleResolveChange = async (decision) => {
+    if (!booking?.id) return
+    setResolving(true)
+    setError('')
+    try {
+      await resolveMethodChange(booking.id, decision)
+      setChangeStatus(decision)
+      if (decision === 'accepted') set('mode', booking.method_change_requested)
+      if (onSaved) await onSaved()
+    } catch (e) {
+      setError(e.message || 'Phản hồi yêu cầu thất bại.')
+    } finally {
+      setResolving(false)
+    }
   }
 
   const inputCls = 'w-full h-10 px-3 rounded-xl border border-outline-variant text-[14px] text-on-surface outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 bg-white transition-all'
@@ -1391,6 +1507,48 @@ function SessionInfoModal({ event, onClose }) {
 
         {/* ── Scrollable Body ── */}
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
+
+          {/* Yêu cầu đổi hình thức từ học sinh */}
+          {booking?.method_change_requested && changeStatus === 'pending' && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+              <div className="flex items-start gap-2.5">
+                <span className="material-symbols-outlined text-amber-600 text-[20px] shrink-0">swap_horiz</span>
+                <div className="min-w-0">
+                  <p className="text-[13px] font-bold text-amber-800">
+                    Học sinh xin đổi sang {booking.method_change_requested === 'online' ? 'Online' : 'Offline'}
+                  </p>
+                  {booking.method_change_reason && (
+                    <p className="text-[12px] text-amber-700 mt-0.5">Lý do: {booking.method_change_reason}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" disabled={resolving}
+                  onClick={() => handleResolveChange('accepted')}
+                  className="h-9 px-4 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold flex items-center gap-1.5 hover:bg-[#15803d] transition-colors disabled:opacity-60">
+                  <span className="material-symbols-outlined text-[15px]">check</span>
+                  Đồng ý đổi
+                </button>
+                <button type="button" disabled={resolving}
+                  onClick={() => handleResolveChange('declined')}
+                  className="h-9 px-4 rounded-lg border border-amber-300 text-amber-700 text-[12px] font-bold flex items-center gap-1.5 hover:bg-amber-100 transition-colors disabled:opacity-60">
+                  <span className="material-symbols-outlined text-[15px]">close</span>
+                  Từ chối
+                </button>
+              </div>
+              {booking.method_change_requested === 'online' && (
+                <p className="text-[11px] text-amber-600">Nếu đồng ý, nhớ điền link phòng học online bên dưới rồi bấm Lưu.</p>
+              )}
+            </div>
+          )}
+          {changeStatus === 'accepted' && booking?.method_change_requested && (
+            <div className="bg-green-50 border border-green-200 rounded-2xl px-4 py-3 flex items-center gap-2">
+              <span className="material-symbols-outlined text-[#16a34a] text-[18px]">check_circle</span>
+              <p className="text-[12px] font-semibold text-green-800">
+                Đã đồng ý đổi sang {booking.method_change_requested === 'online' ? 'Online' : 'Offline'} — học sinh đã được thông báo.
+              </p>
+            </div>
+          )}
 
           {/* CARD 1 — Hình thức học */}
           <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
@@ -1583,7 +1741,8 @@ function SessionInfoModal({ event, onClose }) {
             </button>
             <button
               onClick={handleSave}
-              className={`h-10 px-6 rounded-xl text-[13px] font-bold flex items-center gap-2 transition-all shadow-sm ${
+              disabled={saving}
+              className={`h-10 px-6 rounded-xl text-[13px] font-bold flex items-center gap-2 transition-all shadow-sm disabled:opacity-60 ${
                 saved
                   ? 'bg-[#16a34a] text-white'
                   : 'bg-primary text-on-primary hover:bg-[#1e40af]'
@@ -1595,7 +1754,7 @@ function SessionInfoModal({ event, onClose }) {
               >
                 {saved ? 'check_circle' : 'save'}
               </span>
-              {saved ? 'Đã lưu!' : 'Lưu thông tin'}
+              {saved ? 'Đã lưu!' : saving ? 'Đang lưu...' : 'Lưu & gửi cho học sinh'}
             </button>
           </div>
         </div>
@@ -1611,6 +1770,30 @@ const TIME_SLOTS = [
   '12:00 PM','01:00 PM','01:30 PM','02:00 PM','03:00 PM','03:30 PM',
   '04:00 PM','05:00 PM','06:00 PM','07:00 PM','08:00 PM',
 ]
+
+// Chuyển slot string ("09:00 AM") thành phút kể từ nửa đêm
+function parseSlotMins(slot) {
+  const [time, period] = slot.split(' ')
+  let [h, m] = time.split(':').map(Number)
+  if (period === 'PM' && h !== 12) h += 12
+  if (period === 'AM' && h === 12) h = 0
+  return h * 60 + m
+}
+
+// Kiểm tra slot có bị chặn bởi một slot đã chọn không (dựa theo duration)
+// VD: 09:00 AM đã chọn với 2h → 10:00 AM và 10:30 AM bị block
+function isSlotBlocked(slot, selectedSlots, durationMins) {
+  if (durationMins <= 60) return false // 1h: không block gì
+  const slotMins = parseSlotMins(slot)
+  for (const sel of selectedSlots) {
+    const selMins = parseSlotMins(sel)
+    // Slot bị block nếu nằm trong khoảng [selStart, selStart+duration) của một slot đã chọn
+    // hoặc nếu chọn slot này sẽ đè lên slot đã chọn khác
+    const overlap = slotMins < selMins + durationMins && slotMins + durationMins > selMins
+    if (overlap && slotMins !== selMins) return true
+  }
+  return false
+}
 
 // Badge hiĂ¡Â»Æ’n thĂ¡Â»â€¹ trĂ¡ÂºÂ¡ng thÄ‚Â¡i duyĂ¡Â»â€¡t
 function StatusBadge({ status }) {
@@ -1668,12 +1851,11 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     bio: '',
     teaching_style: '',
     demo_video_url: '',
+    teaching_methods: [],
   })
   const [cvSaving, setCvSaving]         = useState(false)
   const [videoUploading, setVideoUploading] = useState(false)
   const [cvError, setCvError]           = useState('')
-  const [submitLoading, setSubmitLoading] = useState(false)
-  const [submitError, setSubmitError]   = useState('')
 
   // Credential add modal
   const [credModal, setCredModal]       = useState(null) // 'education' | 'certificate' | 'experience' | null
@@ -1685,6 +1867,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const [availEdit, setAvailEdit]       = useState(false)
   const [availData, setAvailData]       = useState({})
   const [availSaving, setAvailSaving]   = useState(false)
+  const [slotDuration, setSlotDuration] = useState(60) // 60 | 120 | 180 phút
 
   useEffect(() => {
     async function load() {
@@ -1693,6 +1876,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         setProfile(data)
         setBioValue(data.bio_pending || data.bio || '')
         setAvailData(data.availability || {})
+        setSlotDuration(Number(data.slot_duration_mins) || 60)
         setAvatarUrl(data.picture || user?.picture || '')
         setCvForm({
           full_name: data.full_name || displayName,
@@ -1705,6 +1889,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
           bio: data.bio || '',
           teaching_style: data.teaching_style || '',
           demo_video_url: data.demo_video_url || '',
+          teaching_methods: Array.isArray(data.teaching_methods) ? data.teaching_methods : [],
         })
       } catch (e) {
         setProfile({ bio: '', bio_status: 'approved', status: 'draft', credentials: [], availability: {} })
@@ -1715,11 +1900,9 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     load()
   }, [])
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Bio save Ă¢â‚¬â€ khÄ‚Â´ng cĂ¡ÂºÂ§n duyĂ¡Â»â€¡t, lĂ†Â°u thĂ¡ÂºÂ³ng Ă¢â€â‚¬Ă¢â€â‚¬
   const handleBioSave = async () => {
     setBioSaving(true)
     try {
-      // GĂ¡Â»Âi API cĂ¡ÂºÂ­p nhĂ¡ÂºÂ­t bio trĂ¡Â»Â±c tiĂ¡ÂºÂ¿p (khÄ‚Â´ng qua pending)
       await updateTutorBio(bioValue)
       setProfile(p => ({ ...p, bio: bioValue, bio_pending: null, bio_status: 'approved' }))
       setBioEdit(false)
@@ -1727,7 +1910,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     finally { setBioSaving(false) }
   }
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Avatar save Ă¢â€â‚¬Ă¢â€â‚¬
   const handleAvatarSave = async () => {
     if (!avatarInput.trim()) return
     setAvatarSaving(true)
@@ -1789,40 +1971,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     }
   }
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Add credential Ă¢â€â‚¬Ă¢â€â‚¬
-  const handleSubmitProfile = async () => {
-    setSubmitError('')
-    setCvError('')
-    const source = cvEdit ? cvForm : profile
-
-    if (!source?.bio?.trim()) {
-      setSubmitError('Vui long dien phan gioi thieu ban than truoc khi nop.')
-      return
-    }
-    if (!source?.subjects?.trim()) {
-      setSubmitError('Vui long dien mon day truoc khi nop.')
-      return
-    }
-
-    setSubmitLoading(true)
-    try {
-      if (cvEdit) {
-        const saved = await updateTutorCv(cvForm)
-        setProfile(p => ({ ...p, ...saved }))
-        setBioValue(cvForm.bio)
-        updateUser({ name: cvForm.full_name })
-        setCvEdit(false)
-      }
-      const updated = await submitTutorProfile()
-      setProfile(p => ({ ...p, ...updated }))
-      alert('Da nop ho so cho admin duyet.')
-    } catch (e) {
-      setSubmitError(e.message || 'Nop ho so that bai.')
-    } finally {
-      setSubmitLoading(false)
-    }
-  }
-
   const handleAddCredential = async () => {
     setCredError('')
     if (!credForm.title.trim()) { setCredError('Title is required.'); return }
@@ -1844,7 +1992,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     finally { setCredSaving(false) }
   }
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Delete credential Ă¢â€â‚¬Ă¢â€â‚¬
   const handleDeleteCred = async (id, status) => {
     try {
       await deleteTutorCredential(id)
@@ -1852,22 +1999,24 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     } catch { /* ignore */ }
   }
 
-  // Ă¢â€â‚¬Ă¢â€â‚¬ Availability toggle slot Ă¢â€â‚¬Ă¢â€â‚¬
   const toggleSlot = (day, slot) => {
     setAvailData(prev => {
       const current = prev[day] || []
-      const next = current.includes(slot)
-        ? current.filter(s => s !== slot)
-        : [...current, slot].sort()
-      return { ...prev, [day]: next }
+      // Nếu slot đang được chọn → bỏ chọn
+      if (current.includes(slot)) {
+        return { ...prev, [day]: current.filter(s => s !== slot) }
+      }
+      // Kiểm tra xem slot có bị block không
+      if (isSlotBlocked(slot, current, slotDuration)) return prev
+      return { ...prev, [day]: [...current, slot].sort() }
     })
   }
 
   const handleAvailSave = async () => {
     setAvailSaving(true)
     try {
-      await updateTutorAvailability(availData)
-      setProfile(p => ({ ...p, availability: availData }))
+      await updateTutorAvailability(availData, slotDuration)
+      setProfile(p => ({ ...p, availability: availData, slot_duration_mins: slotDuration }))
       setAvailEdit(false)
     } catch { /* ignore */ }
     finally { setAvailSaving(false) }
@@ -1898,35 +2047,22 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   )
   const isPending = profileStatus === 'pending'
   const isRejected = profileStatus === 'rejected'
-  const submitButtonText = isPending
-    ? 'Dang cho admin duyet'
-    : isVerified
-      ? 'Nop lai ho so sau khi chinh sua'
-      : 'Nop ho so cho Admin duyet'
   const statusConfig = isVerified
     ? { icon: 'verified_user', title: 'Account Verified', box: 'bg-[#f0fdf4] border-[#bbf7d0]', iconColor: 'text-[#16a34a]', titleColor: 'text-[#16a34a]', textColor: 'text-[#166534]', text: 'Ho so da duoc admin duyet. Hoc sinh va phu huynh se thay tick xanh tren ten gia su.' }
     : isRejected
-      ? { icon: 'cancel', title: 'Profile Rejected', box: 'bg-red-50 border-red-200', iconColor: 'text-red-600', titleColor: 'text-red-700', textColor: 'text-red-700', text: profile?.reject_reason ? `Ly do: ${profile.reject_reason}` : 'Ho so bi tu choi. Hay chinh sua thong tin va nop lai.' }
+      ? { icon: 'cancel', title: 'Profile Rejected', box: 'bg-red-50 border-red-200', iconColor: 'text-red-600', titleColor: 'text-red-700', textColor: 'text-red-700', text: profile?.reject_reason ? `Ly do: ${profile.reject_reason}` : 'Ho so bi tu choi. Hay chinh sua thong tin va luu lai.' }
       : isPending
-        ? { icon: 'pending', title: 'Verification Pending', box: 'bg-amber-50 border-amber-200', iconColor: 'text-amber-500', titleColor: 'text-amber-700', textColor: 'text-amber-700', text: 'Ho so dang cho admin duyet. Ban van co the chinh sua va nop lai neu can.' }
-        : { icon: 'edit_note', title: 'Draft Profile', box: 'bg-surface-container-low border-outline-variant/40', iconColor: 'text-on-surface-variant', titleColor: 'text-on-surface', textColor: 'text-on-surface-variant', text: 'Day la ban nhap. Hay dien du thong tin, luu lai, roi bam nut nop o cuoi trang.' }
-  const submitStatus = isVerified
-    ? { icon: 'verified', text: 'Ho so da duoc admin xac nhan thanh cong.', classes: 'bg-[#f0fdf4] text-[#16a34a] border-[#bbf7d0]' }
-    : isRejected
-      ? { icon: 'cancel', text: 'Ho so cua ban khong duoc thong qua.', classes: 'bg-red-50 text-red-700 border-red-200' }
-      : isPending
-        ? { icon: 'pending', text: 'Pending - ho so dang cho admin duyet.', classes: 'bg-amber-50 text-amber-700 border-amber-200' }
-        : { icon: 'edit_note', text: 'Chua nop ho so cho admin.', classes: 'bg-surface-container-low text-on-surface-variant border-outline-variant/40' }
+        ? { icon: 'pending', title: 'Verification Pending', box: 'bg-amber-50 border-amber-200', iconColor: 'text-amber-500', titleColor: 'text-amber-700', textColor: 'text-amber-700', text: 'Ho so dang cho admin duyet.' }
+        : { icon: 'edit_note', title: 'Draft Profile', box: 'bg-surface-container-low border-outline-variant/40', iconColor: 'text-on-surface-variant', titleColor: 'text-on-surface', textColor: 'text-on-surface-variant', text: 'Day la ban nhap. Hay dien du thong tin va luu lai.' }
 
   return (
     <div className="space-y-6 pb-10">
 
-      {/* Ă¢â€â‚¬Ă¢â€â‚¬ Header Ă¢â€â‚¬Ă¢â€â‚¬ */}
       <div className="flex justify-between items-center flex-wrap gap-3">
         <div>
           <h2 className="font-headline-lg text-headline-lg text-on-surface">My Profile</h2>
           <p className="font-body-md text-body-md text-on-surface-variant">
-            Manage your public profile. Submit the completed profile for admin approval when ready.
+            Manage your public profile.
           </p>
         </div>
         <a href="#/" className="h-10 px-4 border border-outline-variant text-on-surface-variant font-label-md text-label-md rounded-xl hover:bg-surface-container-high transition-colors flex items-center gap-1.5">
@@ -1934,9 +2070,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         </a>
       </div>
 
-      {/* Ă¢â€â‚¬Ă¢â€â‚¬ Hero: Avatar + name Ă¢â€â‚¬Ă¢â€â‚¬ */}
       <div className="bg-gradient-to-br from-[#eef1ff] to-[#eaf3ff] rounded-2xl p-6 border border-primary/10 shadow-sm flex flex-wrap gap-5 items-center">
-        {/* Avatar with change button */}
         <div className="relative flex-shrink-0 group">
           {avatarUrl ? (
             <img src={avatarUrl} alt={displayName}
@@ -1949,7 +2083,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
           {isVerified && (
             <span className="material-symbols-outlined icon-fill absolute -bottom-2 -right-2 text-[22px] bg-white rounded-full p-0.5 shadow" style={{ color: '#16a34a' }} title="Verified by EduX">verified</span>
           )}
-          {/* Change avatar overlay */}
           <button
             onClick={() => setAvatarEdit(true)}
             className="absolute inset-0 rounded-2xl bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
@@ -1975,7 +2108,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
           <p className="text-[13px] text-on-surface-variant">{user?.email}</p>
         </div>
 
-        {/* Avatar change prompt */}
         <button onClick={() => setAvatarEdit(true)}
           className="h-9 px-4 bg-white border border-outline-variant text-on-surface-variant font-label-sm text-label-sm rounded-xl hover:bg-surface-container-high transition-colors flex items-center gap-1.5 shadow-sm">
           <span className="material-symbols-outlined text-[16px]">photo_camera</span>
@@ -1983,7 +2115,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         </button>
       </div>
 
-      {/* Ă¢â€â‚¬Ă¢â€â‚¬ Avatar URL dialog Ă¢â€â‚¬Ă¢â€â‚¬ */}
       {avatarEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
@@ -2040,7 +2171,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                   <span className="material-symbols-outlined text-primary">badge</span>
                   Tutor CV
                 </h4>
-                <p className="text-[12px] text-on-surface-variant mt-1">Gia su tu dien CV, upload video demo va gui admin duyet.</p>
+                <p className="text-[12px] text-on-surface-variant mt-1">Gia su tu dien CV va upload video demo.</p>
               </div>
               {!cvEdit && (
                 <button onClick={() => setCvEdit(true)}
@@ -2063,6 +2194,27 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                   <CvInput label="Hoc phi / gio" type="number" value={cvForm.hourly_rate} onChange={v => setCvForm(f => ({ ...f, hourly_rate: v }))} />
                   <CvInput label="So nam kinh nghiem" type="number" value={cvForm.experience_years} onChange={v => setCvForm(f => ({ ...f, experience_years: v }))} />
                 </div>
+                <div>
+                  <label className="block text-[12px] font-semibold text-on-surface mb-1.5">Hinh thuc day</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { v: 'online',  icon: 'videocam',    label: 'Online' },
+                      { v: 'offline', icon: 'location_on', label: 'Offline' },
+                      { v: 'both',    icon: 'sync_alt',    label: 'Ca hai' },
+                    ].map(opt => {
+                      const active = methodChoiceOf(cvForm.teaching_methods) === opt.v
+                      return (
+                        <button key={opt.v} type="button"
+                          onClick={() => setCvForm(f => ({ ...f, teaching_methods: opt.v === 'both' ? ['online', 'offline'] : [opt.v] }))}
+                          className={`h-11 rounded-xl border text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-colors ${active ? 'border-primary bg-primary/5 text-primary' : 'border-outline-variant text-on-surface-variant hover:bg-surface-container'}`}>
+                          <span className="material-symbols-outlined text-[17px]">{opt.icon}</span>
+                          {opt.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-outline">Hoc sinh chi dat lich duoc theo hinh thuc ban chon. Chon "Ca hai" de linh hoat nhat.</p>
+                </div>
                 <CvTextarea label="Gioi thieu ban than" rows={4} value={cvForm.bio} onChange={v => setCvForm(f => ({ ...f, bio: v }))} />
                 <CvTextarea label="Phong cach giang day" rows={3} value={cvForm.teaching_style} onChange={v => setCvForm(f => ({ ...f, teaching_style: v }))} />
                 <div>
@@ -2079,7 +2231,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                 <div className="flex gap-2">
                   <button onClick={() => setCvEdit(false)} className="h-10 px-4 border border-outline-variant text-on-surface-variant rounded-xl font-label-md text-label-md hover:bg-surface-container transition-colors">Cancel</button>
                   <button onClick={handleCvSave} disabled={cvSaving || videoUploading} className="h-10 px-5 bg-primary text-on-primary rounded-xl font-label-md text-label-md hover:bg-primary/90 transition-colors disabled:opacity-50">
-                    {cvSaving ? 'Saving...' : 'Save Draft'}
+                    {cvSaving ? 'Saving...' : 'Save'}
                   </button>
                 </div>
               </div>
@@ -2091,13 +2243,13 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                 <InfoItem label="Hoc phi" value={profile?.hourly_rate ? `${profile.hourly_rate}/hr` : ''} />
                 <InfoItem label="Kinh nghiem" value={profile?.experience_years ? `${profile.experience_years} nam` : ''} />
                 <InfoItem label="Dien thoai" value={profile?.phone} />
+                <InfoItem label="Hinh thuc day" value={METHOD_LABELS[methodChoiceOf(profile?.teaching_methods)] || 'Chua chon'} />
                 <div className="md:col-span-2"><InfoItem label="Phong cach day" value={profile?.teaching_style} /></div>
                 {profile?.demo_video_url && <div className="md:col-span-2"><p className="font-semibold text-on-surface mb-2">Video demo</p><video className="w-full max-h-72 rounded-xl bg-black" src={profile.demo_video_url} controls /></div>}
               </div>
             )}
           </div>
 
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ About Me Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-sm rounded-2xl p-6">
             <div className="flex items-center justify-between mb-3">
               <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
@@ -2141,7 +2293,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             )}
           </div>
 
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ Education Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <CredentialSection
             title="Education & Degrees"
             icon="school"
@@ -2152,7 +2303,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             proofLabel="Degree Certificate / Transcript image URL"
           />
 
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ Certificates Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <CredentialSection
             title="Certificates & Qualifications"
             icon="workspace_premium"
@@ -2163,19 +2313,8 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             proofLabel="Certificate image URL"
           />
 
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ Experience Ă¢â€â‚¬Ă¢â€â‚¬ */}
-          <CredentialSection
-            title="Teaching Experience"
-            icon="work_history"
-            items={experience}
-            type="experience"
-            onAdd={() => { setCredModal('experience'); setCredForm({ title:'', description:'', proof_url:'' }) }}
-            onDelete={handleDeleteCred}
-            noProof
-          />
         </div>
 
-        {/* Ă¢â€â‚¬Ă¢â€â‚¬ RIGHT: Availability Ă¢â€â‚¬Ă¢â€â‚¬ */}
         <div className="space-y-5">
           <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-sm rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
@@ -2203,18 +2342,54 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             </div>
 
             {availEdit ? (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <p className="text-[12px] text-on-surface-variant">Click slots to toggle availability. No admin approval needed.</p>
+
+                {/* ── Chọn thời lượng slot ── */}
+                <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
+                  <p className="font-label-md text-[12px] font-bold text-on-surface mb-2 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-primary">schedule</span>
+                    Thời lượng mỗi buổi dạy
+                  </p>
+                  <div className="flex gap-2">
+                    {[{ value: 60, label: '1 tiếng', sub: '60 phút' }, { value: 120, label: '2 tiếng', sub: '120 phút' }, { value: 180, label: '3 tiếng', sub: '180 phút' }].map(opt => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setSlotDuration(opt.value)}
+                        className={`flex-1 py-2 px-3 rounded-xl border-2 transition-all text-center ${
+                          slotDuration === opt.value
+                            ? 'border-primary bg-primary text-on-primary'
+                            : 'border-outline-variant/50 text-on-surface-variant hover:border-primary/40 hover:bg-primary/5'
+                        }`}
+                      >
+                        <p className="font-bold text-[13px]">{opt.label}</p>
+                        <p className={`text-[10px] mt-0.5 ${slotDuration === opt.value ? 'text-on-primary/80' : 'text-outline'}`}>{opt.sub}</p>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant mt-2">
+                    ⚠️ Học phí sẽ tính theo thời lượng: <span className="font-semibold text-primary">{slotDuration === 60 ? '1×' : slotDuration === 120 ? '2×' : '3×'} giá mỗi giờ</span>
+                  </p>
+                </div>
+
                 {DAY_ORDER.map(day => (
                   <div key={day}>
                     <p className="font-label-sm text-[12px] font-bold text-on-surface mb-1.5">{day}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {TIME_SLOTS.map(slot => {
-                        const active = (availData[day] || []).includes(slot)
+                        const active  = (availData[day] || []).includes(slot)
+                        const blocked = !active && isSlotBlocked(slot, availData[day] || [], slotDuration)
                         return (
                           <button key={slot} type="button"
                             onClick={() => toggleSlot(day, slot)}
-                            className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${active ? 'bg-primary text-on-primary border-primary' : 'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'}`}>
+                            disabled={blocked}
+                            title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
+                            className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
+                              active   ? 'bg-primary text-on-primary border-primary' :
+                              blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
+                                         'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'
+                            }`}>
                             {slot}
                           </button>
                         )
@@ -2225,6 +2400,18 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
               </div>
             ) : (
               <div className="space-y-2">
+                {/* Badge thời lượng hiện tại */}
+                {profile?.slot_duration_mins && (
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="material-symbols-outlined text-[16px] text-primary">schedule</span>
+                    <span className="text-[12px] text-on-surface-variant">
+                      Mỗi buổi dạy:
+                    </span>
+                    <span className="text-[12px] font-bold text-primary bg-primary/8 px-2 py-0.5 rounded-full border border-primary/20">
+                      {profile.slot_duration_mins === 60 ? '1 tiếng' : profile.slot_duration_mins === 120 ? '2 tiếng' : profile.slot_duration_mins === 180 ? '3 tiếng' : `${profile.slot_duration_mins} phút`}
+                    </span>
+                  </div>
+                )}
                 {DAY_ORDER.map(day => {
                   const slots = (profile?.availability || {})[day] || []
                   return (
@@ -2262,31 +2449,6 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
       </div>
 
       {/* Ă¢â€â‚¬Ă¢â€â‚¬ Add Credential Modal Ă¢â€â‚¬Ă¢â€â‚¬ */}
-      <div className="bg-white/80 backdrop-blur-md border border-primary/15 shadow-sm rounded-2xl p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary">approval_delegation</span>
-            Nop ho so cho admin
-          </h4>
-          <p className="text-[13px] text-on-surface-variant mt-1">
-            Sau khi luu day du CV, bang cap, chung chi, kinh nghiem va lich day, bam nut nay de admin duyet ho so.
-          </p>
-          <div className={`mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[12px] font-semibold ${submitStatus.classes}`}>
-            <span className="material-symbols-outlined icon-fill text-[15px]">{submitStatus.icon}</span>
-            {submitStatus.text}
-          </div>
-          {submitError && <p className="mt-2 text-[12px] text-red-600">{submitError}</p>}
-        </div>
-        <button
-          type="button"
-          onClick={handleSubmitProfile}
-          disabled={submitLoading || isPending}
-          className="h-11 px-5 bg-primary text-on-primary rounded-xl font-label-md text-label-md hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          <span className="material-symbols-outlined text-[18px]">{isPending ? 'hourglass_top' : 'send'}</span>
-          {submitLoading ? 'Dang nop...' : submitButtonText}
-        </button>
-      </div>
 
       {credModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">

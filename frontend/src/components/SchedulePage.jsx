@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../AuthContext';
+import { requestMethodChange } from '../services/api';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -53,6 +54,7 @@ const SchedulePage = () => {
     fetchSchedule();
   }, [searchQuery, statusFilter, subjectFilter, tutorFilter, token]);
 
+  // Thông tin buổi học lấy thẳng từ API (gia sư lưu vào DB) — không còn phụ thuộc localStorage
   useEffect(() => {
     if (!data) return;
     const allSessions = [
@@ -62,12 +64,15 @@ const SchedulePage = () => {
     ];
     const map = {};
     allSessions.forEach(s => {
-      const keys = [s.id, s.booking_id].filter(Boolean);
-      for (const key of keys) {
-        const saved = localStorage.getItem(`session_info_booking-${key}`);
-        if (saved) {
-          try { map[s.id] = JSON.parse(saved); break; } catch {}
-        }
+      if (s.teaching_method || s.meeting_url || s.location || s.session_topic) {
+        map[s.id] = {
+          mode: s.teaching_method || (s.meeting_url ? 'online' : 'offline'),
+          meetLink: s.meeting_url || '',
+          location: s.location || '',
+          locationNote: s.location_note || '',
+          topic: s.session_topic || '',
+          duration: s.session_duration ? String(s.session_duration) : '',
+        };
       }
     });
     setSessionInfoMap(map);
@@ -535,6 +540,7 @@ const SchedulePage = () => {
         <SessionDetailModal
           session={detailSession}
           info={sessionInfoMap[detailSession.id] || null}
+          onRequested={fetchSchedule}
           onClose={() => setDetailSession(null)}
         />
       )}
@@ -653,12 +659,18 @@ const SchedulePage = () => {
 export default SchedulePage;
 
 // ─── Session Detail Modal ────────────────────────────────────────────────────
-function SessionDetailModal({ session, info, onClose }) {
+function SessionDetailModal({ session, info, onClose, onRequested }) {
   const [copied, setCopied] = useState(false);
   const [copiedPwd, setCopiedPwd] = useState(false);
   const [checkedMaterials, setCheckedMaterials] = useState({});
   const [checkedHomework, setCheckedHomework] = useState({});
   const [countdown, setCountdown] = useState('');
+  const [changeOpen, setChangeOpen] = useState(false);
+  const [changeTarget, setChangeTarget] = useState('');
+  const [changeReason, setChangeReason] = useState('');
+  const [changeBusy, setChangeBusy] = useState(false);
+  const [changeError, setChangeError] = useState('');
+  const [changeSent, setChangeSent] = useState(session.method_change_status === 'pending');
 
   const startObj = new Date(session.start_time);
   const endObj   = new Date(session.end_time);
@@ -685,6 +697,22 @@ function SessionDetailModal({ session, info, onClose }) {
     navigator.clipboard.writeText(text).catch(() => {});
     setCb(true);
     setTimeout(() => setCb(false), 1500);
+  };
+
+  const submitMethodChange = async () => {
+    if (!changeTarget) { setChangeError('Vui lòng chọn hình thức muốn đổi.'); return; }
+    setChangeBusy(true);
+    setChangeError('');
+    try {
+      await requestMethodChange(session.booking_id || session.id, changeTarget, changeReason);
+      setChangeSent(true);
+      setChangeOpen(false);
+      if (onRequested) onRequested();
+    } catch (e) {
+      setChangeError(e.message || 'Gửi yêu cầu thất bại.');
+    } finally {
+      setChangeBusy(false);
+    }
   };
 
   // Parse text into list items (split by newline, filter empty)
@@ -926,6 +954,88 @@ function SessionDetailModal({ session, info, onClose }) {
               </div>
             </div>
           </div>
+
+          {/* Xin đổi hình thức học (ốm không đến được → xin học online, v.v.) */}
+          {(() => {
+            const currentMethod = session.teaching_method || mode || null;
+            const supports = (m) => m === 'online'
+              ? session.tutor_supports_online !== false
+              : session.tutor_supports_offline !== false;
+            const targets = ['online', 'offline'].filter(m => m !== currentMethod && supports(m));
+            const canRequest = (isUpcoming || session.status === 'pending' || session.status === 'upcoming')
+              && session.status !== 'completed' && session.status !== 'cancelled';
+            if (!canRequest || (targets.length === 0 && !changeSent)) return null;
+            return (
+              <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px] text-primary">swap_horiz</span>
+                  <p className="font-bold text-[12px] uppercase tracking-wide text-outline">Đổi hình thức học</p>
+                </div>
+
+                {changeSent ? (
+                  <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                    <span className="material-symbols-outlined text-[16px] text-amber-600 mt-0.5">hourglass_top</span>
+                    <p className="text-[12px] text-amber-800">
+                      Đã gửi yêu cầu đổi sang <strong>{(session.method_change_requested || changeTarget) === 'online' ? 'Online' : 'Offline'}</strong> — đang chờ gia sư phản hồi. Bạn sẽ nhận được thông báo khi gia sư trả lời.
+                    </p>
+                  </div>
+                ) : !changeOpen ? (
+                  <>
+                    <p className="text-[12px] text-on-surface-variant">
+                      Có việc đột xuất (ốm, bận đi lại...)? Bạn có thể xin gia sư đổi buổi này sang {targets.map(t => t === 'online' ? 'Online' : 'Offline').join(' / ')}.
+                    </p>
+                    <button
+                      onClick={() => { setChangeOpen(true); if (targets.length === 1) setChangeTarget(targets[0]); }}
+                      className="h-9 px-4 rounded-lg border border-primary/40 text-primary text-[12px] font-bold flex items-center gap-1.5 hover:bg-primary/5 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">swap_horiz</span>
+                      Xin đổi hình thức
+                    </button>
+                  </>
+                ) : (
+                  <div className="space-y-2.5">
+                    {targets.length > 1 && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {targets.map(t => (
+                          <button key={t} type="button" onClick={() => setChangeTarget(t)}
+                            className={`h-9 rounded-lg border text-[12px] font-bold flex items-center justify-center gap-1.5 transition-colors ${
+                              changeTarget === t ? 'border-primary bg-primary/5 text-primary' : 'border-outline-variant text-on-surface-variant'
+                            }`}>
+                            <span className="material-symbols-outlined text-[14px]">{t === 'online' ? 'videocam' : 'location_on'}</span>
+                            {t === 'online' ? 'Online' : 'Offline'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {targets.length === 1 && (
+                      <p className="text-[12px] text-on-surface">
+                        Đổi sang: <strong>{targets[0] === 'online' ? 'Online' : 'Offline'}</strong>
+                      </p>
+                    )}
+                    <textarea
+                      rows={2}
+                      value={changeReason}
+                      onChange={e => setChangeReason(e.target.value)}
+                      placeholder="Lý do (vd: hôm nay em bị ốm, không đến được...)"
+                      className="w-full px-3 py-2 rounded-xl border border-outline-variant/40 text-[13px] outline-none focus:border-primary resize-none"
+                    />
+                    {changeError && <p className="text-[12px] text-red-600">{changeError}</p>}
+                    <div className="flex gap-2">
+                      <button onClick={() => { setChangeOpen(false); setChangeError(''); }}
+                        className="h-9 px-3 rounded-lg border border-outline-variant text-on-surface-variant text-[12px] font-semibold hover:bg-surface-container transition-colors">
+                        Hủy
+                      </button>
+                      <button onClick={submitMethodChange} disabled={changeBusy}
+                        className="h-9 px-4 rounded-lg bg-primary text-on-primary text-[12px] font-bold flex items-center gap-1.5 hover:bg-[#1e40af] transition-colors disabled:opacity-60">
+                        <span className="material-symbols-outlined text-[14px]">send</span>
+                        {changeBusy ? 'Đang gửi...' : 'Gửi yêu cầu'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* ── Footer ── */}
