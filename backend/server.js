@@ -404,6 +404,73 @@ async function sendPasswordResetEmail(to, otp) {
   }
 }
 
+async function sendRegistrationOtpEmail(to, otp) {
+  if (!emailTransporter) {
+    console.log(`[Email] SMTP chua cau hinh - bo qua email toi ${to}. MA OTP: ${otp}`);
+    return;
+  }
+
+  const subject = "[EduX] Ma OTP Xac Thuc Dang Ky";
+  const html = `<!DOCTYPE html>
+<html lang="vi">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#00288e 0%,#1e40af 100%);padding:40px 40px 32px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-0.5px;">EduX</h1>
+            <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px;">Nen tang ket noi gia su</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px;text-align:center;">
+            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Xac Thuc Tai Khoan</h2>
+            <p style="margin:0;color:#444653;font-size:16px;line-height:1.6;">
+              Ma xac thuc OTP cua ban la:
+            </p>
+            <div style="margin:32px 0;background:#eef2ff;border:2px dashed #c7d2fe;border-radius:12px;padding:24px;display:inline-block;">
+              <span style="font-size:36px;font-weight:800;color:#4f46e5;letter-spacing:8px;">${otp}</span>
+            </div>
+            <p style="margin:0;color:#757684;font-size:14px;line-height:1.6;">
+              Ma nay se het han sau <strong>10 phut</strong>. Vui long khong chia se ma nay cho bat ky ai.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f8f9fb;padding:24px 40px;text-align:center;border-top:1px solid #e1e2e4;">
+            <p style="margin:0;color:#757684;font-size:13px;">© 2024 EduX. Moi thac mac xin lien he support@edux.com</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const plainText = `Ma OTP xac thuc dang ky cua ban la: ${otp}\n\nMa nay se het han sau 10 phut.`;
+
+  try {
+    await emailTransporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
+      subject,
+      text: plainText,
+      html,
+      headers: {
+        'X-Mailer': 'EduX Notification System',
+        'X-Priority': '1',
+        'Importance': 'high',
+      },
+    });
+    console.log(`[Email] Da gui email OTP toi ${to}`);
+  } catch (err) {
+    console.error(`[Email] Gui email OTP that bai toi ${to}:`, err.message);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NOTIFICATION & EMAIL RELIABILITY (Batch 20) — centralized in-app notification
 // + email outbox with retry. Module-level (not inside startServer) so it is
@@ -2671,16 +2738,78 @@ app.post("/api/auth/register", async (req, res) => {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Tß║ío user mß╗¢i
-    const result = await pool.query(
+    // Tạo OTP 6 số
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Lưu thông tin vào registration_otps (Upsert)
+    const userData = {
+      fullName: fullName.trim(),
+      email: email.toLowerCase().trim(),
+      passwordHash,
+      userRole,
+      phone: phone || null,
+      city: city || null,
+      avatarUrl: avatarUrl || null
+    };
+
+    await pool.query(
+      `INSERT INTO registration_otps (email, otp, expiry, user_data)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (email) DO UPDATE SET otp = EXCLUDED.otp, expiry = EXCLUDED.expiry, user_data = EXCLUDED.user_data`,
+      [email.toLowerCase().trim(), otp, expiry, JSON.stringify(userData)]
+    );
+
+    // Gửi email
+    sendRegistrationOtpEmail(email.toLowerCase().trim(), otp).catch(console.error);
+
+    return res.status(202).json({
+      requireOtp: true,
+      message: "Vui lòng kiểm tra email để lấy mã OTP."
+    });
+  } catch (error) {
+    console.error("Register error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ. Vui lòng thử lại." });
+  }
+});
+
+// POST /api/auth/verify-register-otp
+app.post("/api/auth/verify-register-otp", async (req, res) => {
+  try {
+    const { email, otp } = req.body || {};
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Thiếu thông tin." });
+    }
+
+    const result = await pool.query("SELECT * FROM registration_otps WHERE email = $1", [email.toLowerCase().trim()]);
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: "Mã OTP không hợp lệ hoặc đã hết hạn." });
+    }
+
+    const record = result.rows[0];
+    if (record.otp !== otp) {
+      return res.status(400).json({ message: "Mã OTP không chính xác." });
+    }
+
+    if (new Date() > new Date(record.expiry)) {
+      return res.status(400).json({ message: "Mã OTP đã hết hạn." });
+    }
+
+    const userData = record.user_data;
+
+    // Tiến hành tạo user
+    const insertResult = await pool.query(
       `INSERT INTO users (full_name, email, password_hash, role, phone, city, picture)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, full_name, email, role, picture, created_at`,
-      [fullName.trim(), email.toLowerCase().trim(), passwordHash, userRole, phone || null, city || null, avatarUrl || null]
+      [userData.fullName, userData.email, userData.passwordHash, userData.userRole, userData.phone, userData.city, userData.avatarUrl]
     );
 
-    const newUser = result.rows[0];
+    const newUser = insertResult.rows[0];
     const token = createToken(newUser);
+
+    // Xóa record OTP
+    await pool.query("DELETE FROM registration_otps WHERE email = $1", [userData.email]);
 
     return res.status(201).json({
       token,
@@ -2693,8 +2822,8 @@ app.post("/api/auth/register", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Register error:", error);
-    return res.status(500).json({ message: "Lỗi máy chủ. Vui lòng thử lại." });
+    console.error("Verify OTP error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
