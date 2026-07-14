@@ -389,6 +389,2121 @@ async function sendPasswordResetEmail(to, otp) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// NOTIFICATION & EMAIL RELIABILITY (Batch 20) — centralized in-app notification
+// + email outbox with retry. Module-level (not inside startServer) so it is
+// callable from every route handler regardless of scope. In-app notifications
+// are written with whatever client/pool the caller passes in — pass the active
+// transaction client from money flows so a rollback also rolls back the
+// notification (email queuing never fires synchronously inside a transaction;
+// the outbox processor sends it after COMMIT).
+// ═══════════════════════════════════════════════════════════════════════════
+const NOTIFICATION_POLICY_VERSION = "NOTIFICATION_POLICY_V1";
+const EMAIL_RETRY_MAX_ATTEMPTS = 3;
+const EMAIL_OUTBOX_PROCESSING_TIMEOUT_MINUTES = 15;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI CASE RESOLUTION (Batch 25) — DRY-RUN scaffolding.
+// Generates AI_SUGGESTED reports for open disputes with safety gates
+// (anti-abuse velocity + platform-technical-issue detection) and an appeal
+// mechanism. Money movement is intentionally NOT executed anywhere in this
+// scaffold — it never touches refund / commission / wallet_ledger logic.
+// Everything is gated OFF by default via environment flags.
+// ═══════════════════════════════════════════════════════════════════════════
+const AUTO_AI_CRON_ENABLED       = String(process.env.AUTO_AI_CRON_ENABLED ?? 'false').toLowerCase() === 'true';
+const AUTO_AI_RESOLUTION_ENABLED = String(process.env.AUTO_AI_RESOLUTION_ENABLED ?? 'false').toLowerCase() === 'true';
+// Dry-run defaults to true whenever auto-resolution is disabled (spec default).
+const AUTO_AI_DRY_RUN = process.env.AUTO_AI_DRY_RUN != null
+  ? String(process.env.AUTO_AI_DRY_RUN).toLowerCase() === 'true'
+  : !AUTO_AI_RESOLUTION_ENABLED;
+
+const AI_CASE_POLICY_VERSION = 'REFUND_POLICY_V2_1';
+const AI_CASE_CONFIG = {
+  minCaseAgeHours:                 Number(process.env.AUTO_AI_PENDING_CASE_MIN_AGE_HOURS || 12),
+  autoResolveRefundThreshold30d:   3,   // student auto-refunds  -> HIGH_REFUND_FREQUENCY
+  tutorPenaltyThreshold30d:        3,   // tutor auto-penalties  -> HABITUAL_LATE_NOSHOW
+  studentDisputeAbnormalThreshold: 5,   // disputes raised by same student in 30d
+  tutorDisputeAbnormalThreshold:   5,   // disputes against same tutor in 30d
+  criticalKeywords: ['lừa đảo', 'quấy rối', 'tống tiền', 'đe dọa', 'bạo lực'],
+  refundKeywords:   ['muộn', 'trễ', 'không đến', 'vắng', 'no-show', 'noshow', 'bỏ buổi'],
+  reviewKeywords:   ['lỗi hệ thống', 'thanh toán', 'giao dịch'],
+  scanLimit: 50,
+};
+
+// Deterministic mock AI evaluation for a dispute. Mirrors the frontend mock
+// engine (frontend/src/admin/ai/engine). Returns a SUGGESTION only — the
+// caller never moves money based on it in this scaffold.
+function evaluateDisputeWithAI(dispute) {
+  const desc = String(dispute.reason || '').toLowerCase();
+
+  if (AI_CASE_CONFIG.criticalKeywords.some(kw => desc.includes(kw))) {
+    return {
+      severity: 'CRITICAL', confidence: 100, autoResolvable: false, moneyAction: 'NONE',
+      recommendation: 'Ngừng tự động hóa. Chuyển admin xử lý ngay (vi phạm nghiêm trọng).',
+      reasoning: 'Hard rule: phát hiện từ khóa nghiêm trọng trong nội dung khiếu nại.',
+      actionCode: 'ESCALATE_CRITICAL_REVIEW',
+    };
+  }
+  if (AI_CASE_CONFIG.refundKeywords.some(kw => desc.includes(kw))) {
+    return {
+      severity: 'LOW', confidence: 85, autoResolvable: true, moneyAction: 'REFUND_TO_STUDENT',
+      recommendation: 'Đề xuất hoàn 100% học phí cho học sinh và cảnh cáo gia sư.',
+      reasoning: 'Gia sư có dấu hiệu đi trễ / vắng mặt theo nội dung khiếu nại.',
+      actionCode: 'AUTO_REFUND_100',
+    };
+  }
+  if (AI_CASE_CONFIG.reviewKeywords.some(kw => desc.includes(kw))) {
+    return {
+      severity: 'MEDIUM', confidence: 65, autoResolvable: false, moneyAction: 'NONE',
+      recommendation: 'Cần con người đối soát giao dịch thanh toán.',
+      reasoning: 'Liên quan lỗi hệ thống / thanh toán — cần kiểm tra thủ công.',
+      actionCode: 'MANUAL_REVIEW',
+    };
+  }
+  return {
+    severity: 'LOW', confidence: 90, autoResolvable: false, moneyAction: 'NONE',
+    recommendation: 'Nhắc nhở hai bên, chưa cần hành động tài chính.',
+    reasoning: 'Vấn đề nhỏ, không đủ căn cứ để tự động hoàn tiền.',
+    actionCode: 'WARN_TUTOR_LEVEL_1',
+  };
+}
+
+// Detect a possible platform outage / technical issue for a lesson window using
+// lesson_session_events (JOIN / HEARTBEAT telemetry). Conservative: only flags
+// when telemetry is generally live system-wide but this lesson has zero events,
+// so a fresh install with no telemetry never false-positives.
+async function detectPlatformIssue(db, { bookingId }) {
+  if (!bookingId) return null;
+  try {
+    const live = await db.query(
+      `SELECT COUNT(*)::int AS n FROM lesson_session_events
+        WHERE created_at > NOW() - INTERVAL '7 days'`);
+    if (!live.rows[0].n) return null; // telemetry not in use -> cannot infer an issue
+
+    const ev = await db.query(
+      `SELECT COUNT(*)::int AS n FROM lesson_session_events
+        WHERE booking_id = $1 AND event_type IN ('JOIN','HEARTBEAT')`, [bookingId]);
+    if (ev.rows[0].n === 0) return 'POSSIBLE_PLATFORM_TECHNICAL_ISSUE';
+    return null;
+  } catch {
+    return null; // table missing / query error -> do not infer a platform issue
+  }
+}
+
+// Compute anti-abuse / platform risk flags for a case. Reads only the new
+// ai_case_resolutions + disputes + (optional) lesson_session_events tables.
+// Never reads or writes any financial table.
+async function computeAiRiskFlags(db, { studentId, tutorId, bookingId }) {
+  const flags = [];
+  let forceHumanReview = false;
+
+  // 1. Anti-abuse velocity — student auto-refund frequency (last 30 days)
+  if (studentId) {
+    const r = await db.query(
+      `SELECT COUNT(*)::int AS n FROM ai_case_resolutions
+        WHERE student_id = $1 AND status = 'AUTO_RESOLVED'
+          AND money_action = 'REFUND_TO_STUDENT'
+          AND created_at > NOW() - INTERVAL '30 days'`, [studentId]);
+    if (r.rows[0].n >= AI_CASE_CONFIG.autoResolveRefundThreshold30d) {
+      flags.push('HIGH_REFUND_FREQUENCY'); forceHumanReview = true;
+    }
+  }
+  // 2. Anti-abuse velocity — tutor auto-penalty frequency (last 30 days)
+  if (tutorId) {
+    const r = await db.query(
+      `SELECT COUNT(*)::int AS n FROM ai_case_resolutions
+        WHERE tutor_id = $1 AND status = 'AUTO_RESOLVED'
+          AND money_action = 'REFUND_TO_STUDENT'
+          AND created_at > NOW() - INTERVAL '30 days'`, [tutorId]);
+    if (r.rows[0].n >= AI_CASE_CONFIG.tutorPenaltyThreshold30d) {
+      flags.push('HABITUAL_LATE_NOSHOW'); forceHumanReview = true;
+    }
+  }
+  // 3. Abnormal dispute patterns (last 30 days) — too many from/against a party
+  const [sd, td] = await Promise.all([
+    studentId ? db.query(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by = $1 AND created_at > NOW() - INTERVAL '30 days'`, [studentId]) : Promise.resolve({ rows: [{ n: 0 }] }),
+    tutorId   ? db.query(`SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id  = $1 AND created_at > NOW() - INTERVAL '30 days'`, [tutorId])   : Promise.resolve({ rows: [{ n: 0 }] }),
+  ]);
+  if (sd.rows[0].n >= AI_CASE_CONFIG.studentDisputeAbnormalThreshold ||
+      td.rows[0].n >= AI_CASE_CONFIG.tutorDisputeAbnormalThreshold) {
+    flags.push('ABNORMAL_DISPUTE_PATTERN'); forceHumanReview = true;
+  }
+
+  // 4. Platform technical-issue edge case (no reliable session evidence)
+  const plat = await detectPlatformIssue(db, { bookingId });
+  if (plat) { flags.push(plat); forceHumanReview = true; }
+
+  return { flags, forceHumanReview };
+}
+
+// Shared logic used by BOTH POST /api/admin/ai-cases/run-pending AND the hourly
+// cron. Scans eligible OPEN disputes older than the min age and writes one
+// ai_case_resolutions row per case. DRY-RUN: produces AI_SUGGESTED /
+// NEED_HUMAN_REVIEW rows only and NEVER moves money (no refund / commission /
+// wallet calls anywhere in this function).
+async function runPendingAiCases({ triggeredBy = 'cron', adminId = null } = {}) {
+  const startedAt = new Date();
+  const stats = { scanned: 0, suggested: 0, autoResolved: 0, needsReview: 0, skipped: 0, failed: 0 };
+  console.log(`[ai-cases] run start by=${triggeredBy} resolutionEnabled=${AUTO_AI_RESOLUTION_ENABLED} dryRun=${AUTO_AI_DRY_RUN} at=${startedAt.toISOString()}`);
+
+  let cases;
+  try {
+    cases = await pool.query(
+      `SELECT d.id, d.reason, d.status, d.target_type, d.booking_id, d.raised_by,
+              d.tutor_id, d.course_id, d.created_at,
+              b.student_id AS b_student_id, b.tutor_id AS b_tutor_id,
+              b.lesson_fee, b.lesson_date
+         FROM disputes d
+         LEFT JOIN bookings b ON b.id = d.booking_id
+        WHERE d.status = 'OPEN'
+          AND d.created_at <= NOW() - make_interval(hours => $1::int)
+          AND NOT EXISTS (SELECT 1 FROM ai_case_resolutions r WHERE r.dispute_id = d.id)
+        ORDER BY d.created_at ASC
+        LIMIT $2`,
+      [AI_CASE_CONFIG.minCaseAgeHours, AI_CASE_CONFIG.scanLimit]
+    );
+  } catch (err) {
+    console.error('[ai-cases] scan failed:', err.message);
+    return { ...stats, error: err.message, started_at: startedAt.toISOString() };
+  }
+  stats.scanned = cases.rows.length;
+
+  for (const d of cases.rows) {
+    try {
+      const studentId = d.b_student_id || d.raised_by || null;
+      const tutorId   = d.tutor_id || d.b_tutor_id || null;
+      const bookingId = d.booking_id || null;
+
+      const ai = evaluateDisputeWithAI(d);
+      const { flags, forceHumanReview } = await computeAiRiskFlags(pool, { studentId, tutorId, bookingId });
+
+      // Decide final status. Money never moves in this scaffold regardless.
+      let status;
+      if (forceHumanReview || !ai.autoResolvable) {
+        status = 'NEED_HUMAN_REVIEW';
+      } else if (AUTO_AI_RESOLUTION_ENABLED && !AUTO_AI_DRY_RUN) {
+        // Live auto-resolution WOULD move money here. Intentionally left as a
+        // marker with executed=false — no financial logic is invoked in this
+        // scaffold (see Batch 25 scope: dry-run only).
+        status = 'AUTO_RESOLVED';
+      } else {
+        status = 'AI_SUGGESTED';
+      }
+
+      const reasonSummary = forceHumanReview
+        ? `${ai.reasoning} | Chuyển admin do cờ rủi ro: ${flags.join(', ')}.`
+        : ai.reasoning;
+
+      await pool.query(
+        `INSERT INTO ai_case_resolutions
+           (dispute_id, booking_id, student_id, tutor_id, status, severity, confidence,
+            money_action, recommendation, reason_summary, risk_flags, ai_evidence,
+            policy_version, dry_run, executed, resolved_transaction_id, financial_trace,
+            resolved_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14,$15,$16,$17::jsonb,
+                 CASE WHEN $5 = 'AI_SUGGESTED' THEN NULL ELSE NOW() END)`,
+        [
+          d.id, bookingId, studentId, tutorId, status, ai.severity, ai.confidence,
+          ai.moneyAction, ai.recommendation, reasonSummary,
+          JSON.stringify(flags),
+          JSON.stringify({
+            action_code: ai.actionCode, auto_resolvable: ai.autoResolvable,
+            target_type: d.target_type, dispute_reason: d.reason,
+            lesson_fee: d.lesson_fee != null ? Number(d.lesson_fee) : null,
+          }),
+          AI_CASE_POLICY_VERSION, AUTO_AI_DRY_RUN, false, null, JSON.stringify({}),
+        ]
+      );
+
+      if (status === 'AI_SUGGESTED') stats.suggested++;
+      else if (status === 'AUTO_RESOLVED') stats.autoResolved++;
+      else stats.needsReview++;
+    } catch (err) {
+      stats.failed++;
+      console.error(`[ai-cases] case ${d.id} failed:`, err.message);
+    }
+  }
+
+  const finishedAt = new Date();
+  console.log(`[ai-cases] run done by=${triggeredBy} scanned=${stats.scanned} suggested=${stats.suggested} autoResolved=${stats.autoResolved} needsReview=${stats.needsReview} skipped=${stats.skipped} failed=${stats.failed} ms=${finishedAt - startedAt}`);
+  return {
+    ...stats, triggered_by: triggeredBy, admin_id: adminId,
+    dry_run: AUTO_AI_DRY_RUN, resolution_enabled: AUTO_AI_RESOLUTION_ENABLED,
+    started_at: startedAt.toISOString(), finished_at: finishedAt.toISOString(),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN AI COPILOT (Batch 26) — context-aware, ADVISORY-ONLY assistant.
+// Deterministic/rule-based by default; optional LLM rewrite (off by default).
+// Read-only collectors + a rule engine. NEVER mutates money, account status,
+// or sends email. Every recommendation is advisory; admin decides.
+// ═══════════════════════════════════════════════════════════════════════════
+const ADMIN_COPILOT_LLM_ENABLED     = String(process.env.ADMIN_COPILOT_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const ADMIN_COPILOT_PROVIDER        = String(process.env.ADMIN_COPILOT_PROVIDER || 'gemini').toLowerCase();
+const ADMIN_COPILOT_MAX_CONTEXT_CHARS = Number(process.env.ADMIN_COPILOT_MAX_CONTEXT_CHARS || 12000);
+
+// Only these action/recommendation types may ever be emitted this batch.
+const COPILOT_ALLOWED_ACTIONS = new Set([
+  'WATCHLIST', 'MANUAL_REVIEW', 'SEND_WARNING_DRAFT', 'REQUEST_MORE_EVIDENCE',
+  'REVIEW_TUTOR_QUALITY', 'REVIEW_REFUND_PATTERN', 'NO_ACTION',
+]);
+
+// ── Privacy masking (never store/return raw email / phone / IP) ──────────────
+function maskEmail(email) {
+  if (!email || typeof email !== 'string' || !email.includes('@')) return null;
+  const [user, domain] = email.split('@');
+  const head = user.slice(0, 2);
+  return `${head}${'*'.repeat(Math.max(2, user.length - 2))}@${domain}`;
+}
+function maskPhone(phone) {
+  if (phone == null) return null;
+  const s = String(phone).replace(/\s+/g, '');
+  if (s.length <= 4) return '****';
+  return `${s.slice(0, 2)}****${s.slice(-3)}`;
+}
+
+// ── Defensive read-only query helpers (return safe defaults on any error) ─────
+async function copilotSafeRows(sql, params = []) {
+  try { return (await pool.query(sql, params)).rows; } catch { return []; }
+}
+async function copilotSafeCount(sql, params = []) {
+  try { const r = await pool.query(sql, params); return Number(r.rows?.[0]?.n || 0); } catch { return 0; }
+}
+async function copilotSafeSum(sql, params = []) {
+  try { const r = await pool.query(sql, params); return Number(r.rows?.[0]?.s || 0); } catch { return 0; }
+}
+
+// ── Data collectors (read-only; each sub-query degrades gracefully) ──────────
+async function collectTutorCopilotContext(tutorId) {
+  const ctx = { entity_type: 'TUTOR', entity_id: tutorId, identity: {}, metrics: {}, notes: [] };
+  const u = await copilotSafeRows(`SELECT full_name, email, phone, role, is_banned, created_at FROM users WHERE id=$1 LIMIT 1`, [tutorId]);
+  if (!u.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const user = u[0];
+  ctx.identity = {
+    name: user.full_name || '—', email_masked: maskEmail(user.email), phone_masked: maskPhone(user.phone),
+    role: user.role, is_banned: !!user.is_banned, joined_at: user.created_at,
+  };
+  const tp = await copilotSafeRows(`SELECT id, COALESCE(avg_rating,0) AS avg_rating, COALESCE(review_count,0) AS review_count, COALESCE(reputation_score,100) AS reputation_score, COALESCE(completed_lessons_count,0) AS completed_lessons FROM tutor_profiles WHERE user_id=$1 LIMIT 1`, [tutorId]);
+  const profileId = tp.length ? tp[0].id : null;
+  ctx.metrics.avg_rating       = tp.length ? Number(tp[0].avg_rating) : null;
+  ctx.metrics.review_count     = tp.length ? Number(tp[0].review_count) : 0;
+  ctx.metrics.reputation_score = tp.length ? Number(tp[0].reputation_score) : null;
+  ctx.metrics.completed_lessons = tp.length ? Number(tp[0].completed_lessons) : 0;
+
+  ctx.metrics.disputes_30d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '30 days'`, [tutorId]);
+  ctx.metrics.disputes_90d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.late_noshow_disputes_30d = await copilotSafeCount(
+    `SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '30 days'
+       AND (LOWER(reason) LIKE '%muộn%' OR LOWER(reason) LIKE '%trễ%' OR LOWER(reason) LIKE '%vắng%' OR LOWER(reason) LIKE '%không đến%' OR LOWER(reason) LIKE '%no-show%')`, [tutorId]);
+  ctx.metrics.refunds_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM refund_logs WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.refund_amount_90d  = await copilotSafeSum(`SELECT COALESCE(SUM(refund_amount),0)::numeric AS s FROM refund_logs WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.bookings_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.ai_flags_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days' AND jsonb_array_length(risk_flags) > 0`, [tutorId]);
+  const exp = await copilotSafeRows(`SELECT COALESCE(SUM(lesson_fee),0)::numeric AS s, COUNT(*)::int AS n FROM bookings WHERE tutor_id=$1 AND escrow_tx_id IS NOT NULL AND escrow_released_at IS NULL`, [tutorId]);
+  ctx.metrics.active_escrow_exposure = exp.length ? Number(exp[0].s) : 0;
+  ctx.metrics.active_escrow_count    = exp.length ? Number(exp[0].n) : 0;
+
+  if (profileId) {
+    const recent = await copilotSafeRows(`SELECT ROUND(AVG(rating)::numeric,2) AS avg, COUNT(*)::int AS n FROM reviews WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '30 days'`, [profileId]);
+    const prior  = await copilotSafeRows(`SELECT ROUND(AVG(rating)::numeric,2) AS avg FROM reviews WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days' AND created_at <= NOW() - INTERVAL '30 days'`, [profileId]);
+    ctx.metrics.rating_recent_30d = recent.length && recent[0].avg != null ? Number(recent[0].avg) : null;
+    ctx.metrics.rating_prior      = prior.length && prior[0].avg != null ? Number(prior[0].avg) : null;
+    ctx.metrics.reviews_30d       = recent.length ? Number(recent[0].n) : 0;
+  }
+
+  // Batch 27: semantic moderation signals (safe if tables empty/absent).
+  ctx.metrics.semantic_reports_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.semantic_external_payment  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.semantic_toxicity          = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'TOXIC_LANGUAGE' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.semantic_low_teaching      = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'LOW_TEACHING_QUALITY' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  const semRep = (await copilotSafeRows(`SELECT overall_reputation_score, external_payment_risk_score, toxicity_risk_score FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC LIMIT 1`, [tutorId]))[0] || null;
+  ctx.metrics.semantic_overall_reputation = semRep ? Number(semRep.overall_reputation_score) : null;
+
+  // Batch 28: fraud intel signals (safe if tables empty/absent).
+  ctx.metrics.fraud_reports_90d          = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (tutor_id=$1 OR primary_user_id=$1) AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.fraud_high_risk_reports    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (tutor_id=$1 OR primary_user_id=$1) AND severity IN ('HIGH','CRITICAL') AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.fraud_external_payment_reports = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE tutor_id=$1 AND report_type='EXTERNAL_PAYMENT_COLLUSION' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.fraud_withdrawal_risk_reports  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE tutor_id=$1 AND report_type='WITHDRAWAL_RISK' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+
+  return ctx;
+}
+
+async function collectStudentCopilotContext(studentId) {
+  const ctx = { entity_type: 'STUDENT', entity_id: studentId, identity: {}, metrics: {}, notes: [] };
+  const u = await copilotSafeRows(`SELECT full_name, email, phone, role, is_banned, created_at FROM users WHERE id=$1 LIMIT 1`, [studentId]);
+  if (!u.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const user = u[0];
+  ctx.identity = {
+    name: user.full_name || '—', email_masked: maskEmail(user.email), phone_masked: maskPhone(user.phone),
+    role: user.role, is_banned: !!user.is_banned, joined_at: user.created_at,
+  };
+  ctx.metrics.disputes_raised_30d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by=$1 AND created_at > NOW() - INTERVAL '30 days'`, [studentId]);
+  ctx.metrics.disputes_raised_90d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.refunds_90d         = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM refund_logs WHERE student_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.refund_amount_90d   = await copilotSafeSum(`SELECT COALESCE(SUM(refund_amount),0)::numeric AS s FROM refund_logs WHERE student_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.auto_refunds_30d    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE student_id=$1 AND status='AUTO_RESOLVED' AND money_action='REFUND_TO_STUDENT' AND created_at > NOW() - INTERVAL '30 days'`, [studentId]);
+  ctx.metrics.bookings_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.absences_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM attendance WHERE student_id=$1 AND status='absent' AND marked_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  // Batch 28: fraud intel signals (safe if tables empty/absent).
+  ctx.metrics.fraud_reports_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (student_id=$1 OR primary_user_id=$1) AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.fraud_high_risk_reports = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (student_id=$1 OR primary_user_id=$1) AND severity IN ('HIGH','CRITICAL') AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  return ctx;
+}
+
+async function collectDisputeCopilotContext(disputeId) {
+  const ctx = { entity_type: 'DISPUTE', entity_id: disputeId, identity: {}, metrics: {}, notes: [] };
+  const d = await copilotSafeRows(
+    `SELECT di.id, di.reason, di.status, di.severity, di.target_type, di.booking_id, di.tutor_id, di.raised_by, di.created_at, di.resolved_at,
+            b.lesson_fee, b.student_id, b.escrow_tx_id, b.escrow_released_at,
+            t.full_name AS tutor_name, s.full_name AS student_name
+       FROM disputes di
+       LEFT JOIN bookings b ON b.id = di.booking_id
+       LEFT JOIN users t ON t.id = di.tutor_id
+       LEFT JOIN users s ON s.id = di.raised_by
+      WHERE di.id=$1 LIMIT 1`, [disputeId]);
+  if (!d.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const row = d[0];
+  ctx.identity = { tutor_name: row.tutor_name || '—', student_name: row.student_name || '—', status: row.status, severity: row.severity, reason: row.reason };
+  ctx.metrics.money_exposure    = Number(row.lesson_fee || 0);
+  ctx.metrics.escrow_open       = !!(row.escrow_tx_id && !row.escrow_released_at);
+  ctx.metrics.age_hours         = row.created_at ? Math.floor((Date.now() - new Date(row.created_at).getTime()) / 3600000) : null;
+  ctx.metrics.session_events    = row.booking_id ? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM lesson_session_events WHERE booking_id=$1 AND event_type IN ('JOIN','HEARTBEAT')`, [row.booking_id]) : 0;
+  ctx.metrics.telemetry_live    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM lesson_session_events WHERE created_at > NOW() - INTERVAL '7 days'`);
+  ctx.metrics.tutor_disputes_30d = row.tutor_id ? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '30 days'`, [row.tutor_id]) : 0;
+  ctx.metrics.student_disputes_30d = row.raised_by ? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by=$1 AND created_at > NOW() - INTERVAL '30 days'`, [row.raised_by]) : 0;
+  const ai = await copilotSafeRows(`SELECT status, appeal_status, risk_flags FROM ai_case_resolutions WHERE dispute_id=$1 LIMIT 1`, [disputeId]);
+  ctx.metrics.ai_case_status  = ai.length ? ai[0].status : null;
+  ctx.metrics.ai_appeal_status = ai.length ? ai[0].appeal_status : null;
+  ctx.metrics.ai_risk_flags   = ai.length ? ai[0].risk_flags : [];
+  return ctx;
+}
+
+async function collectBookingCopilotContext(bookingId) {
+  const ctx = { entity_type: 'BOOKING', entity_id: bookingId, identity: {}, metrics: {}, notes: [] };
+  const b = await copilotSafeRows(
+    `SELECT bk.id, bk.status, bk.lesson_fee, bk.lesson_date, bk.escrow_tx_id, bk.escrow_released_at, bk.created_at,
+            t.full_name AS tutor_name, s.full_name AS student_name, a.status AS attendance_status
+       FROM bookings bk
+       LEFT JOIN users t ON t.id = bk.tutor_id
+       LEFT JOIN users s ON s.id = bk.student_id
+       LEFT JOIN attendance a ON a.booking_id = bk.id
+      WHERE bk.id=$1 LIMIT 1`, [bookingId]);
+  if (!b.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const row = b[0];
+  ctx.identity = { tutor_name: row.tutor_name || '—', student_name: row.student_name || '—', status: row.status };
+  ctx.metrics.money_exposure   = Number(row.lesson_fee || 0);
+  ctx.metrics.escrow_open      = !!(row.escrow_tx_id && !row.escrow_released_at);
+  ctx.metrics.attendance_status = row.attendance_status || null;
+  ctx.metrics.session_events   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM lesson_session_events WHERE booking_id=$1 AND event_type IN ('JOIN','HEARTBEAT')`, [bookingId]);
+  ctx.metrics.related_disputes = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE booking_id=$1`, [bookingId]);
+  return ctx;
+}
+
+async function collectTransactionCopilotContext(transactionId) {
+  const ctx = { entity_type: 'TRANSACTION', entity_id: transactionId, identity: {}, metrics: {}, notes: [] };
+  const t = await copilotSafeRows(`SELECT id, amount, type, status, wallet_id, reference_id, created_at FROM transactions WHERE id=$1 LIMIT 1`, [transactionId]);
+  if (!t.length) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const row = t[0];
+  ctx.identity = { type: row.type, status: row.status };
+  ctx.metrics.amount           = Number(row.amount || 0);
+  ctx.metrics.related_disputes = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE transaction_id=$1`, [transactionId]);
+  ctx.metrics.wallet_failed_30d = row.wallet_id ? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE wallet_id=$1 AND status='FAILED' AND created_at > NOW() - INTERVAL '30 days'`, [row.wallet_id]) : 0;
+  return ctx;
+}
+
+async function collectPageCopilotContext(pageKey, pageContext) {
+  const ctx = { entity_type: 'PAGE', entity_id: null, page_key: pageKey || null, identity: {}, metrics: {}, notes: [] };
+  ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN'`);
+  ctx.metrics.pending_tutors   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='pending'`);
+  ctx.metrics.appealed_ai_cases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`);
+  ctx.metrics.failed_tx_24h    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE status='FAILED' AND created_at > NOW() - INTERVAL '24 hours'`);
+  // Batch 29A: recent admin analytics activity (safe; Copilot never depends on it)
+  ctx.metrics.analytics_queries_7d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_analytics_queries WHERE created_at > NOW() - INTERVAL '7 days'`);
+  // Only a small allow-list of primitive page-context hints is kept (no PII).
+  if (pageContext && typeof pageContext === 'object') {
+    ctx.notes.push(`page_hint:${String(pageKey || 'unknown').slice(0, 40)}`);
+  }
+  return ctx;
+}
+
+// ── Rule-based analysis engine (deterministic). Advisory only. ───────────────
+function copilotRiskLevelFromScore(score) {
+  if (score >= 6) return 'CRITICAL';
+  if (score >= 4) return 'HIGH';
+  if (score >= 2) return 'MEDIUM';
+  return 'LOW';
+}
+function copilotAction(type, label, reason) {
+  if (!COPILOT_ALLOWED_ACTIONS.has(type)) type = 'MANUAL_REVIEW';
+  return { type, label, reason };
+}
+function copilotVnd(n) { return Number(n || 0).toLocaleString('vi-VN') + 'đ'; }
+
+function generateAdminCopilotReport(entityType, context) {
+  const m = context.metrics || {};
+  const findings = [], evidence = [], recommendations = [], actions = [], limitations = [];
+  let score = 0;
+
+  if (context.notes?.includes('NOT_FOUND')) {
+    return {
+      summary: 'Không tìm thấy dữ liệu cho đối tượng này. Vui lòng kiểm tra lại mã đối tượng.',
+      confidence: 30, risk_level: 'LOW', key_findings: [], evidence: [],
+      recommendations: [], suggested_admin_actions: [copilotAction('NO_ACTION', 'Không cần hành động', 'Không có dữ liệu')],
+      limitations: ['Không tìm thấy bản ghi tương ứng.'], model_used: 'RULE_BASED',
+    };
+  }
+
+  if (entityType === 'TUTOR') {
+    if (m.disputes_30d >= 3) { score += 2; findings.push(`Có ${m.disputes_30d} khiếu nại trong 30 ngày gần nhất.`); evidence.push({ label: 'Khiếu nại 30 ngày', value: m.disputes_30d }); }
+    if (m.late_noshow_disputes_30d >= 2) { score += 2; findings.push(`${m.late_noshow_disputes_30d} khiếu nại liên quan đi muộn/vắng mặt.`); evidence.push({ label: 'Khiếu nại đi muộn/vắng', value: m.late_noshow_disputes_30d }); }
+    if (m.rating_recent_30d != null && m.rating_prior != null && m.rating_recent_30d < m.rating_prior - 0.5) { score += 1; findings.push(`Điểm đánh giá giảm từ ${m.rating_prior} xuống ${m.rating_recent_30d}.`); evidence.push({ label: 'Xu hướng đánh giá', value: `${m.rating_prior} → ${m.rating_recent_30d}` }); }
+    if (m.refunds_90d >= 3) { score += 1; findings.push(`Có ${m.refunds_90d} lần hoàn tiền trong 90 ngày (${copilotVnd(m.refund_amount_90d)}).`); evidence.push({ label: 'Hoàn tiền 90 ngày', value: `${m.refunds_90d} lần · ${copilotVnd(m.refund_amount_90d)}` }); }
+    if (m.ai_flags_90d >= 2) { score += 1; findings.push(`AI đã gắn cờ rủi ro ${m.ai_flags_90d} lần trong 90 ngày.`); evidence.push({ label: 'Cờ rủi ro AI', value: m.ai_flags_90d }); }
+    if (m.reputation_score != null && m.reputation_score < 70) { score += 1; findings.push(`Điểm uy tín thấp (${m.reputation_score}/100).`); evidence.push({ label: 'Điểm uy tín', value: m.reputation_score }); }
+    if (m.active_escrow_exposure > 0 && m.disputes_30d > 0) { score += 1; findings.push(`Đang giữ ${copilotVnd(m.active_escrow_exposure)} escrow trong khi có khiếu nại mở.`); evidence.push({ label: 'Escrow đang giữ', value: `${copilotVnd(m.active_escrow_exposure)} · ${m.active_escrow_count} buổi` }); }
+    // Batch 27: semantic moderation signals (0 when tables empty — never breaks)
+    if (m.semantic_external_payment >= 1) { score += 2; findings.push(`AI kiểm duyệt phát hiện ${m.semantic_external_payment} dấu hiệu rủ giao dịch ngoài nền tảng.`); evidence.push({ label: 'Rủi ro giao dịch ngoài (AI)', value: m.semantic_external_payment }); }
+    if (m.semantic_toxicity >= 1) { score += 1; findings.push(`Có ${m.semantic_toxicity} nội dung bị gắn cờ ngôn từ tiêu cực.`); }
+    if (m.semantic_low_teaching >= 2) { score += 1; findings.push(`Có ${m.semantic_low_teaching} phản hồi bị gắn cờ chất lượng giảng dạy thấp.`); }
+    // Batch 28: fraud intel signals (0 when tables empty — never breaks)
+    if (m.fraud_high_risk_reports >= 1) { score += 2; findings.push(`Có ${m.fraud_high_risk_reports} báo cáo gian lận AI mức cao liên quan đến gia sư này.`); evidence.push({ label: 'Báo cáo gian lận (cao)', value: m.fraud_high_risk_reports }); }
+    else if (m.fraud_reports_90d >= 1) { score += 1; findings.push(`Có ${m.fraud_reports_90d} báo cáo gian lận AI liên quan đến gia sư này.`); }
+    if (m.fraud_withdrawal_risk_reports >= 1) { score += 1; findings.push(`Có ${m.fraud_withdrawal_risk_reports} báo cáo rủi ro rút tiền.`); }
+    if (m.is_banned) limitations.push('Tài khoản đang bị khóa.');
+    if (m.late_noshow_disputes_30d >= 2 || m.disputes_30d >= 3) recommendations.push('Xem xét gửi cảnh báo chính thức về chất lượng giảng dạy.');
+    actions.push(copilotAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Có dấu hiệu giảm chất lượng'));
+    actions.push(copilotAction('REVIEW_TUTOR_QUALITY', 'Rà soát chất lượng gia sư', 'Khiếu nại/đánh giá cần kiểm tra'));
+    if (m.late_noshow_disputes_30d >= 1) actions.push(copilotAction('SEND_WARNING_DRAFT', 'Soạn nháp cảnh báo', 'Đi muộn/vắng mặt lặp lại'));
+
+  } else if (entityType === 'STUDENT') {
+    if (m.refunds_90d >= 3) { score += 2; findings.push(`Yêu cầu hoàn tiền ${m.refunds_90d} lần trong 90 ngày.`); evidence.push({ label: 'Hoàn tiền 90 ngày', value: m.refunds_90d }); }
+    if (m.auto_refunds_30d >= 3) { score += 2; findings.push(`Được tự động hoàn tiền ${m.auto_refunds_30d} lần trong 30 ngày (tần suất cao).`); evidence.push({ label: 'Tự động hoàn 30 ngày', value: m.auto_refunds_30d }); }
+    if (m.disputes_raised_30d >= 3) { score += 1; findings.push(`Mở ${m.disputes_raised_30d} khiếu nại trong 30 ngày.`); evidence.push({ label: 'Khiếu nại đã mở 30 ngày', value: m.disputes_raised_30d }); }
+    if (m.absences_90d >= 3) { score += 1; findings.push(`Vắng mặt ${m.absences_90d} buổi trong 90 ngày.`); evidence.push({ label: 'Vắng mặt 90 ngày', value: m.absences_90d }); }
+    // Batch 28: fraud intel signals (0 when tables empty — never breaks)
+    if (m.fraud_high_risk_reports >= 1) { score += 2; findings.push(`Có ${m.fraud_high_risk_reports} báo cáo gian lận AI mức cao liên quan đến học sinh này.`); evidence.push({ label: 'Báo cáo gian lận (cao)', value: m.fraud_high_risk_reports }); }
+    else if (m.fraud_reports_90d >= 1) { score += 1; findings.push(`Có ${m.fraud_reports_90d} báo cáo gian lận AI liên quan đến học sinh này.`); }
+    actions.push(copilotAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Tần suất hoàn tiền/khiếu nại bất thường'));
+    actions.push(copilotAction('REVIEW_REFUND_PATTERN', 'Rà soát mẫu hoàn tiền', 'Kiểm tra khả năng lạm dụng'));
+
+  } else if (entityType === 'DISPUTE') {
+    if (m.telemetry_live > 0 && m.session_events === 0) { score += 2; findings.push('Không có bằng chứng phiên học (JOIN/HEARTBEAT) — có thể lỗi kỹ thuật nền tảng.'); evidence.push({ label: 'Sự kiện phiên học', value: 0 }); limitations.push('Thiếu bằng chứng phiên học đáng tin cậy.'); }
+    else if (m.telemetry_live === 0) limitations.push('Hệ thống telemetry phiên học chưa hoạt động — không thể xác thực bằng dữ liệu phiên.');
+    if (m.money_exposure >= 1000000) { score += 2; findings.push(`Giá trị tranh chấp cao: ${copilotVnd(m.money_exposure)}.`); evidence.push({ label: 'Giá trị tranh chấp', value: copilotVnd(m.money_exposure) }); }
+    else if (m.money_exposure > 0) { score += 1; evidence.push({ label: 'Giá trị tranh chấp', value: copilotVnd(m.money_exposure) }); }
+    if (m.tutor_disputes_30d >= 3) { score += 1; findings.push(`Gia sư có ${m.tutor_disputes_30d} khiếu nại trong 30 ngày.`); }
+    if (m.student_disputes_30d >= 3) { score += 1; findings.push(`Học sinh mở ${m.student_disputes_30d} khiếu nại trong 30 ngày.`); }
+    if (m.ai_appeal_status === 'APPEALED_NEED_REVIEW') { score += 1; findings.push('Có kháng cáo quyết định AI đang chờ xem xét.'); evidence.push({ label: 'Kháng cáo AI', value: 'Đang chờ' }); }
+    actions.push(copilotAction('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Củng cố hồ sơ trước khi quyết định'));
+    actions.push(copilotAction('MANUAL_REVIEW', 'Chuyển xem xét thủ công', 'Quyết định cuối thuộc về admin'));
+
+  } else if (entityType === 'TRANSACTION') {
+    if (m.amount >= 2000000) { score += 2; findings.push(`Giao dịch giá trị cao: ${copilotVnd(m.amount)}.`); evidence.push({ label: 'Số tiền', value: copilotVnd(m.amount) }); }
+    else if (m.amount > 0) evidence.push({ label: 'Số tiền', value: copilotVnd(m.amount) });
+    if (m.related_disputes >= 1) { score += 1; findings.push(`Có ${m.related_disputes} khiếu nại liên quan giao dịch này.`); }
+    if (m.wallet_failed_30d >= 3) { score += 1; findings.push(`Ví liên quan có ${m.wallet_failed_30d} giao dịch thất bại trong 30 ngày.`); }
+    actions.push(copilotAction('MANUAL_REVIEW', 'Chuyển xem xét thủ công', 'Xác minh giao dịch'));
+
+  } else if (entityType === 'BOOKING') {
+    if (m.related_disputes >= 1) { score += 1; findings.push(`Buổi học có ${m.related_disputes} khiếu nại liên quan.`); evidence.push({ label: 'Khiếu nại liên quan', value: m.related_disputes }); }
+    if (m.escrow_open && m.money_exposure > 0) { findings.push(`Đang giữ ${copilotVnd(m.money_exposure)} escrow chưa giải ngân.`); evidence.push({ label: 'Escrow đang giữ', value: copilotVnd(m.money_exposure) }); }
+    if (m.attendance_status === 'absent') { score += 1; findings.push('Điểm danh của buổi học: vắng mặt.'); evidence.push({ label: 'Điểm danh', value: 'Vắng mặt' }); }
+    if (m.session_events === 0) limitations.push('Không có sự kiện phiên học (JOIN/HEARTBEAT) cho buổi này.');
+    actions.push(copilotAction('MANUAL_REVIEW', 'Chuyển xem xét thủ công', 'Xác minh buổi học'));
+
+  } else { // PAGE
+    if (m.open_disputes > 0) { findings.push(`${m.open_disputes} khiếu nại đang mở.`); evidence.push({ label: 'Khiếu nại mở', value: m.open_disputes }); if (m.open_disputes >= 5) score += 1; }
+    if (m.appealed_ai_cases > 0) { findings.push(`${m.appealed_ai_cases} kháng cáo AI chờ xem xét.`); evidence.push({ label: 'Kháng cáo AI', value: m.appealed_ai_cases }); score += 1; }
+    if (m.pending_tutors > 0) { findings.push(`${m.pending_tutors} hồ sơ gia sư chờ duyệt.`); evidence.push({ label: 'Hồ sơ chờ duyệt', value: m.pending_tutors }); }
+    if (m.failed_tx_24h >= 5) { findings.push(`${m.failed_tx_24h} giao dịch thất bại trong 24 giờ.`); score += 1; }
+    actions.push(copilotAction('MANUAL_REVIEW', 'Xử lý các mục đang chờ', 'Có mục cần admin xử lý'));
+  }
+
+  if (findings.length === 0) { findings.push('Không phát hiện dấu hiệu bất thường đáng kể.'); actions.length = 0; actions.push(copilotAction('NO_ACTION', 'Không cần hành động', 'Không có tín hiệu rủi ro')); }
+
+  const risk_level = copilotRiskLevelFromScore(score);
+  limitations.push('Phân tích dựa trên quy tắc, chỉ mang tính tham khảo. Quyết định cuối cùng thuộc về admin.');
+
+  // Confidence grows with data volume; rule-based capped at 92.
+  const dataPoints = evidence.length + findings.length;
+  const confidence = Math.max(40, Math.min(92, 55 + dataPoints * 5));
+
+  const name = context.identity?.name || context.identity?.tutor_name || context.identity?.student_name || '';
+  const head = {
+    TUTOR: name ? `Gia sư ${name}` : 'Gia sư này',
+    STUDENT: name ? `Học sinh ${name}` : 'Học sinh này',
+    DISPUTE: 'Khiếu nại này',
+    TRANSACTION: 'Giao dịch này',
+    BOOKING: 'Buổi học này',
+    PAGE: 'Trang hiện tại',
+  }[entityType] || 'Ngữ cảnh này';
+  const riskVi = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' }[risk_level];
+  const recTail = recommendations.length ? ` Đề xuất: ${recommendations.join(' ')}` : (actions.length && actions[0].type !== 'NO_ACTION' ? ` Đề xuất: ${actions.map(a => a.label.toLowerCase()).join(', ')}.` : '');
+  const summary = `${head} có mức rủi ro ${riskVi}. ${findings.join(' ')}${recTail}`.trim();
+
+  return {
+    summary, confidence, risk_level,
+    key_findings: findings, evidence, recommendations,
+    suggested_admin_actions: actions, limitations, model_used: 'RULE_BASED',
+  };
+}
+
+// Keep only masked/safe fields for persistence (no raw email/phone/IP/tokens).
+function sanitizeCopilotSnapshot(context) {
+  if (!context || typeof context !== 'object') return {};
+  return {
+    entity_type: context.entity_type || null,
+    entity_id: context.entity_id != null ? String(context.entity_id) : null,
+    page_key: context.page_key || null,
+    identity: context.identity || {},
+    metrics: context.metrics || {},
+    notes: Array.isArray(context.notes) ? context.notes : [],
+  };
+}
+
+// Optional LLM rewrite of the summary (off by default). Never invents facts;
+// receives sanitized JSON only; validates output; falls back to RULE_BASED.
+async function maybeCopilotLLMRewrite(report, context) {
+  if (!ADMIN_COPILOT_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+  try {
+    const payload = JSON.stringify({
+      risk_level: report.risk_level, key_findings: report.key_findings,
+      evidence: report.evidence, snapshot: sanitizeCopilotSnapshot(context),
+    }).slice(0, ADMIN_COPILOT_MAX_CONTEXT_CHARS);
+    const prompt = `Bạn là trợ lý cho quản trị viên nền tảng gia sư EduX. Viết lại phần TÓM TẮT bằng tiếng Việt, ngắn gọn, khách quan, CHỈ dựa trên dữ liệu JSON dưới đây và TUYỆT ĐỐI KHÔNG bịa thêm dữ kiện. Không đề xuất hành động tự động di chuyển tiền hay khóa tài khoản. Trả về đúng JSON dạng {"summary_vi":"..."}. Dữ liệu: ${payload}`;
+    if (ADMIN_COPILOT_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const text = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed && typeof parsed.summary_vi === 'string' && parsed.summary_vi.trim().length > 10) {
+              return { summary: parsed.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' };
+            }
+          } catch { /* invalid JSON -> fall through */ }
+        }
+      }
+    }
+    // provider=groq or no key configured -> deterministic fallback
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  } catch (err) {
+    console.warn('[copilot] LLM rewrite failed, falling back:', err.message);
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEMANTIC REVIEW & CHAT MODERATION (Batch 27) — ADVISORY-ONLY.
+// Deterministic/rule-based keyword classifier for reviews & chat messages.
+// Detects external-payment attempts, toxicity, spam/scam, teaching quality,
+// positive signals, and privacy risk. NEVER bans/suspends/refunds/emails or
+// mutates account/money. Optional LLM rewrite (off by default).
+// ═══════════════════════════════════════════════════════════════════════════
+const SEMANTIC_MODERATION_LLM_ENABLED   = String(process.env.SEMANTIC_MODERATION_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const SEMANTIC_MODERATION_PROVIDER      = String(process.env.SEMANTIC_MODERATION_PROVIDER || 'gemini').toLowerCase();
+const SEMANTIC_MODERATION_MAX_TEXT_CHARS = Number(process.env.SEMANTIC_MODERATION_MAX_TEXT_CHARS || 8000);
+const SEMANTIC_MODERATION_WORKER_ENABLED = String(process.env.SEMANTIC_MODERATION_WORKER_ENABLED ?? 'false').toLowerCase() === 'true';
+const SEMANTIC_MODERATION_INTERVAL_MINUTES = Number(process.env.SEMANTIC_MODERATION_INTERVAL_MINUTES || 60);
+const SEMANTIC_MODERATION_BATCH_LIMIT   = Number(process.env.SEMANTIC_MODERATION_BATCH_LIMIT || 50);
+const SEMANTIC_MODERATION_RULE_VERSION  = 'SEMANTIC_MODERATION_V1';
+
+const SEMANTIC_ALLOWED_ACTIONS = new Set([
+  'MANUAL_REVIEW', 'COPY_WARNING_DRAFT', 'WATCHLIST', 'REQUEST_MORE_EVIDENCE',
+  'REVIEW_TUTOR_QUALITY', 'NO_ACTION', 'MARK_FALSE_POSITIVE',
+]);
+
+const SEMANTIC_KEYWORDS = {
+  paymentProviders: ['momo', 'zalopay', 'viettel money', 'vietcombank', 'techcombank', 'vietinbank', 'bidv', 'vcb', 'stk', 'số tài khoản', 'so tai khoan', 'bank transfer', 'internet banking', 'ngân hàng', 'ngan hang'],
+  transferVerbs:    ['chuyển khoản', 'chuyen khoan', 'chuyển tiền', 'chuyen tien', 'pay me directly', 'direct payment', 'pay directly', 'thanh toán riêng', 'trả riêng', 'tra rieng'],
+  avoidPlatform:    ['khỏi đặt trên web', 'khoi dat tren web', 'học ngoài app', 'hoc ngoai app', 'ngoài app', 'ngoai app', 'né phí', 'ne phi', 'đỡ mất phí', 'do mat phi', 'outside platform', 'không qua app', 'khong qua app', 'nhắn zalo riêng', 'nhan zalo rieng', 'liên hệ riêng', 'lien he rieng', 'khỏi đặt', 'khoi dat'],
+  toxic:            ['đồ ngu', 'thằng ngu', 'con ngu', 'óc chó', 'oc cho', 'im mồm', 'câm mồm', 'cam mom', 'đồ rác', 'do rac', 'vô dụng', 'vo dung', 'khốn nạn', 'khon nan', 'mất dạy', 'mat day', 'con điên', 'stupid', 'idiot', 'shut up', 'moron', 'asshole', 'loser', 'trash tutor'],
+  threat:           ['tao giết', 'giết mày', 'giet may', 'đánh cho', 'danh cho', 'cho mày biết tay', 'đe dọa', 'de doa', 'kill you', 'beat you up'],
+  lowQuality:       ['không giải thích', 'khong giai thich', 'khó hiểu', 'kho hieu', 'dạy qua loa', 'day qua loa', 'không chuẩn bị', 'khong chuan bi', 'không nhiệt tình', 'khong nhiet tinh', 'thiếu kiên nhẫn', 'thieu kien nhan', 'vào trễ', 'vao tre', 'đi muộn', 'di muon', 'hủy liên tục', 'huy lien tuc', 'no-show', 'no show', 'unprepared', 'bỏ buổi', 'bo buoi'],
+  positive:         ['kiên nhẫn', 'kien nhan', 'thân thiện', 'than thien', 'dễ hiểu', 'de hieu', 'chuẩn bị tốt', 'chuan bi tot', 'nhiệt tình', 'nhiet tinh', 'đúng giờ', 'dung gio', 'tận tâm', 'tan tam', 'punctual', 'helpful', 'clear explanation', 'patient', 'friendly'],
+  spamPromo:        ['khuyến mãi', 'khuyen mai', 'giảm giá sốc', 'giam gia soc', 'đăng ký ngay', 'dang ky ngay', 'click here', 'freeship', 'trúng thưởng', 'trung thuong'],
+};
+
+const SEM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function asUuidOrNull(v) { return (v && SEM_UUID_RE.test(String(v))) ? String(v) : null; }
+
+// Trim, strip control chars, collapse whitespace, cap length.
+function sanitizeModerationText(text, maxChars = SEMANTIC_MODERATION_MAX_TEXT_CHARS) {
+  if (text == null) return '';
+  // eslint-disable-next-line no-control-regex
+  const s = String(text).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s.slice(0, maxChars);
+}
+
+// Mask emails, long digit runs (phones / bank accounts), and IPs inside a string.
+function maskSensitiveText(text) {
+  if (text == null) return text;
+  let s = String(text);
+  s = s.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP]');
+  s = s.replace(/([a-zA-Z0-9._%+-]{1,2})[a-zA-Z0-9._%+-]*(@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, (m, a, b) => `${a}***${b}`);
+  s = s.replace(/\d[\d\s.\-]{6,}\d/g, (m) => {
+    const digits = m.replace(/\D/g, '');
+    if (digits.length < 8) return m;
+    if (digits.length >= 12) return '****' + digits.slice(-4);
+    return digits.slice(0, 2) + '****' + digits.slice(-3);
+  });
+  return s;
+}
+
+function hashModerationInput(text, sourceType, sourceId) {
+  return crypto.createHash('sha256')
+    .update(`${sourceType || ''}|${sourceId || ''}|${String(text || '').trim().toLowerCase()}`)
+    .digest('hex');
+}
+
+// Core deterministic classifier. Returns the full analysis object.
+function classifyTextModeration(rawText, context = {}) {
+  const original = sanitizeModerationText(rawText);
+  const lower = original.toLowerCase();
+  const categories = new Set();
+  const evidence = [];
+  const highlighted = [];
+  const limitations = [];
+  const clamp = v => Math.max(0, Math.min(100, Math.round(v)));
+  const find = list => list.filter(kw => lower.includes(kw));
+
+  const phoneMatches   = original.match(/\d[\d\s.\-]{6,}\d/g) || [];
+  const emailMatches   = original.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+  const linkMatches    = original.match(/(https?:\/\/|www\.)\S+/gi) || [];
+  const accountMatches = original.match(/\b\d{9,19}\b/g) || [];
+
+  // 1. External payment attempt
+  const provHits = find(SEMANTIC_KEYWORDS.paymentProviders);
+  const verbHits = find(SEMANTIC_KEYWORDS.transferVerbs);
+  const avoidHits = find(SEMANTIC_KEYWORDS.avoidPlatform);
+  const directInstruction = verbHits.length > 0 && (provHits.length > 0 || accountMatches.length > 0);
+  let externalPaymentRisk = 0;
+  if (provHits.length || verbHits.length || avoidHits.length) {
+    categories.add('EXTERNAL_PAYMENT_ATTEMPT');
+    externalPaymentRisk = clamp(25 + provHits.length * 20 + verbHits.length * 20 + avoidHits.length * 18 + (directInstruction ? 30 : 0));
+    [...new Set([...provHits, ...verbHits, ...avoidHits])].forEach(kw => highlighted.push({ text: kw, reason: 'external_payment' }));
+    evidence.push({ label: 'Dấu hiệu giao dịch ngoài nền tảng', value: [...new Set([...provHits, ...verbHits, ...avoidHits])].join(', ') });
+  }
+
+  // 2. Toxic language
+  const toxicHits = find(SEMANTIC_KEYWORDS.toxic);
+  const threatHits = find(SEMANTIC_KEYWORDS.threat);
+  let toxicityRisk = 0;
+  if (toxicHits.length || threatHits.length) {
+    categories.add('TOXIC_LANGUAGE');
+    toxicityRisk = clamp(toxicHits.length * 25 + threatHits.length * 45);
+    [...new Set([...toxicHits, ...threatHits])].forEach(kw => highlighted.push({ text: kw, reason: 'toxic' }));
+    evidence.push({ label: 'Ngôn từ tiêu cực/đe dọa', value: [...new Set([...toxicHits, ...threatHits])].join(', ') });
+  }
+
+  // 3. Spam / scam
+  const spamHits = find(SEMANTIC_KEYWORDS.spamPromo);
+  const repeatedContact = phoneMatches.length >= 2 || linkMatches.length >= 2;
+  let spamRisk = clamp(spamHits.length * 15 + linkMatches.length * 20 + (repeatedContact ? 30 : 0));
+  if (spamHits.length >= 2 || repeatedContact) {
+    categories.add('SPAM_OR_SCAM');
+    evidence.push({ label: 'Dấu hiệu spam/quảng cáo', value: `từ khóa=${spamHits.length}, links=${linkMatches.length}, sđt=${phoneMatches.length}` });
+  }
+
+  // 4. Privacy risk (mask in highlights)
+  if (phoneMatches.length || emailMatches.length || accountMatches.length) {
+    categories.add('PRIVACY_RISK');
+    [...phoneMatches, ...emailMatches].forEach(t => highlighted.push({ text: maskSensitiveText(t), reason: 'privacy' }));
+    evidence.push({ label: 'Chia sẻ thông tin cá nhân (đã che)', value: `sđt=${phoneMatches.length}, email=${emailMatches.length}, stk=${accountMatches.length}` });
+  }
+
+  // 5. Low teaching quality
+  const negHits = find(SEMANTIC_KEYWORDS.lowQuality);
+  if (negHits.length) {
+    categories.add('LOW_TEACHING_QUALITY');
+    [...new Set(negHits)].forEach(kw => highlighted.push({ text: kw, reason: 'low_quality' }));
+    evidence.push({ label: 'Phàn nàn chất lượng giảng dạy', value: [...new Set(negHits)].join(', ') });
+  }
+
+  // 6. Positive teaching signal
+  const posHits = find(SEMANTIC_KEYWORDS.positive);
+  if (posHits.length) {
+    categories.add('POSITIVE_TEACHING_SIGNAL');
+    evidence.push({ label: 'Tín hiệu tích cực', value: [...new Set(posHits)].join(', ') });
+  }
+
+  // Teaching-quality dimension scores (neutral baseline 70)
+  const posN = posHits.length, negN = negHits.length;
+  const scores = {
+    patience:         clamp(70 + posN * 8 - negN * 12 - toxicityRisk * 0.1),
+    friendliness:     clamp(70 + posN * 8 - negN * 6 - toxicityRisk * 0.2),
+    teaching_quality: clamp(70 + posN * 8 - negN * 14),
+    professionalism:  clamp(70 + posN * 5 - negN * 8 - externalPaymentRisk * 0.2 - toxicityRisk * 0.2),
+    external_payment_risk: clamp(externalPaymentRisk),
+    toxicity_risk:    clamp(toxicityRisk),
+    spam_risk:        clamp(spamRisk),
+  };
+
+  // Severity
+  let severity = 'LOW';
+  if (directInstruction || threatHits.length || (categories.has('SPAM_OR_SCAM') && externalPaymentRisk >= 50)) severity = 'CRITICAL';
+  else if (externalPaymentRisk >= 60 || toxicityRisk >= 50 || repeatedContact || (phoneMatches.length + emailMatches.length) >= 2) severity = 'HIGH';
+  else if (externalPaymentRisk >= 30 || toxicityRisk >= 25 || negN >= 2 || categories.has('EXTERNAL_PAYMENT_ATTEMPT') || categories.has('TOXIC_LANGUAGE') || categories.has('PRIVACY_RISK')) severity = 'MEDIUM';
+
+  // Suggested actions (allowed set only)
+  const actions = [];
+  const add = (type, label, reason) => { if (SEMANTIC_ALLOWED_ACTIONS.has(type)) actions.push({ type, label, reason }); };
+  if (severity === 'CRITICAL' || severity === 'HIGH') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Tín hiệu rủi ro cao');
+    if (categories.has('EXTERNAL_PAYMENT_ATTEMPT')) add('REVIEW_TUTOR_QUALITY', 'Rà soát gia sư', 'Nghi ngờ giao dịch ngoài nền tảng');
+    add('COPY_WARNING_DRAFT', 'Soạn nháp cảnh báo', 'Chuẩn bị nhắc nhở');
+    add('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm');
+  } else if (severity === 'MEDIUM') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Cần xác minh thêm');
+    add('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Tín hiệu chưa rõ ràng');
+  } else {
+    add('NO_ACTION', 'Không cần hành động', categories.has('POSITIVE_TEACHING_SIGNAL') ? 'Nội dung tích cực' : 'Tín hiệu yếu/trung tính');
+  }
+  add('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai');
+
+  // Vietnamese summary
+  const catVi = {
+    EXTERNAL_PAYMENT_ATTEMPT: 'giao dịch ngoài nền tảng', TOXIC_LANGUAGE: 'ngôn từ tiêu cực',
+    SPAM_OR_SCAM: 'spam/lừa đảo', LOW_TEACHING_QUALITY: 'chất lượng giảng dạy thấp',
+    POSITIVE_TEACHING_SIGNAL: 'tín hiệu tích cực', PRIVACY_RISK: 'lộ thông tin cá nhân',
+  };
+  const catList = [...categories];
+  const sevVi = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' }[severity];
+  let summary;
+  if (catList.length === 0) summary = 'Không phát hiện dấu hiệu bất thường. Nội dung trung tính.';
+  else if (catList.length === 1 && catList[0] === 'POSITIVE_TEACHING_SIGNAL') summary = 'Nội dung tích cực về gia sư, không có rủi ro. Mức rủi ro thấp.';
+  else summary = `Phát hiện: ${catList.map(c => catVi[c] || c).join(', ')}. Mức rủi ro ${sevVi}.`;
+
+  limitations.push('Phân tích dựa trên quy tắc từ khóa, chỉ mang tính tham khảo. Admin quyết định cuối cùng.');
+
+  return {
+    severity, categories: catList, scores, summary,
+    evidence, highlighted_text: highlighted, suggested_actions: actions, limitations,
+    model_used: 'RULE_BASED',
+  };
+}
+
+function analyzeReviewSemantic(review) {
+  const text = review.text || review.comment || review.content || '';
+  return { ...classifyTextModeration(text, { sourceType: 'REVIEW' }), source_type: 'REVIEW', source_id: review.id || null, text };
+}
+function analyzeChatMessageSemantic(message) {
+  const text = message.text || message.content || '';
+  return { ...classifyTextModeration(text, { sourceType: 'CHAT_MESSAGE' }), source_type: 'CHAT_MESSAGE', source_id: message.id || null, text };
+}
+
+// Optional LLM rewrite of summary only (off by default). Never invents evidence.
+async function maybeSemanticLLMRewrite(report, sanitizedText) {
+  if (!SEMANTIC_MODERATION_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+  try {
+    const payload = JSON.stringify({ categories: report.categories, severity: report.severity, scores: report.scores, text: sanitizeModerationText(sanitizedText, 2000) }).slice(0, SEMANTIC_MODERATION_MAX_TEXT_CHARS);
+    const prompt = `Bạn là trợ lý kiểm duyệt nội dung cho nền tảng gia sư EduX. Viết lại TÓM TẮT bằng tiếng Việt ngắn gọn, khách quan, CHỈ dựa trên dữ liệu JSON dưới đây, KHÔNG bịa thêm bằng chứng, KHÔNG đề xuất khóa/cấm tài khoản. Trả về JSON {"summary_vi":"..."}. Dữ liệu: ${payload}`;
+    if (SEMANTIC_MODERATION_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try {
+            const parsed = JSON.parse(t);
+            if (parsed && typeof parsed.summary_vi === 'string' && parsed.summary_vi.trim().length > 10) {
+              return { summary: parsed.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' };
+            }
+          } catch { /* invalid -> fall through */ }
+        }
+      }
+    }
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  } catch (err) {
+    console.warn('[semantic] LLM rewrite failed, falling back:', err.message);
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  }
+}
+
+async function saveSemanticModerationReport(r) {
+  try {
+    const ins = await pool.query(
+      `INSERT INTO semantic_moderation_reports
+        (source_type, source_id, tutor_id, student_id, target_user_id, severity, status,
+         categories, scores, summary, evidence, highlighted_text, suggested_actions, limitations,
+         model_used, rule_version, input_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,'OPEN',$7::jsonb,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16)
+       RETURNING id`,
+      [
+        r.source_type, r.source_id != null ? String(r.source_id) : null,
+        asUuidOrNull(r.tutor_id), asUuidOrNull(r.student_id), asUuidOrNull(r.target_user_id),
+        r.severity, JSON.stringify(r.categories || []), JSON.stringify(r.scores || {}), r.summary || null,
+        JSON.stringify(r.evidence || []), JSON.stringify(r.highlighted_text || []),
+        JSON.stringify(r.suggested_actions || []), JSON.stringify(r.limitations || []),
+        r.model_used || 'RULE_BASED', SEMANTIC_MODERATION_RULE_VERSION, r.input_hash || null,
+      ]
+    );
+    return ins.rows[0].id;
+  } catch (e) { console.warn('[semantic] save report failed:', e.message); return null; }
+}
+
+// Aggregate a tutor's review texts into semantic reputation scores (read-only).
+async function analyzeTutorSemanticReputation(tutorUserId, { days = 90 } = {}) {
+  const rows = await copilotSafeRows(
+    `SELECT COALESCE(r.comment, r.content) AS text
+       FROM reviews r JOIN tutor_profiles tp ON tp.id = r.tutor_id
+      WHERE tp.user_id = $1 AND r.created_at > NOW() - make_interval(days => $2::int)
+        AND COALESCE(r.comment, r.content) IS NOT NULL
+      ORDER BY r.created_at DESC LIMIT 200`, [tutorUserId, days]);
+  const dims = { patience: [], friendliness: [], teaching_quality: [], professionalism: [] };
+  const risk = { external_payment_risk: 0, toxicity_risk: 0, spam_risk: 0 };
+  let count = 0;
+  for (const row of rows) {
+    if (!row.text) continue;
+    const a = classifyTextModeration(row.text, { sourceType: 'REVIEW' });
+    dims.patience.push(a.scores.patience);
+    dims.friendliness.push(a.scores.friendliness);
+    dims.teaching_quality.push(a.scores.teaching_quality);
+    dims.professionalism.push(a.scores.professionalism);
+    risk.external_payment_risk = Math.max(risk.external_payment_risk, a.scores.external_payment_risk);
+    risk.toxicity_risk = Math.max(risk.toxicity_risk, a.scores.toxicity_risk);
+    risk.spam_risk = Math.max(risk.spam_risk, a.scores.spam_risk);
+    count++;
+  }
+  const avg = arr => arr.length ? Math.round(arr.reduce((s, x) => s + x, 0) / arr.length) : 70;
+  const patience = avg(dims.patience), friendliness = avg(dims.friendliness);
+  const teaching_quality = avg(dims.teaching_quality), professionalism = avg(dims.professionalism);
+  const overall = Math.max(0, Math.min(100, Math.round(
+    (patience + friendliness + teaching_quality + professionalism) / 4
+    - (risk.external_payment_risk + risk.toxicity_risk + risk.spam_risk) / 6
+  )));
+  return {
+    tutor_id: tutorUserId, report_count: count,
+    patience_score: patience, friendliness_score: friendliness,
+    teaching_quality_score: teaching_quality, professionalism_score: professionalism,
+    external_payment_risk_score: risk.external_payment_risk, toxicity_risk_score: risk.toxicity_risk,
+    spam_risk_score: risk.spam_risk, overall_reputation_score: overall,
+    summary: count ? `Dựa trên ${count} đánh giá trong ${days} ngày gần nhất.` : 'Chưa đủ dữ liệu đánh giá để chấm điểm.',
+  };
+}
+
+async function upsertTutorReputationSemanticScore(tutorUserId, { days = 90 } = {}) {
+  const uid = asUuidOrNull(tutorUserId);
+  if (!uid) return null;
+  const rep = await analyzeTutorSemanticReputation(uid, { days });
+  try {
+    await pool.query(
+      `INSERT INTO tutor_reputation_semantic_scores
+        (tutor_id, period_start, period_end, patience_score, friendliness_score, teaching_quality_score,
+         professionalism_score, external_payment_risk_score, toxicity_risk_score, spam_risk_score,
+         overall_reputation_score, summary, report_count, updated_at)
+       VALUES ($1, (CURRENT_DATE - make_interval(days => $2::int))::date, CURRENT_DATE,
+               $3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW())
+       ON CONFLICT (tutor_id, period_start, period_end) DO UPDATE SET
+         patience_score=EXCLUDED.patience_score, friendliness_score=EXCLUDED.friendliness_score,
+         teaching_quality_score=EXCLUDED.teaching_quality_score, professionalism_score=EXCLUDED.professionalism_score,
+         external_payment_risk_score=EXCLUDED.external_payment_risk_score, toxicity_risk_score=EXCLUDED.toxicity_risk_score,
+         spam_risk_score=EXCLUDED.spam_risk_score, overall_reputation_score=EXCLUDED.overall_reputation_score,
+         summary=EXCLUDED.summary, report_count=EXCLUDED.report_count, updated_at=NOW()`,
+      [uid, days, rep.patience_score, rep.friendliness_score, rep.teaching_quality_score, rep.professionalism_score,
+       rep.external_payment_risk_score, rep.toxicity_risk_score, rep.spam_risk_score, rep.overall_reputation_score,
+       rep.summary, rep.report_count]
+    );
+  } catch (e) { console.warn('[semantic] reputation upsert failed:', e.message); }
+  return rep;
+}
+
+// Shared scan used by POST run-pending and the optional worker. Advisory only.
+async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_LIMIT, triggeredBy = 'worker' } = {}) {
+  const stats = { reviews_scanned: 0, chat_scanned: 0, created: 0, skipped: 0, failed: 0, tutors_scored: 0 };
+  const limitations = [];
+  const touchedTutors = new Set();
+
+  let reviews = [];
+  try {
+    reviews = (await pool.query(
+      `SELECT r.id, COALESCE(r.comment, r.content) AS text, tp.user_id AS tutor_user_id
+         FROM reviews r LEFT JOIN tutor_profiles tp ON tp.id = r.tutor_id
+        WHERE COALESCE(r.comment, r.content) IS NOT NULL AND TRIM(COALESCE(r.comment, r.content)) <> ''
+          AND NOT EXISTS (SELECT 1 FROM semantic_moderation_reports s WHERE s.source_type='REVIEW' AND s.source_id = r.id::text)
+        ORDER BY r.created_at DESC LIMIT $1`, [limit])).rows;
+  } catch (e) { limitations.push('Không quét được reviews: ' + e.message); }
+
+  for (const rv of reviews) {
+    stats.reviews_scanned++;
+    try {
+      const a = classifyTextModeration(rv.text, { sourceType: 'REVIEW' });
+      const suspicious = a.severity !== 'LOW' || a.categories.some(c => c !== 'POSITIVE_TEACHING_SIGNAL');
+      if (suspicious) {
+        const id = await saveSemanticModerationReport({
+          ...a, source_type: 'REVIEW', source_id: rv.id,
+          tutor_id: asUuidOrNull(rv.tutor_user_id), input_hash: hashModerationInput(rv.text, 'REVIEW', rv.id),
+        });
+        if (id) stats.created++; else stats.failed++;
+      } else stats.skipped++;
+      if (rv.tutor_user_id) touchedTutors.add(rv.tutor_user_id);
+    } catch { stats.failed++; }
+  }
+
+  let chats = [];
+  try {
+    chats = (await pool.query(
+      `SELECT cm.id, cm.content AS text, cm.sender_id
+         FROM chat_messages cm
+        WHERE cm.content IS NOT NULL AND TRIM(cm.content) <> ''
+          AND NOT EXISTS (SELECT 1 FROM semantic_moderation_reports s WHERE s.source_type='CHAT_MESSAGE' AND s.source_id = cm.id::text)
+        ORDER BY cm.created_at DESC LIMIT $1`, [limit])).rows;
+  } catch (e) { limitations.push('Bỏ qua chat: bảng chat_messages không khả dụng hoặc lỗi truy vấn.'); }
+
+  for (const c of chats) {
+    stats.chat_scanned++;
+    try {
+      const a = classifyTextModeration(c.text, { sourceType: 'CHAT_MESSAGE' });
+      const suspicious = a.severity !== 'LOW' && a.categories.some(cat => ['EXTERNAL_PAYMENT_ATTEMPT', 'TOXIC_LANGUAGE', 'SPAM_OR_SCAM', 'PRIVACY_RISK'].includes(cat));
+      if (suspicious) {
+        const id = await saveSemanticModerationReport({
+          ...a, source_type: 'CHAT_MESSAGE', source_id: c.id,
+          target_user_id: asUuidOrNull(c.sender_id), input_hash: hashModerationInput(c.text, 'CHAT_MESSAGE', c.id),
+        });
+        if (id) stats.created++; else stats.failed++;
+      } else stats.skipped++;
+    } catch { stats.failed++; }
+  }
+
+  for (const t of [...touchedTutors].slice(0, 50)) {
+    try { await upsertTutorReputationSemanticScore(t, { days: 90 }); stats.tutors_scored++; } catch { /* best-effort */ }
+  }
+
+  console.log(`[semantic] run by=${triggeredBy} reviews=${stats.reviews_scanned} chat=${stats.chat_scanned} created=${stats.created} skipped=${stats.skipped} failed=${stats.failed} tutorsScored=${stats.tutors_scored}`);
+  return { ...stats, limitations, triggered_by: triggeredBy, rule_version: SEMANTIC_MODERATION_RULE_VERSION };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI FRAUD RING DETECTION — THREAT INTEL (Batch 28) — ADVISORY-ONLY.
+// Deterministic, read-only analyzers that build fraud intelligence reports for
+// admin review. NEVER bans/suspends/refunds/releases/holds/cancels/blocks or
+// mutates any account/money/booking/transaction. Optional LLM (off by default).
+// ═══════════════════════════════════════════════════════════════════════════
+const FRAUD_INTEL_LLM_ENABLED     = String(process.env.FRAUD_INTEL_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const FRAUD_INTEL_PROVIDER        = String(process.env.FRAUD_INTEL_PROVIDER || 'gemini').toLowerCase();
+const FRAUD_INTEL_MAX_CONTEXT_CHARS = Number(process.env.FRAUD_INTEL_MAX_CONTEXT_CHARS || 12000);
+const FRAUD_INTEL_WORKER_ENABLED  = String(process.env.FRAUD_INTEL_WORKER_ENABLED ?? 'false').toLowerCase() === 'true';
+const FRAUD_INTEL_INTERVAL_MINUTES = Number(process.env.FRAUD_INTEL_INTERVAL_MINUTES || 360);
+const FRAUD_INTEL_PERIOD_DAYS     = Number(process.env.FRAUD_INTEL_PERIOD_DAYS || 30);
+const FRAUD_INTEL_BATCH_LIMIT     = Number(process.env.FRAUD_INTEL_BATCH_LIMIT || 100);
+const FRAUD_INTEL_RULE_VERSION    = 'FRAUD_INTEL_V1';
+
+const FRAUD_ALLOWED_ACTIONS = new Set([
+  'MANUAL_REVIEW', 'WATCHLIST', 'REQUEST_MORE_EVIDENCE', 'REVIEW_WITHDRAWAL_MANUALLY',
+  'REVIEW_REFUND_PATTERN', 'REVIEW_TUTOR_QUALITY', 'REVIEW_EXTERNAL_PAYMENT_SIGNAL',
+  'NO_ACTION', 'MARK_FALSE_POSITIVE',
+]);
+
+function buildFraudPeriod(days) {
+  const d = Math.max(1, Math.min(365, Number(days) || 30));
+  return { days: d, start: new Date(Date.now() - d * 86400000), end: new Date() };
+}
+function buildEntityKey(type, ...ids) { return `${type}:${ids.filter(Boolean).join(':')}`; }
+function calculateSeverityFromRiskScore(score, flags = []) {
+  const s = Number(score) || 0;
+  if (s >= 85 && (flags?.length || 0) >= 2) return 'CRITICAL';
+  if (s >= 70) return 'HIGH';
+  if (s >= 45) return 'MEDIUM';
+  return 'LOW';
+}
+function maskFraudSensitiveText(text) { return maskSensitiveText(text); }
+function fraudAction(type, label, reason) { if (!FRAUD_ALLOWED_ACTIONS.has(type)) type = 'MANUAL_REVIEW'; return { type, label, reason }; }
+function buildFraudActions(severity, flags = []) {
+  const a = [];
+  if (severity === 'CRITICAL' || severity === 'HIGH') a.push(fraudAction('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Rủi ro cao'));
+  a.push(fraudAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm'));
+  if (flags.some(f => f.includes('EXTERNAL_PAYMENT') || f.includes('PLATFORM_FEE') || f.includes('OFF_PLATFORM') || f.includes('CONTACT_SHARING'))) a.push(fraudAction('REVIEW_EXTERNAL_PAYMENT_SIGNAL', 'Rà soát giao dịch ngoài', 'Nghi ngờ né phí nền tảng'));
+  if (flags.some(f => f.includes('REFUND'))) a.push(fraudAction('REVIEW_REFUND_PATTERN', 'Rà soát mẫu hoàn tiền', 'Tần suất bất thường'));
+  if (flags.some(f => f.includes('WITHDRAW') || f.includes('CASH_OUT'))) a.push(fraudAction('REVIEW_WITHDRAWAL_MANUALLY', 'Rà soát rút tiền thủ công', 'Rủi ro rút tiền'));
+  a.push(fraudAction('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Củng cố hồ sơ'));
+  a.push(fraudAction('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai'));
+  return a;
+}
+function normalizeFraudReport(r) {
+  return {
+    ...r,
+    risk_score:  Math.max(0, Math.min(100, Number(r.risk_score) || 0)),
+    confidence:  Math.max(0, Math.min(100, Number(r.confidence) || 0)),
+    severity:    ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(r.severity) ? r.severity : 'LOW',
+    risk_flags:  Array.isArray(r.risk_flags) ? r.risk_flags : [],
+    suggested_actions: (r.suggested_actions || []).filter(a => FRAUD_ALLOWED_ACTIONS.has(a.type)),
+  };
+}
+async function fraudTableExists(table) {
+  try { await pool.query(`SELECT 1 FROM ${table} LIMIT 1`); return true; } catch { return false; }
+}
+async function getFraudSignalAvailability() {
+  const tables = ['bookings', 'transactions', 'refund_logs', 'commission_logs', 'withdrawal_requests', 'disputes', 'ai_case_resolutions', 'semantic_moderation_reports', 'tutor_reputation_semantic_scores', 'reviews', 'chat_messages', 'wallet_ledger', 'lesson_session_events', 'coupon_usages'];
+  const avail = {};
+  for (const t of tables) avail[t] = await fraudTableExists(t);
+  return avail;
+}
+async function fraudUserName(id) {
+  const r = await copilotSafeRows(`SELECT full_name FROM users WHERE id=$1 LIMIT 1`, [id]);
+  return r.length ? (r[0].full_name || 'Người dùng') : 'Không rõ';
+}
+
+// ── Analyzer: student↔tutor pair collusion ──────────────────────────────────
+async function analyzeStudentTutorPair(studentId, tutorId, period, hint = {}) {
+  const flags = [], evidence = []; let risk = 0;
+  const bookingCount = hint.bookingCount ?? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  const bookingTotal = hint.bookingTotal ?? await copilotSafeSum(`SELECT COALESCE(SUM(lesson_fee),0)::numeric AS s FROM bookings WHERE student_id=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  if (bookingCount >= 5) { risk += 25; flags.push('REPEATED_PAIR_BOOKINGS'); }
+  else if (bookingCount >= 3) { risk += 15; flags.push('REPEATED_PAIR_BOOKINGS'); }
+  evidence.push({ label: 'Số buổi đặt giữa cặp', value: bookingCount });
+
+  const releases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND tutor_id=$2 AND escrow_released_at IS NOT NULL AND escrow_released_at > $3`, [studentId, tutorId, period.start]);
+  const disputes = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  const refunds  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM refund_logs WHERE student_id=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  if (disputes + refunds >= 2) { risk += 20; flags.push('REPEATED_REFUND_DISPUTE_PAIR'); evidence.push({ label: 'Khiếu nại/hoàn tiền giữa cặp', value: `${disputes} + ${refunds}` }); }
+  if (bookingTotal >= 3000000) { risk += 15; flags.push('HIGH_PAIR_FINANCIAL_EXPOSURE'); evidence.push({ label: 'Tổng giá trị giữa cặp', value: copilotVnd(bookingTotal) }); }
+
+  const extPay = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
+  if (extPay > 0) { risk += 25; flags.push('EXTERNAL_PAYMENT_SIGNAL'); evidence.push({ label: 'Báo cáo giao dịch ngoài (semantic)', value: extPay }); }
+
+  const sessionEvents = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM lesson_session_events lse JOIN bookings b ON b.id=lse.booking_id WHERE b.student_id=$1 AND b.tutor_id=$2`, [studentId, tutorId]);
+  if (bookingCount >= 3 && sessionEvents === 0) { risk += 15; flags.push('LOW_SESSION_ACTIVITY'); }
+  if (flags.length >= 3) flags.push('SAME_PAIR_ABNORMAL_PATTERN');
+
+  if (risk < 45 && !flags.includes('EXTERNAL_PAYMENT_SIGNAL')) return null;
+  const severity = calculateSeverityFromRiskScore(risk, flags);
+  const [sName, tName] = await Promise.all([fraudUserName(studentId), fraudUserName(tutorId)]);
+  return normalizeFraudReport({
+    report_type: 'USER_PAIR', entity_key: buildEntityKey('pair', studentId, tutorId),
+    primary_user_id: studentId, secondary_user_id: tutorId, student_id: studentId, tutor_id: tutorId,
+    title: `Cặp học sinh–gia sư nghi vấn: ${sName} ↔ ${tName}`,
+    summary: `Cặp có ${bookingCount} buổi đặt, ${disputes} khiếu nại, ${refunds} hoàn tiền${extPay > 0 ? ', có dấu hiệu giao dịch ngoài nền tảng' : ''}.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(95, 40 + flags.length * 12), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'student', id: studentId, name: sName }, { type: 'tutor', id: tutorId, name: tName }],
+    financial_trace: { pair_booking_total: bookingTotal, releases }, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: refund abuse (per student) ────────────────────────────────────
+async function analyzeRefundAbuse(studentId, period) {
+  const flags = [], evidence = []; let risk = 0;
+  const refunds30 = await copilotSafeCount(`SELECT COUNT(*)::int n FROM refund_logs WHERE student_id=$1 AND created_at > NOW()-INTERVAL '30 days'`, [studentId]);
+  const refunds90 = await copilotSafeCount(`SELECT COUNT(*)::int n FROM refund_logs WHERE student_id=$1 AND created_at > NOW()-INTERVAL '90 days'`, [studentId]);
+  const autoRefunds = await copilotSafeCount(`SELECT COUNT(*)::int n FROM ai_case_resolutions WHERE student_id=$1 AND money_action='REFUND_TO_STUDENT' AND created_at > NOW()-INTERVAL '30 days'`, [studentId]);
+  const disputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE raised_by=$1 AND created_at > NOW()-INTERVAL '90 days'`, [studentId]);
+  if (refunds30 >= 3) { risk += 30; flags.push('HIGH_REFUND_FREQUENCY'); }
+  else if (refunds30 >= 2) { risk += 18; flags.push('HIGH_REFUND_FREQUENCY'); }
+  if (autoRefunds >= 3) { risk += 20; flags.push('ABNORMAL_REFUND_RATE'); }
+  if (disputes >= 4) { risk += 18; flags.push('REPEATED_WEAK_EVIDENCE_DISPUTES'); }
+  evidence.push({ label: 'Hoàn tiền 30/90 ngày', value: `${refunds30} / ${refunds90}` });
+  if (autoRefunds) evidence.push({ label: 'Tự động hoàn (AI) 30 ngày', value: autoRefunds });
+  if (risk < 45) return null;
+  const severity = calculateSeverityFromRiskScore(risk, flags);
+  const name = await fraudUserName(studentId);
+  return normalizeFraudReport({
+    report_type: 'REFUND_ABUSE', entity_key: buildEntityKey('student', studentId),
+    primary_user_id: studentId, student_id: studentId,
+    title: `Nghi vấn lạm dụng hoàn tiền: ${name}`,
+    summary: `Học sinh có ${refunds30} hoàn tiền trong 30 ngày (${refunds90} trong 90 ngày), ${autoRefunds} lần tự động hoàn.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(90, 45 + flags.length * 12), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'student', id: studentId, name }],
+    financial_trace: {}, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: tutor withdrawal risk ─────────────────────────────────────────
+async function analyzeWithdrawalRisk(tutorId, period) {
+  const flags = [], evidence = []; let risk = 0;
+  const wr = await copilotSafeRows(`SELECT COUNT(*)::int n, COALESCE(SUM(amount),0)::numeric total FROM withdrawal_requests WHERE tutor_id=$1 AND requested_at > $2`, [tutorId, period.start]);
+  const wcount = wr.length ? Number(wr[0].n) : 0, wtotal = wr.length ? Number(wr[0].total) : 0;
+  if (!wcount) return null;
+  const activeDisputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE tutor_id=$1 AND status='OPEN'`, [tutorId]);
+  const releases = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND escrow_released_at > $2`, [tutorId, period.start]);
+  const extPay = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
+  const distinctStudents = await copilotSafeCount(`SELECT COUNT(DISTINCT student_id)::int n FROM bookings WHERE tutor_id=$1 AND created_at > $2`, [tutorId, period.start]);
+  if (releases >= 5 && wcount >= 2) { risk += 25; flags.push('RAPID_WITHDRAW_AFTER_RELEASE'); }
+  if (activeDisputes >= 1 && wcount >= 1) { risk += 25; flags.push('WITHDRAWAL_WITH_ACTIVE_DISPUTES'); }
+  if (activeDisputes >= 3) { risk += 15; flags.push('HIGH_DISPUTE_TUTOR'); }
+  if (extPay > 0) { risk += 20; flags.push('EXTERNAL_PAYMENT_TUTOR_RISK'); }
+  if (distinctStudents > 0 && distinctStudents <= 2 && releases >= 4) { risk += 15; flags.push('CONCENTRATED_STUDENT_SOURCE'); }
+  evidence.push({ label: 'Yêu cầu rút / tổng', value: `${wcount} · ${copilotVnd(wtotal)}` });
+  evidence.push({ label: 'Khiếu nại đang mở', value: activeDisputes });
+  if (risk < 45) return null;
+  const severity = calculateSeverityFromRiskScore(risk, flags);
+  const name = await fraudUserName(tutorId);
+  return normalizeFraudReport({
+    report_type: 'WITHDRAWAL_RISK', entity_key: buildEntityKey('tutor', tutorId),
+    primary_user_id: tutorId, tutor_id: tutorId,
+    title: `Rủi ro rút tiền: ${name}`,
+    summary: `Gia sư có ${wcount} yêu cầu rút (${copilotVnd(wtotal)})${activeDisputes ? `, ${activeDisputes} khiếu nại đang mở` : ''}${extPay ? ', có báo cáo giao dịch ngoài' : ''}.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(90, 45 + flags.length * 11), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'tutor', id: tutorId, name }],
+    financial_trace: { withdrawal_total: wtotal, releases }, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: external payment collusion (per tutor) ─────────────────────────
+async function analyzeExternalPaymentCollusion(tutorId, period) {
+  const flags = [], evidence = []; let risk = 0;
+  const extReports = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
+  if (!extReports) return null;
+  const privacyReports = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'PRIVACY_RISK' AND created_at > $2`, [tutorId, period.start]);
+  const repRow = (await copilotSafeRows(`SELECT external_payment_risk_score FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC LIMIT 1`, [tutorId]))[0];
+  risk += 30 + Math.min(30, extReports * 10);
+  flags.push('EXTERNAL_PAYMENT_ATTEMPT');
+  if (privacyReports > 0) { risk += 15; flags.push('CONTACT_SHARING_PATTERN'); }
+  if (repRow && Number(repRow.external_payment_risk_score) >= 50) { risk += 15; flags.push('PLATFORM_FEE_AVOIDANCE'); }
+  const recentBookings = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND created_at > NOW()-INTERVAL '30 days'`, [tutorId]);
+  const priorBookings  = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND created_at > NOW()-INTERVAL '90 days' AND created_at <= NOW()-INTERVAL '30 days'`, [tutorId]);
+  if (priorBookings >= 3 && recentBookings < priorBookings / 2) { risk += 15; flags.push('OFF_PLATFORM_MIGRATION_RISK'); }
+  evidence.push({ label: 'Báo cáo giao dịch ngoài', value: extReports });
+  if (privacyReports) evidence.push({ label: 'Báo cáo lộ thông tin', value: privacyReports });
+  const severity = calculateSeverityFromRiskScore(Math.min(100, risk), flags);
+  const name = await fraudUserName(tutorId);
+  return normalizeFraudReport({
+    report_type: 'EXTERNAL_PAYMENT_COLLUSION', entity_key: buildEntityKey('tutor', tutorId),
+    primary_user_id: tutorId, tutor_id: tutorId,
+    title: `Nghi vấn né phí nền tảng: ${name}`,
+    summary: `Gia sư có ${extReports} báo cáo giao dịch ngoài nền tảng${privacyReports ? `, ${privacyReports} báo cáo lộ thông tin` : ''}.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(92, 50 + flags.length * 11), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'tutor', id: tutorId, name }],
+    financial_trace: {}, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: transaction ring / money-flow concentration (per tutor) ────────
+async function analyzeTransactionRing(period, { limit = 50 } = {}) {
+  const out = [];
+  let rows = [];
+  try {
+    rows = (await pool.query(
+      `SELECT tutor_id, COUNT(*)::int releases, COUNT(DISTINCT student_id)::int students, COALESCE(SUM(lesson_fee),0)::numeric total
+         FROM bookings WHERE escrow_released_at > $1 AND tutor_id IS NOT NULL
+         GROUP BY tutor_id HAVING COUNT(*) >= 4
+         ORDER BY SUM(lesson_fee) DESC LIMIT $2`, [period.start, Math.min(limit, 50)])).rows;
+  } catch { return out; }
+  for (const r of rows) {
+    const flags = [], evidence = []; let risk = 0;
+    const releases = Number(r.releases), students = Number(r.students), total = Number(r.total);
+    if (students > 0 && releases / students >= 3) { risk += 25; flags.push('MONEY_FLOW_CONCENTRATION'); }
+    if (students <= 2 && releases >= 5) { risk += 20; flags.push('REPEATED_RELEASE_WITH_LOW_ACTIVITY'); }
+    const sessionEvents = await copilotSafeCount(`SELECT COUNT(*)::int n FROM lesson_session_events lse JOIN bookings b ON b.id=lse.booking_id WHERE b.tutor_id=$1`, [r.tutor_id]);
+    if (releases >= 4 && sessionEvents === 0) { risk += 20; flags.push('LOW_ACTIVITY_HIGH_VALUE'); }
+    const withdrawFast = await copilotSafeCount(`SELECT COUNT(*)::int n FROM withdrawal_requests WHERE tutor_id=$1 AND requested_at > $2`, [r.tutor_id, period.start]);
+    if (withdrawFast >= 2 && total >= 2000000) { risk += 20; flags.push('RAPID_CASH_OUT'); }
+    if (risk < 45) continue;
+    const severity = calculateSeverityFromRiskScore(Math.min(100, risk), flags);
+    const name = await fraudUserName(r.tutor_id);
+    out.push(normalizeFraudReport({
+      report_type: 'TRANSACTION_RING', entity_key: buildEntityKey('txring', r.tutor_id),
+      primary_user_id: r.tutor_id, tutor_id: r.tutor_id,
+      title: `Dòng tiền tập trung bất thường: ${name}`,
+      summary: `Gia sư nhận ${releases} lần giải ngân từ ${students} học sinh (${copilotVnd(total)}) với hoạt động học thấp.`,
+      reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+      risk_score: risk, confidence: Math.min(85, 40 + flags.length * 12), severity, risk_flags: flags,
+      evidence: [{ label: 'Giải ngân / học sinh', value: `${releases} / ${students}` }, { label: 'Tổng tiền', value: copilotVnd(total) }],
+      timeline: [], related_entities: [{ type: 'tutor', id: r.tutor_id, name }],
+      financial_trace: { release_total: total, releases, distinct_students: students },
+      suggested_actions: buildFraudActions(severity, flags), limitations: [],
+    }));
+  }
+  return out;
+}
+
+// ── Analyzer: voucher abuse (best-effort; no coupon-usage table in schema) ───
+async function analyzeVoucherAbuse(period) {
+  const has = await fraudTableExists('coupon_usages');
+  if (!has) return { skipped: true, limitation: 'VOUCHER_SCHEMA_NOT_FOUND: không có bảng lượt dùng voucher.' };
+  return { skipped: true, limitation: 'VOUCHER_ABUSE: analyzer chưa triển khai cho schema hiện tại.' };
+}
+
+// ── Aggregate signal helpers (used by entity lookup + Copilot) ──────────────
+async function analyzeTutorFraudSignals(tutorId, period) {
+  const reports = [await analyzeWithdrawalRisk(tutorId, period), await analyzeExternalPaymentCollusion(tutorId, period)].filter(Boolean);
+  const maxRisk = reports.reduce((m, r) => Math.max(m, r.risk_score), 0);
+  const flags = [...new Set(reports.flatMap(r => r.risk_flags))];
+  return { risk_score: maxRisk, severity: calculateSeverityFromRiskScore(maxRisk, flags), risk_flags: flags, reports };
+}
+async function analyzeStudentFraudSignals(studentId, period) {
+  const reports = [await analyzeRefundAbuse(studentId, period)].filter(Boolean);
+  const maxRisk = reports.reduce((m, x) => Math.max(m, x.risk_score), 0);
+  const flags = [...new Set(reports.flatMap(x => x.risk_flags))];
+  return { risk_score: maxRisk, severity: calculateSeverityFromRiskScore(maxRisk, flags), risk_flags: flags, reports };
+}
+
+// Persist a fraud report; idempotent per (report_type+entity+day) via detection_window_key.
+async function saveFraudIntelReport(rep) {
+  try {
+    const r = normalizeFraudReport(rep);
+    const dayBucket = new Date().toISOString().slice(0, 10);
+    const dwk = `${r.report_type}|${r.entity_key}|${dayBucket}`;
+    const res = await pool.query(
+      `INSERT INTO fraud_intel_reports
+        (report_type, status, severity, risk_score, confidence, primary_user_id, secondary_user_id,
+         tutor_id, student_id, entity_key, detection_window_key, title, summary, reason_summary,
+         risk_flags, evidence, timeline, related_entities, financial_trace, suggested_actions, limitations,
+         model_used, rule_version, period_start, period_end)
+       VALUES ($1,'OPEN',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+               $14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,$21,$22,$23,$24)
+       ON CONFLICT (detection_window_key) DO UPDATE SET
+         severity=EXCLUDED.severity, risk_score=EXCLUDED.risk_score, confidence=EXCLUDED.confidence,
+         summary=EXCLUDED.summary, reason_summary=EXCLUDED.reason_summary, risk_flags=EXCLUDED.risk_flags,
+         evidence=EXCLUDED.evidence, timeline=EXCLUDED.timeline, related_entities=EXCLUDED.related_entities,
+         financial_trace=EXCLUDED.financial_trace, suggested_actions=EXCLUDED.suggested_actions,
+         limitations=EXCLUDED.limitations, period_start=EXCLUDED.period_start, period_end=EXCLUDED.period_end, updated_at=NOW()
+       RETURNING (xmax = 0) AS inserted`,
+      [r.report_type, r.severity, r.risk_score, r.confidence,
+       asUuidOrNull(r.primary_user_id), asUuidOrNull(r.secondary_user_id), asUuidOrNull(r.tutor_id), asUuidOrNull(r.student_id),
+       r.entity_key, dwk, r.title || null, r.summary || null, r.reason_summary || null,
+       JSON.stringify(r.risk_flags || []), JSON.stringify(r.evidence || []), JSON.stringify(r.timeline || []),
+       JSON.stringify(r.related_entities || []), JSON.stringify(r.financial_trace || {}), JSON.stringify(r.suggested_actions || []),
+       JSON.stringify(r.limitations || []), r.model_used || 'RULE_BASED', FRAUD_INTEL_RULE_VERSION, r.period_start || null, r.period_end || null]
+    );
+    return res.rows[0].inserted ? 'created' : 'updated';
+  } catch (e) { console.warn('[fraud] save failed:', e.message); return 'failed'; }
+}
+
+// Optional LLM rewrite of summary only (off by default). Never invents evidence.
+async function maybeFraudLLMRewrite(report) {
+  if (!FRAUD_INTEL_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+  try {
+    const payload = JSON.stringify({ report_type: report.report_type, severity: report.severity, risk_flags: report.risk_flags, evidence: report.evidence }).slice(0, FRAUD_INTEL_MAX_CONTEXT_CHARS);
+    const prompt = `Bạn là chuyên viên phân tích gian lận cho nền tảng gia sư EduX. Viết lại TÓM TẮT bằng tiếng Việt ngắn gọn, khách quan, CHỈ dựa trên JSON dưới đây, KHÔNG bịa thêm bằng chứng, KHÔNG đề xuất khóa/cấm/hoàn tiền tự động. Trả về JSON {"summary_vi":"..."}. Dữ liệu: ${payload}`;
+    if (FRAUD_INTEL_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try { const p = JSON.parse(t); if (p && typeof p.summary_vi === 'string' && p.summary_vi.trim().length > 10) return { summary: p.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' }; } catch { /* ignore */ }
+        }
+      }
+    }
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  } catch (err) { console.warn('[fraud] LLM rewrite failed:', err.message); return { summary: report.summary, model_used: 'RULE_BASED' }; }
+}
+
+// Orchestrator — shared by POST run and the worker. Advisory only; bounded scans.
+async function runFraudRingDetection({ periodDays = FRAUD_INTEL_PERIOD_DAYS, limit = FRAUD_INTEL_BATCH_LIMIT, dryRun = false, analyzers = null, triggeredBy = 'worker' } = {}) {
+  const startedAt = new Date();
+  const period = buildFraudPeriod(periodDays);
+  const cap = Math.min(Math.max(1, Number(limit) || 100), 200);
+  const want = new Set((analyzers && analyzers.length ? analyzers : ['PAIR', 'VOUCHER', 'REFUND', 'WITHDRAWAL', 'EXTERNAL_PAYMENT', 'TRANSACTION_RING']).map(a => String(a).toUpperCase()));
+  const stats = { scanned_pairs: 0, scanned_users: 0, scanned_transactions: 0, reports_created: 0, reports_updated: 0, skipped: 0, failed: 0 };
+  const limitations = [], generated = [];
+  const avail = await getFraudSignalAvailability();
+  if (!avail.coupon_usages) limitations.push('VOUCHER_SCHEMA_NOT_FOUND');
+
+  const persist = async (rep) => {
+    if (!rep) { stats.skipped++; return; }
+    if (dryRun) { generated.push(rep); return; }
+    const r = await saveFraudIntelReport({ ...rep, period_start: period.start, period_end: period.end });
+    if (r === 'created') stats.reports_created++; else if (r === 'updated') stats.reports_updated++; else stats.failed++;
+    generated.push(rep);
+  };
+
+  if (want.has('PAIR')) {
+    try {
+      const pairs = (await pool.query(
+        `SELECT student_id, tutor_id, COUNT(*)::int AS n, COALESCE(SUM(lesson_fee),0)::numeric AS total
+           FROM bookings WHERE created_at > $1 AND student_id IS NOT NULL AND tutor_id IS NOT NULL
+          GROUP BY student_id, tutor_id HAVING COUNT(*) >= 3 ORDER BY COUNT(*) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const p of pairs) { stats.scanned_pairs++; try { await persist(await analyzeStudentTutorPair(p.student_id, p.tutor_id, period, { bookingCount: p.n, bookingTotal: Number(p.total) })); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('PAIR: ' + e.message); }
+  }
+  if (want.has('REFUND')) {
+    try {
+      const students = (await pool.query(`SELECT student_id, COUNT(*)::int AS n FROM refund_logs WHERE created_at > $1 AND student_id IS NOT NULL GROUP BY student_id HAVING COUNT(*) >= 2 ORDER BY COUNT(*) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const s of students) { stats.scanned_users++; try { await persist(await analyzeRefundAbuse(s.student_id, period)); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('REFUND: ' + e.message); }
+  }
+  if (want.has('WITHDRAWAL')) {
+    try {
+      const tutors = (await pool.query(`SELECT tutor_id, COUNT(*)::int AS n FROM withdrawal_requests WHERE requested_at > $1 GROUP BY tutor_id ORDER BY SUM(amount) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const t of tutors) { stats.scanned_users++; try { await persist(await analyzeWithdrawalRisk(t.tutor_id, period)); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('WITHDRAWAL: ' + e.message); }
+  }
+  if (want.has('EXTERNAL_PAYMENT')) {
+    try {
+      const tutors = (await pool.query(`SELECT tutor_id, COUNT(*)::int AS n FROM semantic_moderation_reports WHERE created_at > $1 AND tutor_id IS NOT NULL AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' GROUP BY tutor_id ORDER BY COUNT(*) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const t of tutors) { stats.scanned_users++; try { await persist(await analyzeExternalPaymentCollusion(t.tutor_id, period)); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('EXTERNAL_PAYMENT: ' + e.message); }
+  }
+  if (want.has('TRANSACTION_RING')) {
+    try { const reps = await analyzeTransactionRing(period, { limit: Math.min(cap, 50) }); for (const r of reps) { stats.scanned_transactions++; await persist(r); } }
+    catch (e) { limitations.push('TRANSACTION_RING: ' + e.message); }
+  }
+  if (want.has('VOUCHER')) { const v = await analyzeVoucherAbuse(period); if (v?.limitation) limitations.push(v.limitation); }
+
+  const finishedAt = new Date();
+  try {
+    await pool.query(
+      `INSERT INTO fraud_intel_run_logs (triggered_by, scanned_pairs, scanned_users, scanned_transactions, reports_created, reports_updated, skipped, failed, limitations, finished_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)`,
+      [triggeredBy, stats.scanned_pairs, stats.scanned_users, stats.scanned_transactions, stats.reports_created, stats.reports_updated, stats.skipped, stats.failed, JSON.stringify(limitations), finishedAt]);
+  } catch { /* run-log best-effort */ }
+
+  console.log(`[fraud] run by=${triggeredBy} pairs=${stats.scanned_pairs} users=${stats.scanned_users} tx=${stats.scanned_transactions} created=${stats.reports_created} updated=${stats.reports_updated} failed=${stats.failed} dryRun=${dryRun}`);
+  return { ...stats, limitations, period_days: period.days, dry_run: dryRun, triggered_by: triggeredBy, generated: dryRun ? generated : undefined, started_at: startedAt.toISOString(), finished_at: finishedAt.toISOString() };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SAFE NATURAL-LANGUAGE ANALYTICS (Batch 29A) — template allowlist only.
+// Admin asks in VN/EN; deterministic intent detection maps to a VETTED,
+// parameterized, SELECT-only template. NEVER executes free-form or LLM-generated
+// SQL. Read-only; no mutation of any business table. Optional LLM only classifies
+// intent into an allowlisted template key (never writes SQL).
+// ═══════════════════════════════════════════════════════════════════════════
+const ADMIN_ANALYTICS_LLM_ENABLED    = String(process.env.ADMIN_ANALYTICS_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const ADMIN_ANALYTICS_PROVIDER       = String(process.env.ADMIN_ANALYTICS_PROVIDER || 'gemini').toLowerCase();
+const ADMIN_ANALYTICS_MAX_QUESTION_CHARS = Number(process.env.ADMIN_ANALYTICS_MAX_QUESTION_CHARS || 1000);
+const ADMIN_ANALYTICS_DEFAULT_DAYS   = Number(process.env.ADMIN_ANALYTICS_DEFAULT_DAYS || 30);
+const ADMIN_ANALYTICS_DEFAULT_LIMIT  = Number(process.env.ADMIN_ANALYTICS_DEFAULT_LIMIT || 50);
+const ADMIN_ANALYTICS_MAX_LIMIT      = Number(process.env.ADMIN_ANALYTICS_MAX_LIMIT || 200);
+
+const ANALYTICS_BLOCKED_RE   = /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|copy|execute|exec|merge)\b|;|--|\/\*|\bpg_|information_schema/i;
+const ANALYTICS_SENSITIVE_RE = /(password|mat khau|token|otp|secret|reset|api[ _]?key|private key|raw ip|dia chi ip)/i;
+
+function stripDiacritics(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+}
+function normalizeAnalyticsQuestion(q) {
+  return stripDiacritics(String(q || '').toLowerCase()).replace(/\s+/g, ' ').trim();
+}
+function maskAnalyticsSensitiveValue(value, col) {
+  if (value == null) return value;
+  const c = String(col).toLowerCase();
+  if (/(password|token|otp|secret|reset|api_key|apikey|hash|private)/.test(c)) return '[REDACTED]';
+  if (c.includes('email')) return maskEmail(String(value));
+  if (c.includes('phone')) return maskPhone(String(value));
+  if (c.includes('ip')) return '[IP]';
+  return value;
+}
+function maskAnalyticsRow(row) { const out = {}; for (const k of Object.keys(row)) out[k] = maskAnalyticsSensitiveValue(row[k], k); return out; }
+
+// ── Template registry (the primary security boundary). Static, parameterized. ─
+const ANALYTICS_TEMPLATES = [
+  {
+    key: 'top_refund_tutors_30d', label: 'Top gia sư bị hoàn tiền nhiều nhất',
+    description: 'Xếp hạng gia sư theo số lần và tổng tiền bị hoàn trong N ngày.',
+    exampleQuestions: ['Top gia sư có nhiều refund nhất 30 ngày', 'Gia sư nào bị hoàn tiền nhiều nhất tháng này'],
+    keywords: [['refund', 2], ['hoan tien', 2], ['gia su', 1], ['tutor', 1], ['nhieu nhat', 1], ['top', 1], ['most', 1]],
+    requiredTables: ['refund_logs', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'refund_count',
+    columns: ['tutor_id', 'tutor_name', 'refund_count', 'refund_amount', 'dispute_count'],
+    sql: `SELECT rl.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS refund_count,
+                 COALESCE(SUM(rl.refund_amount),0)::numeric AS refund_amount,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=rl.tutor_id AND d.created_at > NOW()-make_interval(days=>$1::int)) AS dispute_count
+            FROM refund_logs rl LEFT JOIN users u ON u.id=rl.tutor_id
+           WHERE rl.tutor_id IS NOT NULL AND rl.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY rl.tutor_id, u.full_name ORDER BY refund_count DESC, refund_amount DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, gia sư bị hoàn tiền nhiều nhất là ${rows[0].tutor_name || 'N/A'} với ${rows[0].refund_count} lần (${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ). Tổng ${rows.length} gia sư có hoàn tiền.` : `Không có gia sư nào bị hoàn tiền trong ${p.days} ngày.`,
+  },
+  {
+    key: 'top_dispute_students_30d', label: 'Top học sinh khiếu nại nhiều nhất',
+    description: 'Xếp hạng học sinh theo số khiếu nại đã mở trong N ngày.',
+    exampleQuestions: ['Học sinh nào khiếu nại nhiều nhất', 'Top học sinh tạo dispute nhiều nhất tháng này'],
+    keywords: [['hoc sinh', 2], ['student', 2], ['khieu nai', 2], ['dispute', 2], ['nhieu nhat', 1], ['top', 1]],
+    requiredTables: ['disputes', 'users'], chartType: 'bar', labelKey: 'student_name', valueKey: 'dispute_count',
+    columns: ['student_id', 'student_name', 'dispute_count', 'refund_count'],
+    sql: `SELECT d.raised_by AS student_id, u.full_name AS student_name, COUNT(*)::int AS dispute_count,
+                 (SELECT COUNT(*)::int FROM refund_logs rl WHERE rl.student_id=d.raised_by AND rl.created_at > NOW()-make_interval(days=>$1::int)) AS refund_count
+            FROM disputes d LEFT JOIN users u ON u.id=d.raised_by
+           WHERE d.raised_by IS NOT NULL AND d.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY d.raised_by, u.full_name ORDER BY dispute_count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Học sinh mở nhiều khiếu nại nhất trong ${p.days} ngày: ${rows[0].student_name || 'N/A'} (${rows[0].dispute_count} khiếu nại).` : `Không có khiếu nại nào trong ${p.days} ngày.`,
+  },
+  {
+    key: 'fraud_high_risk_tutors', label: 'Gia sư rủi ro gian lận cao',
+    description: 'Gia sư có báo cáo gian lận mức HIGH/CRITICAL (Batch 28).',
+    exampleQuestions: ['Gia sư nào có rủi ro gian lận cao nhất', 'Top fraud tutor high risk'],
+    keywords: [['gian lan', 2], ['fraud', 2], ['rui ro', 1], ['gia su', 1], ['tutor', 1], ['cao nhat', 1], ['high risk', 2]],
+    requiredTables: ['fraud_intel_reports', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'max_risk_score',
+    columns: ['tutor_id', 'tutor_name', 'report_count', 'max_risk_score', 'latest_summary'],
+    sql: `SELECT f.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS report_count,
+                 MAX(f.risk_score)::numeric AS max_risk_score, (ARRAY_AGG(f.summary ORDER BY f.created_at DESC))[1] AS latest_summary
+            FROM fraud_intel_reports f LEFT JOIN users u ON u.id=f.tutor_id
+           WHERE f.tutor_id IS NOT NULL AND f.severity IN ('HIGH','CRITICAL') AND f.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY f.tutor_id, u.full_name ORDER BY max_risk_score DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư bị gắn cờ gian lận cao trong ${p.days} ngày. Cao nhất: ${rows[0].tutor_name || 'N/A'} (điểm ${Math.round(Number(rows[0].max_risk_score))}).` : `Không có báo cáo gian lận mức cao trong ${p.days} ngày.`,
+  },
+  {
+    key: 'external_payment_signals', label: 'Dấu hiệu giao dịch ngoài nền tảng',
+    description: 'Người dùng có báo cáo kiểm duyệt EXTERNAL_PAYMENT_ATTEMPT (Batch 27).',
+    exampleQuestions: ['Ai có dấu hiệu giao dịch ngoài nền tảng', 'Top gia sư rủ chuyển khoản ngoài app'],
+    keywords: [['giao dich ngoai', 3], ['ngoai nen tang', 2], ['ngoai app', 2], ['chuyen khoan', 2], ['external payment', 3], ['off platform', 2], ['ne phi', 1]],
+    requiredTables: ['semantic_moderation_reports', 'users'], chartType: 'bar', labelKey: 'user_name', valueKey: 'semantic_report_count',
+    columns: ['user_id', 'user_name', 'semantic_report_count', 'fraud_report_count', 'latest_summary'],
+    sql: `SELECT s.tutor_id AS user_id, u.full_name AS user_name, COUNT(*)::int AS semantic_report_count,
+                 (SELECT COUNT(*)::int FROM fraud_intel_reports f WHERE f.tutor_id=s.tutor_id AND f.report_type='EXTERNAL_PAYMENT_COLLUSION' AND f.created_at > NOW()-make_interval(days=>$1::int)) AS fraud_report_count,
+                 (ARRAY_AGG(s.summary ORDER BY s.created_at DESC))[1] AS latest_summary
+            FROM semantic_moderation_reports s LEFT JOIN users u ON u.id=s.tutor_id
+           WHERE s.tutor_id IS NOT NULL AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND s.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY s.tutor_id, u.full_name ORDER BY semantic_report_count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Phát hiện ${rows.length} người dùng có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.` : `Không có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.`,
+  },
+  {
+    key: 'withdrawal_pending_risk', label: 'Gia sư chờ rút tiền có rủi ro',
+    description: 'Yêu cầu rút tiền PENDING kèm khiếu nại/gian lận/giao dịch ngoài.',
+    exampleQuestions: ['Gia sư đang chờ rút tiền có rủi ro cao', 'Withdrawal pending risky tutors'],
+    keywords: [['rut tien', 3], ['withdrawal', 3], ['cho rut', 2], ['pending', 1], ['rui ro', 1]],
+    requiredTables: ['withdrawal_requests', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'pending_amount',
+    columns: ['tutor_id', 'tutor_name', 'pending_amount', 'active_disputes', 'fraud_reports', 'external_payment_reports'],
+    sql: `SELECT w.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(w.amount),0)::numeric AS pending_amount,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=w.tutor_id AND d.status='OPEN') AS active_disputes,
+                 (SELECT COUNT(*)::int FROM fraud_intel_reports f WHERE f.tutor_id=w.tutor_id AND f.created_at > NOW()-make_interval(days=>$1::int)) AS fraud_reports,
+                 (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=w.tutor_id AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT') AS external_payment_reports
+            FROM withdrawal_requests w LEFT JOIN users u ON u.id=w.tutor_id
+           WHERE w.status='PENDING'
+           GROUP BY w.tutor_id, u.full_name ORDER BY pending_amount DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư đang chờ rút tiền; ưu tiên rà soát: ${rows[0].tutor_name || 'N/A'} (${Number(rows[0].pending_amount).toLocaleString('vi-VN')}đ, ${rows[0].active_disputes} khiếu nại mở).` : `Không có yêu cầu rút tiền đang chờ.`,
+  },
+  {
+    key: 'monthly_revenue_summary', label: 'Doanh thu theo tháng',
+    description: 'Tổng hoa hồng/doanh thu ghi nhận (commission_logs EARNED) theo tháng.',
+    exampleQuestions: ['Doanh thu theo tháng', 'Revenue by month'],
+    keywords: [['doanh thu', 3], ['revenue', 3], ['theo thang', 2], ['by month', 2], ['thang', 1]],
+    requiredTables: ['commission_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'gross_revenue',
+    columns: ['month', 'gross_revenue', 'commission_amount', 'transaction_count'],
+    sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month,
+                 COALESCE(SUM(gross_amount),0)::numeric AS gross_revenue,
+                 COALESCE(SUM(commission_amount),0)::numeric AS commission_amount, COUNT(*)::int AS transaction_count
+            FROM commission_logs WHERE event_type='EARNED' AND created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
+    summarize: (rows) => rows.length ? `Doanh thu ghi nhận theo ${rows.length} tháng gần nhất. Tháng mới nhất (${rows[0].month}): ${Number(rows[0].gross_revenue).toLocaleString('vi-VN')}đ (hoa hồng ${Number(rows[0].commission_amount).toLocaleString('vi-VN')}đ).` : `Chưa có dữ liệu doanh thu (commission_logs EARNED).`,
+  },
+  {
+    key: 'monthly_refund_summary', label: 'Hoàn tiền theo tháng',
+    description: 'Số lần và tổng tiền hoàn theo tháng.',
+    exampleQuestions: ['Refund theo tháng', 'Hoàn tiền theo tháng'],
+    keywords: [['refund', 2], ['hoan tien', 2], ['theo thang', 3], ['by month', 3], ['thang', 1]],
+    requiredTables: ['refund_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'refund_amount',
+    columns: ['month', 'refund_count', 'refund_amount'],
+    sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month, COUNT(*)::int AS refund_count,
+                 COALESCE(SUM(refund_amount),0)::numeric AS refund_amount
+            FROM refund_logs WHERE created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
+    summarize: (rows) => rows.length ? `Hoàn tiền theo ${rows.length} tháng. Tháng mới nhất (${rows[0].month}): ${rows[0].refund_count} lần, ${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ.` : `Chưa có dữ liệu hoàn tiền.`,
+  },
+  {
+    key: 'dispute_status_summary', label: 'Khiếu nại theo trạng thái',
+    description: 'Phân bố khiếu nại theo trạng thái trong N ngày.',
+    exampleQuestions: ['Thống kê khiếu nại theo trạng thái', 'Dispute status summary'],
+    keywords: [['khieu nai', 2], ['dispute', 2], ['trang thai', 3], ['status', 2], ['thong ke', 1]],
+    requiredTables: ['disputes'], chartType: 'bar', labelKey: 'status', valueKey: 'count',
+    columns: ['status', 'count', 'latest_created_at'],
+    sql: `SELECT status, COUNT(*)::int AS count, MAX(created_at) AS latest_created_at
+            FROM disputes WHERE created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY status ORDER BY count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày có ${rows.reduce((s, r) => s + Number(r.count), 0)} khiếu nại; nhiều nhất ở trạng thái "${rows[0].status}" (${rows[0].count}).` : `Không có khiếu nại trong ${p.days} ngày.`,
+  },
+  {
+    key: 'semantic_high_risk_reports', label: 'Kiểm duyệt nội dung rủi ro cao',
+    description: 'Báo cáo kiểm duyệt ngữ nghĩa mức HIGH/CRITICAL theo mức độ.',
+    exampleQuestions: ['Nội dung kiểm duyệt rủi ro cao', 'Semantic moderation high risk'],
+    keywords: [['kiem duyet', 2], ['semantic', 2], ['noi dung', 1], ['rui ro cao', 2], ['high risk', 2]],
+    requiredTables: ['semantic_moderation_reports'], chartType: 'bar', labelKey: 'severity', valueKey: 'report_count',
+    columns: ['severity', 'report_count', 'latest_summary'],
+    sql: `SELECT severity, COUNT(*)::int AS report_count, (ARRAY_AGG(summary ORDER BY created_at DESC))[1] AS latest_summary
+            FROM semantic_moderation_reports WHERE severity IN ('HIGH','CRITICAL') AND created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY severity ORDER BY report_count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.reduce((s, r) => s + Number(r.report_count), 0)} báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.` : `Không có báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.`,
+  },
+  {
+    key: 'fraud_critical_reports', label: 'Báo cáo gian lận CRITICAL',
+    description: 'Danh sách báo cáo gian lận mức CRITICAL (Batch 28).',
+    exampleQuestions: ['Báo cáo gian lận critical', 'Fraud critical reports'],
+    keywords: [['gian lan', 2], ['fraud', 2], ['critical', 3], ['nghiem trong', 2]],
+    requiredTables: ['fraud_intel_reports'], chartType: 'none', labelKey: 'report_type', valueKey: 'risk_score',
+    columns: ['report_type', 'severity', 'risk_score', 'summary', 'status'],
+    sql: `SELECT report_type, severity, risk_score::numeric AS risk_score, summary, status
+            FROM fraud_intel_reports WHERE severity='CRITICAL' AND created_at > NOW()-make_interval(days=>$1::int)
+           ORDER BY risk_score DESC, created_at DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} báo cáo gian lận CRITICAL trong ${p.days} ngày cần ưu tiên xử lý.` : `Không có báo cáo gian lận CRITICAL trong ${p.days} ngày.`,
+  },
+  {
+    key: 'ai_case_manual_review', label: 'AI case cần admin review',
+    description: 'Các quyết định AI ở trạng thái NEED_HUMAN_REVIEW (Batch 25).',
+    exampleQuestions: ['AI case nào cần admin review', 'Khiếu nại AI cần xử lý thủ công'],
+    keywords: [['ai case', 3], ['case', 1], ['admin review', 2], ['xu ly thu cong', 2], ['manual review', 2], ['khieu nai ai', 2]],
+    requiredTables: ['ai_case_resolutions'], chartType: 'none', labelKey: 'status', valueKey: 'confidence',
+    columns: ['case_type', 'status', 'recommendation', 'confidence', 'reason_summary'],
+    sql: `SELECT money_action AS case_type, status, recommendation, confidence::numeric AS confidence, reason_summary
+            FROM ai_case_resolutions WHERE status='NEED_HUMAN_REVIEW' AND created_at > NOW()-make_interval(days=>$1::int)
+           ORDER BY created_at DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} quyết định AI cần admin xem xét thủ công trong ${p.days} ngày.` : `Không có AI case nào cần review trong ${p.days} ngày.`,
+  },
+  {
+    key: 'tutor_quality_decline', label: 'Gia sư giảm chất lượng',
+    description: 'Gia sư có báo cáo chất lượng thấp / khiếu nại / hoàn tiền tăng.',
+    exampleQuestions: ['Gia sư có dấu hiệu giảm chất lượng', 'Tutor quality decline'],
+    keywords: [['giam chat luong', 3], ['chat luong', 1], ['quality decline', 3], ['gia su', 1], ['tutor', 1]],
+    requiredTables: ['tutor_profiles', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'dispute_count',
+    columns: ['tutor_id', 'tutor_name', 'avg_rating', 'low_teaching_reports', 'dispute_count', 'refund_count'],
+    sql: `SELECT tp.user_id AS tutor_id, u.full_name AS tutor_name, COALESCE(tp.avg_rating,0)::numeric AS avg_rating,
+                 (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=tp.user_id AND s.categories ? 'LOW_TEACHING_QUALITY' AND s.created_at > NOW()-make_interval(days=>$1::int)) AS low_teaching_reports,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=tp.user_id AND d.created_at > NOW()-make_interval(days=>$1::int)) AS dispute_count,
+                 (SELECT COUNT(*)::int FROM refund_logs rl WHERE rl.tutor_id=tp.user_id AND rl.created_at > NOW()-make_interval(days=>$1::int)) AS refund_count
+            FROM tutor_profiles tp LEFT JOIN users u ON u.id=tp.user_id
+           WHERE tp.status='approved' AND (
+                 (SELECT COUNT(*) FROM semantic_moderation_reports s WHERE s.tutor_id=tp.user_id AND s.categories ? 'LOW_TEACHING_QUALITY' AND s.created_at > NOW()-make_interval(days=>$1::int)) > 0
+              OR (SELECT COUNT(*) FROM disputes d WHERE d.tutor_id=tp.user_id AND d.created_at > NOW()-make_interval(days=>$1::int)) >= 2)
+           ORDER BY dispute_count DESC, low_teaching_reports DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư có dấu hiệu giảm chất lượng trong ${p.days} ngày.` : `Không phát hiện gia sư giảm chất lượng rõ rệt trong ${p.days} ngày.`,
+  },
+];
+const ANALYTICS_TEMPLATE_MAP = Object.fromEntries(ANALYTICS_TEMPLATES.map(t => [t.key, t]));
+
+function getAnalyticsTemplate(key) { return ANALYTICS_TEMPLATE_MAP[key] || null; }
+function listAnalyticsTemplates() {
+  return ANALYTICS_TEMPLATES.map(t => ({ key: t.key, label: t.label, description: t.description, exampleQuestions: t.exampleQuestions, params: ['days', 'limit'], chartType: t.chartType, columns: t.columns }));
+}
+// Secondary defense: assert our own template SQL is a single bounded SELECT/WITH.
+function validateAnalyticsTemplate(t) {
+  if (!t || typeof t.sql !== 'string') return { ok: false, reason: 'NO_TEMPLATE' };
+  const sql = t.sql.trim();
+  if (!/^(select|with)\b/i.test(sql)) return { ok: false, reason: 'NOT_SELECT' };
+  if (!/\blimit\b/i.test(sql)) return { ok: false, reason: 'NO_LIMIT' };
+  if (ANALYTICS_BLOCKED_RE.test(sql.replace(/\$\d+/g, '')) && /\b(insert|update|delete|drop|alter|truncate|grant|revoke)\b/i.test(sql)) return { ok: false, reason: 'BLOCKED_KEYWORD' };
+  return { ok: true };
+}
+// Deterministic intent detection (rule-based). Returns { key, score } or null.
+function detectAnalyticsIntent(question) {
+  const q = normalizeAnalyticsQuestion(question);
+  let best = null, bestScore = 0;
+  for (const t of ANALYTICS_TEMPLATES) {
+    let score = 0;
+    for (const [kw, w] of t.keywords) if (q.includes(kw)) score += w;
+    if (score > bestScore) { bestScore = score; best = t; }
+  }
+  return best && bestScore >= 3 ? { key: best.key, score: bestScore } : null;
+}
+// Optional LLM intent classification (never writes SQL; must return a known key).
+async function maybeAnalyticsLLMIntent(question) {
+  if (!ADMIN_ANALYTICS_LLM_ENABLED) return null;
+  try {
+    const keys = ANALYTICS_TEMPLATES.map(t => t.key).join(', ');
+    const prompt = `Bạn phân loại câu hỏi phân tích dữ liệu của admin nền tảng gia sư vào ĐÚNG MỘT template key trong danh sách sau (hoặc "NONE"): ${keys}. TUYỆT ĐỐI KHÔNG sinh SQL. Trả về JSON {"template_key":"..."}. Câu hỏi: ${String(question).slice(0, 500)}`;
+    if (ADMIN_ANALYTICS_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try { const p = JSON.parse(t); if (p && ANALYTICS_TEMPLATE_MAP[p.template_key]) return { key: p.template_key, score: 99 }; } catch { /* ignore */ }
+        }
+      }
+    }
+    return null;
+  } catch { return null; }
+}
+
+function clampAnalyticsParams(params = {}) {
+  let days = parseInt(params.days, 10); if (!Number.isFinite(days)) days = ADMIN_ANALYTICS_DEFAULT_DAYS;
+  days = Math.max(1, Math.min(365, days));
+  let limit = parseInt(params.limit, 10); if (!Number.isFinite(limit)) limit = ADMIN_ANALYTICS_DEFAULT_LIMIT;
+  limit = Math.max(1, Math.min(ADMIN_ANALYTICS_MAX_LIMIT, limit));
+  return { days, limit };
+}
+
+function buildChartData(t, rows) {
+  if (!t || t.chartType === 'none' || !rows.length) return {};
+  const labels = rows.slice(0, 20).map(r => String(r[t.labelKey] ?? ''));
+  const values = rows.slice(0, 20).map(r => Number(r[t.valueKey]) || 0);
+  return { type: t.chartType, labels, values, value_label: t.valueKey };
+}
+
+// Run a vetted template with a transaction-scoped statement_timeout (read-only).
+async function runAnalyticsTemplate(templateKey, params, adminId) {
+  const t = getAnalyticsTemplate(templateKey);
+  if (!t) return { status: 'NO_MATCH', limitations: ['TEMPLATE_NOT_FOUND'] };
+  const v = validateAnalyticsTemplate(t);
+  if (!v.ok) return { status: 'BLOCKED', limitations: [v.reason], safety_flags: ['TEMPLATE_VALIDATION_FAILED'] };
+
+  const { days, limit } = clampAnalyticsParams(params);
+  const limitations = [];
+  for (const tbl of t.requiredTables) { if (!(await fraudTableExists(tbl))) limitations.push(`TABLE_NOT_FOUND:${tbl}`); }
+  if (limitations.length) {
+    return { status: 'SUCCESS', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Không đủ dữ liệu: một số bảng chưa sẵn sàng.', limitations, sql_preview: t.sql, params: { days, limit } };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL statement_timeout = 8000');
+    const r = await client.query(t.sql, [days, limit]);
+    await client.query('COMMIT');
+    const rows = r.rows.map(maskAnalyticsRow);
+    return {
+      status: 'SUCCESS', template_key: t.key, columns: t.columns, rows,
+      chart: buildChartData(t, rows), summary: t.summarize(rows, { days, limit }),
+      limitations, sql_preview: t.sql, params: { days, limit },
+    };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.warn(`[analytics] template ${t.key} failed:`, e.message);
+    return { status: 'FAILED', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Truy vấn thất bại.', limitations: ['QUERY_FAILED'], error_message: e.message, sql_preview: t.sql, params: { days, limit } };
+  } finally { client.release(); }
+}
+
+function buildAnalyticsSummary(templateKey, rows, params, limitations) {
+  const t = getAnalyticsTemplate(templateKey);
+  if (!t) return 'Không có mẫu phù hợp.';
+  return t.summarize(rows, params) + (limitations?.length ? ` (Giới hạn: ${limitations.join(', ')})` : '');
+}
+
+async function saveAnalyticsAuditLog(log) {
+  try {
+    const r = await pool.query(
+      `INSERT INTO admin_analytics_queries
+        (question, normalized_question, detected_intent, template_key, status, summary, sql_preview,
+         parameters, result_count, result_preview, chart_data, limitations, safety_flags, model_used, created_by, error_message)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16)
+       RETURNING id`,
+      [
+        String(log.question || '').slice(0, ADMIN_ANALYTICS_MAX_QUESTION_CHARS), log.normalized_question || null,
+        log.detected_intent || null, log.template_key || null, log.status || 'SUCCESS', log.summary || null,
+        log.sql_preview || null, JSON.stringify(log.parameters || {}), Number(log.result_count) || 0,
+        JSON.stringify((log.result_preview || []).slice(0, 20)), JSON.stringify(log.chart_data || {}),
+        JSON.stringify(log.limitations || []), JSON.stringify(log.safety_flags || []),
+        log.model_used || 'TEMPLATE_RULE_BASED', asUuidOrNull(log.created_by), log.error_message || null,
+      ]
+    );
+    return r.rows[0].id;
+  } catch (e) { console.warn('[analytics] audit save failed:', e.message); return null; }
+}
+
+// Trim, strip control chars, collapse whitespace, cap length. Null-safe.
+function sanitizeNotificationText(value, maxLength = 500) {
+  if (value == null) return null;
+  // eslint-disable-next-line no-control-regex
+  let s = String(value).replace(/[\x00-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  return s.slice(0, maxLength);
+}
+
+// HTML-escape a value for safe insertion into email htmlBody.
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const fmtVnd = n => Number(n || 0).toLocaleString('vi-VN') + 'đ';
+
+// Plain-text/simple-HTML templates for every notifiable event. Vietnamese,
+// short, no external images, no secrets. Returns {subject,title,body,htmlBody,icon,priority}.
+const NOTIFICATION_TEMPLATES = {
+  withdrawal_created: d => ({
+    subject: '[EduX] Yêu cầu rút tiền đã được tạo', title: 'Yêu cầu rút tiền đã được tạo',
+    body: `Bạn đã yêu cầu rút ${fmtVnd(d.amount)}. Admin sẽ xem xét và chuyển khoản thủ công.`,
+    icon: 'account_balance', priority: 'normal',
+  }),
+  withdrawal_approved: d => ({
+    subject: '[EduX] Yêu cầu rút tiền đã được duyệt', title: 'Yêu cầu rút tiền đã được duyệt',
+    body: `Yêu cầu rút ${fmtVnd(d.amount)} đã được duyệt. Admin sẽ chuyển khoản.`,
+    icon: 'check_circle', priority: 'normal',
+  }),
+  withdrawal_rejected: d => ({
+    subject: '[EduX] Yêu cầu rút tiền bị từ chối', title: 'Yêu cầu rút tiền bị từ chối',
+    body: `Yêu cầu rút ${fmtVnd(d.amount)} bị từ chối. Số dư đã được hoàn lại.${d.reason ? ` Lý do: ${d.reason}` : ''}`,
+    icon: 'cancel', priority: 'normal',
+  }),
+  withdrawal_paid: d => ({
+    subject: '[EduX] Rút tiền thành công', title: 'Rút tiền thành công',
+    body: `Admin đã chuyển khoản ${fmtVnd(d.amount)} cho bạn.`,
+    icon: 'paid', priority: 'high',
+  }),
+  refund_created: d => ({
+    subject: '[EduX] Yêu cầu hoàn tiền đã được ghi nhận', title: 'Yêu cầu hoàn tiền đã được ghi nhận',
+    body: `Yêu cầu hoàn tiền cho "${d.itemName || 'giao dịch'}" đang được xử lý.`,
+    icon: 'undo', priority: 'normal',
+  }),
+  refund_resolved: d => ({
+    subject: '[EduX] Hoàn tiền thành công', title: 'Hoàn tiền thành công',
+    body: `Bạn đã được hoàn ${fmtVnd(d.amount)}${d.rate != null ? ` (${Math.round(d.rate * 100)}%)` : ''} cho "${d.itemName || 'giao dịch'}".`,
+    icon: 'undo', priority: 'normal',
+  }),
+  dispute_opened: d => ({
+    subject: '[EduX] Khiếu nại mới', title: d.forAdmin ? 'Khiếu nại mới cần xử lý' : 'Bạn đang bị khiếu nại',
+    body: d.forAdmin
+      ? `${d.reporterName || 'Người dùng'} báo cáo vi phạm. Lý do: ${d.reason || ''}`
+      : `${d.reporterName || 'Người dùng'} gửi khiếu nại. Admin sẽ xem xét và phán quyết.`,
+    icon: d.forAdmin ? 'gavel' : 'report', priority: 'high',
+  }),
+  dispute_resolved_refund: d => ({
+    subject: '[EduX] Khiếu nại: Đã hoàn tiền', title: 'Khiếu nại: Đã hoàn tiền',
+    body: d.forTutor
+      ? `Admin hoàn tiền cho học sinh.${d.repDeduct ? ` Điểm uy tín bị trừ ${d.repDeduct}.` : ''}`
+      : `Admin phán quyết: Hoàn ${fmtVnd(d.amount)} (${Math.round((d.rate ?? 1) * 100)}%) vào ví bạn.`,
+    icon: d.forTutor ? 'gavel' : 'check_circle', priority: 'high',
+  }),
+  dispute_resolved_release: d => ({
+    subject: '[EduX] Khiếu nại đã được xử lý', title: 'Khiếu nại không được chấp nhận',
+    body: 'Admin xem xét và phán quyết gia sư không vi phạm.',
+    icon: 'gavel', priority: 'normal',
+  }),
+  booking_approved: d => ({
+    subject: '[EduX] Lịch học đã được xác nhận', title: 'Lịch học đã được xác nhận — Tiền tạm giữ',
+    body: `Gia sư đã duyệt lịch học. ${fmtVnd(d.amount)} đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`,
+    icon: 'lock', priority: 'normal',
+  }),
+  booking_declined: d => ({
+    subject: '[EduX] Lịch học bị từ chối', title: 'Hoàn tiền lịch học bị từ chối',
+    body: `Gia sư đã từ chối lịch học. ${fmtVnd(d.amount)} đã được hoàn lại vào ví của bạn.`,
+    icon: 'undo', priority: 'normal',
+  }),
+  booking_cancelled: d => ({
+    subject: '[EduX] Lịch học đã bị hủy', title: 'Lịch học đã bị hủy',
+    body: d.message || 'Lịch học đã bị hủy theo chính sách hoàn tiền.',
+    icon: 'cancel', priority: 'normal',
+  }),
+  booking_completed_present: d => ({
+    subject: '[EduX] Buổi học đã hoàn thành', title: 'Buổi học đã hoàn thành',
+    body: `Buổi học đã được đánh dấu tham gia đầy đủ. Học phí sẽ giải ngân sau 24h nếu không có khiếu nại.`,
+    icon: 'task_alt', priority: 'normal',
+  }),
+  escrow_auto_release_pending: d => ({
+    subject: '[EduX] Học phí sắp được giải ngân', title: 'Học phí sắp được giải ngân',
+    body: `Học phí ${fmtVnd(d.amount)} sẽ tự động giải ngân sau 24h nếu không có khiếu nại.`,
+    icon: 'schedule', priority: 'low',
+  }),
+  escrow_released: d => ({
+    subject: '[EduX] Học phí đã được giải ngân', title: 'Tiền học phí đã vào ví',
+    body: `${fmtVnd(d.amount)} đã vào ví (sau 10% hoa hồng).`,
+    icon: 'payments', priority: 'normal',
+  }),
+  course_purchased: d => ({
+    subject: '[EduX] Đăng ký khóa học thành công', title: 'Đăng ký khóa học thành công',
+    body: `Bạn đã đăng ký khóa học "${d.courseName || ''}" thành công.`,
+    icon: 'school', priority: 'normal',
+  }),
+  course_refunded: d => ({
+    subject: '[EduX] Hoàn tiền khóa học', title: 'Hoàn tiền khóa học thành công',
+    body: `Bạn đã được hoàn ${fmtVnd(d.amount)}${d.rate != null ? ` (${Math.round(d.rate * 100)}%)` : ''} cho khóa học "${d.courseName || ''}".`,
+    icon: 'undo', priority: 'normal',
+  }),
+  tutor_profile_approved: d => ({
+    subject: '[EduX] Hồ sơ gia sư đã được duyệt', title: 'Hồ sơ gia sư đã được duyệt',
+    body: 'Hồ sơ đăng ký gia sư của bạn đã được chấp thuận. Tài khoản của bạn hiện đã hoạt động đầy đủ.',
+    icon: 'verified', priority: 'high',
+  }),
+  tutor_profile_rejected: d => ({
+    subject: '[EduX] Hồ sơ gia sư chưa được duyệt', title: 'Hồ sơ gia sư chưa được duyệt',
+    body: `Hồ sơ đăng ký gia sư chưa đáp ứng điều kiện.${d.reason ? ` Lý do: ${d.reason}` : ''}`,
+    icon: 'gavel', priority: 'high',
+  }),
+  system_alert_admin: d => ({
+    subject: `[EduX] ${d.title || 'Cảnh báo hệ thống'}`, title: d.title || 'Cảnh báo hệ thống',
+    body: d.message || '',
+    icon: 'warning', priority: d.priority || 'normal',
+  }),
+  // ── Batch 20.1: templates for the remaining legacy direct-insert sites ──────
+  manual_hold_release: d => ({
+    subject: '[EduX] Admin đã nhả cọc', title: 'Admin đã nhả cọc',
+    body: `Admin đã thủ công nhả ${fmtVnd(d.amount)} tiền cọc vào số dư khả dụng của bạn.`,
+    icon: 'verified_user', priority: 'high',
+  }),
+  parent_leave_request: d => ({
+    subject: '[EduX] Học sinh xin nghỉ', title: 'Học sinh xin nghỉ',
+    body: `${d.studentName || 'Học sinh'} xin nghỉ buổi ${d.subject || ''} ngày ${d.dateLabel || ''}. Lý do: ${d.reason || 'Không có lý do.'}`,
+    icon: 'event_busy', priority: 'normal',
+  }),
+  tutor_periodic_review: d => ({
+    subject: `[EduX] Nhận xét mới từ gia sư — ${d.subject || ''}`, title: `Nhận xét mới từ gia sư — ${d.subject || ''}`,
+    body: `Gia sư vừa gửi nhận xét định kỳ cho ${d.studentName || 'học sinh'} (${d.periodLabel || ''}).`,
+    icon: 'rate_review', priority: 'normal',
+  }),
+  chat_new_message: d => ({
+    subject: '[EduX] Tin nhắn mới', title: `Tin nhắn mới từ ${d.senderName || 'một người dùng'}`,
+    body: d.messageText || '',
+    icon: 'chat', priority: 'low',
+  }),
+  course_enrollment_ping: d => ({
+    subject: '[EduX] Học sinh mới đăng ký khóa học', title: 'Học sinh mới đăng ký khóa học',
+    body: `${d.studentName || 'Học sinh'} vừa mua khóa học "${d.courseName || ''}"`,
+    icon: 'school', priority: 'normal',
+  }),
+  booking_auto_cancel_no_response: d => ({
+    subject: '[EduX] Lịch học đã bị hủy tự động', title: d.forTutor ? 'Lịch học bị hủy tự động' : 'Lịch học đã bị hủy do gia sư không phản hồi',
+    body: d.forTutor
+      ? 'Một lịch học đã bị hủy vì bạn không phản hồi trong 24h.'
+      : (d.refunded ? `Hệ thống đã hủy lịch học và hoàn lại ${fmtVnd(d.amount)} vì gia sư không duyệt trong 24h.` : 'Hệ thống đã hủy lịch học vì gia sư không duyệt trong 24h.'),
+    icon: d.forTutor ? 'event_busy' : 'undo', priority: 'high',
+  }),
+  reputation_auto_ban: d => ({
+    subject: '[EduX] Tài khoản bị khóa', title: 'Tài khoản bị khóa',
+    body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+    icon: 'block', priority: 'critical',
+  }),
+};
+
+// Renders a template into {subject,title,body,htmlBody,icon,priority}. Unknown
+// keys fall back to a generic safe template rather than throwing.
+function renderNotificationTemplate(templateKey, data = {}) {
+  const fn = NOTIFICATION_TEMPLATES[templateKey];
+  const base = fn ? fn(data) : {
+    subject: '[EduX] Thông báo', title: data.title || 'Thông báo mới',
+    body: data.message || data.body || '', icon: 'notifications', priority: 'normal',
+  };
+  const title = sanitizeNotificationText(base.title, 200) || 'Thông báo';
+  const body  = sanitizeNotificationText(base.body, 1000) || '';
+  const subject = sanitizeNotificationText(base.subject, 200) || `[EduX] ${title}`;
+  const htmlTitle = escapeHtml(title);
+  const htmlBodyText = escapeHtml(body);
+  const htmlBody = `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:32px 16px;"><tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);">
+<tr><td style="background:#00288e;padding:24px 32px;"><h1 style="margin:0;color:#fff;font-size:20px;">EduX</h1></td></tr>
+<tr><td style="padding:32px;"><h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${htmlTitle}</h2>
+<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${htmlBodyText}</p></td></tr>
+<tr><td style="background:#f8f9fb;padding:16px 32px;border-top:1px solid #e1e2e4;"><p style="margin:0;color:#757684;font-size:12px;">EduX — support@edux.com</p></td></tr>
+</table></td></tr></table></body></html>`;
+  return { subject, title, body, htmlBody, icon: base.icon || 'notifications', priority: base.priority || 'normal' };
+}
+
+// Insert an in-app notification row. Idempotent via idempotency_key (ON
+// CONFLICT DO NOTHING). Returns the row id, or null if duplicate/skipped.
+async function createInAppNotification(clientOrPool, payload) {
+  const rendered = renderNotificationTemplate(payload.templateKey, payload.data || {});
+  const title = sanitizeNotificationText(payload.title || rendered.title, 200) || rendered.title;
+  const body  = sanitizeNotificationText(payload.body  || rendered.body, 1000)  || rendered.body;
+  const r = await clientOrPool.query(
+    `INSERT INTO notifications
+       (user_id, type, title, body, icon, ref_id, ref_type, event_type, priority,
+        source_type, source_id, idempotency_key, metadata)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)
+     ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+     RETURNING id`,
+    [
+      payload.userId, payload.type || payload.eventType || 'system', title, body,
+      payload.icon || rendered.icon, payload.refId || null, payload.refType || null,
+      payload.eventType || null, payload.priority || rendered.priority || 'normal',
+      payload.sourceType || null, payload.sourceId || null,
+      payload.idempotencyKey || null, JSON.stringify(payload.metadata || {}),
+    ]
+  );
+  return r.rows.length ? r.rows[0].id : null;
+}
+
+// Queue an email in the outbox (does NOT send synchronously). Idempotent via
+// idempotency_key. Returns the outbox row id, or null if duplicate.
+async function queueEmailNotification(clientOrPool, payload) {
+  const rendered = renderNotificationTemplate(payload.templateKey, payload.data || {});
+  const r = await clientOrPool.query(
+    `INSERT INTO notification_outbox
+       (user_id, email, channel, event_type, template_key, subject, title, body, html_body,
+        status, priority, source_type, source_id, ref_type, ref_id, notification_id,
+        idempotency_key, metadata)
+     VALUES ($1,$2,'EMAIL',$3,$4,$5,$6,$7,$8,'PENDING',$9,$10,$11,$12,$13,$14,$15,$16::jsonb)
+     ON CONFLICT (idempotency_key) DO NOTHING
+     RETURNING id`,
+    [
+      payload.userId || null, payload.email || null, payload.eventType || payload.templateKey,
+      payload.templateKey, rendered.subject, rendered.title, rendered.body, rendered.htmlBody,
+      payload.priority || rendered.priority || 'normal',
+      payload.sourceType || null, payload.sourceId || null,
+      payload.refType || null, payload.refId || null, payload.notificationId || null,
+      payload.idempotencyKey || null, JSON.stringify(payload.metadata || {}),
+    ]
+  );
+  return r.rows.length ? r.rows[0].id : null;
+}
+
+// Central entry point: creates in-app notification and/or queues email
+// depending on payload.channels (default ['IN_APP']). Pass the active
+// transaction client when called from inside a money-flow transaction so
+// rollback covers the notification too. Throws on real DB errors — callers in
+// critical (money) paths MUST use safeNotifyUser instead.
+async function notifyUser(clientOrPool, payload) {
+  const channels = payload.channels || ['IN_APP'];
+  const result = { notificationId: null, outboxId: null };
+
+  if (channels.includes('IN_APP') && payload.userId) {
+    const idemKey = payload.idempotencyKey ? `notif:${payload.idempotencyKey}` : null;
+    result.notificationId = await createInAppNotification(clientOrPool, { ...payload, idempotencyKey: idemKey });
+  }
+
+  if (channels.includes('EMAIL') && (payload.email || payload.userId)) {
+    let email = payload.email;
+    if (!email && payload.userId) {
+      const u = await clientOrPool.query('SELECT email FROM users WHERE id=$1', [payload.userId]);
+      email = u.rows[0]?.email || null;
+    }
+    if (email) {
+      const idemKey = payload.idempotencyKey ? `email:${payload.idempotencyKey}` : null;
+      result.outboxId = await queueEmailNotification(clientOrPool, {
+        ...payload, email, notificationId: result.notificationId, idempotencyKey: idemKey,
+      });
+    }
+  }
+  return result;
+}
+
+// Safe wrapper: never throws. Use inside money-movement flows so a
+// notification/email failure can never roll back or crash a financial
+// transaction. Logs the error and returns null on failure.
+async function safeNotifyUser(clientOrPool, payload) {
+  try {
+    return await notifyUser(clientOrPool, payload);
+  } catch (err) {
+    console.error('[safeNotifyUser] non-fatal notification error:', err.message);
+    return null;
+  }
+}
+
+// ── Email outbox processor (Batch 20.2 hardened) ─────────────────────────────
+// Claim-then-send pattern: rows are claimed into PROCESSING status in a short
+// transaction (releasing DB locks immediately), then emails are sent outside
+// any transaction. Each post-send update is guarded by (status='PROCESSING'
+// AND processor_id=<this run>), so overlapping processors cannot corrupt each
+// other's rows. Stale PROCESSING rows (older than
+// EMAIL_OUTBOX_PROCESSING_TIMEOUT_MINUTES) are recovered to RETRYING/FAILED
+// before each run. Exactly-once delivery cannot be guaranteed without
+// provider-side idempotency; this design materially reduces duplicate risk.
+let _outboxProcessorRunning = false;
+async function processNotificationOutbox(limit = 20) {
+  if (_outboxProcessorRunning) return { skipped: true, reason: 'already_running' };
+  _outboxProcessorRunning = true;
+  const stats = { sent: 0, failed: 0, retrying: 0, skipped: 0, recovered: 0 };
+
+  try {
+    // 1. Recover stale PROCESSING rows from crashed/timed-out prior runs.
+    const recov = await pool.query(
+      `UPDATE notification_outbox
+       SET status = CASE WHEN attempts >= max_attempts THEN 'FAILED' ELSE 'RETRYING' END,
+           error_message = COALESCE(error_message, 'PROCESSING_TIMEOUT'),
+           next_attempt_at = NOW(),
+           updated_at = NOW()
+       WHERE channel = 'EMAIL'
+         AND status = 'PROCESSING'
+         AND processing_started_at < NOW() - ($1 * INTERVAL '1 minute')`,
+      [EMAIL_OUTBOX_PROCESSING_TIMEOUT_MINUTES]
+    );
+    stats.recovered = recov.rowCount || 0;
+    if (stats.recovered > 0) {
+      console.log(`[processNotificationOutbox] recovered ${stats.recovered} stale PROCESSING row(s)`);
+    }
+
+    // 2. Claim due rows in a short transaction; release locks immediately after.
+    const processorId = `pid${process.pid}-${Date.now()}`;
+    let rows = [];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const due = await client.query(
+        `SELECT id FROM notification_outbox
+         WHERE channel = 'EMAIL'
+           AND status IN ('PENDING','RETRYING')
+           AND next_attempt_at <= NOW()
+           AND attempts < max_attempts
+         ORDER BY priority = 'critical' DESC, priority = 'high' DESC, created_at ASC
+         LIMIT $1
+         FOR UPDATE SKIP LOCKED`,
+        [limit]
+      );
+      if (due.rows.length) {
+        const ids = due.rows.map(r => r.id);
+        const claimed = await client.query(
+          `UPDATE notification_outbox
+           SET status = 'PROCESSING',
+               attempts = attempts + 1,
+               last_attempt_at = NOW(),
+               processing_started_at = NOW(),
+               processor_id = $1,
+               updated_at = NOW()
+           WHERE id = ANY($2::uuid[])
+           RETURNING *`,
+          [processorId, ids]
+        );
+        rows = claimed.rows;
+      }
+      await client.query('COMMIT');
+    } catch (claimErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw claimErr;
+    } finally {
+      client.release();
+    }
+
+    // 3. Send emails outside the transaction; update with processor_id guard.
+    for (const row of rows) {
+      if (!row.email) {
+        const u = await pool.query(
+          `UPDATE notification_outbox
+           SET status='SKIPPED', error_message='NO_EMAIL_ADDRESS', updated_at=NOW()
+           WHERE id=$1 AND status='PROCESSING' AND processor_id=$2
+           RETURNING id`,
+          [row.id, processorId]
+        );
+        if (!u.rowCount) console.warn(`[processNotificationOutbox] guard miss SKIPPED(no-email) id=${row.id}`);
+        stats.skipped++;
+        continue;
+      }
+      if (!emailTransporter) {
+        const u = await pool.query(
+          `UPDATE notification_outbox
+           SET status='SKIPPED', error_message='SMTP_NOT_CONFIGURED', updated_at=NOW()
+           WHERE id=$1 AND status='PROCESSING' AND processor_id=$2
+           RETURNING id`,
+          [row.id, processorId]
+        );
+        if (!u.rowCount) console.warn(`[processNotificationOutbox] guard miss SKIPPED(no-smtp) id=${row.id}`);
+        stats.skipped++;
+        continue;
+      }
+      try {
+        const info = await emailTransporter.sendMail({
+          from: process.env.SMTP_FROM || process.env.SMTP_USER,
+          to: row.email,
+          replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
+          subject: row.subject || row.title || 'EduX',
+          text: row.body,
+          html: row.html_body || undefined,
+          headers: { 'X-Mailer': 'EduX Notification System' },
+        });
+        const u = await pool.query(
+          `UPDATE notification_outbox
+           SET status='SENT', sent_at=NOW(), error_message=NULL,
+               provider_message_id=$1, updated_at=NOW()
+           WHERE id=$2 AND status='PROCESSING' AND processor_id=$3
+           RETURNING id`,
+          [info?.messageId || null, row.id, processorId]
+        );
+        if (!u.rowCount) console.warn(`[processNotificationOutbox] guard miss SENT id=${row.id}`);
+        stats.sent++;
+      } catch (sendErr) {
+        const willRetry = row.attempts < row.max_attempts;
+        const u = await pool.query(
+          `UPDATE notification_outbox
+           SET status = $1,
+               error_message = $2,
+               next_attempt_at = CASE WHEN $1='RETRYING'
+                 THEN NOW() + INTERVAL '5 minutes' * $3
+                 ELSE next_attempt_at END,
+               updated_at = NOW()
+           WHERE id=$4 AND status='PROCESSING' AND processor_id=$5
+           RETURNING id`,
+          [
+            willRetry ? 'RETRYING' : 'FAILED',
+            sanitizeNotificationText(sendErr.message, 500),
+            row.attempts,
+            row.id,
+            processorId,
+          ]
+        );
+        if (!u.rowCount) console.warn(`[processNotificationOutbox] guard miss RETRYING/FAILED id=${row.id}`);
+        willRetry ? stats.retrying++ : stats.failed++;
+      }
+    }
+  } catch (err) {
+    console.error('[processNotificationOutbox] error:', err.message);
+  } finally {
+    _outboxProcessorRunning = false;
+  }
+  return stats;
+}
+
 
 // ΓöÇΓöÇΓöÇ Multer Configuration ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const upload = multer({
@@ -1182,10 +3297,19 @@ app.post("/api/admin/tutors/:id/release-hold", verifyToken, requireAdmin, async 
     const heldAmount = Number(walletRes.rows[0].held_balance);
     await client.query('UPDATE wallets SET balance = balance + held_balance, held_balance = 0 WHERE id=$1', [walletRes.rows[0].id]);
     
-    await client.query(`
-      INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-      VALUES ($1,'hold_released','Admin đã nhả cọc',$2,'verified_user',$1,'system')
-    `, [userId, `Admin đã thủ công nhả ${heldAmount.toLocaleString('vi-VN')}đ tiền cọc vào số dư khả dụng của bạn.`]);
+    // Batch 20.1: routed through safeNotifyUser (same client, rollback-safe).
+    // type/icon/body kept identical to the original direct insert.
+    await safeNotifyUser(client, {
+      userId, type: 'hold_released', channels: ['IN_APP'],
+      templateKey: 'manual_hold_release', eventType: 'manual_hold_release',
+      title: 'Admin đã nhả cọc',
+      body: `Admin đã thủ công nhả ${heldAmount.toLocaleString('vi-VN')}đ tiền cọc vào số dư khả dụng của bạn.`,
+      icon: 'verified_user', refId: userId, refType: 'system',
+      sourceType: 'wallet', sourceId: userId, priority: 'high',
+      // No idempotency key: this ad-hoc admin action has no natural per-event
+      // id and is legitimately repeatable for the same tutor over time (each
+      // release is a distinct event), matching the original always-insert behavior.
+    });
 
     await client.query('COMMIT');
     return res.json({ success: true, message: "Đã nhả cọc thành công." });
@@ -1236,6 +3360,15 @@ app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req
       }
     }
 
+    // Batch 20: additive in-app notification (existing email above is unchanged)
+    await safeNotifyUser(pool, {
+      userId: profile.user_id, channels: ['IN_APP'],
+      templateKey: 'tutor_profile_approved', eventType: 'tutor_profile_approved',
+      refId: profile.id, refType: 'tutor_profile',
+      sourceType: 'tutor_profile', sourceId: profile.id,
+      idempotencyKey: `tutor_profile:${profile.id}:approved:${profile.user_id}`,
+    });
+
     return res.json(profile);
   } catch (error) {
     console.error("Approve error:", error);
@@ -1280,6 +3413,15 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
         console.error("[Reject] Email error (non-fatal):", emailErr.message);
       }
     }
+
+    // Batch 20: additive in-app notification (existing email above is unchanged)
+    await safeNotifyUser(pool, {
+      userId: profile.user_id, channels: ['IN_APP'],
+      templateKey: 'tutor_profile_rejected', eventType: 'tutor_profile_rejected',
+      data: { reason: reason.trim() }, refId: profile.id, refType: 'tutor_profile',
+      sourceType: 'tutor_profile', sourceId: profile.id,
+      idempotencyKey: `tutor_profile:${profile.id}:rejected:${profile.user_id}`,
+    });
 
     return res.json(profile);
   } catch (error) {
@@ -2531,10 +4673,9 @@ app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) =>
 });
 
 // ── GET /api/admin/commissions ───────────────────────────────────────────────
-// CAP-7.1: Read-only commission/revenue breakdown from PAYMENT transactions.
-// No commission table exists; uses a fixed 10% estimated rate (clearly labelled).
-// No tutor link available (reference_id mostly null). Course title from description.
-const COMMISSION_RATE = 10; // estimated fixed rate, no DB commission table
+// CAP-7.1: Commission summary — prefers commission_logs (Batch 18 source of truth).
+// Falls back to legacy PAYMENT-estimate when commission_logs table is empty/absent.
+const COMMISSION_RATE = 10; // kept for backwards-compat legacy estimate path
 
 function extractCourseTitle(desc) {
   if (!desc) return null;
@@ -2551,15 +4692,25 @@ function paymentSource(desc) {
 
 app.get("/api/admin/commissions", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT t.id::text            AS id,
-             t.id::text            AS transaction_id,
-             ABS(t.amount)::numeric AS gross_amount,
-             t.status,
-             t.description,
-             t.created_at,
-             u.full_name           AS student_name,
-             u.email               AS student_email
+    // Primary: commission_logs summary (Batch 18)
+    const clRes = await pool.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN gross_amount       ELSE 0 END), 0)::numeric AS total_gross_earned,
+        COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN commission_amount  ELSE 0 END), 0)::numeric AS total_commission_earned,
+        COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN tutor_amount       ELSE 0 END), 0)::numeric AS total_tutor_earned,
+        COALESCE(SUM(CASE WHEN event_type='REVERSED' THEN commission_amount  ELSE 0 END), 0)::numeric AS total_commission_reversed,
+        COUNT(*)::int AS total_events
+      FROM commission_logs
+    `).catch(() => ({ rows: [null] }));
+
+    const cl = clRes.rows[0];
+    const hasTracked = cl && cl.total_events > 0;
+
+    // Legacy fallback: PAYMENT transactions estimate (no tutor link)
+    const legRes = await pool.query(`
+      SELECT t.id::text AS id, t.id::text AS transaction_id,
+             ABS(t.amount)::numeric AS gross_amount, t.status, t.description, t.created_at,
+             u.full_name AS student_name, u.email AS student_email
       FROM transactions t
       JOIN wallets w ON w.id = t.wallet_id
       JOIN users u   ON u.id = w.user_id
@@ -2568,40 +4719,48 @@ app.get("/api/admin/commissions", verifyToken, requireAdmin, async (req, res) =>
       LIMIT 100
     `);
 
-    const rows = result.rows;
-    let totalGross = 0;
-    const commissions = rows.map(r => {
+    let totalLegacyGross = 0;
+    const legacyCommissions = legRes.rows.map(r => {
       const gross = Number(r.gross_amount);
-      totalGross += gross;
+      totalLegacyGross += gross;
       const commission = Math.round(gross * COMMISSION_RATE / 100);
       return {
-        id:                  r.id,
-        transaction_id:      r.transaction_id,
-        source:              paymentSource(r.description),
-        student_name:        r.student_name,
-        student_email:       r.student_email,
-        tutor_name:          null,
-        tutor_email:         null,
-        course_title:        extractCourseTitle(r.description) || r.description || null,
-        gross_amount:        gross,
-        platform_commission: commission,
-        tutor_earning:       gross - commission,
-        commission_rate:     COMMISSION_RATE,
-        status:              r.status,
-        created_at:          r.created_at,
+        id: r.id, transaction_id: r.transaction_id,
+        source: paymentSource(r.description),
+        student_name: r.student_name, student_email: r.student_email,
+        tutor_name: null, tutor_email: null,
+        course_title: extractCourseTitle(r.description) || r.description || null,
+        gross_amount: gross, platform_commission: commission,
+        tutor_earning: gross - commission,
+        commission_rate: COMMISSION_RATE, status: r.status, created_at: r.created_at,
       };
     });
 
+    const trackedSummary = hasTracked ? {
+      source: 'commission_logs',
+      policy_version: COMMISSION_POLICY_VERSION,
+      total_gross_earned:          Number(cl.total_gross_earned),
+      total_commission_earned:     Number(cl.total_commission_earned),
+      total_tutor_earned:          Number(cl.total_tutor_earned),
+      total_commission_reversed:   Number(cl.total_commission_reversed),
+      net_platform_commission:     Number(cl.total_commission_earned) - Number(cl.total_commission_reversed),
+      total_events:                cl.total_events,
+      commission_rate:             PLATFORM_COMMISSION_RATE * 100,
+      generated_at:                new Date().toISOString(),
+    } : null;
+
     return res.json({
-      summary: {
-        total_gross_revenue:            totalGross,
-        estimated_platform_commission:  Math.round(totalGross * COMMISSION_RATE / 100),
-        estimated_tutor_earnings:       Math.round(totalGross * (100 - COMMISSION_RATE) / 100),
-        commission_rate:                COMMISSION_RATE,
-        total_payment_count:            rows.length,
-        generated_at:                   new Date().toISOString(),
+      summary: trackedSummary || {
+        source: 'legacy_estimate',
+        total_gross_revenue:           totalLegacyGross,
+        estimated_platform_commission: Math.round(totalLegacyGross * COMMISSION_RATE / 100),
+        estimated_tutor_earnings:      Math.round(totalLegacyGross * (100 - COMMISSION_RATE) / 100),
+        commission_rate:               COMMISSION_RATE,
+        total_payment_count:           legRes.rows.length,
+        generated_at:                  new Date().toISOString(),
       },
-      commissions,
+      tracked_summary: trackedSummary,
+      commissions: legacyCommissions,
     });
   } catch (err) {
     console.error("GET /api/admin/commissions error:", err);
@@ -2707,6 +4866,7 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
       topTxRes,
       discountRes,
       refundRes,
+      withdrawAggRes,
     ] = await Promise.all([
       // Overall totals
       pool.query(`
@@ -2756,6 +4916,16 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
       `),
       // Refund count from resolved-refund disputes (no refund tx table exists)
       pool.query(`SELECT COUNT(*)::int AS count FROM disputes WHERE status='RESOLVED_REFUND'`),
+      // Withdrawal metrics from withdrawal_requests (Batch 19.1; safe fallback to 0)
+      pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE status IN ('PENDING','APPROVED')),0)::numeric AS pending_amount,
+          COUNT(*) FILTER (WHERE status IN ('PENDING','APPROVED'))::int                    AS pending_count,
+          COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric                    AS paid_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric                AS rejected_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric               AS cancelled_amount
+        FROM withdrawal_requests
+      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0, paid_amount: 0, rejected_amount: 0, cancelled_amount: 0 }] })),
     ]);
 
     const t = totalsRes.rows[0];
@@ -2770,6 +4940,7 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
     }
 
     const COMMISSION_RATE_EST = 10; // estimated, no commission table
+    const wd = withdrawAggRes.rows[0];
     return res.json({
       summary: {
         total_revenue:             Math.round(totalPayments),
@@ -2783,6 +4954,12 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
         transaction_count:         t.transaction_count,
         payment_count:             t.payment_count,
         deposit_count:             t.deposit_count,
+        // Batch 19.1: read-only withdrawal metrics (additive)
+        withdrawal_pending_amount:    Math.round(Number(wd.pending_amount)),
+        withdrawal_pending_count:     Number(wd.pending_count) || 0,
+        withdrawal_paid_amount:       Math.round(Number(wd.paid_amount)),
+        withdrawal_rejected_amount:   Math.round(Number(wd.rejected_amount)),
+        withdrawal_cancelled_amount:  Math.round(Number(wd.cancelled_amount)),
         generated_at:              new Date().toISOString(),
       },
       monthly: monthlyRes.rows.map(r => ({
@@ -2824,7 +5001,6 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
       walletRes,
       txAggRes,
       escrowRes,
-      withdrawRes,
       integrityRes,
       refundRes,
       largeRes,
@@ -2837,11 +5013,6 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
         FROM transactions
       `),
       pool.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(ABS(amount)),0)::numeric AS amount FROM transactions WHERE status='HELD_IN_ESCROW'`),
-      pool.query(`
-        SELECT COALESCE(SUM(amount) FILTER (WHERE status IN ('pending','PENDING')),0)::numeric AS pending_amount,
-               COUNT(*) FILTER (WHERE status IN ('pending','PENDING'))::int                     AS pending_count
-        FROM withdraw_requests
-      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0 }] })),
       pool.query(`
         SELECT
           (SELECT COUNT(*)::int FROM transactions t LEFT JOIN wallets w ON w.id=t.wallet_id WHERE w.id IS NULL) AS orphan_tx,
@@ -2861,9 +5032,46 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
     const wallet    = walletRes.rows[0];
     const txAgg     = txAggRes.rows[0];
     const escrow    = escrowRes.rows[0];
-    const withdraw  = withdrawRes.rows[0];
     const integ     = integrityRes.rows[0];
     const refundCnt = refundRes.rows[0].count;
+
+    // ── Withdrawal reconciliation (Batch 19.1): prefer new withdrawal_requests,
+    //    fall back to the legacy withdraw_requests only if the new table is absent.
+    let withdraw = { pending_amount: 0, pending_count: 0, paid_amount: 0, rejected_amount: 0, cancelled_amount: 0 };
+    let withdrawalSource = 'withdrawal_requests';
+    let withdrawalItems  = [];
+    try {
+      const wagg = await pool.query(`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE status IN ('PENDING','APPROVED')),0)::numeric AS pending_amount,
+          COUNT(*) FILTER (WHERE status IN ('PENDING','APPROVED'))::int                    AS pending_count,
+          COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric                    AS paid_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric                AS rejected_amount,
+          COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric               AS cancelled_amount
+        FROM withdrawal_requests
+      `);
+      withdraw = wagg.rows[0];
+      const witems = await pool.query(`
+        SELECT wr.id::text AS withdrawal_request_id, wr.tutor_id::text AS tutor_id,
+               wr.amount::numeric AS amount, wr.status, wr.requested_at, wr.paid_at, wr.policy_version,
+               u.full_name AS tutor_name, u.email AS tutor_email
+        FROM withdrawal_requests wr
+        LEFT JOIN users u ON u.id = wr.tutor_id
+        WHERE wr.status IN ('PENDING','APPROVED')
+        ORDER BY wr.requested_at DESC
+        LIMIT 20
+      `);
+      withdrawalItems = witems.rows;
+    } catch (e) {
+      // New table missing → fall back to legacy withdraw_requests (pending only).
+      withdrawalSource = 'legacy_withdraw_requests';
+      const leg = await pool.query(`
+        SELECT COALESCE(SUM(amount) FILTER (WHERE status IN ('pending','PENDING')),0)::numeric AS pending_amount,
+               COUNT(*) FILTER (WHERE status IN ('pending','PENDING'))::int                     AS pending_count
+        FROM withdraw_requests
+      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0 }] }));
+      withdraw = { ...withdraw, pending_amount: leg.rows[0].pending_amount, pending_count: leg.rows[0].pending_count };
+    }
 
     const walletBalance = Number(wallet.balance);
     const walletHeld    = Number(wallet.held);
@@ -2910,7 +5118,7 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
       description: `Giao dịch không có ví: ${integ.orphan_tx}; ví không có người dùng: ${integ.orphan_wallet}; số tiền null/0: ${integ.bad_amount}.`,
     });
 
-    // 4. Pending withdrawals
+    // 4. Pending withdrawals (Batch 19.1: PENDING + APPROVED from withdrawal_requests)
     checks.push({
       id: 'pending-withdrawals',
       name: 'Yêu cầu rút tiền đang chờ',
@@ -2918,7 +5126,7 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
       expected_amount: 0,
       actual_amount: Math.round(Number(withdraw.pending_amount)),
       difference: Math.round(Number(withdraw.pending_amount)),
-      description: `${withdraw.pending_count} yêu cầu rút tiền đang chờ duyệt. Chỉ xem, không duyệt.`,
+      description: `${withdraw.pending_count} yêu cầu rút tiền đang chờ/đã duyệt (nguồn: ${withdrawalSource}). Chỉ xem, không duyệt.`,
     });
 
     // 5. Refund disputes vs refund transactions
@@ -2934,6 +5142,29 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
 
     // Build review items
     const items = [];
+    // Pending/approved withdrawals awaiting manual payout (Batch 19.1)
+    for (const w of withdrawalItems) {
+      items.push({
+        id: `wd-${w.withdrawal_request_id}`,
+        type: 'withdrawal',
+        severity: Number(w.amount) >= 5000000 ? 'medium' : 'low',
+        status: 'review_only',
+        title: `Rút tiền chờ chi: ${w.tutor_name || w.tutor_email || w.tutor_id}`,
+        description: `Trạng thái ${w.status} — chờ admin chuyển khoản thủ công (${w.policy_version}).`,
+        amount: Math.round(Number(w.amount)),
+        reference_id: w.withdrawal_request_id,
+        created_at: w.requested_at,
+        // extra fields (ignored by the generic frontend table, useful for API consumers)
+        withdrawal_request_id: w.withdrawal_request_id,
+        tutor_id: w.tutor_id,
+        tutor_name: w.tutor_name,
+        tutor_email: w.tutor_email,
+        withdrawal_status: w.status,
+        requested_at: w.requested_at,
+        paid_at: w.paid_at,
+        policy_version: w.policy_version,
+      });
+    }
     for (const r of largeRes.rows) {
       const amt = Number(r.amount);
       items.push({
@@ -2960,7 +5191,14 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
         successful_payments:       Math.round(payments),
         escrow_transactions:       escrow.count,
         escrow_amount:             Math.round(escrowAmount),
-        withdraw_pending_amount:   Math.round(Number(withdraw.pending_amount)),
+        withdraw_pending_amount:   Math.round(Number(withdraw.pending_amount)), // kept for backward-compat
+        // Batch 19.1: withdrawal metrics from withdrawal_requests
+        withdrawal_source:            withdrawalSource,
+        withdrawal_pending_amount:    Math.round(Number(withdraw.pending_amount)),
+        withdrawal_pending_count:     Number(withdraw.pending_count) || 0,
+        withdrawal_paid_amount:       Math.round(Number(withdraw.paid_amount)),
+        withdrawal_rejected_amount:   Math.round(Number(withdraw.rejected_amount)),
+        withdrawal_cancelled_amount:  Math.round(Number(withdraw.cancelled_amount)),
         unmatched_count:           unmatchedCnt,
         issue_count:               issueCount,
         generated_at:              new Date().toISOString(),
@@ -3086,6 +5324,111 @@ app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) 
   }
 });
 
+// ── GET /api/admin/notification-outbox ────────────────────────────────────────
+// Batch 20: paginated/filterable view of the email outbox delivery status.
+app.get("/api/admin/notification-outbox", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    const conditions = [];
+    const params = [];
+    const addParam = v => { params.push(v); return `$${params.length}`; };
+    if (req.query.status)    conditions.push(`o.status = ${addParam(req.query.status)}`);
+    if (req.query.channel)   conditions.push(`o.channel = ${addParam(req.query.channel)}`);
+    if (req.query.eventType) conditions.push(`o.event_type = ${addParam(req.query.eventType)}`);
+    if (req.query.userId)    conditions.push(`o.user_id = ${addParam(req.query.userId)}::uuid`);
+    if (req.query.email)     conditions.push(`o.email ILIKE ${addParam('%' + req.query.email + '%')}`);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const total = (await pool.query(`SELECT COUNT(*)::int AS n FROM notification_outbox o ${where}`, params)).rows[0].n;
+
+    params.push(limit); params.push(offset);
+    const items = (await pool.query(`
+      SELECT o.*, u.full_name AS recipient_name
+      FROM notification_outbox o
+      LEFT JOIN users u ON u.id = o.user_id
+      ${where}
+      ORDER BY o.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params)).rows;
+
+    const sum = (await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status='PENDING')::int    AS pending,
+        COUNT(*) FILTER (WHERE status='PROCESSING')::int AS processing,
+        COUNT(*) FILTER (WHERE status='SENT')::int       AS sent,
+        COUNT(*) FILTER (WHERE status='FAILED')::int     AS failed,
+        COUNT(*) FILTER (WHERE status='RETRYING')::int   AS retrying,
+        COUNT(*) FILTER (WHERE status='SKIPPED')::int    AS skipped
+      FROM notification_outbox
+    `)).rows[0];
+
+    return res.json({
+      items,
+      pagination: { page, limit, total },
+      summary: {
+        pending:    sum.pending,
+        processing: sum.processing,
+        sent:       sum.sent,
+        failed:     sum.failed,
+        retrying:   sum.retrying,
+        skipped:    sum.skipped,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/notification-outbox error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy hàng đợi email." });
+  }
+});
+
+// POST /api/admin/notification-outbox/:id/retry — re-queue FAILED/SKIPPED/RETRYING
+// or stale PROCESSING rows. Bumps max_attempts for exhausted rows so the
+// processor can pick them up again. Does not send immediately.
+app.post("/api/admin/notification-outbox/:id/retry", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const check = await pool.query(
+      `SELECT status, processing_started_at, attempts, max_attempts
+       FROM notification_outbox WHERE id=$1`,
+      [req.params.id]
+    );
+    if (!check.rows.length) return res.status(404).json({ message: 'Không tìm thấy bản ghi.' });
+    const row = check.rows[0];
+
+    const isStaleProcessing = row.status === 'PROCESSING' &&
+      row.processing_started_at &&
+      new Date(row.processing_started_at) <
+        new Date(Date.now() - EMAIL_OUTBOX_PROCESSING_TIMEOUT_MINUTES * 60 * 1000);
+
+    if (row.status === 'PROCESSING' && !isStaleProcessing) {
+      return res.status(409).json({ message: 'Email đang được xử lý. Vui lòng đợi.' });
+    }
+
+    const canRetry = ['FAILED', 'SKIPPED', 'RETRYING'].includes(row.status) || isStaleProcessing;
+    if (!canRetry) {
+      return res.status(409).json({ message: 'Chỉ có thể thử lại email FAILED, SKIPPED, RETRYING hoặc PROCESSING quá thời gian.' });
+    }
+
+    await pool.query(
+      `UPDATE notification_outbox
+       SET status = 'PENDING',
+           next_attempt_at = NOW(),
+           error_message = NULL,
+           processor_id = NULL,
+           processing_started_at = NULL,
+           max_attempts = CASE WHEN attempts >= max_attempts THEN attempts + 1 ELSE max_attempts END,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [req.params.id]
+    );
+    return res.json({ success: true, message: 'Đã đưa email vào hàng đợi thử lại.' });
+  } catch (err) {
+    console.error("POST /api/admin/notification-outbox/:id/retry error:", err);
+    return res.status(500).json({ message: "Lỗi khi thử lại email." });
+  }
+});
+
 // ── GET /api/admin/wallet-ledger ──────────────────────────────────────────────
 // CAP-17.1: Read-only, paginated, filterable view of the append-only ledger.
 app.get("/api/admin/wallet-ledger", verifyToken, requireAdmin, async (req, res) => {
@@ -3181,6 +5524,81 @@ app.get("/api/admin/wallet-integrity", verifyToken, requireAdmin, async (req, re
   } catch (err) {
     console.error("GET /api/admin/wallet-integrity error:", err);
     return res.status(500).json({ message: "Lỗi khi kiểm tra tính toàn vẹn ví." });
+  }
+});
+
+// ── GET /api/admin/commission-logs ────────────────────────────────────────────
+// Batch 18: Paginated/filterable read-only view of commission_logs.
+app.get("/api/admin/commission-logs", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit)  || 50));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    const conditions = [];
+    const params = [];
+    const addParam = v => { params.push(v); return `$${params.length}`; };
+
+    if (req.query.sourceType)    conditions.push(`cl.source_type = ${addParam(req.query.sourceType)}`);
+    if (req.query.sourceId)      conditions.push(`cl.source_id = ${addParam(req.query.sourceId)}::uuid`);
+    if (req.query.bookingId)     conditions.push(`cl.booking_id = ${addParam(req.query.bookingId)}::uuid`);
+    if (req.query.courseId)      conditions.push(`cl.course_id = ${addParam(req.query.courseId)}::uuid`);
+    if (req.query.disputeId)     conditions.push(`cl.dispute_id = ${addParam(req.query.disputeId)}::uuid`);
+    if (req.query.transactionId) conditions.push(`cl.transaction_id = ${addParam(req.query.transactionId)}::uuid`);
+    if (req.query.studentId)     conditions.push(`cl.student_id = ${addParam(req.query.studentId)}::uuid`);
+    if (req.query.tutorId)       conditions.push(`cl.tutor_id = ${addParam(req.query.tutorId)}::uuid`);
+    if (req.query.eventType)     conditions.push(`cl.event_type = ${addParam(req.query.eventType)}`);
+    if (req.query.reasonCode)    conditions.push(`cl.reason_code = ${addParam(req.query.reasonCode)}`);
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const total = (await pool.query(
+      `SELECT COUNT(*)::int AS n FROM commission_logs cl ${where}`, params
+    )).rows[0].n;
+
+    params.push(limit); params.push(offset);
+    const items = (await pool.query(`
+      SELECT cl.*,
+             s.full_name  AS student_name,  s.email AS student_email,
+             t.full_name  AS tutor_name,    t.email AS tutor_email,
+             b.lesson_date, b.time_slot,
+             c.title      AS course_title,
+             d.reason     AS dispute_reason
+      FROM commission_logs cl
+      LEFT JOIN users s ON s.id = cl.student_id
+      LEFT JOIN users t ON t.id = cl.tutor_id
+      LEFT JOIN bookings b   ON b.id = cl.booking_id
+      LEFT JOIN courses  c   ON c.id = cl.course_id
+      LEFT JOIN disputes d   ON d.id = cl.dispute_id
+      ${where}
+      ORDER BY cl.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params)).rows;
+
+    // Page-level summary for the filtered result set
+    const sumRes = (await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN gross_amount      ELSE 0 END),0)::numeric AS gross_earned,
+         COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN commission_amount ELSE 0 END),0)::numeric AS commission_earned,
+         COALESCE(SUM(CASE WHEN event_type='REVERSED' THEN commission_amount ELSE 0 END),0)::numeric AS commission_reversed,
+         COALESCE(SUM(CASE WHEN event_type='EARNED'   THEN tutor_amount      ELSE 0 END),0)::numeric AS tutor_amount
+       FROM commission_logs cl ${where}`, params.slice(0, -2)
+    )).rows[0];
+
+    return res.json({
+      items,
+      pagination: { page, limit, total },
+      summary: {
+        gross_earned:          Number(sumRes.gross_earned),
+        commission_earned:     Number(sumRes.commission_earned),
+        commission_reversed:   Number(sumRes.commission_reversed),
+        net_commission:        Number(sumRes.commission_earned) - Number(sumRes.commission_reversed),
+        tutor_amount:          Number(sumRes.tutor_amount),
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/commission-logs error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nhật ký hoa hồng." });
   }
 });
 
@@ -4428,14 +6846,16 @@ app.post('/api/parent/children/:studentId/schedule/:sessionId/leave', verifyToke
 
     const session = updated.rows[0];
     const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [studentId]);
-    await pool.query(`
-      INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-      VALUES ($1, 'student_absent', 'Học sinh xin nghỉ', $2, 'event_busy', $3, 'session')
-    `, [
-      session.tutor_id,
-      `${studentRes.rows[0]?.full_name || 'Học sinh'} xin nghỉ buổi ${session.subject} ngày ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. Lý do: ${reason || 'Không có lý do.'}`,
-      sessionId
-    ]);
+    // Batch 20.1: routed through safeNotifyUser (no transaction here originally, uses pool)
+    await safeNotifyUser(pool, {
+      userId: session.tutor_id, type: 'student_absent', channels: ['IN_APP'],
+      templateKey: 'parent_leave_request', eventType: 'parent_leave_request',
+      title: 'Học sinh xin nghỉ',
+      body: `${studentRes.rows[0]?.full_name || 'Học sinh'} xin nghỉ buổi ${session.subject} ngày ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. Lý do: ${reason || 'Không có lý do.'}`,
+      icon: 'event_busy', refId: sessionId, refType: 'session',
+      sourceType: 'leave_request', sourceId: sessionId, priority: 'normal',
+      idempotencyKey: `leave_request:${sessionId}:${session.tutor_id}`,
+    });
 
     return res.json({ message: 'Đã gửi yêu cầu nghỉ phép.' });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -4474,13 +6894,17 @@ app.post('/api/tutor/reviews', verifyToken, requireTutor, async (req, res) => {
 
     const parents = await pool.query('SELECT parent_id FROM parent_children WHERE student_id=$1', [student_id]);
     const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [student_id]);
+    // Batch 20.1: routed through safeNotifyUser (no transaction here originally, uses pool)
     for (const p of parents.rows) {
-      await pool.query(`
-        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-        VALUES ($1,'tutor_review',$2,$3,'rate_review',$4,'review')
-      `, [p.parent_id, `Nhận xét mới từ gia sư — ${subject}`,
-          `Gia sư vừa gửi nhận xét định kỳ cho ${studentRes.rows[0]?.full_name || 'học sinh'} (${period_label}).`,
-          review.rows[0].id]);
+      await safeNotifyUser(pool, {
+        userId: p.parent_id, type: 'tutor_review', channels: ['IN_APP'],
+        templateKey: 'tutor_periodic_review', eventType: 'tutor_periodic_review',
+        title: `Nhận xét mới từ gia sư — ${subject}`,
+        body: `Gia sư vừa gửi nhận xét định kỳ cho ${studentRes.rows[0]?.full_name || 'học sinh'} (${period_label}).`,
+        icon: 'rate_review', refId: review.rows[0].id, refType: 'review',
+        sourceType: 'review', sourceId: review.rows[0].id, priority: 'normal',
+        idempotencyKey: `tutor_periodic_review:${review.rows[0].id}:${p.parent_id}`,
+      });
     }
     return res.status(201).json({ review: review.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -4515,14 +6939,73 @@ app.get('/api/parent/invoices', verifyToken, async (req, res) => {
 });
 
 // GET /api/notifications
+// Batch 20: additive — legacy `notifications`/`unread_count` fields are kept
+// exactly as before (NotificationDropdown.jsx depends on them); `items`,
+// `pagination`, and `summary` are new fields for pagination-aware consumers.
 app.get('/api/notifications', verifyToken, async (req, res) => {
   try {
+    const status = req.query.status || 'all'; // all|unread|read
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    // Legacy shape: unchanged query/response for existing consumers
     const notifs = await pool.query(
       `SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
       [req.user.userId]
     );
     const unreadCount = notifs.rows.filter(n => !n.is_read).length;
-    return res.json({ notifications: notifs.rows, unread_count: unreadCount });
+
+    // New paginated shape (additive)
+    const conditions = ['user_id=$1'];
+    const params = [req.user.userId];
+    if (status === 'unread') conditions.push('is_read=FALSE');
+    else if (status === 'read') conditions.push('is_read=TRUE');
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const total = (await pool.query(`SELECT COUNT(*)::int AS n FROM notifications ${where}`, params)).rows[0].n;
+    params.push(limit); params.push(offset);
+    const items = (await pool.query(
+      `SELECT * FROM notifications ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    )).rows;
+    const totalCount = (await pool.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE user_id=$1`, [req.user.userId])).rows[0].n;
+    const trueUnread  = (await pool.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE user_id=$1 AND is_read=FALSE`, [req.user.userId])).rows[0].n;
+
+    return res.json({
+      // legacy fields (kept for backward compatibility)
+      notifications: notifs.rows,
+      unread_count: unreadCount,
+      // new fields (additive)
+      items,
+      pagination: { page, limit, total },
+      summary: { unread_count: trueUnread, total_count: totalCount },
+    });
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+});
+
+// GET /api/notifications/unread-count (Batch 20)
+app.get('/api/notifications/unread-count', verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE user_id=$1 AND is_read=FALSE`, [req.user.userId]);
+    return res.json({ unread_count: r.rows[0].n });
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+});
+
+// PATCH /api/notifications/:id/read (Batch 20; existing PUT kept for compat)
+app.patch('/api/notifications/:id/read', verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query('UPDATE notifications SET is_read=TRUE WHERE id=$1 AND user_id=$2 RETURNING id', [req.params.id, req.user.userId]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Không tìm thấy thông báo.' });
+    return res.json({ message: 'OK' });
+  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+});
+
+// PATCH /api/notifications/mark-all-read (Batch 20; existing PUT read-all kept for compat)
+app.patch('/api/notifications/mark-all-read', verifyToken, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=TRUE WHERE user_id=$1', [req.user.userId]);
+    return res.json({ message: 'OK' });
   } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
@@ -4804,14 +7287,17 @@ app.post('/api/chat/start', verifyToken, async (req, res) => {
       );
       firstMsg = msg.rows[0];
 
-      // Thêm thông báo cho gia sư
-      try {
-        await pool.query(
-          `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-           VALUES ($1, 'new_message', $2, $3, 'chat', $4, 'chat')`,
-          [tutor_id, `Tin nhắn mới từ ${req.user.name || 'một học sinh'}`, content.trim(), senderId]
-        );
-      } catch (_) {}
+      // Thêm thông báo cho gia sư (Batch 20.1: safeNotifyUser, IN_APP only —
+      // realtime unaffected since Supabase listens at the DB/WAL level, not
+      // the insertion call site. ref_id/ref_type/type/icon kept identical.)
+      await safeNotifyUser(pool, {
+        userId: tutor_id, type: 'new_message', channels: ['IN_APP'],
+        templateKey: 'chat_new_message', eventType: 'chat_new_message',
+        title: `Tin nhắn mới từ ${req.user.name || 'một học sinh'}`,
+        body: content.trim(), icon: 'chat', refId: senderId, refType: 'chat',
+        sourceType: 'chat_message', sourceId: firstMsg.id, priority: 'low',
+        idempotencyKey: `chat_message:${firstMsg.id}:${tutor_id}`,
+      });
     }
 
     return res.status(201).json({
@@ -4891,12 +7377,15 @@ app.post('/api/chat', verifyToken, async (req, res) => {
       [senderId, receiver_id, content.trim()]
     );
 
-    // Thêm thông báo cho người nhận
-    await pool.query(
-      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-       VALUES ($1, 'new_message', $2, $3, 'chat', $4, 'chat')`,
-      [receiver_id, `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`, content.trim(), senderId]
-    );
+    // Thêm thông báo cho người nhận (Batch 20.1: safeNotifyUser, IN_APP only)
+    await safeNotifyUser(pool, {
+      userId: receiver_id, type: 'new_message', channels: ['IN_APP'],
+      templateKey: 'chat_new_message', eventType: 'chat_new_message',
+      title: `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`,
+      body: content.trim(), icon: 'chat', refId: senderId, refType: 'chat',
+      sourceType: 'chat_message', sourceId: msg.rows[0].id, priority: 'low',
+      idempotencyKey: `chat_message:${msg.rows[0].id}:${receiver_id}`,
+    });
 
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -4958,11 +7447,15 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
     if (msgType === 'image') bodyText = 'Đã gửi một hình ảnh';
     if (msgType === 'video') bodyText = 'Đã gửi một video';
 
-    await pool.query(
-      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-       VALUES ($1, 'new_message', $2, $3, 'chat', $4, 'chat')`,
-      [receiver_id, `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`, bodyText, senderId]
-    );
+    // Batch 20.1: safeNotifyUser, IN_APP only
+    await safeNotifyUser(pool, {
+      userId: receiver_id, type: 'new_message', channels: ['IN_APP'],
+      templateKey: 'chat_new_message', eventType: 'chat_new_message',
+      title: `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`,
+      body: bodyText, icon: 'chat', refId: senderId, refType: 'chat',
+      sourceType: 'chat_message', sourceId: msg.rows[0].id, priority: 'low',
+      idempotencyKey: `chat_message:${msg.rows[0].id}:${receiver_id}`,
+    });
 
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Server error: ' + e.message }); }
@@ -5590,6 +8083,25 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
             [tw.rows[0].id, tutorShare, `Doanh thu bán khóa học: ${c.title}`]);
         }
         if (adminWalletId) await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id=$2`, [adminShare, adminWalletId]);
+        // Commission log: EARNED per course in cart (Batch 18)
+        await createCommissionLog(client, {
+          source_type: 'course', source_id: c.id, course_id: c.id,
+          student_id: studentId, tutor_id: c.tutor_id,
+          gross_amount: eff, commission_rate: PLATFORM_COMMISSION_RATE,
+          commission_amount: adminShare, tutor_amount: tutorShare,
+          event_type: 'EARNED', reason_code: 'COURSE_PURCHASE',
+          decision_by: 'api', actor_id: req.user.userId,
+          idempotency_key: `commission:course:${c.id}:student:${studentId}:COURSE_PURCHASE`,
+          metadata: { cart: true, discount_applied: discount > 0 },
+        });
+        // Notify student (Batch 20)
+        await safeNotifyUser(client, {
+          userId: studentId, channels: ['IN_APP'],
+          templateKey: 'course_purchased', eventType: 'course_purchased',
+          data: { courseName: c.title }, refId: c.id, refType: 'course',
+          sourceType: 'course', sourceId: c.id,
+          idempotencyKey: `course:${c.id}:purchased:${studentId}`,
+        });
       }
     }
 
@@ -5719,6 +8231,18 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [tutorShare, tutorWalletId]);
       await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [adminShare, adminWalletId]);
 
+      // Commission log: EARNED (single course buy, Batch 18)
+      await createCommissionLog(client, {
+        source_type: 'course', source_id: course.id, course_id: course.id,
+        student_id: studentId, tutor_id: course.tutor_id,
+        gross_amount: price, commission_rate: PLATFORM_COMMISSION_RATE,
+        commission_amount: adminShare, tutor_amount: tutorShare,
+        event_type: 'EARNED', reason_code: 'COURSE_PURCHASE',
+        decision_by: 'api', actor_id: req.user.userId,
+        idempotency_key: `commission:course:${course.id}:student:${studentId}:COURSE_PURCHASE`,
+        metadata: { cart: false },
+      });
+
       // 5. Ghi log Transactions
       // Học viên trừ tiền mua khóa
       await client.query(`
@@ -5748,17 +8272,24 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
     // Tăng enrollment_count
     await client.query(`UPDATE courses SET enrollment_count = COALESCE(enrollment_count, 0) + 1 WHERE id = $1`, [courseId]);
 
-    // Gửi thông báo
-    await client.query(
-      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-       VALUES ($1, 'course_enrollment', 'Học sinh mới đăng ký khóa học', $2, 'school', $3, 'course')`,
-      [course.tutor_id, `${studentName} vừa mua khóa học "${course.title}"`, courseId]
-    );
-    await client.query(
-      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-       VALUES ($1, 'course_enrollment', 'Đăng ký khóa học thành công', $2, 'check_circle', $3, 'course')`,
-      [studentId, `Bạn đã đăng ký thành công khóa học "${course.title}"`, courseId]
-    );
+    // Gửi thông báo (Batch 20.1: safeNotifyUser, same client, rollback-safe)
+    await safeNotifyUser(client, {
+      userId: course.tutor_id, type: 'course_enrollment', channels: ['IN_APP'],
+      templateKey: 'course_enrollment_ping', eventType: 'course_enrollment_ping',
+      title: 'Học sinh mới đăng ký khóa học',
+      body: `${studentName} vừa mua khóa học "${course.title}"`,
+      icon: 'school', refId: courseId, refType: 'course',
+      sourceType: 'course_enrollment', sourceId: enrollmentId, priority: 'normal',
+      idempotencyKey: `course_enrollment:${enrollmentId}:${course.tutor_id}`,
+    });
+    // Notify student (Batch 20: fires for both free and paid enrollment, same as before)
+    await safeNotifyUser(client, {
+      userId: studentId, channels: price > 0 ? ['IN_APP', 'EMAIL'] : ['IN_APP'],
+      templateKey: 'course_purchased', eventType: 'course_purchased',
+      data: { courseName: course.title }, refId: courseId, refType: 'course',
+      sourceType: 'course', sourceId: courseId,
+      idempotencyKey: `course:${courseId}:purchased:${studentId}`,
+    });
 
     await client.query("COMMIT");
 
@@ -7279,8 +9810,7 @@ app.get("/api/student/bookings", verifyToken, async (req, res) => {
 });
 
 // GET /api/admin/disputes — Lấy tất cả disputes cho admin
-app.get("/api/admin/disputes", verifyToken, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT d.id, d.reason, d.status, d.admin_note, d.created_at, d.resolved_at,
@@ -7566,6 +10096,94 @@ async function setLedgerContext(client, context) {
   await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
+// commission_logs is append-only; wallet_ledger remains the low-level audit.
+// ═══════════════════════════════════════════════════════════════════════════
+const PLATFORM_COMMISSION_RATE = 0.10;
+const COMMISSION_POLICY_VERSION = "COMMISSION_POLICY_V1";
+
+function calculateCommissionSplit(grossAmount, rate = PLATFORM_COMMISSION_RATE) {
+  const gross = Math.max(0, Math.round(Number(grossAmount || 0)));
+  const commissionAmount = gross - Math.floor(gross * (1 - rate));
+  const tutorAmount = gross - commissionAmount;
+  return { grossAmount: gross, commissionRate: rate, commissionAmount, tutorAmount };
+}
+
+// Idempotent commission log insert. Returns new row id or null on duplicate.
+// Must be called inside caller's transaction so rollback covers the log too.
+async function createCommissionLog(client, log) {
+  try {
+    const r = await client.query(
+      `INSERT INTO commission_logs
+         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
+          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
+          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING id`,
+      [
+        log.source_type, log.source_id,
+        log.booking_id   || null,
+        log.course_id    || null,
+        log.dispute_id   || null,
+        log.transaction_id || null,
+        log.student_id   || null,
+        log.tutor_id     || null,
+        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
+        log.commission_amount, log.tutor_amount,
+        log.event_type, log.reason_code,
+        log.policy_version || COMMISSION_POLICY_VERSION,
+        log.decision_by || 'system',
+        log.actor_id    || null,
+        log.idempotency_key || null,
+        JSON.stringify(log.metadata || {}),
+      ]
+    );
+    return r.rows.length ? r.rows[0].id : null;
+  } catch (e) {
+    throw e;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WITHDRAWAL POLICY V1 (Batch 19) — tutor manual payout. Money is HELD when a
+// request is created (balance→held_balance), released on cancel/reject, and
+// drawn down from held_balance on paid. NO real bank API is called. Every
+// wallet movement runs inside a DB transaction with setLedgerContext so the
+// wallet_ledger trigger records the correct reason_code.
+// NOTE (audited): transactions.type is an enum → use 'WITHDRAW' (not
+// 'WITHDRAWAL'); transactions.status enum has no CANCELLED/REJECTED → paid
+// maps to 'SUCCESS', cancel/reject map to 'FAILED'. wallets has CHECK
+// balance>=0 / held_balance>=0, enforced by SELECT ... FOR UPDATE + guards.
+// ═══════════════════════════════════════════════════════════════════════════
+const WITHDRAWAL_POLICY_VERSION = "WITHDRAWAL_POLICY_V1";
+const MIN_WITHDRAWAL_AMOUNT = 50000;
+
+// Return a rounded non-negative integer VND amount, or 0 if invalid.
+function normalizeWithdrawalAmount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+// Trim, strip control chars, collapse whitespace, cap length. Null-safe.
+function sanitizeBankText(value, maxLength = 120) {
+  if (value == null) return null;
+  let s = String(value).replace(/[\x00-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  return s.slice(0, maxLength);
+}
+
+// Lock the tutor's wallet row FOR UPDATE (prevents concurrent balance races).
+async function getTutorWalletForUpdate(client, tutorId) {
+  const r = await client.query(
+    'SELECT id, user_id, balance, held_balance FROM wallets WHERE user_id=$1 FOR UPDATE',
+    [tutorId]
+  );
+  return r.rows.length ? r.rows[0] : null;
+}
+
 // PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
 // Logic escrow:
 //   Approved  → hold_money_for_lesson (trừ balance, cộng held_balance)
@@ -7624,13 +10242,14 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             WHERE id=$5
           `, [status, txId, booking.payer_wallet_id_val, lessonFee, booking.id]);
 
-          // Notify học sinh: tiền đã bị hold
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'escrow_hold','Lịch học đã được xác nhận — Tiền tạm giữ',$2,'lock',$3,'booking')
-          `, [booking.student_id,
-              `Gia sư đã duyệt lịch học. ${lessonFee.toLocaleString('vi-VN')}đ đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`,
-              booking.id]);
+          // Notify học sinh: tiền đã bị hold (Batch 20)
+          await safeNotifyUser(client, {
+            userId: booking.student_id, channels: ['IN_APP'],
+            templateKey: 'booking_approved', eventType: 'booking_approved',
+            data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id,
+            idempotencyKey: `booking:${booking.id}:approved:${booking.student_id}`,
+          });
         } catch (escrowErr) {
           await client.query('ROLLBACK');
           return res.status(400).json({ message: 'Số dư ví không đủ để xác nhận lịch học. Vui lòng nạp thêm tiền.' });
@@ -7662,12 +10281,13 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
       ]);
       await client.query(`UPDATE bookings SET status=$1, escrow_released_at=NOW() WHERE id=$2`, [status, booking.id]);
 
-      await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-        VALUES ($1,'refund','Hoàn tiền lịch học bị từ chối',$2,'undo',$3,'booking')
-      `, [booking.student_id,
-          `Gia sư đã từ chối lịch học. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví của bạn.`,
-          booking.id]);
+      await safeNotifyUser(client, {
+        userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'booking_declined', eventType: 'booking_declined',
+        data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id,
+        idempotencyKey: `booking:${booking.id}:declined:${booking.student_id}`,
+      });
     }
 
     // ── CANCELLED: Refund Policy v2.1 (Batch 16) ─────────────────────────────
@@ -7718,6 +10338,19 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
           await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
             booking.escrow_tx_id, booking.payer_wallet_id, tw.rows[0].id, adminWalletId, nonRefunded, 0.1,
           ]);
+          // Commission log: EARNED on non-refunded cancellation fee (Batch 18)
+          const _ccSplit = calculateCommissionSplit(nonRefunded);
+          await createCommissionLog(client, {
+            source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+            transaction_id: booking.escrow_tx_id,
+            student_id: booking.student_id, tutor_id: booking.tutor_id,
+            gross_amount: _ccSplit.grossAmount, commission_rate: _ccSplit.commissionRate,
+            commission_amount: _ccSplit.commissionAmount, tutor_amount: _ccSplit.tutorAmount,
+            event_type: 'EARNED', reason_code: 'BOOKING_CANCEL_COMPENSATION',
+            decision_by: isTutor ? 'tutor' : 'student', actor_id: req.user.userId,
+            idempotency_key: `commission:booking:${booking.id}:BOOKING_CANCEL_COMPENSATION`,
+            metadata: { refund_rate: decision.refundRate, non_refunded: nonRefunded },
+          });
         }
 
         await client.query(`UPDATE bookings SET status='Cancelled', escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
@@ -7729,20 +10362,27 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             ? `Hoàn ${pct}% (${refundAmount.toLocaleString('vi-VN')}đ). Phí hủy: ${nonRefunded.toLocaleString('vi-VN')}đ.`
             : `Không hoàn tiền theo chính sách (${decision.reasonCode}).`;
 
-        await client.query(`
-          INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-          VALUES ($1,'cancellation','Lịch học đã bị hủy',$2,'cancel',$3,'booking')
-        `, [booking.student_id, refundMsg, booking.id]);
+        await safeNotifyUser(client, {
+          userId: booking.student_id, channels: ['IN_APP'],
+          templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
+          data: { message: refundMsg }, refId: booking.id, refType: 'booking',
+          sourceType: 'booking', sourceId: booking.id,
+          idempotencyKey: `booking:${booking.id}:cancelled:${booking.student_id}`,
+        });
 
         // Notify the counter-party (tutor when student cancels)
         if (booking.tutor_id && !isTutor) {
           const tutorMsg = nonRefunded > 0
             ? `Học sinh đã hủy buổi học. Bạn nhận phí hủy ${Math.floor(nonRefunded * 0.9).toLocaleString('vi-VN')}đ.`
             : `Học sinh đã hủy buổi học và được hoàn tiền theo chính sách.`;
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'cancellation','Học sinh đã hủy lịch học',$2,'event_busy',$3,'booking')
-          `, [booking.tutor_id, tutorMsg, booking.id]);
+          await safeNotifyUser(client, {
+            userId: booking.tutor_id, channels: ['IN_APP'],
+            templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
+            title: 'Học sinh đã hủy lịch học', data: { message: tutorMsg },
+            refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id,
+            idempotencyKey: `booking:${booking.id}:cancelled:${booking.tutor_id}`,
+          });
         }
       } else {
         // Không có escrow: hủy bình thường
@@ -8110,21 +10750,27 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
         WHERE id = $1 AND escrow_released_at IS NULL
       `, [booking.id]);
 
-      // Notify học sinh: có 24h để khiếu nại
-      await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-        VALUES ($1,'lesson_completed','Buổi học đã hoàn thành',$2,'task_alt',$3,'booking')
-      `, [booking.student_id,
-          `Gia sư đã xác nhận hoàn thành buổi học ${booking.subject || ''}. Tiền sẽ tự động giải ngân sau 24h nếu bạn không có khiếu nại.`,
-          booking.id]);
+      // Notify học sinh: có 24h để khiếu nại (Batch 20.1: safeNotifyUser, same client)
+      await safeNotifyUser(client, {
+        userId: booking.student_id, type: 'lesson_completed', channels: ['IN_APP'],
+        templateKey: 'escrow_auto_release_pending', eventType: 'escrow_auto_release_pending',
+        title: 'Buổi học đã hoàn thành',
+        body: `Gia sư đã xác nhận hoàn thành buổi học ${booking.subject || ''}. Tiền sẽ tự động giải ngân sau 24h nếu bạn không có khiếu nại.`,
+        icon: 'task_alt', refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+        idempotencyKey: `booking:${booking.id}:lesson_completed:${booking.student_id}`,
+      });
 
       // Notify gia sư
-      await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-        VALUES ($1,'lesson_completed','Đã ghi nhận hoàn thành buổi học',$2,'how_to_reg',$3,'booking')
-      `, [booking.tutor_id,
-          `Buổi học ${booking.subject || ''} đã được ghi nhận hoàn thành. Tiền sẽ được giải ngân vào ví sau 24h.`,
-          booking.id]);
+      await safeNotifyUser(client, {
+        userId: booking.tutor_id, type: 'lesson_completed', channels: ['IN_APP'],
+        templateKey: 'escrow_auto_release_pending', eventType: 'escrow_auto_release_pending',
+        title: 'Đã ghi nhận hoàn thành buổi học',
+        body: `Buổi học ${booking.subject || ''} đã được ghi nhận hoàn thành. Tiền sẽ được giải ngân vào ví sau 24h.`,
+        icon: 'how_to_reg', refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+        idempotencyKey: `booking:${booking.id}:lesson_completed:${booking.tutor_id}`,
+      });
     }
 
     // ── ABSENT / EXCUSED: Hoàn tiền 100% cho học sinh (Batch 16.1: refund_logs) ──
@@ -8149,10 +10795,16 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
         const notifBody = status === 'absent'
           ? `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`
           : `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`;
-        await client.query(`
-          INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-          VALUES ($1,'refund',$2,$3,'undo',$4,'booking')
-        `, [booking.student_id, notifTitle, notifBody, booking.id]);
+        // Batch 20.1: safeNotifyUser, same client. logId (refund_logs) is the
+        // natural idempotency anchor — one notification per refund event.
+        await safeNotifyUser(client, {
+          userId: booking.student_id, type: 'refund', channels: ['IN_APP'],
+          templateKey: 'refund_resolved', eventType: 'refund_resolved',
+          title: notifTitle, body: notifBody, icon: 'undo',
+          refId: booking.id, refType: 'booking',
+          sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+          idempotencyKey: `refund_log:${logId}`,
+        });
       }
     }
 
@@ -8288,6 +10940,360 @@ app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
   } catch (error) {
     console.error("Get tutor earnings error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// =========================================================================
+// ============ TUTOR WITHDRAWAL / PAYOUT ROUTES (Batch 19) ================
+// =========================================================================
+
+// POST /api/tutor/withdrawals — tutor requests a withdrawal (holds the money)
+app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const amount = normalizeWithdrawalAmount(req.body?.amount);
+    const bankName        = sanitizeBankText(req.body?.bankName, 120);
+    const bankAccountNo   = sanitizeBankText(req.body?.bankAccountNo, 40);
+    const bankAccountName = sanitizeBankText(req.body?.bankAccountName, 120);
+    const payoutNote      = sanitizeBankText(req.body?.payoutNote, 300);
+    const clientKey       = sanitizeBankText(req.body?.idempotencyKey, 100);
+
+    if (amount < MIN_WITHDRAWAL_AMOUNT) {
+      return res.status(400).json({ message: `Số tiền rút tối thiểu là ${MIN_WITHDRAWAL_AMOUNT.toLocaleString('vi-VN')}đ.` });
+    }
+    if (!bankName || !bankAccountNo || !bankAccountName) {
+      return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin ngân hàng.' });
+    }
+
+    const idemKey = clientKey ? `withdrawal:tutor:${req.user.userId}:${clientKey}` : null;
+
+    await client.query('BEGIN');
+
+    // Idempotency: if this client key was already used, return the existing request
+    if (idemKey) {
+      const existing = await client.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1', [idemKey]);
+      if (existing.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(200).json({ success: true, duplicate: true, request: existing.rows[0] });
+      }
+    }
+
+    const wallet = await getTutorWalletForUpdate(client, req.user.userId);
+    if (!wallet) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+
+    if (Number(wallet.balance) < amount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ code: 'INSUFFICIENT_FUNDS', message: 'Số dư khả dụng không đủ để rút.', balance: Number(wallet.balance), requested: amount });
+    }
+
+    // 1) Record a PENDING WITHDRAW transaction (enum: type=WITHDRAW, status=PENDING)
+    const txRes = await client.query(
+      `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
+       VALUES ($1, $2, 'WITHDRAW', 'PENDING', 'MANUAL', $3) RETURNING id`,
+      [wallet.id, -amount, 'Yêu cầu rút tiền gia sư']
+    );
+    const holdTxId = txRes.rows[0].id;
+
+    // 2) Reserve the money: balance → held_balance (ledger reason WITHDRAWAL_HOLD)
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_HOLD', source: 'api', reference_type: 'withdrawal',
+      transaction_id: holdTxId, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    await client.query('UPDATE wallets SET balance = balance - $1, held_balance = held_balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+
+    // 3) Create the withdrawal request row
+    const wr = await client.query(
+      `INSERT INTO withdrawal_requests
+         (tutor_id, wallet_id, amount, fee_amount, net_amount, status, payout_method,
+          bank_name, bank_account_no, bank_account_name, payout_note, policy_version,
+          hold_transaction_id, idempotency_key, metadata)
+       VALUES ($1,$2,$3,0,$3,'PENDING','BANK_TRANSFER',$4,$5,$6,$7,$8,$9,$10,'{}'::jsonb)
+       RETURNING *`,
+      [req.user.userId, wallet.id, amount, bankName, bankAccountNo, bankAccountName, payoutNote, WITHDRAWAL_POLICY_VERSION, holdTxId, idemKey]
+    );
+    const request = wr.rows[0];
+
+    // Link the transaction back to the request for traceability
+    await client.query('UPDATE transactions SET reference_id=$1 WHERE id=$2', [request.id, holdTxId]);
+
+    // Notify tutor (Batch 20: in-app + email outbox, same client so rollback-safe)
+    await safeNotifyUser(client, {
+      userId: req.user.userId, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'withdrawal_created', eventType: 'withdrawal_created',
+      data: { amount }, refId: request.id, refType: 'withdrawal',
+      sourceType: 'withdrawal', sourceId: request.id,
+      idempotencyKey: `withdrawal:${request.id}:created:${req.user.userId}`,
+    });
+
+    await client.query('COMMIT');
+    return res.status(201).json({ success: true, request });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') { // unique_violation on idempotency_key (race)
+      const ex = await pool.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1',
+        [`withdrawal:tutor:${req.user.userId}:${sanitizeBankText(req.body?.idempotencyKey, 100)}`]).catch(() => ({ rows: [] }));
+      if (ex.rows.length) return res.status(200).json({ success: true, duplicate: true, request: ex.rows[0] });
+      return res.status(409).json({ message: 'Yêu cầu rút tiền trùng lặp.' });
+    }
+    console.error('POST /api/tutor/withdrawals error:', err);
+    return res.status(500).json({ message: 'Lỗi khi tạo yêu cầu rút tiền.' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/tutor/withdrawals — tutor's own withdrawal history
+app.get('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const items = (await pool.query(
+      `SELECT * FROM withdrawal_requests WHERE tutor_id=$1 ORDER BY created_at DESC LIMIT 100`,
+      [req.user.userId]
+    )).rows;
+    const wallet = (await pool.query('SELECT balance, held_balance FROM wallets WHERE user_id=$1', [req.user.userId])).rows[0] || null;
+    return res.json({
+      items,
+      wallet: wallet ? { balance: Number(wallet.balance), held_balance: Number(wallet.held_balance) } : null,
+      min_amount: MIN_WITHDRAWAL_AMOUNT,
+      policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+  } catch (err) {
+    console.error('GET /api/tutor/withdrawals error:', err);
+    return res.status(500).json({ message: 'Lỗi khi lấy lịch sử rút tiền.' });
+  }
+});
+
+// PATCH /api/tutor/withdrawals/:id/cancel — tutor cancels own PENDING request
+app.patch('/api/tutor/withdrawals/:id/cancel', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 AND tutor_id=$2 FOR UPDATE', [req.params.id, req.user.userId]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu rút tiền.' }); }
+    const wr = wrRes.rows[0];
+    if (wr.status !== 'PENDING') { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ có thể hủy yêu cầu đang chờ (PENDING).' }); }
+
+    const wallet = await getTutorWalletForUpdate(client, req.user.userId);
+    if (!wallet) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+    const amount = Number(wr.amount);
+    if (Number(wallet.held_balance) < amount) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Số dư tạm giữ không đủ để hoàn.' }); }
+
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_CANCEL_RELEASE', source: 'api', reference_type: 'withdrawal',
+      reference_id: wr.id, transaction_id: wr.hold_transaction_id, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    await client.query('UPDATE wallets SET held_balance = held_balance - $1, balance = balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+    if (wr.hold_transaction_id) await client.query(`UPDATE transactions SET status='FAILED', updated_at=NOW() WHERE id=$1`, [wr.hold_transaction_id]);
+    await client.query(`UPDATE withdrawal_requests SET status='CANCELLED', cancelled_at=NOW(), updated_at=NOW() WHERE id=$1`, [wr.id]);
+
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã hủy yêu cầu rút tiền và hoàn lại số dư khả dụng.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('PATCH /api/tutor/withdrawals/:id/cancel error:', err);
+    return res.status(500).json({ message: 'Lỗi khi hủy yêu cầu rút tiền.' });
+  } finally {
+    client.release();
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN WITHDRAWAL / PAYOUT MANAGEMENT (Batch 19) — manual payout only.
+// Money was already held when the tutor requested; approve moves no money;
+// reject releases hold back to balance; mark-paid draws down held_balance.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/admin/withdrawal-requests — list + summary (read-only)
+app.get("/api/admin/withdrawal-requests", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit)  || 50));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    const conditions = [];
+    const params = [];
+    const addParam = v => { params.push(v); return `$${params.length}`; };
+    if (req.query.status)  conditions.push(`wr.status = ${addParam(req.query.status)}`);
+    if (req.query.tutorId) conditions.push(`wr.tutor_id = ${addParam(req.query.tutorId)}::uuid`);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const total = (await pool.query(`SELECT COUNT(*)::int AS n FROM withdrawal_requests wr ${where}`, params)).rows[0].n;
+
+    params.push(limit); params.push(offset);
+    const items = (await pool.query(`
+      SELECT wr.*,
+             u.full_name AS tutor_name, u.email AS tutor_email,
+             w.balance   AS wallet_balance, w.held_balance AS wallet_held_balance
+      FROM withdrawal_requests wr
+      LEFT JOIN users   u ON u.id = wr.tutor_id
+      LEFT JOIN wallets w ON w.id = wr.wallet_id
+      ${where}
+      ORDER BY wr.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params)).rows;
+
+    const sum = (await pool.query(`
+      SELECT
+        COALESCE(SUM(amount) FILTER (WHERE status='PENDING'),0)::numeric   AS pending_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='APPROVED'),0)::numeric  AS approved_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric      AS paid_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric  AS rejected_amount,
+        COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric AS cancelled_amount,
+        COUNT(*) FILTER (WHERE status='PENDING')::int                      AS pending_count
+      FROM withdrawal_requests
+    `)).rows[0];
+
+    return res.json({
+      items,
+      pagination: { page, limit, total },
+      summary: {
+        pending_amount:   Number(sum.pending_amount),
+        approved_amount:  Number(sum.approved_amount),
+        paid_amount:      Number(sum.paid_amount),
+        rejected_amount:  Number(sum.rejected_amount),
+        cancelled_amount: Number(sum.cancelled_amount),
+        pending_count:    sum.pending_count,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/withdrawal-requests error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách yêu cầu rút tiền." });
+  }
+});
+
+// PATCH /api/admin/withdrawal-requests/:id/approve — no money movement
+app.patch("/api/admin/withdrawal-requests/:id/approve", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const adminNote = sanitizeBankText(req.body?.adminNote, 300);
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' }); }
+    const wr = wrRes.rows[0];
+    if (wr.status !== 'PENDING') { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ duyệt được yêu cầu đang chờ (PENDING).' }); }
+
+    await client.query(
+      `UPDATE withdrawal_requests SET status='APPROVED', approved_by=$1, approved_at=NOW(), admin_note=COALESCE($2, admin_note), updated_at=NOW() WHERE id=$3`,
+      [req.user.userId, adminNote, wr.id]);
+    await safeNotifyUser(client, {
+      userId: wr.tutor_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'withdrawal_approved', eventType: 'withdrawal_approved',
+      data: { amount: Number(wr.amount) }, refId: wr.id, refType: 'withdrawal',
+      sourceType: 'withdrawal', sourceId: wr.id,
+      idempotencyKey: `withdrawal:${wr.id}:approved:${wr.tutor_id}`,
+    });
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã duyệt yêu cầu rút tiền.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("approve withdrawal error:", err);
+    return res.status(500).json({ message: 'Lỗi khi duyệt yêu cầu.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/admin/withdrawal-requests/:id/reject — release hold back to balance
+app.patch("/api/admin/withdrawal-requests/:id/reject", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const rejectReason = sanitizeBankText(req.body?.rejectReason || req.body?.adminNote, 300);
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' }); }
+    const wr = wrRes.rows[0];
+    if (!['PENDING', 'APPROVED'].includes(wr.status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ từ chối được yêu cầu PENDING hoặc APPROVED.' }); }
+
+    const walletRes = await client.query('SELECT id, balance, held_balance FROM wallets WHERE id=$1 FOR UPDATE', [wr.wallet_id]);
+    if (!walletRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+    const wallet = walletRes.rows[0];
+    const amount = Number(wr.amount);
+    if (Number(wallet.held_balance) < amount) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Số dư tạm giữ không đủ để hoàn.' }); }
+
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_REJECT_RELEASE', source: 'admin', reference_type: 'withdrawal',
+      reference_id: wr.id, transaction_id: wr.hold_transaction_id, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    await client.query('UPDATE wallets SET held_balance = held_balance - $1, balance = balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+    if (wr.hold_transaction_id) await client.query(`UPDATE transactions SET status='FAILED', updated_at=NOW() WHERE id=$1`, [wr.hold_transaction_id]);
+    await client.query(
+      `UPDATE withdrawal_requests SET status='REJECTED', rejected_by=$1, rejected_at=NOW(), reject_reason=$2, admin_note=COALESCE($2, admin_note), updated_at=NOW() WHERE id=$3`,
+      [req.user.userId, rejectReason, wr.id]);
+    await safeNotifyUser(client, {
+      userId: wr.tutor_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'withdrawal_rejected', eventType: 'withdrawal_rejected',
+      data: { amount, reason: rejectReason }, refId: wr.id, refType: 'withdrawal',
+      sourceType: 'withdrawal', sourceId: wr.id,
+      idempotencyKey: `withdrawal:${wr.id}:rejected:${wr.tutor_id}`,
+    });
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã từ chối và hoàn lại số dư cho gia sư.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("reject withdrawal error:", err);
+    return res.status(500).json({ message: 'Lỗi khi từ chối yêu cầu.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/admin/withdrawal-requests/:id/mark-paid — draw down held_balance
+app.patch("/api/admin/withdrawal-requests/:id/mark-paid", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const adminNote = sanitizeBankText(req.body?.adminNote, 300);
+    await client.query('BEGIN');
+    const wrRes = await client.query('SELECT * FROM withdrawal_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!wrRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' }); }
+    const wr = wrRes.rows[0];
+    if (wr.status === 'PAID') { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Yêu cầu đã được thanh toán trước đó.', request: wr }); }
+    if (!['PENDING', 'APPROVED'].includes(wr.status)) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Chỉ thanh toán được yêu cầu PENDING hoặc APPROVED.' }); }
+
+    const walletRes = await client.query('SELECT id, balance, held_balance FROM wallets WHERE id=$1 FOR UPDATE', [wr.wallet_id]);
+    if (!walletRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy ví.' }); }
+    const wallet = walletRes.rows[0];
+    const amount = Number(wr.amount);
+    if (Number(wallet.held_balance) < amount) { await client.query('ROLLBACK'); return res.status(409).json({ message: 'Số dư tạm giữ không đủ để thanh toán.' }); }
+
+    await setLedgerContext(client, {
+      reason_code: 'WITHDRAWAL_PAID', source: 'admin', reference_type: 'withdrawal',
+      reference_id: wr.id, transaction_id: wr.hold_transaction_id, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
+    });
+    // Money leaves the system: held_balance decreases (no balance credit)
+    await client.query('UPDATE wallets SET held_balance = held_balance - $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+
+    // Transition the hold transaction to SUCCESS (single payout record)
+    let payoutTxId = wr.hold_transaction_id;
+    if (payoutTxId) {
+      await client.query(
+        `UPDATE transactions SET status='SUCCESS', gateway='MANUAL_BANK_TRANSFER', description=$1, updated_at=NOW() WHERE id=$2`,
+        ['Admin xác nhận đã chuyển khoản rút tiền', payoutTxId]);
+    } else {
+      const tx = await client.query(
+        `INSERT INTO transactions (wallet_id, amount, type, status, gateway, reference_id, description)
+         VALUES ($1,$2,'WITHDRAW','SUCCESS','MANUAL_BANK_TRANSFER',$3,$4) RETURNING id`,
+        [wallet.id, -amount, wr.id, 'Admin xác nhận đã chuyển khoản rút tiền']);
+      payoutTxId = tx.rows[0].id;
+    }
+
+    await client.query(
+      `UPDATE withdrawal_requests SET status='PAID', paid_by=$1, paid_at=NOW(), payout_transaction_id=$2, admin_note=COALESCE($3, admin_note), updated_at=NOW() WHERE id=$4`,
+      [req.user.userId, payoutTxId, adminNote, wr.id]);
+    await safeNotifyUser(client, {
+      userId: wr.tutor_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'withdrawal_paid', eventType: 'withdrawal_paid',
+      data: { amount }, refId: wr.id, refType: 'withdrawal',
+      sourceType: 'withdrawal', sourceId: wr.id,
+      idempotencyKey: `withdrawal:${wr.id}:paid:${wr.tutor_id}`,
+    });
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã xác nhận thanh toán rút tiền.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("mark-paid withdrawal error:", err);
+    return res.status(500).json({ message: 'Lỗi khi xác nhận thanh toán.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -8552,16 +11558,24 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
-      await client.query(`
-        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
-        VALUES ($1,'dispute_opened','Khiếu nại mới cần xử lý',$2,'gavel',$3,'dispute')
-      `, [admin.id, `${reporterName} báo cáo vi phạm buổi học ID: ${booking.id}. Lý do: ${reason}`, dispute.rows[0].id]);
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: true, reporterName, reason: `báo cáo vi phạm buổi học ID: ${booking.id}. Lý do: ${reason}` },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${admin.id}`,
+      });
     }
     if (booking.tutor_id) {
-      await client.query(`
-        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
-        VALUES ($1,'dispute_opened','Bạn đang bị khiếu nại',$2,'report',$3,'dispute')
-      `, [booking.tutor_id, `${reporterName} gửi khiếu nại. Admin sẽ xem xét và phán quyết.`, dispute.rows[0].id]);
+      await safeNotifyUser(client, {
+        userId: booking.tutor_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: false, reporterName },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${booking.tutor_id}`,
+      });
     }
 
     await client.query('COMMIT');
@@ -8664,6 +11678,20 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
         if (tutorDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [tutorDeduct, tw.rows[0].id]);
         if (adminDeduct > 0) await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [adminDeduct, adminWalletId]);
 
+        // Commission log: REVERSED — policy refund reverses prior commission (Batch 18)
+        if (refundAmount > 0) {
+          await createCommissionLog(client, {
+            source_type: 'course', source_id: enrollment.course_id, course_id: enrollment.course_id,
+            student_id: enrollment.student_id, tutor_id: enrollment.tutor_id,
+            gross_amount: refundAmount, commission_rate: PLATFORM_COMMISSION_RATE,
+            commission_amount: adminDeduct, tutor_amount: tutorDeduct,
+            event_type: 'REVERSED', reason_code: 'COURSE_REFUND_POLICY_V2_1',
+            decision_by: 'api', actor_id: req.user.userId,
+            idempotency_key: `commission:course:${enrollment.course_id}:student:${enrollment.student_id}:COURSE_REFUND_POLICY_V2_1`,
+            metadata: { refund_rate: decision.refundRate, reason_code: decision.reasonCode, progress_percent: Math.round(progressPercent), hours_since_purchase: Math.round(hoursSincePurchase) },
+          });
+        }
+
         await client.query(`UPDATE course_enrollments SET status='refunded' WHERE id=$1`, [enrollment.id]);
 
         await client.query(`
@@ -8677,8 +11705,14 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
         `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
             `Tự động hoàn ${Math.round(decision.refundRate * 100)}% theo ${REFUND_POLICY_VERSION} (tiến độ ${Math.round(progressPercent)}%, ${Math.round(hoursSincePurchase)}h).`]);
 
-        await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'course_refund','Hoàn tiền khóa học thành công',$2,'undo',$3,'course')`,
-          [enrollment.student_id, `Bạn đã được hoàn ${refundAmount.toLocaleString('vi-VN')}đ (${Math.round(decision.refundRate * 100)}%) cho khóa học "${enrollment.title}".`, enrollment.course_id]);
+        await safeNotifyUser(client, {
+          userId: enrollment.student_id, channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'course_refunded', eventType: 'course_refunded',
+          data: { amount: refundAmount, rate: decision.refundRate, courseName: enrollment.title },
+          refId: enrollment.course_id, refType: 'course',
+          sourceType: 'course', sourceId: enrollment.course_id,
+          idempotencyKey: `course:${enrollment.course_id}:student:${enrollment.student_id}:refunded`,
+        });
 
         await client.query('COMMIT');
         return res.status(200).json({
@@ -8699,16 +11733,24 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
-      await client.query(`
-        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
-        VALUES ($1,'dispute_opened','Khiếu nại khóa học mới',$2,'gavel',$3,'dispute')
-      `, [admin.id, `${reporterName} khiếu nại khóa học ID: ${enrollment.course_id}. Lý do: ${reason}`, dispute.rows[0].id]);
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: true, reporterName, reason: `khiếu nại khóa học ID: ${enrollment.course_id}. Lý do: ${reason}` },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${admin.id}`,
+      });
     }
     if (enrollment.tutor_id) {
-      await client.query(`
-        INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type)
-        VALUES ($1,'dispute_opened','Khóa học của bạn bị khiếu nại',$2,'report',$3,'dispute')
-      `, [enrollment.tutor_id, `${reporterName} khiếu nại khóa "${enrollment.title}". Admin sẽ xem xét.`, dispute.rows[0].id]);
+      await safeNotifyUser(client, {
+        userId: enrollment.tutor_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: false, reporterName },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${enrollment.tutor_id}`,
+      });
     }
 
     await client.query('COMMIT');
@@ -8719,6 +11761,701 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
     return res.status(500).json({ message: 'Lỗi máy chủ.' });
   } finally {
     client.release();
+  }
+});
+
+// ═══ AI Case Resolution endpoints (Batch 25 — dry-run scaffolding) ══════════
+
+// POST /api/admin/ai-cases/run-pending — manually trigger a scan of pending cases.
+app.post('/api/admin/ai-cases/run-pending', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await runPendingAiCases({ triggeredBy: 'admin', adminId: req.user.id });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('POST /api/admin/ai-cases/run-pending error:', err.message);
+    return res.status(500).json({ message: 'Không thể chạy xử lý AI cho các khiếu nại.' });
+  }
+});
+
+// GET /api/admin/ai-cases — list AI case resolutions (filter + paginate).
+app.get('/api/admin/ai-cases', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.status)       { params.push(req.query.status);       where.push(`r.status = $${params.length}`); }
+    if (req.query.appealStatus) { params.push(req.query.appealStatus); where.push(`r.appeal_status = $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const totalRes = await pool.query(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions r ${whereSql}`, params);
+    const rows = (await pool.query(
+      `SELECT r.*, s.full_name AS student_name, s.email AS student_email,
+              t.full_name AS tutor_name, t.email AS tutor_email,
+              d.reason AS dispute_reason, d.status AS dispute_status
+         FROM ai_case_resolutions r
+         LEFT JOIN users s    ON s.id = r.student_id
+         LEFT JOIN users t    ON t.id = r.tutor_id
+         LEFT JOIN disputes d ON d.id = r.dispute_id
+         ${whereSql}
+         ORDER BY r.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    )).rows;
+
+    const summary = { ai_suggested: 0, auto_resolved: 0, need_human_review: 0, appealed: 0 };
+    for (const s of (await pool.query(`SELECT status, COUNT(*)::int AS n FROM ai_case_resolutions GROUP BY status`)).rows) {
+      if (s.status === 'AI_SUGGESTED')      summary.ai_suggested      = s.n;
+      else if (s.status === 'AUTO_RESOLVED') summary.auto_resolved     = s.n;
+      else if (s.status === 'NEED_HUMAN_REVIEW') summary.need_human_review = s.n;
+    }
+    summary.appealed = (await pool.query(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`)).rows[0].n;
+
+    return res.json({
+      items: rows,
+      pagination: { page, limit, total: totalRes.rows[0].n },
+      summary,
+      config: {
+        resolution_enabled: AUTO_AI_RESOLUTION_ENABLED, dry_run: AUTO_AI_DRY_RUN,
+        cron_enabled: AUTO_AI_CRON_ENABLED, min_case_age_hours: AI_CASE_CONFIG.minCaseAgeHours,
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/admin/ai-cases error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách xử lý AI.' });
+  }
+});
+
+// GET /api/admin/ai-cases/:id — full detail for the admin modal.
+app.get('/api/admin/ai-cases/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT r.*, s.full_name AS student_name, s.email AS student_email,
+              t.full_name AS tutor_name, t.email AS tutor_email, ab.full_name AS appeal_by_name,
+              d.reason AS dispute_reason, d.status AS dispute_status, d.created_at AS dispute_created_at
+         FROM ai_case_resolutions r
+         LEFT JOIN users s    ON s.id = r.student_id
+         LEFT JOIN users t    ON t.id = r.tutor_id
+         LEFT JOIN users ab   ON ab.id = r.appeal_by
+         LEFT JOIN disputes d ON d.id = r.dispute_id
+        WHERE r.id = $1`, [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Không tìm thấy bản ghi.' });
+    return res.json(r.rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/ai-cases/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
+// GET /api/my/ai-cases — the current user's own AI case resolutions.
+app.get('/api/my/ai-cases', verifyToken, async (req, res) => {
+  try {
+    const rows = (await pool.query(
+      `SELECT r.id, r.status, r.severity, r.money_action, r.recommendation, r.reason_summary,
+              r.risk_flags, r.appeal_status, r.appeal_reason, r.appealed_at, r.created_at, r.resolved_at,
+              d.reason AS dispute_reason,
+              (r.student_id = $1) AS is_student, (r.tutor_id = $1) AS is_tutor
+         FROM ai_case_resolutions r
+         LEFT JOIN disputes d ON d.id = r.dispute_id
+        WHERE r.student_id = $1 OR r.tutor_id = $1
+        ORDER BY r.created_at DESC
+        LIMIT 100`, [req.user.id])).rows;
+    return res.json({ items: rows });
+  } catch (err) {
+    console.error('GET /api/my/ai-cases error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách.' });
+  }
+});
+
+// POST /api/my/ai-case-feedback/:id/appeal — affected user appeals an AUTO_RESOLVED case.
+app.post('/api/my/ai-case-feedback/:id/appeal', verifyToken, async (req, res) => {
+  try {
+    const reason = sanitizeNotificationText(req.body?.appealReason || req.body?.reason, 1000);
+    if (!reason) return res.status(400).json({ message: 'Vui lòng nhập lý do kháng cáo.' });
+
+    const r = await pool.query('SELECT * FROM ai_case_resolutions WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ message: 'Không tìm thấy quyết định AI.' });
+    const rec = r.rows[0];
+
+    // Only the affected student or tutor may appeal.
+    if (![rec.student_id, rec.tutor_id].includes(req.user.id)) {
+      return res.status(403).json({ message: 'Bạn không có quyền kháng cáo quyết định này.' });
+    }
+    // Only AUTO_RESOLVED decisions can be appealed.
+    if (rec.status !== 'AUTO_RESOLVED') {
+      return res.status(409).json({ message: 'Chỉ có thể kháng cáo quyết định đã tự động xử lý.' });
+    }
+    // Appeal window: within 24 hours after resolution.
+    const base = rec.resolved_at || rec.created_at;
+    if (base && (Date.now() - new Date(base).getTime()) > 24 * 60 * 60 * 1000) {
+      return res.status(409).json({ message: 'Đã quá thời hạn kháng cáo (24 giờ).' });
+    }
+    if (rec.appeal_status !== 'NONE') {
+      return res.status(409).json({ message: 'Kháng cáo đã được gửi trước đó.' });
+    }
+
+    await pool.query(
+      `UPDATE ai_case_resolutions
+          SET appeal_status='APPEALED_NEED_REVIEW', appeal_reason=$1, appeal_by=$2, appealed_at=NOW()
+        WHERE id=$3`, [reason, req.user.id, req.params.id]);
+
+    // Notify all admins (in-app). Never blocks the response on notification failure.
+    try {
+      const admins = await pool.query("SELECT id FROM users WHERE role='admin'");
+      for (const a of admins.rows) {
+        await createInAppNotification(pool, {
+          userId: a.id, type: 'system', eventType: 'ai_case_appealed',
+          title: 'Có kháng cáo quyết định AI cần xem xét',
+          body: `Một người dùng đã kháng cáo quyết định AI (case ${req.params.id}).`,
+          icon: 'gavel', refId: req.params.id, refType: 'ai_case', priority: 'high',
+          idempotencyKey: `ai_case_appeal:${req.params.id}:${a.id}`,
+        });
+      }
+    } catch (nErr) { console.warn('[ai-case appeal] admin notify failed:', nErr.message); }
+
+    return res.json({ ok: true, message: 'Kháng cáo đã được gửi. Admin sẽ xem xét lại quyết định.' });
+  } catch (err) {
+    console.error('POST /api/my/ai-case-feedback/:id/appeal error:', err.message);
+    return res.status(500).json({ message: 'Không thể gửi kháng cáo.' });
+  }
+});
+
+// ═══ Admin AI Copilot endpoints (Batch 26 — advisory only) ══════════════════
+
+// POST /api/admin/copilot/analyze — context-aware advisory analysis.
+app.post('/api/admin/copilot/analyze', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { entityType, entityId, pageKey, pageContext } = req.body || {};
+    const type = String(entityType || 'PAGE').toUpperCase();
+    const allowed = ['TUTOR', 'STUDENT', 'DISPUTE', 'TRANSACTION', 'BOOKING', 'PAGE'];
+    if (!allowed.includes(type)) return res.status(400).json({ message: 'entityType không hợp lệ.' });
+    if (type !== 'PAGE' && !entityId) return res.status(400).json({ message: 'Thiếu entityId cho loại đối tượng này.' });
+
+    let context;
+    if (type === 'TUTOR')            context = await collectTutorCopilotContext(entityId);
+    else if (type === 'STUDENT')     context = await collectStudentCopilotContext(entityId);
+    else if (type === 'DISPUTE')     context = await collectDisputeCopilotContext(entityId);
+    else if (type === 'BOOKING')     context = await collectBookingCopilotContext(entityId);
+    else if (type === 'TRANSACTION') context = await collectTransactionCopilotContext(entityId);
+    else                             context = await collectPageCopilotContext(pageKey, pageContext);
+
+    const report = generateAdminCopilotReport(type, context);
+    const llm = await maybeCopilotLLMRewrite(report, context);
+    report.summary = llm.summary;
+    report.model_used = llm.model_used;
+    report.created_at = new Date().toISOString();
+
+    let savedId = null;
+    try {
+      const ins = await pool.query(
+        `INSERT INTO admin_copilot_reports
+           (entity_type, entity_id, page_key, summary, confidence, risk_level,
+            key_findings, evidence, recommendations, suggested_admin_actions, limitations,
+            model_used, input_snapshot, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13::jsonb,$14)
+         RETURNING id`,
+        [
+          type, entityId ? String(entityId) : null, pageKey || null, report.summary,
+          report.confidence, report.risk_level,
+          JSON.stringify(report.key_findings), JSON.stringify(report.evidence),
+          JSON.stringify(report.recommendations), JSON.stringify(report.suggested_admin_actions),
+          JSON.stringify(report.limitations), report.model_used,
+          JSON.stringify(sanitizeCopilotSnapshot(context)), req.user.id,
+        ]
+      );
+      savedId = ins.rows[0].id;
+    } catch (e) { console.warn('[copilot] persist failed:', e.message); }
+
+    return res.json({ id: savedId, ...report });
+  } catch (err) {
+    console.error('POST /api/admin/copilot/analyze error:', err.message);
+    return res.status(500).json({ message: 'Không thể phân tích ngữ cảnh.' });
+  }
+});
+
+// GET /api/admin/copilot/history — recent analyses (filterable, paginated).
+app.get('/api/admin/copilot/history', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.entityType) { params.push(String(req.query.entityType).toUpperCase()); where.push(`entity_type = $${params.length}`); }
+    if (req.query.entityId)   { params.push(String(req.query.entityId)); where.push(`entity_id = $${params.length}`); }
+    if (req.query.riskLevel)  { params.push(String(req.query.riskLevel).toUpperCase()); where.push(`risk_level = $${params.length}`); }
+    if (req.query.from)       { params.push(req.query.from); where.push(`created_at >= $${params.length}`); }
+    if (req.query.to)         { params.push(req.query.to);   where.push(`created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_copilot_reports ${whereSql}`, params);
+    const rows = await copilotSafeRows(
+      `SELECT id, entity_type, entity_id, page_key, summary, confidence, risk_level,
+              model_used, created_at
+         FROM admin_copilot_reports ${whereSql}
+         ORDER BY created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    return res.json({ items: rows, pagination: { page, limit, total } });
+  } catch (err) {
+    console.error('GET /api/admin/copilot/history error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải lịch sử phân tích.' });
+  }
+});
+
+// GET /api/admin/copilot/history/:id — full detail of one analysis.
+app.get('/api/admin/copilot/history/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const rows = await copilotSafeRows(`SELECT * FROM admin_copilot_reports WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy bản ghi.' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/copilot/history/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
+// ═══ Semantic Moderation endpoints (Batch 27 — advisory only) ═══════════════
+
+// POST /api/admin/semantic-moderation/analyze — analyze one item / manual text.
+app.post('/api/admin/semantic-moderation/analyze', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { sourceType, sourceId, text, tutorId, studentId } = req.body || {};
+    const type = String(sourceType || 'TEXT').toUpperCase();
+    const allowed = ['REVIEW', 'CHAT_MESSAGE', 'CHAT_THREAD', 'TUTOR_PROFILE', 'TEXT'];
+    if (!allowed.includes(type)) return res.status(400).json({ message: 'sourceType không hợp lệ.' });
+
+    let analyzeText = typeof text === 'string' ? text : '';
+    let resolvedTutorId = asUuidOrNull(tutorId);
+    let resolvedStudentId = asUuidOrNull(studentId);
+    let targetUserId = null;
+
+    if ((!analyzeText || !analyzeText.trim()) && sourceId) {
+      if (type === 'REVIEW') {
+        const r = await copilotSafeRows(`SELECT COALESCE(comment, content) AS text, tutor_id FROM reviews WHERE id=$1 LIMIT 1`, [sourceId]);
+        if (r.length) {
+          analyzeText = r[0].text || '';
+          const tp = await copilotSafeRows(`SELECT user_id FROM tutor_profiles WHERE id=$1 LIMIT 1`, [r[0].tutor_id]);
+          if (tp.length) resolvedTutorId = resolvedTutorId || asUuidOrNull(tp[0].user_id);
+        }
+      } else if (type === 'CHAT_MESSAGE') {
+        const r = await copilotSafeRows(`SELECT content, sender_id FROM chat_messages WHERE id=$1 LIMIT 1`, [sourceId]);
+        if (r.length) { analyzeText = r[0].content || ''; targetUserId = asUuidOrNull(r[0].sender_id); }
+      } else if (type === 'TUTOR_PROFILE') {
+        const r = await copilotSafeRows(`SELECT bio, headline FROM tutor_profiles WHERE user_id=$1 LIMIT 1`, [sourceId]);
+        if (r.length) analyzeText = [r[0].headline, r[0].bio].filter(Boolean).join('. ');
+        resolvedTutorId = resolvedTutorId || asUuidOrNull(sourceId);
+      }
+    }
+
+    if (!analyzeText || !analyzeText.trim()) return res.status(400).json({ message: 'Không có nội dung để phân tích.' });
+
+    const base = classifyTextModeration(analyzeText, { sourceType: type });
+    const llm = await maybeSemanticLLMRewrite(base, analyzeText);
+    base.summary = llm.summary; base.model_used = llm.model_used;
+
+    const report = {
+      ...base, source_type: type, source_id: sourceId || null,
+      tutor_id: resolvedTutorId, student_id: resolvedStudentId, target_user_id: targetUserId,
+      input_hash: hashModerationInput(analyzeText, type, sourceId),
+    };
+    const id = await saveSemanticModerationReport(report);
+    if (resolvedTutorId) { try { await upsertTutorReputationSemanticScore(resolvedTutorId, { days: 90 }); } catch { /* best-effort */ } }
+
+    return res.json({ id, created_at: new Date().toISOString(), ...report });
+  } catch (err) {
+    console.error('POST /api/admin/semantic-moderation/analyze error:', err.message);
+    return res.status(500).json({ message: 'Không thể phân tích nội dung.' });
+  }
+});
+
+// POST /api/admin/semantic-moderation/run-pending — scan recent reviews/chat.
+app.post('/api/admin/semantic-moderation/run-pending', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(200, Math.max(1, parseInt(req.body?.limit, 10) || SEMANTIC_MODERATION_BATCH_LIMIT));
+    const result = await runPendingSemanticModeration({ limit, triggeredBy: 'admin' });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('POST /api/admin/semantic-moderation/run-pending error:', err.message);
+    return res.status(500).json({ message: 'Không thể chạy quét kiểm duyệt.' });
+  }
+});
+
+// GET /api/admin/semantic-moderation/reports — list (filters + pagination).
+app.get('/api/admin/semantic-moderation/reports', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.sourceType) { params.push(String(req.query.sourceType).toUpperCase()); where.push(`s.source_type=$${params.length}`); }
+    if (req.query.severity)   { params.push(String(req.query.severity).toUpperCase());   where.push(`s.severity=$${params.length}`); }
+    if (req.query.status)     { params.push(String(req.query.status).toUpperCase());     where.push(`s.status=$${params.length}`); }
+    if (req.query.category)   { params.push(String(req.query.category).toUpperCase());   where.push(`s.categories ? $${params.length}`); }
+    if (req.query.tutorId && asUuidOrNull(req.query.tutorId)) { params.push(asUuidOrNull(req.query.tutorId)); where.push(`s.tutor_id=$${params.length}`); }
+    if (req.query.from)       { params.push(req.query.from); where.push(`s.created_at >= $${params.length}`); }
+    if (req.query.to)         { params.push(req.query.to);   where.push(`s.created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports s ${whereSql}`, params);
+    const rows = await copilotSafeRows(
+      `SELECT s.id, s.source_type, s.source_id, s.tutor_id, s.target_user_id, s.severity, s.status,
+              s.categories, s.summary, s.model_used, s.created_at,
+              tu.full_name AS tutor_name, xu.full_name AS target_name
+         FROM semantic_moderation_reports s
+         LEFT JOIN users tu ON tu.id = s.tutor_id
+         LEFT JOIN users xu ON xu.id = s.target_user_id
+         ${whereSql}
+         ORDER BY s.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    const summary = {
+      open:             await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE status='OPEN'`),
+      high_risk:        await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE severity IN ('HIGH','CRITICAL')`),
+      external_payment: await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE categories ? 'EXTERNAL_PAYMENT_ATTEMPT'`),
+      toxic_spam:       await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE categories ? 'TOXIC_LANGUAGE' OR categories ? 'SPAM_OR_SCAM'`),
+      handled:          await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE status <> 'OPEN'`),
+    };
+    return res.json({ items: rows, pagination: { page, limit, total }, summary });
+  } catch (err) {
+    console.error('GET /api/admin/semantic-moderation/reports error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách báo cáo.' });
+  }
+});
+
+// GET /api/admin/semantic-moderation/reports/:id — detail.
+app.get('/api/admin/semantic-moderation/reports/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const rows = await copilotSafeRows(
+      `SELECT s.*, tu.full_name AS tutor_name, tu.email AS tutor_email, xu.full_name AS target_name
+         FROM semantic_moderation_reports s
+         LEFT JOIN users tu ON tu.id = s.tutor_id
+         LEFT JOIN users xu ON xu.id = s.target_user_id
+        WHERE s.id=$1`, [idNum]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    const r = rows[0];
+    if (r.tutor_email) r.tutor_email = maskEmail(r.tutor_email); // never expose raw email
+    return res.json(r);
+  } catch (err) {
+    console.error('GET /api/admin/semantic-moderation/reports/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết báo cáo.' });
+  }
+});
+
+// PATCH /api/admin/semantic-moderation/reports/:id/status — status + admin note only.
+app.patch('/api/admin/semantic-moderation/reports/:id/status', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, adminNote } = req.body || {};
+    const st = String(status || '').toUpperCase();
+    if (!['REVIEWED', 'DISMISSED', 'ACTION_REQUIRED'].includes(st)) return res.status(400).json({ message: 'status không hợp lệ.' });
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const note = adminNote ? sanitizeModerationText(adminNote, 2000) : null;
+    const upd = await pool.query(
+      `UPDATE semantic_moderation_reports
+          SET status=$1, admin_note=$2, reviewed_at=NOW(), reviewed_by=$3
+        WHERE id=$4 RETURNING id, status, reviewed_at`,
+      [st, note, asUuidOrNull(req.user.id), idNum]
+    );
+    if (!upd.rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    return res.json({ ok: true, ...upd.rows[0] });
+  } catch (err) {
+    console.error('PATCH /api/admin/semantic-moderation/reports/:id/status error:', err.message);
+    return res.status(500).json({ message: 'Không thể cập nhật trạng thái.' });
+  }
+});
+
+// GET /api/admin/tutors/:id/semantic-reputation — latest score + radar data.
+app.get('/api/admin/tutors/:id/semantic-reputation', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const uid = asUuidOrNull(req.params.id);
+    if (!uid) return res.status(400).json({ message: 'ID gia sư không hợp lệ.' });
+    let latest = (await copilotSafeRows(
+      `SELECT * FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC, updated_at DESC LIMIT 1`, [uid]))[0] || null;
+    if (!latest) {
+      const rep = await analyzeTutorSemanticReputation(uid, { days: 90 });
+      latest = { ...rep, period_start: null, period_end: null, computed_on_the_fly: true };
+    }
+    const radar = [
+      { label: 'Kiên nhẫn',              value: Number(latest.patience_score ?? 0) },
+      { label: 'Thân thiện',             value: Number(latest.friendliness_score ?? 0) },
+      { label: 'Sư phạm',                value: Number(latest.teaching_quality_score ?? 0) },
+      { label: 'Chuyên nghiệp',          value: Number(latest.professionalism_score ?? 0) },
+      { label: 'Rủi ro giao dịch ngoài', value: Number(latest.external_payment_risk_score ?? 0) },
+      { label: 'Rủi ro toxic',           value: Number(latest.toxicity_risk_score ?? 0) },
+    ];
+    return res.json({ tutor_id: uid, latest_score: latest, radar });
+  } catch (err) {
+    console.error('GET /api/admin/tutors/:id/semantic-reputation error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải điểm uy tín.' });
+  }
+});
+
+// ═══ Safe NL Analytics endpoints (Batch 29A — template allowlist, SELECT-only) ═
+
+// POST /api/admin/analytics/ask — map question -> vetted template -> run SELECT.
+app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const question = String(req.body?.question || '').trim();
+    const params = req.body?.params || {};
+    if (!question) return res.status(400).json({ message: 'Vui lòng nhập câu hỏi.' });
+    if (question.length > ADMIN_ANALYTICS_MAX_QUESTION_CHARS) return res.status(400).json({ message: `Câu hỏi quá dài (tối đa ${ADMIN_ANALYTICS_MAX_QUESTION_CHARS} ký tự).` });
+    if (params.limit != null && parseInt(params.limit, 10) > ADMIN_ANALYTICS_MAX_LIMIT) return res.status(400).json({ message: `limit tối đa là ${ADMIN_ANALYTICS_MAX_LIMIT}.` });
+
+    const normalized = normalizeAnalyticsQuestion(question);
+
+    // Secondary guard: reject dangerous SQL keywords / sensitive-data requests.
+    if (ANALYTICS_BLOCKED_RE.test(question)) {
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'BLOCKED', summary: 'Câu hỏi chứa từ khóa bị chặn.', safety_flags: ['BLOCKED_SQL_KEYWORD'], created_by: req.user.id });
+      return res.json({ status: 'BLOCKED', intent: null, summary: 'Câu hỏi chứa từ khóa không được phép. Hệ thống chỉ chạy các mẫu phân tích an toàn (chỉ đọc).', safety_flags: ['BLOCKED_SQL_KEYWORD'], limitations: [], columns: [], rows: [], chart: {}, sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().slice(0, 6).map(t => t.exampleQuestions[0]) });
+    }
+    if (ANALYTICS_SENSITIVE_RE.test(normalized)) {
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'BLOCKED', summary: 'Yêu cầu dữ liệu nhạy cảm bị từ chối.', safety_flags: ['SENSITIVE_REQUEST'], created_by: req.user.id });
+      return res.json({ status: 'BLOCKED', intent: null, summary: 'Không thể truy xuất dữ liệu nhạy cảm (mật khẩu/token/OTP/IP...). Vui lòng dùng câu hỏi phân tích an toàn.', safety_flags: ['SENSITIVE_REQUEST'], limitations: [], columns: [], rows: [], chart: {}, sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().slice(0, 6).map(t => t.exampleQuestions[0]) });
+    }
+
+    // Intent detection: rule-based first, optional LLM classify as fallback.
+    let intent = detectAnalyticsIntent(question);
+    let modelUsed = 'TEMPLATE_RULE_BASED';
+    if (!intent) { const llm = await maybeAnalyticsLLMIntent(question); if (llm) { intent = llm; modelUsed = 'LLM_INTENT_' + ADMIN_ANALYTICS_PROVIDER.toUpperCase(); } }
+
+    if (!intent) {
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'NO_MATCH', summary: 'Không có mẫu phân tích phù hợp.', model_used: modelUsed, created_by: req.user.id });
+      return res.json({ status: 'NO_MATCH', intent: null, summary: 'Hiện hệ thống chưa hỗ trợ câu hỏi này ở chế độ an toàn.', columns: [], rows: [], chart: {}, limitations: [], safety_flags: [], sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().map(t => t.exampleQuestions[0]) });
+    }
+
+    const result = await runAnalyticsTemplate(intent.key, params, req.user.id);
+    const auditId = await saveAnalyticsAuditLog({
+      question, normalized_question: normalized, detected_intent: intent.key, template_key: intent.key,
+      status: result.status, summary: result.summary, sql_preview: result.sql_preview, parameters: result.params,
+      result_count: (result.rows || []).length, result_preview: result.rows, chart_data: result.chart,
+      limitations: result.limitations, safety_flags: result.safety_flags || [], model_used: modelUsed,
+      created_by: req.user.id, error_message: result.error_message,
+    });
+
+    return res.json({
+      status: result.status, template_key: intent.key, intent: intent.key, summary: result.summary,
+      columns: result.columns || [], rows: result.rows || [], chart: result.chart || {},
+      sql_preview: result.sql_preview, limitations: result.limitations || [], safety_flags: result.safety_flags || [],
+      model_used: modelUsed, audit_id: auditId,
+    });
+  } catch (err) {
+    console.error('POST /api/admin/analytics/ask error:', err.message);
+    return res.status(500).json({ message: 'Không thể xử lý câu hỏi phân tích.' });
+  }
+});
+
+// GET /api/admin/analytics/templates — list supported templates.
+app.get('/api/admin/analytics/templates', verifyToken, requireAdmin, async (req, res) => {
+  try { return res.json({ items: listAnalyticsTemplates() }); }
+  catch (err) { console.error('GET /api/admin/analytics/templates error:', err.message); return res.status(500).json({ message: 'Không thể tải danh sách mẫu.' }); }
+});
+
+// GET /api/admin/analytics/history — previous queries (filters + pagination).
+app.get('/api/admin/analytics/history', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.status) { params.push(String(req.query.status).toUpperCase()); where.push(`status=$${params.length}`); }
+    if (req.query.templateKey) { params.push(String(req.query.templateKey)); where.push(`template_key=$${params.length}`); }
+    if (req.query.from) { params.push(req.query.from); where.push(`created_at >= $${params.length}`); }
+    if (req.query.to) { params.push(req.query.to); where.push(`created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_analytics_queries ${whereSql}`, params);
+    const items = await copilotSafeRows(
+      `SELECT id, question, template_key, detected_intent, status, result_count, summary, model_used, created_at
+         FROM admin_analytics_queries ${whereSql} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]);
+    return res.json({ items, pagination: { page, limit, total } });
+  } catch (err) {
+    console.error('GET /api/admin/analytics/history error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải lịch sử.' });
+  }
+});
+
+// GET /api/admin/analytics/history/:id — detail audit log.
+app.get('/api/admin/analytics/history/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const rows = await copilotSafeRows(`SELECT * FROM admin_analytics_queries WHERE id=$1`, [idNum]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy.' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/analytics/history/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
+// POST /api/admin/analytics/explain-template — describe a template (no query run).
+app.post('/api/admin/analytics/explain-template', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const t = getAnalyticsTemplate(String(req.body?.templateKey || ''));
+    if (!t) return res.status(404).json({ message: 'Không tìm thấy mẫu.' });
+    return res.json({
+      key: t.key, label: t.label,
+      calculates: t.description,
+      data_sources: t.requiredTables,
+      example_questions: t.exampleQuestions,
+      params: ['days (1-365)', `limit (<= ${ADMIN_ANALYTICS_MAX_LIMIT})`],
+      chart_type: t.chartType,
+      sql_preview: t.sql,
+      safety_notes: [
+        'Chỉ chạy truy vấn SELECT đã được kiểm duyệt trong allowlist.',
+        'Tham số hóa hoàn toàn — không ghép chuỗi đầu vào người dùng.',
+        'Có LIMIT và giới hạn theo khoảng ngày; timeout 8 giây.',
+        'Chỉ đọc — không thay đổi bất kỳ dữ liệu nào.',
+      ],
+    });
+  } catch (err) {
+    console.error('POST /api/admin/analytics/explain-template error:', err.message);
+    return res.status(500).json({ message: 'Không thể giải thích mẫu.' });
+  }
+});
+
+// ═══ AI Fraud Intel endpoints (Batch 28 — advisory only) ════════════════════
+
+// POST /api/admin/fraud-intel/run — run bounded fraud detection.
+app.post('/api/admin/fraud-intel/run', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { periodDays, limit, dryRun, analyzers } = req.body || {};
+    const result = await runFraudRingDetection({
+      periodDays: Number(periodDays) || FRAUD_INTEL_PERIOD_DAYS,
+      limit: Number(limit) || FRAUD_INTEL_BATCH_LIMIT,
+      dryRun: !!dryRun,
+      analyzers: Array.isArray(analyzers) ? analyzers : null,
+      triggeredBy: 'admin',
+    });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('POST /api/admin/fraud-intel/run error:', err.message);
+    return res.status(500).json({ message: 'Không thể chạy phân tích gian lận.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/reports — list (filters + pagination + KPIs).
+app.get('/api/admin/fraud-intel/reports', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.reportType) { params.push(String(req.query.reportType).toUpperCase()); where.push(`f.report_type=$${params.length}`); }
+    if (req.query.severity)   { params.push(String(req.query.severity).toUpperCase());   where.push(`f.severity=$${params.length}`); }
+    if (req.query.status)     { params.push(String(req.query.status).toUpperCase());     where.push(`f.status=$${params.length}`); }
+    if (req.query.riskFlag)   { params.push(String(req.query.riskFlag).toUpperCase());   where.push(`f.risk_flags ? $${params.length}`); }
+    if (req.query.tutorId && asUuidOrNull(req.query.tutorId))     { params.push(asUuidOrNull(req.query.tutorId));   where.push(`f.tutor_id=$${params.length}`); }
+    if (req.query.studentId && asUuidOrNull(req.query.studentId)) { params.push(asUuidOrNull(req.query.studentId)); where.push(`f.student_id=$${params.length}`); }
+    if (req.query.from) { params.push(req.query.from); where.push(`f.created_at >= $${params.length}`); }
+    if (req.query.to)   { params.push(req.query.to);   where.push(`f.created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports f ${whereSql}`, params);
+    const items = await copilotSafeRows(
+      `SELECT f.id, f.report_type, f.severity, f.status, f.risk_score, f.confidence,
+              f.tutor_id, f.student_id, f.primary_user_id, f.title, f.summary, f.risk_flags,
+              f.model_used, f.created_at,
+              pu.full_name AS primary_name, tu.full_name AS tutor_name
+         FROM fraud_intel_reports f
+         LEFT JOIN users pu ON pu.id = f.primary_user_id
+         LEFT JOIN users tu ON tu.id = f.tutor_id
+         ${whereSql}
+         ORDER BY f.risk_score DESC, f.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    const summary = {
+      open:             await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE status='OPEN'`),
+      critical:         await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE severity='CRITICAL'`),
+      high:             await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE severity='HIGH'`),
+      external_payment: await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE report_type='EXTERNAL_PAYMENT_COLLUSION'`),
+      withdrawal_risk:  await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE report_type='WITHDRAWAL_RISK'`),
+      reviewed:         await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE status <> 'OPEN'`),
+    };
+    return res.json({ items, summary, pagination: { page, limit, total } });
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/reports error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách báo cáo gian lận.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/reports/:id — detail.
+app.get('/api/admin/fraud-intel/reports/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const rows = await copilotSafeRows(
+      `SELECT f.*, pu.full_name AS primary_name, tu.full_name AS tutor_name, su.full_name AS student_name
+         FROM fraud_intel_reports f
+         LEFT JOIN users pu ON pu.id = f.primary_user_id
+         LEFT JOIN users tu ON tu.id = f.tutor_id
+         LEFT JOIN users su ON su.id = f.student_id
+        WHERE f.id=$1`, [idNum]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/reports/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
+// PATCH /api/admin/fraud-intel/reports/:id/status — status + note only.
+app.patch('/api/admin/fraud-intel/reports/:id/status', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, adminNote } = req.body || {};
+    const st = String(status || '').toUpperCase();
+    if (!['REVIEWED', 'DISMISSED', 'ACTION_REQUIRED', 'ESCALATED'].includes(st)) return res.status(400).json({ message: 'status không hợp lệ.' });
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const note = adminNote ? sanitizeModerationText(adminNote, 2000) : null;
+    const upd = await pool.query(
+      `UPDATE fraud_intel_reports SET status=$1, admin_note=$2, reviewed_at=NOW(), reviewed_by=$3, updated_at=NOW()
+        WHERE id=$4 RETURNING id, status, reviewed_at`,
+      [st, note, asUuidOrNull(req.user.id), idNum]);
+    if (!upd.rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    return res.json({ ok: true, ...upd.rows[0] });
+  } catch (err) {
+    console.error('PATCH /api/admin/fraud-intel/reports/:id/status error:', err.message);
+    return res.status(500).json({ message: 'Không thể cập nhật trạng thái.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/entity/:entityType/:entityId — reports + fresh risk.
+app.get('/api/admin/fraud-intel/entity/:entityType/:entityId', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const uid = asUuidOrNull(req.params.entityId);
+    if (!uid) return res.status(400).json({ message: 'entityId không hợp lệ.' });
+    const type = String(req.params.entityType || '').toLowerCase();
+    const reports = await copilotSafeRows(
+      `SELECT id, report_type, severity, status, risk_score, confidence, title, summary, risk_flags, created_at
+         FROM fraud_intel_reports
+        WHERE primary_user_id=$1 OR secondary_user_id=$1 OR tutor_id=$1 OR student_id=$1
+        ORDER BY created_at DESC LIMIT 50`, [uid]);
+    const period = buildFraudPeriod(90);
+    let risk = null;
+    try {
+      if (type === 'tutor') risk = await analyzeTutorFraudSignals(uid, period);
+      else if (type === 'student') risk = await analyzeStudentFraudSignals(uid, period);
+      else risk = { tutor: await analyzeTutorFraudSignals(uid, period), student: await analyzeStudentFraudSignals(uid, period) };
+    } catch { risk = null; }
+    return res.json({ entity_type: type, entity_id: uid, reports, risk_summary: risk });
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/entity error:', err.message);
+    return res.status(500).json({ message: 'Không thể tra cứu rủi ro người dùng.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/run-logs — recent run logs.
+app.get('/api/admin/fraud-intel/run-logs', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const rows = await copilotSafeRows(`SELECT * FROM fraud_intel_run_logs ORDER BY started_at DESC LIMIT 30`);
+    return res.json({ items: rows });
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/run-logs error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải nhật ký chạy.' });
   }
 });
 
@@ -8789,7 +12526,15 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
       // Auto-ban check
       if (tp.rows.length && tp.rows[0].reputation_score < 30) {
         await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
-        await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'system','Tài khoản bị khóa','Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.','block',NULL,NULL)`, [tutorId]);
+        // Batch 20.1: safeNotifyUser, same client, priority critical
+        await safeNotifyUser(client, {
+          userId: tutorId, type: 'system', channels: ['IN_APP'],
+          templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
+          title: 'Tài khoản bị khóa',
+          body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+          icon: 'block', sourceType: 'user', sourceId: tutorId, priority: 'critical',
+          idempotencyKey: `reputation_auto_ban:${tutorId}:${disputeId}`,
+        });
       }
     }
 
@@ -8819,6 +12564,19 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
           if (nonRefunded > 0) {
             if (!tutorWalletId || !adminWalletId) { await client.query('ROLLBACK'); return res.status(500).json({ message: 'Thiếu ví để xử lý phần không hoàn.' }); }
             await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [escrowTxId, payerWalletId, tutorWalletId, adminWalletId, nonRefunded, 0.1]);
+            // Commission log: EARNED on the non-refunded portion of booking dispute (Batch 18)
+            const _dpSplit = calculateCommissionSplit(nonRefunded);
+            await createCommissionLog(client, {
+              source_type: 'dispute', source_id: disputeId, dispute_id: disputeId, booking_id: bookingId,
+              transaction_id: escrowTxId,
+              student_id: studentId, tutor_id: tutorId,
+              gross_amount: _dpSplit.grossAmount, commission_rate: _dpSplit.commissionRate,
+              commission_amount: _dpSplit.commissionAmount, tutor_amount: _dpSplit.tutorAmount,
+              event_type: 'EARNED', reason_code: 'BOOKING_CANCEL_COMPENSATION',
+              decision_by: 'admin', actor_id: req.user.userId,
+              idempotency_key: `commission:dispute:${disputeId}:BOOKING_PARTIAL_RELEASE`,
+              metadata: { refund_rate: refundRate, non_refunded: nonRefunded },
+            });
           }
         }
         await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [bookingId]);
@@ -8841,16 +12599,37 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
             INSERT INTO transactions (wallet_id, amount, type, status, gateway, reference_id, description)
             VALUES ($1,$2,'REFUND','SUCCESS','SYSTEM',$3,$4)
           `, [sw.rows[0].id, refundAmount, courseId, `Admin hoàn tiền khóa học ${Math.round(refundRate * 100)}%`]);
+          // Commission log: REVERSED — admin refunded course (Batch 18)
+          await createCommissionLog(client, {
+            source_type: 'dispute', source_id: disputeId, dispute_id: disputeId, course_id: courseId,
+            student_id: studentId, tutor_id: tutorId,
+            gross_amount: refundAmount, commission_rate: PLATFORM_COMMISSION_RATE,
+            commission_amount: adminDeduct, tutor_amount: tutorDeduct,
+            event_type: 'REVERSED', reason_code: 'COURSE_REFUND_ADMIN',
+            decision_by: 'admin', actor_id: req.user.userId,
+            idempotency_key: `commission:dispute:${disputeId}:COURSE_REFUND_ADMIN`,
+            metadata: { refund_rate: refundRate, course_id: courseId },
+          });
         }
         await client.query(`UPDATE course_enrollments SET status='refunded' WHERE course_id=$1 AND student_id=$2`, [courseId, studentId]);
       }
 
       await client.query("UPDATE disputes SET status='RESOLVED_REFUND', penalty_type=$1, admin_note=$2, resolved_at=NOW() WHERE id=$3", [penaltyType, adminNote, disputeId]);
 
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Đã hoàn tiền',$2,'check_circle',$3,'dispute')`,
-        [studentId, `Admin phán quyết: Hoàn ${refundAmount.toLocaleString('vi-VN')}đ (${Math.round(refundRate * 100)}%) vào ví bạn.`, disputeId]);
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại: Phán quyết chống lại bạn',$2,'gavel',$3,'dispute')`,
-        [tutorId, `Admin hoàn tiền cho học sinh. ${repDeduct > 0 ? 'Điểm uy tín bị trừ ' + repDeduct + '.' : ''}`, disputeId]);
+      await safeNotifyUser(client, {
+        userId: studentId, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_resolved_refund', eventType: 'dispute_resolved_refund',
+        data: { forTutor: false, amount: refundAmount, rate: refundRate },
+        refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
+        idempotencyKey: `dispute:${disputeId}:resolved:refund:${studentId}`,
+      });
+      await safeNotifyUser(client, {
+        userId: tutorId, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_resolved_refund', eventType: 'dispute_resolved_refund',
+        data: { forTutor: true, repDeduct },
+        refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
+        idempotencyKey: `dispute:${disputeId}:resolved:refund:${tutorId}`,
+      });
 
     } else if (decision === 'RELEASE_TO_TUTOR') {
       if (dispute.target_type === 'booking') {
@@ -8858,6 +12637,19 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
         if (escrowTxId) {
           await setLedgerContext(client, { reason_code: 'DISPUTE_RELEASE', source: 'admin', reference_type: 'booking', reference_id: bookingId, transaction_id: escrowTxId, actor_id: req.user.userId, metadata: { disputeId } });
           await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [escrowTxId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
+          // Commission log: EARNED on admin dispute release (Batch 18)
+          const _drSplit = calculateCommissionSplit(amount);
+          await createCommissionLog(client, {
+            source_type: 'dispute', source_id: disputeId, dispute_id: disputeId, booking_id: bookingId,
+            transaction_id: escrowTxId,
+            student_id: studentId, tutor_id: tutorId,
+            gross_amount: _drSplit.grossAmount, commission_rate: _drSplit.commissionRate,
+            commission_amount: _drSplit.commissionAmount, tutor_amount: _drSplit.tutorAmount,
+            event_type: 'EARNED', reason_code: 'DISPUTE_RELEASE',
+            decision_by: 'admin', actor_id: req.user.userId,
+            idempotency_key: `commission:dispute:${disputeId}:DISPUTE_RELEASE`,
+            metadata: { booking_id: bookingId },
+          });
         }
         await client.query("UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [bookingId]);
       } else if (dispute.target_type === 'course') {
@@ -8866,8 +12658,12 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
 
       await client.query("UPDATE disputes SET status='RESOLVED_RELEASE', penalty_type=$1, admin_note=$2, resolved_at=NOW() WHERE id=$3", [penaltyType, adminNote, disputeId]);
 
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'dispute_resolved','Khiếu nại không được chấp nhận',$2,'gavel',$3,'dispute')`,
-        [studentId, `Admin xem xét và phán quyết gia sư không vi phạm.`, disputeId]);
+      await safeNotifyUser(client, {
+        userId: studentId, channels: ['IN_APP'],
+        templateKey: 'dispute_resolved_release', eventType: 'dispute_resolved_release',
+        refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
+        idempotencyKey: `dispute:${disputeId}:resolved:release:${studentId}`,
+      });
     }
 
     await client.query('COMMIT');
@@ -8922,15 +12718,50 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
       await client.query('UPDATE wallets SET held_balance=held_balance+$1 WHERE id=$2', [tutorAmount, tw.rows[0].id]);
       if (adminWalletId) await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
       await client.query('UPDATE transactions SET status=\'RELEASED\', updated_at=NOW() WHERE id=$1', [booking.escrow_tx_id]);
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'escrow_released','Tiền giữ trong quỹ đảm bảo',$2,'lock',$3,'booking')`,
-        [booking.tutor_id, `${tutorAmount.toLocaleString('vi-VN')}đ trong quỹ đảm bảo. Sẽ rút được sau buổi thứ 3.`, booking.id]);
+      await safeNotifyUser(client, {
+        userId: booking.tutor_id, channels: ['IN_APP'],
+        title: 'Tiền giữ trong quỹ đảm bảo', templateKey: 'escrow_released', eventType: 'escrow_released',
+        body: `${tutorAmount.toLocaleString('vi-VN')}đ trong quỹ đảm bảo. Sẽ rút được sau buổi thứ 3.`,
+        icon: 'lock', refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id,
+        idempotencyKey: `booking:${booking.id}:escrow_released:${booking.tutor_id}`,
+      });
+      // Commission log: EARNED (cọc ảo path, held_balance, Batch 18)
+      await createCommissionLog(client, {
+        source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+        transaction_id: booking.escrow_tx_id,
+        student_id: booking.student_id, tutor_id: booking.tutor_id,
+        gross_amount: lessonFee, commission_rate: PLATFORM_COMMISSION_RATE,
+        commission_amount: adminAmount, tutor_amount: tutorAmount,
+        event_type: 'EARNED', reason_code: 'MANUAL_RELEASE',
+        decision_by: 'student', actor_id: req.user.userId,
+        idempotency_key: `commission:booking:${booking.id}:MANUAL_RELEASE`,
+        metadata: { virtual_deposit: true, completed_count: completedCount },
+      });
     } else {
       // Buổi 3+: giải ngân thẳng vào balance
       await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
         booking.escrow_tx_id, booking.payer_wallet_id, tw.rows[0].id, adminWalletId, lessonFee, 0.1
       ]);
-      await client.query(`INSERT INTO notifications (user_id,type,title,body,icon,ref_id,ref_type) VALUES ($1,'escrow_released','Tiền học phí đã vào ví',$2,'payments',$3,'booking')`,
-        [booking.tutor_id, `${tutorAmount.toLocaleString('vi-VN')}đ đã vào ví (sau 10% hoa hồng).`, booking.id]);
+      await safeNotifyUser(client, {
+        userId: booking.tutor_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'escrow_released', eventType: 'escrow_released',
+        data: { amount: tutorAmount }, refId: booking.id, refType: 'booking',
+        sourceType: 'booking', sourceId: booking.id,
+        idempotencyKey: `booking:${booking.id}:escrow_released:${booking.tutor_id}`,
+      });
+      // Commission log: EARNED (normal release path, Batch 18)
+      await createCommissionLog(client, {
+        source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+        transaction_id: booking.escrow_tx_id,
+        student_id: booking.student_id, tutor_id: booking.tutor_id,
+        gross_amount: lessonFee, commission_rate: PLATFORM_COMMISSION_RATE,
+        commission_amount: adminAmount, tutor_amount: tutorAmount,
+        event_type: 'EARNED', reason_code: 'MANUAL_RELEASE',
+        decision_by: 'student', actor_id: req.user.userId,
+        idempotency_key: `commission:booking:${booking.id}:MANUAL_RELEASE`,
+        metadata: { virtual_deposit: false, completed_count: completedCount },
+      });
     }
 
     await client.query('UPDATE tutor_profiles SET completed_lessons_count=completed_lessons_count+1 WHERE user_id=$1', [booking.tutor_id]);
@@ -9237,6 +13068,467 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.error('⚠️  DB migration (wallet_ledger) warning:', err.message);
   }
 
+  // ── Commission Policy V1: append-only business-level commission log (Batch 18) ─
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS commission_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        source_type TEXT NOT NULL CHECK (source_type IN ('booking','course','dispute','transaction','system')),
+        source_id UUID NOT NULL,
+        booking_id UUID REFERENCES bookings(id) ON DELETE SET NULL,
+        course_id UUID REFERENCES courses(id) ON DELETE SET NULL,
+        dispute_id UUID REFERENCES disputes(id) ON DELETE SET NULL,
+        transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+        student_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        tutor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        gross_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        commission_rate NUMERIC(6,5) NOT NULL DEFAULT 0.10,
+        commission_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        tutor_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        event_type TEXT NOT NULL CHECK (event_type IN ('EARNED','REVERSED','ADJUSTED')),
+        reason_code TEXT NOT NULL,
+        policy_version TEXT NOT NULL DEFAULT 'COMMISSION_POLICY_V1',
+        decision_by TEXT NOT NULL DEFAULT 'system'
+          CHECK (decision_by IN ('system','admin','student','tutor','api','cron')),
+        actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        idempotency_key TEXT UNIQUE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_source      ON commission_logs(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_booking     ON commission_logs(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_course      ON commission_logs(course_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_dispute     ON commission_logs(dispute_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_transaction ON commission_logs(transaction_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_student     ON commission_logs(student_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_tutor       ON commission_logs(tutor_id);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_reason      ON commission_logs(reason_code);
+      CREATE INDEX IF NOT EXISTS idx_commission_logs_created     ON commission_logs(created_at);
+    `);
+    console.log('✅ DB migration: commission_logs table + indexes ready (Batch 18)');
+  } catch (err) {
+    console.error('⚠️  DB migration (commission_logs) warning:', err.message);
+  }
+
+  // ── Withdrawal Policy V1: tutor manual payout requests (Batch 19) ───────────
+  // Append state machine: PENDING → APPROVED → PAID, or PENDING/APPROVED →
+  // REJECTED, or PENDING → CANCELLED. Money is HELD on create. This is a NEW
+  // table, separate from the legacy empty `withdraw_requests` (left intact).
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS withdrawal_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        wallet_id UUID NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+        amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+        fee_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        net_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'PENDING'
+          CHECK (status IN ('PENDING','APPROVED','REJECTED','CANCELLED','PAID')),
+        payout_method TEXT NOT NULL DEFAULT 'BANK_TRANSFER',
+        bank_name TEXT,
+        bank_account_no TEXT,
+        bank_account_name TEXT,
+        payout_note TEXT,
+        policy_version TEXT NOT NULL DEFAULT 'WITHDRAWAL_POLICY_V1',
+        requested_at TIMESTAMPTZ DEFAULT NOW(),
+        approved_at TIMESTAMPTZ,
+        rejected_at TIMESTAMPTZ,
+        cancelled_at TIMESTAMPTZ,
+        paid_at TIMESTAMPTZ,
+        approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        rejected_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        paid_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        admin_note TEXT,
+        reject_reason TEXT,
+        hold_transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+        payout_transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+        idempotency_key TEXT UNIQUE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_tutor   ON withdrawal_requests(tutor_id);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_wallet  ON withdrawal_requests(wallet_id);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_status  ON withdrawal_requests(status);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_created ON withdrawal_requests(created_at);
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_paid    ON withdrawal_requests(paid_at);
+    `);
+    console.log('✅ DB migration: withdrawal_requests table + indexes ready (Batch 19)');
+  } catch (err) {
+    console.error('⚠️  DB migration (withdrawal_requests) warning:', err.message);
+  }
+
+  // ── Notification & Email Reliability: additive columns + outbox (Batch 20) ──
+  try {
+    await pool.query(`
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS event_type TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'normal';
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS source_type TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS source_id UUID;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_idempotency_key
+        ON notifications(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    `);
+    console.log('✅ DB migration: notifications additive columns ready (Batch 20)');
+  } catch (err) {
+    console.error('⚠️  DB migration (notifications columns) warning:', err.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notification_outbox (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        email TEXT,
+        channel TEXT NOT NULL CHECK (channel IN ('IN_APP','EMAIL')),
+        event_type TEXT NOT NULL,
+        template_key TEXT NOT NULL,
+        subject TEXT,
+        title TEXT,
+        body TEXT NOT NULL,
+        html_body TEXT,
+        status TEXT NOT NULL DEFAULT 'PENDING'
+          CHECK (status IN ('PENDING','SENT','FAILED','RETRYING','SKIPPED','CANCELLED')),
+        priority TEXT NOT NULL DEFAULT 'normal'
+          CHECK (priority IN ('low','normal','high','critical')),
+        source_type TEXT,
+        source_id UUID,
+        ref_type TEXT,
+        ref_id UUID,
+        notification_id UUID REFERENCES notifications(id) ON DELETE SET NULL,
+        attempts INT NOT NULL DEFAULT 0,
+        max_attempts INT NOT NULL DEFAULT 3,
+        last_attempt_at TIMESTAMPTZ,
+        next_attempt_at TIMESTAMPTZ DEFAULT NOW(),
+        sent_at TIMESTAMPTZ,
+        error_message TEXT,
+        idempotency_key TEXT UNIQUE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_user         ON notification_outbox(user_id);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_email        ON notification_outbox(email);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_status       ON notification_outbox(status);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_next_attempt ON notification_outbox(next_attempt_at);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_event        ON notification_outbox(event_type);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_source       ON notification_outbox(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_created      ON notification_outbox(created_at);
+    `);
+    console.log('✅ DB migration: notification_outbox table + indexes ready (Batch 20)');
+  } catch (err) {
+    console.error('⚠️  DB migration (notification_outbox) warning:', err.message);
+  }
+
+  // ── DB migration: notification_outbox PROCESSING support (Batch 20.2) ────────
+  try {
+    // Add new columns needed for claim-then-send processor pattern.
+    await pool.query(`
+      ALTER TABLE notification_outbox
+        ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS processor_id          TEXT,
+        ADD COLUMN IF NOT EXISTS provider_message_id   TEXT
+    `);
+
+    // Update status CHECK constraint to include PROCESSING. The DO block finds
+    // and drops any existing status-related CHECK (regardless of auto-name),
+    // then adds a stable named constraint.
+    await pool.query(`
+      DO $$
+      DECLARE _cname TEXT;
+      BEGIN
+        FOR _cname IN
+          SELECT con.conname
+          FROM pg_constraint con
+          JOIN pg_class rel ON rel.oid = con.conrelid
+          WHERE rel.relname = 'notification_outbox'
+            AND con.contype = 'c'
+            AND pg_get_constraintdef(con.oid) ILIKE '%PENDING%'
+            AND pg_get_constraintdef(con.oid) ILIKE '%status%'
+        LOOP
+          EXECUTE format('ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS %I', _cname);
+        END LOOP;
+        ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_status_check;
+        ALTER TABLE notification_outbox ADD CONSTRAINT notification_outbox_status_check
+          CHECK (status IN ('PENDING','SENT','FAILED','RETRYING','SKIPPED','CANCELLED','PROCESSING'));
+      END $$
+    `);
+
+    // Index to accelerate stale-PROCESSING recovery query.
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_notification_outbox_processing
+        ON notification_outbox(status, processing_started_at)
+    `);
+
+    console.log('✅ DB migration: notification_outbox PROCESSING support ready (Batch 20.2)');
+  } catch (err) {
+    console.error('⚠️  DB migration (notification_outbox Batch 20.2) warning:', err.message);
+  }
+
+  // ── Auto-migrate: AI case resolution (Batch 25, dry-run scaffolding) ─────────
+  // NOTE: resolved_transaction_id matches transactions.id (UUID) so the FK is
+  // type-safe. appeal_by / appeal_reviewed_by are UUID to match users.id (this
+  // schema uses UUID user ids, not INTEGER).
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ai_case_resolutions (
+        id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        dispute_id              UUID REFERENCES disputes(id) ON DELETE CASCADE,
+        booking_id              UUID,
+        student_id              UUID REFERENCES users(id) ON DELETE SET NULL,
+        tutor_id                UUID REFERENCES users(id) ON DELETE SET NULL,
+        status                  TEXT NOT NULL DEFAULT 'AI_SUGGESTED'
+                                CHECK (status IN ('AI_SUGGESTED','AUTO_RESOLVED','NEED_HUMAN_REVIEW','SKIPPED','FAILED')),
+        severity                TEXT,
+        confidence              INT,
+        money_action            TEXT,
+        recommendation          TEXT,
+        reason_summary          TEXT,
+        risk_flags              JSONB NOT NULL DEFAULT '[]'::jsonb,
+        ai_evidence             JSONB NOT NULL DEFAULT '{}'::jsonb,
+        policy_version          TEXT DEFAULT 'REFUND_POLICY_V2_1',
+        dry_run                 BOOLEAN NOT NULL DEFAULT TRUE,
+        executed                BOOLEAN NOT NULL DEFAULT FALSE,
+        resolved_transaction_id UUID REFERENCES transactions(id),
+        financial_trace         JSONB NOT NULL DEFAULT '{}'::jsonb,
+        appealed_at             TIMESTAMPTZ,
+        appeal_reason           TEXT,
+        appeal_status           TEXT NOT NULL DEFAULT 'NONE'
+                                CHECK (appeal_status IN ('NONE','APPEALED_NEED_REVIEW','REVIEWED','REJECTED','ACCEPTED')),
+        appeal_by               UUID REFERENCES users(id),
+        appeal_reviewed_at      TIMESTAMPTZ,
+        appeal_reviewed_by      UUID REFERENCES users(id),
+        created_at              TIMESTAMPTZ DEFAULT NOW(),
+        resolved_at             TIMESTAMPTZ
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_case_res_dispute ON ai_case_resolutions(dispute_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_case_res_status  ON ai_case_resolutions(status);
+      CREATE INDEX IF NOT EXISTS idx_ai_case_res_appeal  ON ai_case_resolutions(appeal_status);
+      CREATE INDEX IF NOT EXISTS idx_ai_case_res_student ON ai_case_resolutions(student_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_case_res_tutor   ON ai_case_resolutions(tutor_id);
+
+      CREATE TABLE IF NOT EXISTS lesson_session_events (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id  UUID,
+        user_id     UUID,
+        role        TEXT,
+        event_type  TEXT NOT NULL CHECK (event_type IN ('JOIN','LEAVE','HEARTBEAT')),
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lesson_session_events_booking ON lesson_session_events(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_lesson_session_events_created ON lesson_session_events(created_at);
+    `);
+    console.log('✅ DB migration: ai_case_resolutions + lesson_session_events ready (Batch 25)');
+  } catch (err) {
+    console.error('⚠️  DB migration (ai_case_resolutions Batch 25) warning:', err.message);
+  }
+
+  // ── Auto-migrate: admin_copilot_reports (Batch 26, advisory-only) ───────────
+  // created_by is UUID to match users.id (this schema uses UUID user ids). No FK
+  // to keep it decoupled/robust; the value is validated as the admin's own id.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_copilot_reports (
+        id                      BIGSERIAL PRIMARY KEY,
+        entity_type             TEXT NOT NULL,
+        entity_id               TEXT,
+        page_key                TEXT,
+        summary                 TEXT,
+        confidence              NUMERIC(5,2),
+        risk_level              TEXT CHECK (risk_level IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+        key_findings            JSONB NOT NULL DEFAULT '[]'::jsonb,
+        evidence                JSONB NOT NULL DEFAULT '[]'::jsonb,
+        recommendations         JSONB NOT NULL DEFAULT '[]'::jsonb,
+        suggested_admin_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        limitations             JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used              TEXT DEFAULT 'RULE_BASED',
+        input_snapshot          JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by              UUID,
+        created_at              TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_copilot_reports_entity ON admin_copilot_reports(entity_type, entity_id);
+      CREATE INDEX IF NOT EXISTS idx_copilot_reports_risk   ON admin_copilot_reports(risk_level, created_at);
+      CREATE INDEX IF NOT EXISTS idx_copilot_reports_author ON admin_copilot_reports(created_by, created_at);
+    `);
+    console.log('✅ DB migration: admin_copilot_reports ready (Batch 26)');
+  } catch (err) {
+    console.error('⚠️  DB migration (admin_copilot_reports Batch 26) warning:', err.message);
+  }
+
+  // ── Auto-migrate: semantic moderation (Batch 27, advisory-only) ─────────────
+  // User-id columns are UUID (matches users.id). No FK to stay decoupled and to
+  // allow storing analysis for manual/edge cases; values validated in code.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS semantic_moderation_reports (
+        id             BIGSERIAL PRIMARY KEY,
+        source_type    TEXT NOT NULL CHECK (source_type IN ('REVIEW','CHAT_MESSAGE','CHAT_THREAD','TUTOR_PROFILE','TEXT','MIXED')),
+        source_id      TEXT,
+        tutor_id       UUID,
+        student_id     UUID,
+        target_user_id UUID,
+        severity       TEXT CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')) DEFAULT 'LOW',
+        status         TEXT CHECK (status IN ('OPEN','REVIEWED','DISMISSED','ACTION_REQUIRED')) DEFAULT 'OPEN',
+        categories        JSONB NOT NULL DEFAULT '[]'::jsonb,
+        scores            JSONB NOT NULL DEFAULT '{}'::jsonb,
+        summary           TEXT,
+        evidence          JSONB NOT NULL DEFAULT '[]'::jsonb,
+        highlighted_text  JSONB NOT NULL DEFAULT '[]'::jsonb,
+        suggested_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        limitations       JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used     TEXT DEFAULT 'RULE_BASED',
+        rule_version   TEXT NOT NULL DEFAULT 'SEMANTIC_MODERATION_V1',
+        input_hash     TEXT,
+        created_at     TIMESTAMPTZ DEFAULT NOW(),
+        reviewed_at    TIMESTAMPTZ,
+        reviewed_by    UUID,
+        admin_note     TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_source   ON semantic_moderation_reports(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_tutor    ON semantic_moderation_reports(tutor_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_target   ON semantic_moderation_reports(target_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_sev      ON semantic_moderation_reports(severity, status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_hash     ON semantic_moderation_reports(input_hash);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_cat      ON semantic_moderation_reports USING GIN (categories);
+
+      CREATE TABLE IF NOT EXISTS tutor_reputation_semantic_scores (
+        id                          BIGSERIAL PRIMARY KEY,
+        tutor_id                    UUID,
+        period_start                DATE NOT NULL,
+        period_end                  DATE NOT NULL,
+        patience_score              NUMERIC(5,2),
+        friendliness_score          NUMERIC(5,2),
+        teaching_quality_score      NUMERIC(5,2),
+        professionalism_score       NUMERIC(5,2),
+        external_payment_risk_score NUMERIC(5,2),
+        toxicity_risk_score         NUMERIC(5,2),
+        spam_risk_score             NUMERIC(5,2),
+        overall_reputation_score    NUMERIC(5,2),
+        summary                     TEXT,
+        evidence                    JSONB NOT NULL DEFAULT '[]'::jsonb,
+        report_count                INTEGER DEFAULT 0,
+        created_at                  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at                  TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (tutor_id, period_start, period_end)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tutor_rep_sem_tutor ON tutor_reputation_semantic_scores(tutor_id, period_end);
+    `);
+    console.log('✅ DB migration: semantic_moderation_reports + tutor_reputation_semantic_scores ready (Batch 27)');
+  } catch (err) {
+    console.error('⚠️  DB migration (semantic moderation Batch 27) warning:', err.message);
+  }
+
+  // ── Auto-migrate: fraud intel (Batch 28, advisory-only) ─────────────────────
+  // User-id columns UUID (matches users.id), no FK. detection_window_key gives
+  // per-(type+entity+day) idempotency via ON CONFLICT upsert.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS fraud_intel_reports (
+        id                   BIGSERIAL PRIMARY KEY,
+        report_type          TEXT NOT NULL CHECK (report_type IN ('USER_PAIR','TUTOR_CLUSTER','STUDENT_CLUSTER','TRANSACTION_RING','VOUCHER_ABUSE','REFUND_ABUSE','WITHDRAWAL_RISK','EXTERNAL_PAYMENT_COLLUSION','MIXED')),
+        status               TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','REVIEWED','DISMISSED','ACTION_REQUIRED','ESCALATED')),
+        severity             TEXT NOT NULL DEFAULT 'LOW' CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+        risk_score           NUMERIC(5,2) DEFAULT 0,
+        confidence           NUMERIC(5,2) DEFAULT 0,
+        primary_user_id      UUID,
+        secondary_user_id    UUID,
+        tutor_id             UUID,
+        student_id           UUID,
+        entity_key           TEXT NOT NULL,
+        detection_window_key TEXT UNIQUE,
+        title                TEXT,
+        summary              TEXT,
+        reason_summary       TEXT,
+        risk_flags           JSONB NOT NULL DEFAULT '[]'::jsonb,
+        evidence             JSONB NOT NULL DEFAULT '[]'::jsonb,
+        timeline             JSONB NOT NULL DEFAULT '[]'::jsonb,
+        related_entities     JSONB NOT NULL DEFAULT '[]'::jsonb,
+        financial_trace      JSONB NOT NULL DEFAULT '{}'::jsonb,
+        suggested_actions    JSONB NOT NULL DEFAULT '[]'::jsonb,
+        limitations          JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used           TEXT DEFAULT 'RULE_BASED',
+        rule_version         TEXT DEFAULT 'FRAUD_INTEL_V1',
+        period_start         TIMESTAMPTZ,
+        period_end           TIMESTAMPTZ,
+        reviewed_at          TIMESTAMPTZ,
+        reviewed_by          UUID,
+        admin_note           TEXT,
+        created_at           TIMESTAMPTZ DEFAULT NOW(),
+        updated_at           TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_fraud_status   ON fraud_intel_reports(status, severity, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_type     ON fraud_intel_reports(report_type, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_entity   ON fraud_intel_reports(entity_key, period_start, period_end);
+      CREATE INDEX IF NOT EXISTS idx_fraud_tutor    ON fraud_intel_reports(tutor_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_student  ON fraud_intel_reports(student_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_primary  ON fraud_intel_reports(primary_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_secondary ON fraud_intel_reports(secondary_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_flags    ON fraud_intel_reports USING GIN (risk_flags);
+
+      CREATE TABLE IF NOT EXISTS fraud_intel_run_logs (
+        id                   BIGSERIAL PRIMARY KEY,
+        triggered_by         TEXT,
+        scanned_pairs        INTEGER DEFAULT 0,
+        scanned_users        INTEGER DEFAULT 0,
+        scanned_transactions INTEGER DEFAULT 0,
+        reports_created      INTEGER DEFAULT 0,
+        reports_updated      INTEGER DEFAULT 0,
+        skipped              INTEGER DEFAULT 0,
+        failed               INTEGER DEFAULT 0,
+        limitations          JSONB DEFAULT '[]'::jsonb,
+        started_at           TIMESTAMPTZ DEFAULT NOW(),
+        finished_at          TIMESTAMPTZ,
+        error_message        TEXT
+      );
+    `);
+    console.log('✅ DB migration: fraud_intel_reports + fraud_intel_run_logs ready (Batch 28)');
+  } catch (err) {
+    console.error('⚠️  DB migration (fraud intel Batch 28) warning:', err.message);
+  }
+
+  // ── Auto-migrate: admin_analytics_queries (Batch 29A audit log) ─────────────
+  // created_by UUID (matches users.id), no FK. Stores only capped result preview.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_analytics_queries (
+        id                  BIGSERIAL PRIMARY KEY,
+        question            TEXT NOT NULL,
+        normalized_question TEXT,
+        detected_intent     TEXT,
+        template_key        TEXT,
+        status              TEXT CHECK (status IN ('SUCCESS','NO_MATCH','BLOCKED','FAILED')) DEFAULT 'SUCCESS',
+        summary             TEXT,
+        sql_preview         TEXT,
+        parameters          JSONB NOT NULL DEFAULT '{}'::jsonb,
+        result_count        INTEGER DEFAULT 0,
+        result_preview      JSONB NOT NULL DEFAULT '[]'::jsonb,
+        chart_data          JSONB NOT NULL DEFAULT '{}'::jsonb,
+        limitations         JSONB NOT NULL DEFAULT '[]'::jsonb,
+        safety_flags        JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used          TEXT DEFAULT 'TEMPLATE_RULE_BASED',
+        created_by          UUID,
+        created_at          TIMESTAMPTZ DEFAULT NOW(),
+        error_message       TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_author   ON admin_analytics_queries(created_by, created_at);
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_intent   ON admin_analytics_queries(detected_intent, created_at);
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_template ON admin_analytics_queries(template_key, created_at);
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_status   ON admin_analytics_queries(status, created_at);
+    `);
+    console.log('✅ DB migration: admin_analytics_queries ready (Batch 29A)');
+  } catch (err) {
+    console.error('⚠️  DB migration (admin_analytics_queries Batch 29A) warning:', err.message);
+  }
+
+  // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
+  // Runs every minute; processNotificationOutbox() guards against overlap and
+  // never throws, so this interval can never crash the server.
+  setInterval(() => {
+    processNotificationOutbox(20).catch(err => console.error('[outbox cron] error:', err.message));
+  }, 60 * 1000);
+
   // ── Cron: Auto-release escrow sau 24h nếu không có khiếu nại ───────────────
   setInterval(async () => {
     try {
@@ -9276,15 +13568,33 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
           await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
             row.escrow_tx_id, row.payer_wallet_id, tutorWalletId, adminWalletId, row.lesson_fee, 0.1
           ]);
+          // Commission log: EARNED on auto-release (Batch 18)
+          const _arSplit = calculateCommissionSplit(row.lesson_fee);
+          const _arStudent = (await client.query('SELECT student_id FROM bookings WHERE id=$1', [row.id])).rows[0]?.student_id || null;
+          await createCommissionLog(client, {
+            source_type: 'booking', source_id: row.id, booking_id: row.id,
+            transaction_id: row.escrow_tx_id,
+            student_id: _arStudent, tutor_id: row.tutor_id,
+            gross_amount: _arSplit.grossAmount, commission_rate: _arSplit.commissionRate,
+            commission_amount: _arSplit.commissionAmount, tutor_amount: _arSplit.tutorAmount,
+            event_type: 'EARNED', reason_code: 'AUTO_RELEASE_24H',
+            decision_by: 'cron',
+            idempotency_key: `commission:booking:${row.id}:AUTO_RELEASE_24H`,
+            metadata: { lesson_fee: row.lesson_fee },
+          });
           await client.query(`UPDATE bookings SET escrow_released_at=NOW() WHERE id=$1`, [row.id]);
           await client.query(`
             UPDATE tutor_profiles SET completed_lessons_count = completed_lessons_count + 1
             WHERE user_id = $1
           `, [row.tutor_id]);
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'escrow_released','Tiền học phí đã được giải ngân',$2,'payments',$3,'booking')
-          `, [row.tutor_id, `Học phí buổi học đã được chuyển vào ví của bạn (sau 24h xác nhận).`, row.id]);
+          await safeNotifyUser(client, {
+            userId: row.tutor_id, channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'escrow_released', eventType: 'escrow_released',
+            body: 'Học phí buổi học đã được chuyển vào ví của bạn (sau 24h xác nhận).',
+            data: { amount: row.lesson_fee }, refId: row.id, refType: 'booking',
+            sourceType: 'booking', sourceId: row.id,
+            idempotencyKey: `booking:${row.id}:escrow_released:${row.tutor_id}`,
+          });
           await client.query('COMMIT');
           console.log(`✅ Auto-released escrow for booking ${row.id}`);
         } catch (innerErr) {
@@ -9340,19 +13650,29 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
             await client.query(`UPDATE bookings SET status='Cancelled' WHERE id=$1`, [row.id]);
           }
 
-          // Thông báo cho Học sinh
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'refund','Lịch học đã bị hủy do gia sư không phản hồi',$2,'undo',$3,'booking')
-          `, [row.student_id, refunded
+          // Thông báo cho Học sinh (Batch 20.1: safeNotifyUser, same client)
+          await safeNotifyUser(client, {
+            userId: row.student_id, type: 'refund', channels: ['IN_APP'],
+            templateKey: 'booking_auto_cancel_no_response', eventType: 'booking_auto_cancel_no_response',
+            title: 'Lịch học đã bị hủy do gia sư không phản hồi',
+            body: refunded
               ? `Hệ thống đã hủy lịch học và hoàn lại ${Number(row.lesson_fee || 0).toLocaleString('vi-VN')}đ vì gia sư không duyệt trong 24h.`
-              : `Hệ thống đã hủy lịch học vì gia sư không duyệt trong 24h.`, row.id]);
+              : `Hệ thống đã hủy lịch học vì gia sư không duyệt trong 24h.`,
+            icon: 'undo', refId: row.id, refType: 'booking',
+            sourceType: 'booking', sourceId: row.id, priority: 'high',
+            idempotencyKey: `booking:${row.id}:auto_cancel_no_response:${row.student_id}`,
+          });
 
           // Thông báo cho Gia sư
-          await client.query(`
-            INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-            VALUES ($1,'cancellation','Lịch học bị hủy tự động',$2,'event_busy',$3,'booking')
-          `, [row.tutor_id, `Một lịch học đã bị hủy vì bạn không phản hồi trong 24h.`, row.id]);
+          await safeNotifyUser(client, {
+            userId: row.tutor_id, type: 'cancellation', channels: ['IN_APP'],
+            templateKey: 'booking_auto_cancel_no_response', eventType: 'booking_auto_cancel_no_response',
+            title: 'Lịch học bị hủy tự động',
+            body: 'Một lịch học đã bị hủy vì bạn không phản hồi trong 24h.',
+            icon: 'event_busy', refId: row.id, refType: 'booking',
+            sourceType: 'booking', sourceId: row.id, priority: 'high',
+            idempotencyKey: `booking:${row.id}:auto_cancel_no_response:${row.tutor_id}`,
+          });
 
           await client.query('COMMIT');
           console.log(`✅ Auto-cancelled unapproved booking ${row.id}`);
@@ -9369,6 +13689,44 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
       }
     }
   }, 10 * 60 * 1000); // chạy mỗi 10 phút
+
+  // ── Cron: AI case resolution (Batch 25) — hourly, gated OFF by default ───────
+  // Uses the SAME runPendingAiCases() logic as POST /api/admin/ai-cases/run-pending.
+  // Never moves money (dry-run scaffolding). Disabled unless AUTO_AI_CRON_ENABLED=true.
+  if (AUTO_AI_CRON_ENABLED) {
+    setInterval(() => {
+      runPendingAiCases({ triggeredBy: 'cron' }).catch(err => console.error('[ai-cases cron] error:', err.message));
+    }, 60 * 60 * 1000);
+    console.log(`🕐 AI case cron ENABLED (hourly). resolutionEnabled=${AUTO_AI_RESOLUTION_ENABLED} dryRun=${AUTO_AI_DRY_RUN}`);
+  } else {
+    console.log('⏸️  AI case cron disabled (AUTO_AI_CRON_ENABLED=false).');
+  }
+
+  // ── Worker: Semantic moderation (Batch 27) — gated OFF by default ───────────
+  // Uses the SAME runPendingSemanticModeration() as POST run-pending. Only writes
+  // moderation reports + tutor semantic scores; never emails/bans/changes money.
+  if (SEMANTIC_MODERATION_WORKER_ENABLED) {
+    setInterval(() => {
+      runPendingSemanticModeration({ limit: SEMANTIC_MODERATION_BATCH_LIMIT, triggeredBy: 'worker' })
+        .catch(err => console.error('[semantic worker] error:', err.message));
+    }, Math.max(5, SEMANTIC_MODERATION_INTERVAL_MINUTES) * 60 * 1000);
+    console.log(`🕐 Semantic moderation worker ENABLED (every ${SEMANTIC_MODERATION_INTERVAL_MINUTES}m).`);
+  } else {
+    console.log('⏸️  Semantic moderation worker disabled (SEMANTIC_MODERATION_WORKER_ENABLED=false).');
+  }
+
+  // ── Worker: Fraud intel (Batch 28) — gated OFF by default ───────────────────
+  // Same runFraudRingDetection() as POST run. Only writes fraud reports + run
+  // logs; never emails/bans/moves money/changes account or transaction status.
+  if (FRAUD_INTEL_WORKER_ENABLED) {
+    setInterval(() => {
+      runFraudRingDetection({ periodDays: FRAUD_INTEL_PERIOD_DAYS, limit: FRAUD_INTEL_BATCH_LIMIT, triggeredBy: 'worker' })
+        .catch(err => console.error('[fraud worker] error:', err.message));
+    }, Math.max(10, FRAUD_INTEL_INTERVAL_MINUTES) * 60 * 1000);
+    console.log(`🕐 Fraud intel worker ENABLED (every ${FRAUD_INTEL_INTERVAL_MINUTES}m).`);
+  } else {
+    console.log('⏸️  Fraud intel worker disabled (FRAUD_INTEL_WORKER_ENABLED=false).');
+  }
 
   app.listen(port, () => {
     console.log(`🚀 Server is running on http://localhost:${port}`);

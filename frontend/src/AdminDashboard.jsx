@@ -6,7 +6,6 @@ import NotificationDropdown from './components/NotificationDropdown'
 import FinancialOverview     from './admin/transactions/FinancialOverview'
 import LessonPayments        from './admin/transactions/LessonPayments'
 import CourseTransactions    from './admin/transactions/CourseTransactions'
-import TutorWithdrawals      from './admin/transactions/TutorWithdrawals'
 import RefundManagement      from './admin/transactions/RefundManagement'
 import FailedTransactions    from './admin/transactions/FailedTransactions'
 import PaymentGateways       from './admin/transactions/PaymentGateways'
@@ -20,9 +19,17 @@ import FraudAlerts           from './admin/transactions/FraudAlerts'
 import NotificationCenter    from './admin/transactions/NotificationCenter'
 import AuditLogs             from './admin/transactions/AuditLogs'
 import WalletLedger          from './admin/transactions/WalletLedger'
+import CommissionLogs        from './admin/transactions/CommissionLogs'
+import NotificationOutbox     from './admin/transactions/NotificationOutbox'
+import WithdrawalRequests     from './admin/transactions/WithdrawalRequests'
+import AICaseResolutions      from './admin/transactions/AICaseResolutions'
+import AdminCopilot           from './admin/copilot/AdminCopilot'
 
 import Violations from './admin/services/Violations'
 import Moderation from './admin/services/Moderation'
+import SemanticModeration from './admin/semantic/SemanticModeration'
+import FraudIntel from './admin/fraud/FraudIntel'
+import SafeAnalytics from './admin/analytics/SafeAnalytics'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -59,9 +66,10 @@ const TX_SUB_ITEMS = [
   { id: 'tx-overview',     label: 'Tổng Quan Tài Chính',    icon: 'bar_chart' },
   { id: 'tx-lessons',      label: 'Thanh Toán Buổi Học',       icon: 'receipt_long' },
   { id: 'tx-courses',      label: 'Giao Dịch Khóa Học',   icon: 'school' },
-  { id: 'tx-withdrawals',  label: 'Gia Sư Rút Tiền',     icon: 'account_balance' },
+  { id: 'tx-withdrawals',  label: 'Duyệt Rút Tiền',      icon: 'account_balance' },
   { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
   { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
+  { id: 'tx-ai-cases',     label: 'Xử Lý AI Khiếu Nại',    icon: 'smart_toy' },
   { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
   { id: 'tx-gateways',     label: 'Cổng Thanh Toán',      icon: 'credit_card' },
   { id: 'tx-commissions',  label: 'Quản Lý Hoa Hồng',       icon: 'percent' },
@@ -72,7 +80,9 @@ const TX_SUB_ITEMS = [
   { id: 'tx-reconciliation', label: 'Đối Soát',      icon: 'compare_arrows' },
   { id: 'tx-fraud',        label: 'Cảnh Báo Gian Lận',          icon: 'warning' },
   { id: 'tx-notifications', label: 'Trung Tâm Thông Báo',  icon: 'notifications' },
-  { id: 'tx-wallet-ledger', label: 'Sổ Cái Ví',             icon: 'account_balance_wallet' },
+  { id: 'tx-wallet-ledger',    label: 'Sổ Cái Ví',            icon: 'account_balance_wallet' },
+  { id: 'tx-commission-logs', label: 'Nhật Ký Hoa Hồng',    icon: 'receipt_long' },
+  { id: 'notifications-outbox', label: 'Email / Hàng Đợi Thông Báo', icon: 'mark_email_read' },
   { id: 'tx-audit',        label: 'Nhật Ký Admin',            icon: 'history_edu' },
 ]
 
@@ -83,6 +93,9 @@ const SM_SUB_ITEMS = [
   { id: 'sm-reviews',      label: 'Đánh giá',              icon: 'reviews' },
   { id: 'sm-violations',   label: 'Báo cáo vi phạm',       icon: 'gavel' },
   { id: 'sm-moderation',   label: 'Kiểm duyệt nội dung',   icon: 'policy' },
+  { id: 'sm-semantic',     label: 'AI Kiểm duyệt Nội dung', icon: 'smart_toy' },
+  { id: 'sm-fraud',        label: 'AI Phát hiện Gian lận', icon: 'security' },
+  { id: 'sm-analytics',    label: 'AI Phân tích Dữ liệu',  icon: 'query_stats' },
 ]
 const SM_VIEW_IDS = new Set(SM_SUB_ITEMS.map(i => i.id))
 
@@ -266,7 +279,7 @@ export default function AdminDashboard() {
   const initials    = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 
   return (
-    <div className="bg-background text-on-surface min-h-screen flex antialiased">
+    <div className="bg-background text-on-surface min-h-screen flex antialiased overflow-x-hidden">
 
       {/* Toast */}
       {toast && (
@@ -385,11 +398,11 @@ export default function AdminDashboard() {
       </aside>
 
       {/* ══ MAIN ══ */}
-      <main className="flex-1 ml-64 min-h-screen flex flex-col overflow-x-hidden">
+      <main className="ml-64 w-[calc(100%-16rem)] max-w-[calc(100vw-16rem)] min-w-0 min-h-screen flex flex-col overflow-x-hidden">
 
         {/* Top bar */}
-        <header className="h-16 fixed top-0 right-0 left-64 z-10 bg-white shadow-sm flex justify-between items-center px-10">
-          <div className="relative w-96">
+        <header className="h-16 fixed top-0 right-0 left-64 z-10 bg-white shadow-sm flex justify-between items-center px-6 lg:px-10 min-w-0 overflow-hidden">
+          <div className="relative w-full max-w-md min-w-0">
             <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span>
             <input
               className="w-full pl-10 pr-4 py-2 rounded-lg border border-outline-variant bg-gray-50 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all"
@@ -462,9 +475,10 @@ export default function AdminDashboard() {
           {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} token={token} />}
           {activeView === 'tx-lessons'       && <LessonPayments token={token} />}
           {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
-          {activeView === 'tx-withdrawals'   && <TutorWithdrawals token={token} />}
+          {activeView === 'tx-withdrawals'   && <WithdrawalRequests token={token} />}
           {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
           {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
+          {activeView === 'tx-ai-cases'      && <AICaseResolutions token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
           {activeView === 'tx-gateways'      && <PaymentGateways token={token} />}
           {activeView === 'tx-commissions'   && <CommissionManagement token={token} />}
@@ -475,7 +489,9 @@ export default function AdminDashboard() {
           {activeView === 'tx-reconciliation' && <Reconciliation token={token} />}
           {activeView === 'tx-fraud'         && <FraudAlerts token={token} />}
           {activeView === 'tx-notifications' && <NotificationCenter token={token} />}
-          {activeView === 'tx-wallet-ledger' && <WalletLedger token={token} />}
+          {activeView === 'tx-wallet-ledger'    && <WalletLedger token={token} />}
+          {activeView === 'tx-commission-logs' && <CommissionLogs token={token} />}
+          {activeView === 'notifications-outbox' && <NotificationOutbox token={token} />}
           {activeView === 'tx-audit'         && <AuditLogs token={token} />}
           
           {/* ── Service Management Module ── */}
@@ -483,6 +499,9 @@ export default function AdminDashboard() {
           {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
           {activeView === 'sm-violations'    && <Violations token={token} />}
           {activeView === 'sm-moderation'    && <Moderation token={token} />}
+          {activeView === 'sm-semantic'      && <SemanticModeration token={token} />}
+          {activeView === 'sm-fraud'         && <FraudIntel token={token} />}
+          {activeView === 'sm-analytics'     && <SafeAnalytics token={token} />}
 
           {activeView === 'reports'          && <FinancialReports token={token} />}
           {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
@@ -570,6 +589,9 @@ export default function AdminDashboard() {
         @keyframes growUp { from { transform: scaleY(0); } to { transform: scaleY(1); } }
         .bar-grow { transform-origin: bottom; animation: growUp 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
       `}</style>
+
+      {/* ══ AI COPILOT (Batch 26 — advisory only) ══ */}
+      <AdminCopilot token={token} pageKey={activeView} />
     </div>
   )
 }
@@ -604,7 +626,7 @@ function DashboardView({
   const rangeLabel    = chartRange === '30d' ? '30 ngày gần đây' : chartRange === '6m' ? '6 tháng gần đây' : 'Năm nay'
 
   return (
-    <div className="p-10 max-w-[1280px] mx-auto w-full">
+    <div className="p-6 lg:p-10 max-w-[1280px] mx-auto w-full min-w-0">
       <div className="mb-8 flex items-start justify-between">
         <div>
           <h2 className="text-3xl font-bold text-on-background">Tổng quan hệ thống</h2>
@@ -675,7 +697,7 @@ function DashboardView({
       </div>
 
       {/* ── CAP-1.1: Live KPI Cards (3 × 2 grid) ── */}
-      <div className="grid grid-cols-3 gap-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
         <OverviewCard
           icon="group"       iconBg="bg-gray-100"   iconColor="text-on-surface-variant"
           label="Tổng người dùng"
@@ -715,9 +737,9 @@ function DashboardView({
       </div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
         {/* Bar Chart — CAP-1.2: live data, dynamic Y-axis, range selector */}
-        <div className="col-span-8 bg-white rounded-xl p-6 shadow-sm flex flex-col h-[380px]">
+        <div className="xl:col-span-8 bg-white rounded-xl p-6 shadow-sm flex flex-col h-[380px] overflow-hidden min-w-0">
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-lg font-semibold text-on-background">Xu hướng tăng trưởng người dùng</h3>
@@ -759,7 +781,7 @@ function DashboardView({
                   <div key={i} className="flex flex-col items-center gap-1 flex-1">
                     <div className="w-full flex items-end justify-center" style={{ height: '200px' }}>
                       <div
-                        className="w-10 bg-gray-200 rounded-t-sm animate-pulse"
+                        className="w-full bg-gray-200 rounded-t-sm animate-pulse"
                         style={{ height: `${20 + (i % 5) * 15}%` }}
                       />
                     </div>
@@ -785,7 +807,7 @@ function DashboardView({
                   <div key={i} className="flex flex-col items-center gap-1 flex-1">
                     <div className="w-full flex items-end justify-center" style={{ height: '200px' }}>
                       <div
-                        className="w-10 bg-primary rounded-t-sm bar-grow"
+                        className="w-full bg-primary rounded-t-sm bar-grow"
                         style={{ height: `${b.h}%`, animationDelay: `${b.animDelay}ms` }}
                       />
                     </div>
@@ -805,7 +827,7 @@ function DashboardView({
         </div>
 
         {/* Recent Activity — CAP-1.2: live data from chart endpoint + KPI stats */}
-        <div className="col-span-4 bg-white rounded-xl p-6 shadow-sm">
+        <div className="xl:col-span-4 bg-white rounded-xl p-6 shadow-sm">
           <h3 className="text-lg font-semibold text-on-background mb-5">Hoạt động gần đây</h3>
           <div className="space-y-4">
             {/* Item 1: new tutor profiles today (chartData.today) */}
@@ -861,7 +883,7 @@ function DashboardView({
       </div>
 
       {/* Quick access row */}
-      <div className="grid grid-cols-3 gap-6 mt-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
         {[
           { id: 'tutor-approval',  icon: 'how_to_reg',  label: 'Duyệt gia sư',      desc: 'Xem xét hồ sơ chờ duyệt', count: null, accent: 'border-blue-500' },
           { id: 'sm-complaints',   icon: 'report_problem', label: 'Khiếu nại',    desc: 'Xem và xử lý khiếu nại tranh chấp', count: null, accent: 'border-amber-500' },
@@ -3014,12 +3036,20 @@ function ComplaintsView({ token }) {
                     <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${statusColor[d.status]||'bg-gray-100 text-gray-600'}`}>{statusLabel[d.status]||d.status}</span>
                   </td>
                   <td className="py-3 px-4 text-right">
-                    {d.status === 'OPEN' ? (
-                      <button onClick={() => { setResolveModal(d); setAdminNote(''); setRefundRate(1) }}
-                        className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 flex items-center gap-1 ml-auto">
-                        <span className="material-symbols-outlined text-[14px]">gavel</span>Phán quyết
+                    <div className="flex items-center gap-2 justify-end">
+                      <button
+                        onClick={() => window.dispatchEvent(new CustomEvent('admin-copilot:analyze', { detail: { entityType: 'DISPUTE', entityId: d.id } }))}
+                        title="Phân tích bằng AI Copilot"
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-blue-200 text-blue-600 hover:bg-blue-50 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[14px]">smart_toy</span>AI
                       </button>
-                    ) : <span className="text-xs text-on-surface-variant italic">Đã xử lý</span>}
+                      {d.status === 'OPEN' ? (
+                        <button onClick={() => { setResolveModal(d); setAdminNote(''); setRefundRate(1) }}
+                          className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[14px]">gavel</span>Phán quyết
+                        </button>
+                      ) : <span className="text-xs text-on-surface-variant italic">Đã xử lý</span>}
+                    </div>
                   </td>
                 </tr>
               ))}
