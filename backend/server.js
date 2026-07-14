@@ -78,11 +78,26 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function requireTutor(req, res, next) {
+async function requireTutor(req, res, next) {
   if (req.user?.role !== "tutor") {
     return res.status(403).json({ message: "Từ chối truy cập: chỉ dành cho gia sư." });
   }
-  next();
+  try {
+    const profileRes = await pool.query(
+      "SELECT status FROM tutor_profiles WHERE user_id = $1",
+      [req.user.userId]
+    );
+    if (profileRes.rows.length === 0) {
+      return res.status(403).json({ message: "Bạn cần tạo hồ sơ gia sư và chờ duyệt trước khi sử dụng tính năng này." });
+    }
+    if (profileRes.rows[0].status !== "approved") {
+      return res.status(403).json({ message: "Hồ sơ gia sư của bạn đang chờ duyệt hoặc bị từ chối. Vui lòng quay lại sau." });
+    }
+    next();
+  } catch (error) {
+    console.error("requireTutor error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ khi xác thực quyền gia sư." });
+  }
 }
 
 // ΓöÇΓöÇΓöÇ Nodemailer: email helper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -3124,24 +3139,23 @@ app.post(
       }
 
       // Insert new certificates into tutor_certificates table (with metadata)
-      if (certFiles.length > 0) {
+      if (parsedCertMetadata.length > 0) {
         const profileId = result.rows[0].id;
         await pool.query("DELETE FROM tutor_certificates WHERE tutor_profile_id = $1", [profileId]);
-        for (let i = 0; i < certFiles.length; i++) {
-          const f = certFiles[i];
-          const meta = parsedCertMetadata[i] || {};
-          const ext = f.originalname.split('.').pop();
-          const certPath = await uploadFileToStorage(f, `certificates/${userId}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
+        for (let i = 0; i < parsedCertMetadata.length; i++) {
+          const meta = parsedCertMetadata[i];
+          if (!meta || !meta.url) continue; // Bỏ qua nếu không có url
+          
           try {
             await pool.query(
               "INSERT INTO tutor_certificates (tutor_profile_id, name, url, cert_type, issuer, issue_year) VALUES ($1, $2, $3, $4, $5, $6)",
-              [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
+              [profileId, meta.name || 'Chứng chỉ', meta.url, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
             );
           } catch (certExtErr) {
             // Fall back to basic insert if extended cert columns don't exist yet
             await pool.query(
               "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
-              [profileId, meta.name || f.originalname, certPath]
+              [profileId, meta.name || 'Chứng chỉ', meta.url]
             );
           }
         }
@@ -6249,107 +6263,91 @@ app.post('/api/exam-papers/:paperId/submit', verifyToken, async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/parent/overview
+// GET /api/parent/overview
 // Returns: stats, recent quiz attempts, available tutors, practice sessions
 app.get("/api/parent/overview", verifyToken, async (req, res) => {
   try {
-    // Total students in system
+    const parentId = req.user.userId;
+    // Total students of this parent
     const studentsRes = await pool.query(
-      `SELECT COUNT(*) as count FROM users WHERE role='student'`
+      `SELECT COUNT(*) as count FROM parent_children WHERE parent_id=$1`,
+      [parentId]
     );
-    // Total quiz attempts (submitted)
+    // Total quiz attempts
     const attemptsRes = await pool.query(
-      `SELECT COUNT(*) as count FROM quiz_attempts WHERE status='submitted'`
+      `SELECT COUNT(*) as count FROM quiz_attempts WHERE status='submitted' AND student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)`,
+      [parentId]
     );
-    // Total practice sessions (submitted)
+    // Total practice sessions
     const practiceRes = await pool.query(
-      `SELECT COUNT(*) as count FROM practice_sessions WHERE status='submitted'`
+      `SELECT COUNT(*) as count FROM practice_sessions WHERE status='submitted' AND student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)`,
+      [parentId]
     );
-    // Approved tutors
+    // Approved tutors teaching these kids
     const tutorsRes = await pool.query(
-      `SELECT COUNT(*) as count FROM tutor_profiles WHERE status='approved'`
+      `SELECT COUNT(DISTINCT tutor_id) as count FROM bookings WHERE student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)`,
+      [parentId]
     );
 
-    // Recent quiz attempts with student & quiz info
+    // Recent quiz attempts
     const recentAttemptsRes = await pool.query(`
-      SELECT
-        qa.id,
-        qa.score,
-        qa.status,
-        qa.submitted_at,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        q.title      AS quiz_title,
-        q.subject    AS quiz_subject,
-        q.total_questions
+      SELECT qa.id, qa.score, qa.status, qa.submitted_at, u.full_name AS student_name, u.picture AS student_picture, q.title AS quiz_title, q.subject AS quiz_subject, q.total_questions
       FROM quiz_attempts qa
       JOIN users u ON qa.student_id = u.id
       JOIN quizzes q ON qa.quiz_id = q.id
-      WHERE qa.status = 'submitted'
-      ORDER BY qa.submitted_at DESC
-      LIMIT 10
-    `);
+      WHERE qa.status = 'submitted' AND qa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY qa.submitted_at DESC LIMIT 10
+    `, [parentId]);
 
-    // Recent practice sessions
+    // Recent practice
     const recentPracticeRes = await pool.query(`
-      SELECT
-        ps.id,
-        ps.topic,
-        ps.difficulty,
-        ps.score,
-        ps.total_questions,
-        ps.total_correct,
-        ps.status,
-        ps.submitted_at,
-        u.full_name AS student_name,
-        u.picture   AS student_picture
+      SELECT ps.id, ps.topic, ps.difficulty, ps.score, ps.total_questions, ps.total_correct, ps.status, ps.submitted_at, u.full_name AS student_name, u.picture AS student_picture
       FROM practice_sessions ps
       JOIN users u ON ps.student_id = u.id
-      WHERE ps.status = 'submitted'
-      ORDER BY ps.submitted_at DESC
-      LIMIT 10
-    `);
+      WHERE ps.status = 'submitted' AND ps.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY ps.submitted_at DESC LIMIT 10
+    `, [parentId]);
 
-    // Available tutors list
-    const availableTutorsRes = await pool.query(`
-      SELECT
-        u.id,
-        u.full_name,
-        u.picture,
-        u.email,
-        tp.subjects,
-        tp.hourly_rate,
-        tp.headline,
-        tp.bio,
-        tp.experience_years,
-        tp.location
-      FROM tutor_profiles tp
-      JOIN users u ON tp.user_id = u.id
-      WHERE tp.status = 'approved'
-      ORDER BY tp.created_at DESC
-      LIMIT 20
-    `);
+    // Tutors list: First try "My Tutors", then "Suggested"
+    let myTutorsRes = await pool.query(`
+      SELECT DISTINCT u.id, u.full_name, u.picture, u.email, tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, 'my_tutor' as tutor_type
+      FROM bookings b
+      JOIN users u ON b.tutor_id = u.id
+      JOIN tutor_profiles tp ON tp.user_id = u.id
+      WHERE b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1) AND tp.status='approved'
+      LIMIT 10
+    `, [parentId]);
+
+    if (myTutorsRes.rows.length === 0) {
+      myTutorsRes = await pool.query(`
+        SELECT u.id, u.full_name, u.picture, u.email, tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, 'suggested' as tutor_type
+        FROM tutor_profiles tp
+        JOIN users u ON tp.user_id = u.id
+        WHERE tp.status = 'approved'
+        ORDER BY tp.created_at DESC
+        LIMIT 10
+      `);
+    }
 
     // Exam paper attempts
     const examAttemptsRes = await pool.query(`
-      SELECT
-        epa.id,
-        epa.score,
-        epa.status,
-        epa.submitted_at,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        ep.title     AS exam_title,
-        ep.subject   AS exam_subject,
-        ep.grade,
-        ep.year,
-        ep.total_questions
+      SELECT epa.id, epa.score, epa.status, epa.submitted_at, u.full_name AS student_name, u.picture AS student_picture, ep.title AS exam_title, ep.subject AS exam_subject, ep.grade, ep.year, ep.total_questions
       FROM exam_paper_attempts epa
       JOIN users u ON epa.student_id = u.id
       JOIN exam_papers ep ON epa.exam_paper_id = ep.id
-      WHERE epa.status = 'submitted'
-      ORDER BY epa.submitted_at DESC
-      LIMIT 10
-    `);
+      WHERE epa.status = 'submitted' AND epa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY epa.submitted_at DESC LIMIT 10
+    `, [parentId]);
+
+    // Upcoming classes (tutor_sessions where status=scheduled/ongoing)
+    const upcomingClassesRes = await pool.query(`
+      SELECT ts.id, ts.scheduled_at, ts.duration_mins, ts.subject, ts.status, u.full_name AS tutor_name, stu.full_name AS student_name
+      FROM tutor_sessions ts
+      JOIN users u ON ts.tutor_id = u.id
+      JOIN users stu ON ts.student_id = stu.id
+      WHERE ts.status IN ('scheduled', 'ongoing') AND ts.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY ts.scheduled_at ASC LIMIT 5
+    `, [parentId]);
 
     return res.json({
       stats: {
@@ -6360,8 +6358,9 @@ app.get("/api/parent/overview", verifyToken, async (req, res) => {
       },
       recent_quiz_attempts: recentAttemptsRes.rows,
       recent_practice_sessions: recentPracticeRes.rows,
-      available_tutors: availableTutorsRes.rows,
+      available_tutors: myTutorsRes.rows,
       recent_exam_attempts: examAttemptsRes.rows,
+      upcoming_classes: upcomingClassesRes.rows,
     });
   } catch (error) {
     console.error("Parent overview error:", error);
@@ -6373,22 +6372,20 @@ app.get("/api/parent/overview", verifyToken, async (req, res) => {
 // Returns list of all students with their quiz/practice stats
 app.get("/api/parent/students", verifyToken, async (req, res) => {
   try {
+    const parentId = req.user.userId;
     const studentsRes = await pool.query(`
       SELECT
-        u.id,
-        u.full_name,
-        u.email,
-        u.picture,
-        u.created_at,
+        u.id, u.full_name, u.email, u.picture, u.created_at,
         (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS quiz_attempts_count,
         (SELECT COUNT(*) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS practice_count,
         (SELECT ROUND(AVG(qa.score),1) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS avg_quiz_score,
         (SELECT ROUND(AVG(ps.score),1) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS avg_practice_score,
         (SELECT qa.submitted_at FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted' ORDER BY qa.submitted_at DESC LIMIT 1) AS last_activity
       FROM users u
-      WHERE u.role = 'student'
+      JOIN parent_children pc ON pc.student_id = u.id
+      WHERE u.role = 'student' AND pc.parent_id = $1
       ORDER BY last_activity DESC NULLS LAST
-    `);
+    `, [parentId]);
     return res.json({ students: studentsRes.rows });
   } catch (error) {
     console.error("Parent students error:", error);
@@ -6400,26 +6397,17 @@ app.get("/api/parent/students", verifyToken, async (req, res) => {
 // Returns all approved tutors with detailed profile
 app.get("/api/parent/tutors", verifyToken, async (req, res) => {
   try {
+    const parentId = req.user.userId;
     const res2 = await pool.query(`
-      SELECT
-        u.id,
-        u.full_name,
-        u.email,
-        u.picture,
-        tp.subjects,
-        tp.hourly_rate,
-        tp.headline,
-        tp.bio,
-        tp.experience_years,
-        tp.location,
-        tp.teaching_style,
-        tp.status,
-        tp.created_at
+      SELECT DISTINCT
+        u.id, u.full_name, u.email, u.picture,
+        tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, tp.teaching_style, tp.status, tp.created_at
       FROM tutor_profiles tp
       JOIN users u ON tp.user_id = u.id
-      WHERE tp.status = 'approved'
+      JOIN bookings b ON b.tutor_id = u.id
+      WHERE tp.status = 'approved' AND b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
       ORDER BY tp.created_at DESC
-    `);
+    `, [parentId]);
     return res.json({ tutors: res2.rows });
   } catch (error) {
     console.error("Parent tutors error:", error);
@@ -6431,69 +6419,34 @@ app.get("/api/parent/tutors", verifyToken, async (req, res) => {
 // Returns all quiz + practice + exam activity across all students
 app.get("/api/parent/activity", verifyToken, async (req, res) => {
   try {
+    const parentId = req.user.userId;
     const quizRes = await pool.query(`
-      SELECT
-        'quiz' AS type,
-        qa.id,
-        qa.score,
-        qa.submitted_at AS timestamp,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        q.title      AS title,
-        q.subject    AS subject,
-        q.total_questions
+      SELECT 'quiz' AS type, qa.id, qa.score, qa.submitted_at AS timestamp, u.full_name AS student_name, u.picture AS student_picture, q.title AS title, q.subject AS subject, q.total_questions
       FROM quiz_attempts qa
       JOIN users u ON qa.student_id=u.id
       JOIN quizzes q ON qa.quiz_id=q.id
-      WHERE qa.status='submitted'
-      ORDER BY qa.submitted_at DESC
-      LIMIT 50
-    `);
+      WHERE qa.status='submitted' AND qa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY qa.submitted_at DESC LIMIT 50
+    `, [parentId]);
 
     const practiceRes = await pool.query(`
-      SELECT
-        'practice' AS type,
-        ps.id,
-        ps.score,
-        ps.submitted_at AS timestamp,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        ps.topic     AS title,
-        ps.difficulty AS subject,
-        ps.total_questions
+      SELECT 'practice' AS type, ps.id, ps.score, ps.submitted_at AS timestamp, u.full_name AS student_name, u.picture AS student_picture, ps.topic AS title, ps.difficulty AS subject, ps.total_questions
       FROM practice_sessions ps
       JOIN users u ON ps.student_id=u.id
-      WHERE ps.status='submitted'
-      ORDER BY ps.submitted_at DESC
-      LIMIT 50
-    `);
+      WHERE ps.status='submitted' AND ps.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY ps.submitted_at DESC LIMIT 50
+    `, [parentId]);
 
     const examRes = await pool.query(`
-      SELECT
-        'exam' AS type,
-        epa.id,
-        epa.score,
-        epa.submitted_at AS timestamp,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        ep.title     AS title,
-        ep.subject   AS subject,
-        ep.total_questions
+      SELECT 'exam' AS type, epa.id, epa.score, epa.submitted_at AS timestamp, u.full_name AS student_name, u.picture AS student_picture, ep.title AS title, ep.subject AS subject, ep.total_questions
       FROM exam_paper_attempts epa
       JOIN users u ON epa.student_id=u.id
       JOIN exam_papers ep ON epa.exam_paper_id=ep.id
-      WHERE epa.status='submitted'
-      ORDER BY epa.submitted_at DESC
-      LIMIT 50
-    `);
+      WHERE epa.status='submitted' AND epa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY epa.submitted_at DESC LIMIT 50
+    `, [parentId]);
 
-    // Merge and sort by timestamp
-    const all = [
-      ...quizRes.rows,
-      ...practiceRes.rows,
-      ...examRes.rows,
-    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
+    const all = [...quizRes.rows, ...practiceRes.rows, ...examRes.rows].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     return res.json({ activities: all.slice(0, 50) });
   } catch (error) {
     console.error("Parent activity error:", error);
@@ -9001,9 +8954,8 @@ async function startServer() {
 }
 
 
-app.get("/api/tutor/courses", verifyToken, async (req, res) => {
+app.get("/api/tutor/courses", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
     await ensureCourseSchema();
     const courses = await pool.query(
       `SELECT c.*,
@@ -9094,7 +9046,7 @@ async function saveCourseLessons(client, courseId, lessons = []) {
 }
 
 async function upsertTutorCourse(req, res, courseId = null) {
-  if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
+  // Role is already checked by requireTutor in the route handler
   await ensureCourseSchema();
   const { title, description, subject, level, price, thumbnailUrl, status, lessons, learningOutcomes, requirements } = req.body || {};
   const cleanTitle = String(title || "").trim();
@@ -9144,7 +9096,7 @@ async function upsertTutorCourse(req, res, courseId = null) {
   }
 }
 
-app.post("/api/tutor/courses", verifyToken, async (req, res) => {
+app.post("/api/tutor/courses", verifyToken, requireTutor, async (req, res) => {
   try {
     return await upsertTutorCourse(req, res);
   } catch (error) {
@@ -9153,7 +9105,7 @@ app.post("/api/tutor/courses", verifyToken, async (req, res) => {
   }
 });
 
-app.patch("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+app.patch("/api/tutor/courses/:id", verifyToken, requireTutor, async (req, res) => {
   try {
     return await upsertTutorCourse(req, res, req.params.id);
   } catch (error) {
@@ -9162,9 +9114,8 @@ app.patch("/api/tutor/courses/:id", verifyToken, async (req, res) => {
   }
 });
 
-app.delete("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+app.delete("/api/tutor/courses/:id", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
     await ensureCourseSchema();
     const result = await pool.query(
       "UPDATE courses SET status = 'archived', updated_at = NOW() WHERE id = $1 AND tutor_id = $2 RETURNING id",
@@ -9178,11 +9129,8 @@ app.delete("/api/tutor/courses/:id", verifyToken, async (req, res) => {
   }
 });
 
-app.get("/api/tutor/students", verifyToken, async (req, res) => {
+app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
 
     const tutorId = req.user.userId;
     const result = await pool.query(
@@ -10052,7 +10000,7 @@ async function callGeminiModel(model, prompt) {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+              body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.7,
@@ -10071,6 +10019,69 @@ async function callGeminiModel(model, prompt) {
     return { ok: false, status: 0, errText: err.message };
   }
 }
+
+// 2. Tạo URL Nạp Tiền VNPAY
+app.post('/api/payment/create-url', verifyToken, async (req, res) => {
+  try {
+      const { amount, returnUrl } = req.body;
+      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
+      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'Ví không tồn tại' });
+      const wId = String(walletRes.rows[0].id);
+
+      const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
+      const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
+      const vnpUrl = process.env.VNPAY_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
+      
+      let rawIp = req.headers['x-forwarded-for'] || (req.socket ? req.socket.remoteAddress : null) || '127.0.0.1';
+      if (typeof rawIp === 'string' && rawIp.includes(',')) rawIp = rawIp.split(',')[0].trim();
+      if (typeof rawIp === 'string' && rawIp.startsWith('::ffff:')) rawIp = rawIp.slice(7);
+      if (rawIp === '::1') rawIp = '127.0.0.1';
+      const ipAddr = rawIp || '127.0.0.1';
+
+      const date = new Date();
+      const createDate = moment(date).format('YYYYMMDDHHmmss');
+      const orderId = moment(date).format('DDHHmmss'); 
+
+      // Tất cả value PHẢI là String
+      let vnp_Params = {};
+      vnp_Params['vnp_Version']    = '2.1.0';
+      vnp_Params['vnp_Command']    = 'pay';
+      vnp_Params['vnp_TmnCode']    = tmnCode;
+      vnp_Params['vnp_Locale']     = 'vn';
+      vnp_Params['vnp_CurrCode']   = 'VND';
+      vnp_Params['vnp_TxnRef']     = orderId;
+      vnp_Params['vnp_OrderInfo']  = wId;
+      vnp_Params['vnp_OrderType']  = 'topup';
+      vnp_Params['vnp_Amount']     = String(amount * 100);
+      vnp_Params['vnp_ReturnUrl']  = returnUrl;
+      vnp_Params['vnp_IpAddr']     = ipAddr;
+      vnp_Params['vnp_CreateDate'] = createDate;
+
+      // Sắp xếp key theo alphabet rồi tự build signData
+      const sortedKeys = Object.keys(vnp_Params).sort();
+      const signParts = [];
+      for (const key of sortedKeys) {
+          const encKey = encodeURIComponent(key);
+          const encVal = encodeURIComponent(String(vnp_Params[key])).replace(/%20/g, '+');
+          signParts.push(encKey + '=' + encVal);
+      }
+      const signData = signParts.join('&');
+
+      const hmac = crypto.createHmac('sha512', secretKey);
+      const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest('hex');
+
+      vnp_Params['vnp_SecureHash'] = signed;
+
+      const queryString = new URLSearchParams(vnp_Params).toString();
+      const redirectUrl = `${vnpUrl}?${queryString}`;
+
+      // Trả về vnpUrl, params (để form redirect), và redirectUrl ( fallback)
+      res.json({ success: true, vnpUrl, params: vnp_Params, redirectUrl });
+  } catch (e) {
+      console.error('Create VNPAY URL Error:', e);
+      res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
 const askAiHandler = async (req, res) => {
   try {
@@ -10239,19 +10250,35 @@ app.post("/api/ask-ai", askAiHandler);
   // [POST] /api/feedbacks - Gia sư submit đánh giá
   app.post('/api/feedbacks', verifyToken, requireTutor, async (req, res) => {
     try {
-      const tutorId = req.user.id;
-      const { lesson_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note } = req.body;
+      const tutorId = req.user.id || req.user.userId;
+      const { lesson_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note, milestone_id } = req.body;
 
       // Validate data
       if (!student_id || !focus_rating || !understanding_level || !homework_status) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      // Insert feedback
+      // 1. Validate Time / Status (Micro-feedback constraint)
+      if (lesson_id) {
+        // Assume lesson_id refers to tutor_sessions or bookings
+        const sessionCheck = await pool.query(
+          `SELECT scheduled_at, duration_mins, status FROM tutor_sessions WHERE id = $1`,
+          [lesson_id]
+        );
+        if (sessionCheck.rows.length > 0) {
+          const session = sessionCheck.rows[0];
+          const endTime = new Date(new Date(session.scheduled_at).getTime() + session.duration_mins * 60000);
+          if (new Date() < endTime && session.status !== 'completed') {
+             return res.status(403).json({ error: "Chỉ được đánh giá sau khi buổi học kết thúc." });
+          }
+        }
+      }
+
+      // 2. Insert feedback
       const query = `
         INSERT INTO lesson_feedbacks 
-        (lesson_id, tutor_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (lesson_id, tutor_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note, milestone_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *
       `;
       const values = [
@@ -10262,11 +10289,37 @@ app.post("/api/ask-ai", askAiHandler);
         focus_rating, 
         understanding_level, 
         homework_status, 
-        tutor_note
+        tutor_note,
+        milestone_id || null
       ];
       
       const result = await pool.query(query, values);
       const data = result.rows[0];
+
+      // 3. Logic Early Warning
+      const recentFeedbacks = await pool.query(`
+        SELECT understanding_level, homework_status FROM lesson_feedbacks
+        WHERE student_id = $1 AND tutor_id = $2
+        ORDER BY created_at DESC LIMIT 3
+      `, [student_id, tutorId]);
+
+      if (recentFeedbacks.rows.length >= 2) {
+        const kemCount = recentFeedbacks.rows.filter(f => f.understanding_level === 'Kém').length;
+        const noHomeworkCount = recentFeedbacks.rows.filter(f => f.homework_status === 'Không').length;
+
+        if (kemCount >= 2 || noHomeworkCount >= 2) {
+           // Insert notification alert
+           await pool.query(`
+             INSERT INTO notifications (user_id, title, message, type)
+             VALUES (
+                (SELECT parent_id FROM parent_children WHERE child_id = $1 LIMIT 1),
+                'Cảnh báo kết quả học tập',
+                'Học sinh có dấu hiệu sa sút trong các buổi học gần đây. Vui lòng kiểm tra timeline!',
+                'alert'
+             )
+           `, [student_id]).catch(e => console.error('Early warning notification failed', e.message));
+        }
+      }
 
       res.status(201).json({ message: "Feedback submitted successfully", data });
     } catch (err) {
@@ -10302,12 +10355,9 @@ app.post("/api/ask-ai", askAiHandler);
 });
 
 
-app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
+app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req, res) => {
   const client = await pool.connect();
   try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
 
     const tutorId = req.user.userId;
     const { id } = req.params;
@@ -10421,11 +10471,8 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
   }
 });
 
-app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
+app.get("/api/tutor/earnings", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
 
     const tutorId = req.user.userId;
     const [profileResult, walletResult] = await Promise.all([
@@ -10916,72 +10963,11 @@ app.get('/api/payment/wallet', verifyToken, async (req, res) => {
   }
 });
 
-// 2. Tạo URL Nạp Tiền VNPAY
-app.post('/api/payment/create-url', verifyToken, async (req, res) => {
-  try {
-      const { amount, returnUrl } = req.body;
-      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
-      const wId = walletRes.rows[0].id;
-
-      const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
-      const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
-      let vnpUrl = process.env.VNPAY_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
-      
-      const ipAddr = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.socket.remoteAddress || req.connection.socket.remoteAddress || '127.0.0.1';
-
-      let date = new Date();
-      let createDate = moment(date).format('YYYYMMDDHHmmss');
-      let orderId = moment(date).format('DDHHmmss'); 
-
-      let vnp_Params = {
-          'vnp_Version': '2.1.0',
-          'vnp_Command': 'pay',
-          'vnp_TmnCode': tmnCode,
-          'vnp_Locale': 'vn',
-          'vnp_CurrCode': 'VND',
-          'vnp_TxnRef': orderId,
-          'vnp_OrderInfo': wId, 
-          'vnp_OrderType': 'topup',
-          'vnp_Amount': amount * 100, 
-          'vnp_ReturnUrl': returnUrl,
-          'vnp_IpAddr': ipAddr,
-          'vnp_CreateDate': createDate
-      };
-
-      function sortObject(obj) {
-          let sorted = {};
-          let str = [];
-          let key;
-          for (key in obj){
-              if (Object.prototype.hasOwnProperty.call(obj, key)) { str.push(encodeURIComponent(key)); }
-          }
-          str.sort();
-          for (key = 0; key < str.length; key++) {
-              sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+");
-          }
-          return sorted;
-      }
-
-      vnp_Params = sortObject(vnp_Params);
-      const signData = querystring.stringify(vnp_Params, { encode: false });
-      const hmac = crypto.createHmac("sha512", secretKey);
-      const signed = hmac.update(new Buffer.from(signData, 'utf-8')).digest("hex"); 
-      
-      vnp_Params['vnp_SecureHash'] = signed;
-      vnpUrl += '?' + querystring.stringify(vnp_Params, { encode: false });
-
-      res.json({ success: true, url: vnpUrl });
-  } catch (e) {
-      console.error('Create VNPAY URL Error:', e);
-      res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
 
 // 3. VNPAY IPN Webhook
 app.get('/api/payment/vnpay-ipn', async (req, res) => {
   try {
-      let vnp_Params = req.query;
+      let vnp_Params = { ...req.query };
       const secureHash = vnp_Params['vnp_SecureHash'];
       const amount = vnp_Params['vnp_Amount'] / 100;
       const orderId = vnp_Params['vnp_TxnRef'];
@@ -10991,21 +10977,22 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
       delete vnp_Params['vnp_SecureHash'];
       delete vnp_Params['vnp_SecureHashType'];
 
-      function sortObject(obj) {
-          let sorted = {};
-          let str = [];
-          let key;
-          for (key in obj){ if (Object.prototype.hasOwnProperty.call(obj, key)) { str.push(encodeURIComponent(key)); } }
-          str.sort();
-          for (key = 0; key < str.length; key++) { sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+"); }
-          return sorted;
+      // Sắp xếp key theo alphabet rồi tự build query string
+      const sortedKeys = Object.keys(vnp_Params).sort();
+      const signParts = [];
+      for (const key of sortedKeys) {
+          const encKey = encodeURIComponent(key);
+          const encVal = encodeURIComponent(String(vnp_Params[key])).replace(/%20/g, '+');
+          signParts.push(encKey + '=' + encVal);
       }
+      const signData = signParts.join('&');
 
-      vnp_Params = sortObject(vnp_Params);
       const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
-      const signData = querystring.stringify(vnp_Params, { encode: false });
-      const hmac = crypto.createHmac("sha512", secretKey);
-      const signed = hmac.update(new Buffer.from(signData, 'utf-8')).digest("hex");     
+      const hmac = crypto.createHmac('sha512', secretKey);
+      const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest('hex');
+
+      console.log('[VNPAY IPN] signData:', signData);
+      console.log('[VNPAY IPN] signed:', signed, '| secureHash:', secureHash);
 
       if (secureHash !== signed) {
           return res.status(200).json({ RspCode: '97', Message: 'Checksum failed' });
@@ -13329,6 +13316,149 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
   } else {
     console.log('⏸️  Fraud intel worker disabled (FRAUD_INTEL_WORKER_ENABLED=false).');
   }
+
+  // ==========================================
+  // ADVANCED FEATURES APIs
+  // ==========================================
+
+  // --- Milestones ---
+  app.post('/api/milestones', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const { class_id, title, target_date } = req.body;
+      const result = await pool.query(
+        `INSERT INTO milestones (class_id, tutor_id, title, target_date) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [class_id, req.user.userId || req.user.id, title, target_date]
+      );
+      res.json({ message: "Milestone created", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/milestones/:class_id', verifyToken, async (req, res) => {
+    try {
+      const result = await pool.query(`SELECT * FROM milestones WHERE class_id = $1 ORDER BY created_at ASC`, [req.params.class_id]);
+      res.json({ data: result.rows });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put('/api/milestones/:id/complete', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const evidenceCheck = await pool.query(`SELECT count(*) FROM evidences WHERE milestone_id = $1`, [id]);
+      if (parseInt(evidenceCheck.rows[0].count) === 0) {
+        return res.status(400).json({ error: "Bắt buộc phải có ít nhất 1 minh chứng (evidence) để hoàn thành chặng này." });
+      }
+      const result = await pool.query(`UPDATE milestones SET status = 'done', updated_at = NOW() WHERE id = $1 RETURNING *`, [id]);
+      res.json({ message: "Milestone marked as done", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Evidences ---
+  app.post('/api/evidences', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const { milestone_id, file_url, file_type, description } = req.body;
+      const result = await pool.query(
+        `INSERT INTO evidences (milestone_id, file_url, file_type, description) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [milestone_id, file_url, file_type, description]
+      );
+      res.json({ message: "Evidence uploaded", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Predictive Trend ---
+  app.get('/api/students/:id/predictive-trend', verifyToken, async (req, res) => {
+    try {
+      const studentId = req.params.id;
+      const result = await pool.query(`
+        SELECT understanding_level FROM lesson_feedbacks
+        WHERE student_id = $1 ORDER BY created_at DESC LIMIT 5
+      `, [studentId]);
+      
+      const feedbacks = result.rows;
+      if (feedbacks.length < 3) {
+        return res.json({ data: { status: 'Gathering Data', score: null, message: 'Đang thu thập dữ liệu. Cần ít nhất 3 buổi học.' } });
+      }
+
+      // Time-weighted: latest is most heavily weighted
+      let score = 0;
+      let totalWeight = 0;
+      feedbacks.forEach((fb, index) => {
+         const weight = 5 - index; // Latest = 5, oldest = 1
+         totalWeight += weight;
+         if (fb.understanding_level === 'Tốt') score += weight * 1;
+         else if (fb.understanding_level === 'Tạm') score += weight * 0.5;
+         else score += weight * 0;
+      });
+      const trendScore = score / totalWeight; // 0.0 to 1.0
+
+      let status = 'Green';
+      let message = 'Đúng tiến độ, con đang học rất tốt!';
+      if (trendScore < 0.5) {
+         status = 'Red';
+         message = 'Cần can thiệp! Tốc độ học hiện tại chưa đạt yêu cầu.';
+      } else if (trendScore < 0.75) {
+         status = 'Yellow';
+         message = 'Chậm nhẹ. Cần cố gắng hơn ở các bài tiếp theo.';
+      }
+
+      res.json({ data: { status, score: trendScore, message } });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Parent Pulse Check ---
+  app.post('/api/parent-feedbacks', verifyToken, async (req, res) => {
+    try {
+      const { student_id, tutor_id, course_id, evaluation } = req.body;
+      const result = await pool.query(
+        `INSERT INTO parent_feedbacks (student_id, tutor_id, course_id, evaluation) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [student_id, tutor_id, course_id, evaluation]
+      );
+
+      if (evaluation === 'Không đổi' || evaluation === 'Kém đi') {
+        const tutorFbs = await pool.query(`
+          SELECT understanding_level FROM lesson_feedbacks 
+          WHERE student_id = $1 AND tutor_id = $2 
+          ORDER BY created_at DESC LIMIT 4
+        `, [student_id, tutor_id]);
+        
+        const totCount = tutorFbs.rows.filter(f => f.understanding_level === 'Tốt').length;
+        if (tutorFbs.rows.length > 0 && (totCount / tutorFbs.rows.length) > 0.75) {
+           await pool.query(`
+             INSERT INTO notifications (user_id, title, message, type)
+             VALUES ((SELECT id FROM users WHERE role = 'admin' LIMIT 1), 'Cảnh báo Lệch Pha', 'Phụ huynh báo Kém nhưng Gia sư báo Tốt.', 'alert')
+           `).catch(console.error);
+        }
+      }
+      res.json({ message: "Cảm ơn bạn đã đánh giá!", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Dispute Center ---
+  app.post('/api/disputes', verifyToken, async (req, res) => {
+    try {
+      const { session_id, reason } = req.body;
+      const parent_id = req.user.userId || req.user.id;
+      const result = await pool.query(
+        `INSERT INTO disputes (session_id, parent_id, reason) VALUES ($1, $2, $3) RETURNING *`,
+        [session_id, parent_id, reason]
+      );
+      res.json({ message: "Báo cáo sự cố thành công. Chúng tôi đang tạm giữ tiền và sẽ liên hệ lại.", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
 
   app.listen(port, () => {
     console.log(`🚀 Server is running on http://localhost:${port}`);

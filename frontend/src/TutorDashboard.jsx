@@ -47,6 +47,7 @@ export default function TutorDashboard() {
   })
   const [loading, setLoading] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [profileStatus, setProfileStatus] = useState('loading')
 
   const displayName = user?.name || user?.email?.split('@')[0] || 'Tutor'
   const initials = displayName
@@ -67,6 +68,20 @@ export default function TutorDashboard() {
   useEffect(() => {
     async function loadTutorData() {
       try {
+        let profile = null;
+        try {
+          profile = await getTutorProfile()
+          setProfileStatus(profile.status)
+        } catch (e) {
+          console.warn('Profile fetch error or not found:', e)
+          setProfileStatus('missing')
+        }
+
+        if (!profile || profile.status !== 'approved') {
+          setLoading(false)
+          return
+        }
+
         const [bookingsList, earningsData] = await Promise.all([
           getBookings(),
           getTutorEarnings().catch(() => null),
@@ -336,7 +351,36 @@ export default function TutorDashboard() {
           {/* Decorative background glow */}
           <div className="fixed top-0 right-0 w-1/2 h-1/2 bg-gradient-to-bl from-primary-fixed-dim/20 to-transparent pointer-events-none -z-10 blur-3xl rounded-full" />
 
-          {activeTab === 'Tổng quan' && (
+          {['pending', 'rejected', 'missing'].includes(profileStatus) && activeTab !== 'Hồ sơ' ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center z-20 bg-surface/90 backdrop-blur-sm animate-fade-in min-h-[500px]">
+              <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+                <span className="material-symbols-outlined text-primary text-[48px]">
+                  {profileStatus === 'rejected' ? 'cancel' : profileStatus === 'missing' ? 'post_add' : 'hourglass_empty'}
+                </span>
+              </div>
+              <h2 className="text-[28px] font-bold text-on-surface mb-3">
+                {profileStatus === 'rejected' ? 'Hồ sơ của bạn đã bị từ chối' : 
+                 profileStatus === 'missing' ? 'Bạn chưa có hồ sơ gia sư' : 
+                 'Hồ sơ của bạn đang chờ duyệt'}
+              </h2>
+              <p className="text-on-surface-variant max-w-md text-[15px] mb-8 leading-relaxed">
+                {profileStatus === 'rejected' 
+                  ? 'Vui lòng kiểm tra lại thông tin trên hồ sơ của bạn hoặc liên hệ với bộ phận hỗ trợ để biết thêm chi tiết.' 
+                  : profileStatus === 'missing'
+                  ? 'Vui lòng chuyển sang tab "Hồ sơ" để điền thông tin và nộp đơn đăng ký làm gia sư.'
+                  : 'Cảm ơn bạn đã đăng ký làm gia sư tại EduX. Quản trị viên đang xem xét hồ sơ của bạn. Quá trình này có thể mất từ 1-2 ngày làm việc.'}
+              </p>
+              <button 
+                onClick={() => setActiveTab('Hồ sơ')}
+                className="h-12 px-8 bg-primary text-on-primary font-bold rounded-xl hover:bg-primary/90 transition-all flex items-center gap-2 shadow-sm"
+              >
+                <span className="material-symbols-outlined text-[20px]">manage_accounts</span>
+                {profileStatus === 'missing' ? 'Tạo hồ sơ ngay' : 'Xem & Cập nhật hồ sơ'}
+              </button>
+            </div>
+          ) : null}
+
+          {(profileStatus === 'approved' || activeTab === 'Hồ sơ') && activeTab === 'Tổng quan' && (
             <>
           {/* Ă¢â€â‚¬Ă¢â€â‚¬ Welcome Ă¢â€â‚¬Ă¢â€â‚¬ */}
           <div className="space-y-1">
@@ -478,31 +522,31 @@ export default function TutorDashboard() {
             <TutorProfileTab user={user} displayName={displayName} initials={initials} />
           )}
 
-          {activeTab === 'Lịch trình' && (
+          {profileStatus === 'approved' && activeTab === 'Lịch trình' && (
             <MyScheduleTab />
           )}
 
-          {activeTab === 'Học viên' && (
+          {profileStatus === 'approved' && activeTab === 'Học viên' && (
             <TutorStudentsTab />
           )}
 
-          {activeTab === 'Khóa học' && (
+          {profileStatus === 'approved' && activeTab === 'Khóa học' && (
             <TutorCoursesTab user={user} />
           )}
 
-          {activeTab === 'Bài kiểm tra' && (
+          {profileStatus === 'approved' && activeTab === 'Bài kiểm tra' && (
             <TutorAssessmentManager token={token} />
           )}
 
-          {activeTab === 'Chấm điểm & Nhận xét' && (
+          {profileStatus === 'approved' && activeTab === 'Chấm điểm & Nhận xét' && (
             <TutorGradingDashboard token={token} />
           )}
 
-          {activeTab === 'Thu nhập' && (
+          {profileStatus === 'approved' && activeTab === 'Thu nhập' && (
             <TutorEarningsTab />
           )}
 
-          {activeTab === 'Tin nhắn' && (
+          {profileStatus === 'approved' && activeTab === 'Tin nhắn' && (
             <MessagesSection token={token} user={user} />
           )}
 
