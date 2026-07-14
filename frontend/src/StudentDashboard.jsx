@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
 import AssessmentsWrapper from './components/AssessmentsWrapper'
+import MyComplaints from './pages/MyComplaints'
 import PracticeMode from './PracticeMode'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
@@ -149,6 +150,11 @@ export default function StudentDashboard() {
         {/* ── Main canvas ── */}
         <main className={`overflow-x-hidden p-md lg:p-lg ${activeSection === 'schedule' ? 'block' : 'flex-1 overflow-y-auto'}`}>
           <div className={`max-w-container-max mx-auto flex flex-col gap-xl ${activeSection === 'schedule' ? 'pb-8' : 'pb-xl'}`}>
+
+            {/* ── Complaints Section ── */}
+            {activeSection === 'complaints' && (
+              <MyComplaints token={token} />
+            )}
 
             {/* ── Assessments Section (Gộp Bài tập & Đề thi) ── */}
             {activeSection === 'assessments' && (

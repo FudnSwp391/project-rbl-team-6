@@ -7948,7 +7948,7 @@ app.get('/api/student/my-courses', verifyToken, async (req, res) => {
       LEFT JOIN users u ON u.id = c.tutor_id
       LEFT JOIN course_lessons cl ON cl.course_id = c.id
       LEFT JOIN course_progress cp ON cp.enrollment_id = ce.id AND cp.lesson_id = cl.id
-      WHERE ce.student_id = $1
+      WHERE ce.student_id = $1 AND ce.status = 'active'
       GROUP BY ce.id, c.id, u.full_name, u.picture
       ORDER BY ce.created_at DESC
     `, [userId]);
@@ -7996,7 +7996,7 @@ app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
        JOIN courses c ON c.id = ce.course_id
        LEFT JOIN users u  ON u.id  = c.tutor_id
        LEFT JOIN users su ON su.id = ce.student_id
-       WHERE ce.course_id = $1 AND ce.student_id = $2 LIMIT 1`, [courseId, req.user.userId]);
+       WHERE ce.course_id = $1 AND ce.student_id = $2 AND ce.status = 'active' LIMIT 1`, [courseId, req.user.userId]);
     if (en.rowCount === 0) return res.status(403).json({ eligible: false, message: "Bạn chưa đăng ký khóa học này." });
     const row = en.rows[0];
 
@@ -8156,10 +8156,11 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
 app.get("/api/courses/:id/enrollment-status", verifyToken, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, status, created_at FROM course_enrollments WHERE course_id = $1 AND student_id = $2`,
+      `SELECT id, status, created_at FROM course_enrollments WHERE course_id = $1 AND student_id = $2 ORDER BY updated_at DESC LIMIT 1`,
       [req.params.id, req.user.userId]
     );
-    if (r.rowCount > 0) return res.json({ enrolled: true, enrollment: r.rows[0] });
+    if (r.rowCount > 0 && r.rows[0].status === 'active') return res.json({ enrolled: true, enrollment: r.rows[0] });
+    if (r.rowCount > 0 && r.rows[0].status === 'refunded') return res.json({ enrolled: false, refunded: true });
     return res.json({ enrolled: false });
   } catch (err) {
     console.error("GET enrollment-status error:", err);
@@ -9025,6 +9026,586 @@ async function logLoginAttempt(userId, ip, userAgent) {
     return false;
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  COURSE COMPLAINTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+const complaintUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = ['image/jpeg', 'image/png', 'application/pdf'].includes(file.mimetype);
+    if (!ok) return cb(new Error('Chỉ hỗ trợ jpg, png, pdf (tối đa 5MB)'));
+    cb(null, true);
+  }
+});
+
+// DB setup
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS course_complaints (
+        id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+        complaint_number  BIGSERIAL   UNIQUE NOT NULL,
+        course_id         UUID        NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        enrollment_id     UUID        NOT NULL REFERENCES course_enrollments(id) ON DELETE CASCADE,
+        title             TEXT        NOT NULL CHECK (char_length(title) BETWEEN 5 AND 200),
+        category          TEXT        NOT NULL CHECK (category IN ('tutor_behavior','content_quality','technical','payment','other')),
+        reason            TEXT        NOT NULL CHECK (char_length(reason) BETWEEN 2 AND 300),
+        description       TEXT        CHECK (description IS NULL OR char_length(description) <= 2000),
+        status            TEXT        NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','waiting_student','waiting_tutor','resolved','rejected','closed')),
+        admin_response    TEXT,
+        admin_id          UUID        REFERENCES users(id) ON DELETE SET NULL,
+        resolved_at       TIMESTAMPTZ,
+        created_at        TIMESTAMPTZ DEFAULT NOW(),
+        updated_at        TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cc_student  ON course_complaints(student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cc_course   ON course_complaints(course_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cc_status   ON course_complaints(status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cc_created  ON course_complaints(created_at DESC)`);
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS resolution_type TEXT CHECK (resolution_type IN ('accepted','rejected','partial')), ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(12,0)`);
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'uq_one_active_complaint') THEN
+          CREATE UNIQUE INDEX uq_one_active_complaint
+          ON course_complaints(student_id, course_id)
+          WHERE status IN ('pending','processing','waiting_student','waiting_tutor');
+        END IF;
+      END $$
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS course_complaint_messages (
+        id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+        complaint_id  UUID        NOT NULL REFERENCES course_complaints(id) ON DELETE CASCADE,
+        sender_id     UUID        REFERENCES users(id) ON DELETE SET NULL,
+        sender_role   TEXT        NOT NULL CHECK (sender_role IN ('student','admin','system')),
+        message       TEXT        NOT NULL CHECK (char_length(message) BETWEEN 1 AND 5000),
+        message_type  TEXT        NOT NULL DEFAULT 'message' CHECK (message_type IN ('message','status_change')),
+        metadata      JSONB       DEFAULT '{}',
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ccm_complaint ON course_complaint_messages(complaint_id, created_at)`);
+    await pool.query(`DO $$ BEGIN ALTER TABLE course_complaint_messages DROP CONSTRAINT IF EXISTS course_complaint_messages_message_type_check; ALTER TABLE course_complaint_messages ADD CONSTRAINT course_complaint_messages_message_type_check CHECK (message_type IN ('message','status_change','resolution')); EXCEPTION WHEN OTHERS THEN NULL; END $$`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS course_complaint_attachments (
+        id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+        complaint_id  UUID        NOT NULL REFERENCES course_complaints(id) ON DELETE CASCADE,
+        file_url      TEXT        NOT NULL,
+        file_name     TEXT        NOT NULL,
+        file_type     TEXT        NOT NULL,
+        file_size     INT         NOT NULL CHECK (file_size > 0 AND file_size <= 5242880),
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cca_complaint ON course_complaint_attachments(complaint_id)`);
+    console.log('✅ Course complaints tables ready');
+  } catch (e) {
+    console.error('❌ Course complaints table setup error:', e.message);
+  }
+})();
+
+// Migration v2: add refund fields + extend category constraint
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS refund_type TEXT CHECK (refund_type IS NULL OR refund_type IN ('full','partial'))`);
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS refund_amount BIGINT CHECK (refund_amount IS NULL OR refund_amount > 0)`);
+    await pool.query(`
+      DO $$
+      BEGIN
+        ALTER TABLE course_complaints DROP CONSTRAINT IF EXISTS course_complaints_category_check;
+        ALTER TABLE course_complaints ADD CONSTRAINT course_complaints_category_check
+          CHECK (category IN ('tutor_behavior','content_quality','technical','payment','other','refund_request'));
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $$
+    `);
+    console.log('✅ Course complaints migration v2 done');
+  } catch (e) {
+    console.error('❌ Course complaints migration v2 error:', e.message);
+  }
+})();
+
+// Migration v3: add resolution_request + refund_reason fields
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS resolution_request TEXT CHECK (resolution_request IS NULL OR resolution_request IN ('report_only','admin_contact','course_swap','refund'))`);
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS refund_reason TEXT`);
+    console.log('✅ Course complaints migration v3 done');
+  } catch (e) {
+    console.error('❌ Course complaints migration v3 error:', e.message);
+  }
+})();
+
+// Migration v4: expand resolution_request CHECK to include new resolution types
+(async () => {
+  try {
+    await pool.query(`DO $$ BEGIN ALTER TABLE course_complaints DROP CONSTRAINT IF EXISTS course_complaints_resolution_request_check; ALTER TABLE course_complaints ADD CONSTRAINT course_complaints_resolution_request_check CHECK (resolution_request IS NULL OR resolution_request IN ('report_only','admin_contact','course_swap','refund','REFUND','CHANGE_COURSE','CHANGE_TUTOR','OTHER')); EXCEPTION WHEN OTHERS THEN NULL; END $$`);
+    console.log('✅ Course complaints migration v4 done');
+  } catch (e) {
+    console.error('❌ Course complaints migration v4 error:', e.message);
+  }
+})();
+
+// POST /api/complaints/upload
+app.post('/api/complaints/upload', verifyToken, (req, res, next) => {
+  complaintUpload.single('file')(req, res, err => {
+    if (err) return res.status(400).json({ message: err.message });
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'Không có file được gửi.' });
+    const { originalname, mimetype, size, buffer } = req.file;
+    const ext = originalname.includes('.') ? '.' + originalname.split('.').pop() : '';
+    const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+    const storagePath = `complaints/${req.user.userId}/${safeName}`;
+    const { error } = await supabaseAdmin.storage.from(BUCKET).upload(storagePath, buffer, { contentType: mimetype, upsert: false });
+    if (error) return res.status(500).json({ message: 'Lỗi upload: ' + error.message });
+    const { data: urlData } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(storagePath);
+    return res.json({ file_url: urlData.publicUrl, file_name: originalname, file_type: mimetype, file_size: size });
+  } catch (e) {
+    console.error('Complaint upload error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/complaints
+app.post('/api/complaints', verifyToken, async (req, res) => {
+  const { course_id, title, category, reason, description, attachments = [], resolution_request, refund_reason } = req.body;
+  const studentId = req.user.userId;
+  if (!course_id || !title || !category || !reason) {
+    return res.status(400).json({ message: 'Thiếu thông tin bắt buộc.' });
+  }
+  if (resolution_request && !['report_only','admin_contact','course_swap','refund','REFUND','CHANGE_COURSE','CHANGE_TUTOR','OTHER'].includes(resolution_request)) {
+    return res.status(400).json({ message: 'Loại yêu cầu không hợp lệ.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const enroll = await client.query(
+      `SELECT id FROM course_enrollments WHERE course_id=$1 AND student_id=$2 AND status='active' LIMIT 1`,
+      [course_id, studentId]
+    );
+    if (!enroll.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Bạn chưa đăng ký hoặc khóa học chưa kích hoạt.' });
+    }
+    let complaint;
+    try {
+      complaint = await client.query(
+        `INSERT INTO course_complaints (course_id, student_id, enrollment_id, title, category, reason, description, resolution_request, refund_reason)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [course_id, studentId, enroll.rows[0].id, title.trim(), category, reason.trim(), description?.trim() || null, resolution_request || null, refund_reason?.trim() || null]
+      );
+    } catch (e) {
+      if (e.code === '23505') {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: 'Bạn đã có khiếu nại đang xử lý cho khóa học này. Vui lòng chờ khiếu nại hiện tại được giải quyết.' });
+      }
+      throw e;
+    }
+    const comp = complaint.rows[0];
+    if (attachments.length > 0) {
+      for (const att of attachments) {
+        await client.query(
+          `INSERT INTO course_complaint_attachments (complaint_id, file_url, file_name, file_type, file_size) VALUES ($1,$2,$3,$4,$5)`,
+          [comp.id, att.file_url, att.file_name, att.file_type, att.file_size]
+        );
+      }
+    }
+    if (description?.trim()) {
+      await client.query(
+        `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type)
+         VALUES ($1,$2,'student',$3,'message')`,
+        [comp.id, studentId, description.trim()]
+      );
+    }
+    const admins = await client.query(`SELECT id FROM users WHERE role='admin' LIMIT 5`);
+    for (const admin of admins.rows) {
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1,'new_complaint',$2,$3,'report_problem',$4,'complaint')`,
+        [admin.id, 'Khiếu nại mới từ học viên', `${title.trim()}`, comp.id]
+      );
+    }
+    await client.query('COMMIT');
+    const responseBody = {
+      id: comp.id,
+      complaint_number: comp.complaint_number,
+      ticket_number: String(comp.complaint_number).padStart(6, '0'),
+      status: comp.status,
+      created_at: comp.created_at
+    };
+    return res.status(201).json(responseBody);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('[POST /complaints] 500 error:', e.message, e.code);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/complaints/active?course_id=
+app.get('/api/complaints/active', verifyToken, async (req, res) => {
+  const { course_id } = req.query;
+  if (!course_id) return res.status(400).json({ message: 'course_id là bắt buộc.' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT cc.*, LPAD(cc.complaint_number::text, 6, '0') AS ticket_number, c.title AS course_title
+       FROM course_complaints cc
+       JOIN courses c ON cc.course_id = c.id
+       WHERE cc.student_id=$1 AND cc.course_id=$2
+         AND cc.status IN ('pending','processing','waiting_student','waiting_tutor')
+       ORDER BY cc.created_at DESC LIMIT 1`,
+      [req.user.userId, course_id]
+    );
+    if (!rows.length) return res.json({ active: null });
+    const messages = await pool.query(
+      `SELECT m.*, u.full_name AS sender_name
+       FROM course_complaint_messages m
+       LEFT JOIN users u ON m.sender_id = u.id
+       WHERE m.complaint_id=$1 ORDER BY m.created_at ASC`,
+      [rows[0].id]
+    );
+    const attachments = await pool.query(
+      `SELECT * FROM course_complaint_attachments WHERE complaint_id=$1 ORDER BY created_at ASC`,
+      [rows[0].id]
+    );
+    return res.json({ active: { ...rows[0], messages: messages.rows, attachments: attachments.rows } });
+  } catch (e) {
+    console.error('Get active complaint error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/complaints
+app.get('/api/complaints', verifyToken, async (req, res) => {
+  const studentId = req.user.userId;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(20, parseInt(req.query.limit) || 10);
+  const offset = (page - 1) * limit;
+  try {
+    const { rows } = await pool.query(
+      `SELECT cc.id, cc.complaint_number, LPAD(cc.complaint_number::text,6,'0') AS ticket_number,
+              cc.title, cc.category, cc.status, cc.admin_response, cc.resolution_request, cc.refund_reason,
+              cc.created_at, cc.updated_at,
+              c.title AS course_title,
+              u.full_name AS admin_name
+       FROM course_complaints cc
+       JOIN courses c ON cc.course_id = c.id
+       LEFT JOIN users u ON cc.admin_id = u.id
+       WHERE cc.student_id=$1
+       ORDER BY cc.created_at DESC LIMIT $2 OFFSET $3`,
+      [studentId, limit, offset]
+    );
+    const total = parseInt((await pool.query(`SELECT COUNT(*) FROM course_complaints WHERE student_id=$1`, [studentId])).rows[0].count);
+    return res.json({ complaints: rows, total, page, limit });
+  } catch (e) {
+    console.error('List complaints error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/complaints/:id
+app.get('/api/complaints/:id', verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cc.*, LPAD(cc.complaint_number::text,6,'0') AS ticket_number, c.title AS course_title
+       FROM course_complaints cc
+       JOIN courses c ON cc.course_id = c.id
+       WHERE cc.id=$1 AND cc.student_id=$2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const messages = await pool.query(
+      `SELECT m.*, u.full_name AS sender_name
+       FROM course_complaint_messages m
+       LEFT JOIN users u ON m.sender_id = u.id
+       WHERE m.complaint_id=$1 ORDER BY m.created_at ASC`,
+      [req.params.id]
+    );
+    const attachments = await pool.query(
+      `SELECT * FROM course_complaint_attachments WHERE complaint_id=$1 ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+    return res.json({ ...rows[0], messages: messages.rows, attachments: attachments.rows });
+  } catch (e) {
+    console.error('Get complaint detail error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/complaints/:id/messages
+app.post('/api/complaints/:id/messages', verifyToken, async (req, res) => {
+  const { message } = req.body;
+  if (!message?.trim()) return res.status(400).json({ message: 'Nội dung không được trống.' });
+  try {
+    const comp = await pool.query(
+      `SELECT * FROM course_complaints WHERE id=$1 AND student_id=$2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!comp.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    if (!['processing', 'waiting_student'].includes(comp.rows[0].status)) {
+      return res.status(400).json({ message: 'Không thể gửi tin nhắn ở trạng thái này.' });
+    }
+    const msg = await pool.query(
+      `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type)
+       VALUES ($1,$2,'student',$3,'message') RETURNING *`,
+      [req.params.id, req.user.userId, message.trim()]
+    );
+    await pool.query(
+      `UPDATE course_complaints SET status='processing', updated_at=NOW() WHERE id=$1`,
+      [req.params.id]
+    );
+    const admins = await pool.query(`SELECT id FROM users WHERE role='admin' LIMIT 5`);
+    for (const admin of admins.rows) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1,'complaint_message','Học viên phản hồi khiếu nại',$2,'chat',$3,'complaint')`,
+        [admin.id, message.trim().slice(0, 100), req.params.id]
+      );
+    }
+    return res.status(201).json({ message: msg.rows[0] });
+  } catch (e) {
+    console.error('Post complaint message error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// DELETE /api/complaints/:id — student huỷ khiếu nại (chỉ khi pending)
+app.delete('/api/complaints/:id', verifyToken, async (req, res) => {
+  try {
+    const comp = await pool.query(
+      `SELECT id, status, student_id FROM course_complaints WHERE id=$1`,
+      [req.params.id]
+    );
+    if (!comp.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const c = comp.rows[0];
+    if (c.student_id !== req.user.userId) return res.status(403).json({ message: 'Không có quyền xoá khiếu nại này.' });
+    if (c.status !== 'pending') return res.status(409).json({ message: 'Chỉ có thể xoá khiếu nại khi đang chờ xử lý.' });
+    await pool.query(`DELETE FROM course_complaints WHERE id=$1`, [req.params.id]);
+    return res.json({ message: 'Đã xoá khiếu nại.' });
+  } catch (e) {
+    console.error('[DELETE /complaints/:id]', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// PUT /api/complaints/:id — student chỉnh sửa khiếu nại (chỉ khi pending)
+app.put('/api/complaints/:id', verifyToken, async (req, res) => {
+  try {
+    const comp = await pool.query(
+      `SELECT id, status, student_id FROM course_complaints WHERE id=$1`,
+      [req.params.id]
+    );
+    if (!comp.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const c = comp.rows[0];
+    if (c.student_id !== req.user.userId) return res.status(403).json({ message: 'Không có quyền chỉnh sửa khiếu nại này.' });
+    if (c.status !== 'pending') return res.status(409).json({ message: 'Chỉ có thể chỉnh sửa khi đang chờ xử lý.' });
+    const { title, category, reason, description, resolution_request } = req.body;
+    if (!title?.trim() || title.trim().length < 5) return res.status(400).json({ message: 'Tiêu đề phải có ít nhất 5 ký tự.' });
+    if (!category) return res.status(400).json({ message: 'Vui lòng chọn danh mục.' });
+    if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng nhập lý do.' });
+    const updated = await pool.query(
+      `UPDATE course_complaints
+       SET title=$1, category=$2, reason=$3, description=$4, resolution_request=$5, updated_at=NOW()
+       WHERE id=$6 RETURNING *`,
+      [title.trim(), category, reason.trim(), description?.trim() || null, resolution_request || null, req.params.id]
+    );
+    return res.json(updated.rows[0]);
+  } catch (e) {
+    console.error('[PUT /complaints/:id]', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/admin/course-complaints
+app.get('/api/admin/course-complaints', verifyToken, requireAdmin, async (req, res) => {
+  const { status, search, page = 1, limit = 20 } = req.query;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const conditions = [];
+  const params = [];
+  if (status && status !== 'all') {
+    params.push(status);
+    conditions.push(`cc.status = $${params.length}`);
+  }
+  if (search) {
+    params.push(`%${search}%`);
+    const idx = params.length;
+    conditions.push(`(u.full_name ILIKE $${idx} OR c.title ILIKE $${idx} OR cc.title ILIKE $${idx})`);
+  }
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  try {
+    const total = parseInt((await pool.query(
+      `SELECT COUNT(*) FROM course_complaints cc JOIN users u ON cc.student_id=u.id JOIN courses c ON cc.course_id=c.id ${where}`,
+      params
+    )).rows[0].count);
+    const { rows } = await pool.query(
+      `SELECT cc.id, LPAD(cc.complaint_number::text,6,'0') AS ticket_number,
+              cc.title, cc.category, cc.status, cc.resolution_request, cc.created_at, cc.updated_at,
+              u.full_name AS student_name, u.email AS student_email,
+              c.title AS course_title
+       FROM course_complaints cc
+       JOIN users u ON cc.student_id=u.id
+       JOIN courses c ON cc.course_id=c.id
+       ${where}
+       ORDER BY cc.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, parseInt(limit), offset]
+    );
+    const statsRes = await pool.query(`SELECT status, COUNT(*) AS cnt FROM course_complaints GROUP BY status`);
+    const stats = {};
+    statsRes.rows.forEach(r => { stats[r.status] = parseInt(r.cnt); });
+    return res.json({ complaints: rows, total, page: parseInt(page), limit: parseInt(limit), stats });
+  } catch (e) {
+    console.error('Admin list complaints error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/admin/course-complaints/:id
+app.get('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cc.*, LPAD(cc.complaint_number::text,6,'0') AS ticket_number,
+              u.full_name AS student_name, u.email AS student_email, u.picture AS student_picture,
+              c.title AS course_title, c.price AS course_price, c.subject AS course_subject,
+              tu.full_name AS tutor_name
+       FROM course_complaints cc
+       JOIN users u ON cc.student_id=u.id
+       JOIN courses c ON cc.course_id=c.id
+       LEFT JOIN users tu ON tu.id=c.tutor_id
+       WHERE cc.id=$1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy.' });
+    const messages = await pool.query(
+      `SELECT m.*, u.full_name AS sender_name
+       FROM course_complaint_messages m
+       LEFT JOIN users u ON m.sender_id=u.id
+       WHERE m.complaint_id=$1 ORDER BY m.created_at ASC`,
+      [req.params.id]
+    );
+    const attachments = await pool.query(
+      `SELECT * FROM course_complaint_attachments WHERE complaint_id=$1 ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+    return res.json({ ...rows[0], messages: messages.rows, attachments: attachments.rows });
+  } catch (e) {
+    console.error('Admin get complaint detail error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// PUT /api/admin/course-complaints/:id
+app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (req, res) => {
+  const { status, message, admin_response, resolution_type, refund_amount, resolution_details } = req.body;
+  const validStatuses = ['pending','processing','waiting_student','waiting_tutor','resolved','rejected','closed'];
+  if (status && !validStatuses.includes(status)) {
+    return res.status(400).json({ message: 'Trạng thái không hợp lệ.' });
+  }
+  if (resolution_type && !['accepted','rejected','partial'].includes(resolution_type)) {
+    return res.status(400).json({ message: 'Kết quả không hợp lệ.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query(`SELECT * FROM course_complaints WHERE id=$1 FOR UPDATE`, [req.params.id]);
+    if (!existing.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy.' }); }
+    const comp = existing.rows[0];
+    if (['resolved', 'rejected', 'closed'].includes(comp.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Complaint has already been processed.' });
+    }
+    if (refund_amount && parseInt(refund_amount) > 0) {
+      const courseRes = await client.query(`SELECT price FROM courses WHERE id=$1`, [comp.course_id]);
+      const coursePrice = courseRes.rows.length ? Number(courseRes.rows[0].price) || 0 : 0;
+      if (parseInt(refund_amount) > coursePrice) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: 'Số tiền hoàn không được vượt quá giá khóa học.' });
+      }
+    }
+    const oldStatus = comp.status;
+    const newStatus = status || (resolution_type === 'accepted' ? 'resolved' : resolution_type === 'rejected' ? 'rejected' : resolution_type === 'partial' ? 'resolved' : oldStatus);
+    const isTerminal = ['resolved','rejected','closed'].includes(newStatus);
+    const updated = await client.query(
+      `UPDATE course_complaints
+       SET status=$1, admin_id=$2,
+           admin_response=COALESCE($3, admin_response),
+           resolution_type=COALESCE($6, resolution_type),
+           refund_amount=COALESCE($7, refund_amount),
+           resolved_at=CASE WHEN $4 AND resolved_at IS NULL THEN NOW() ELSE resolved_at END,
+           updated_at=NOW()
+       WHERE id=$5 RETURNING *`,
+      [newStatus, req.user.userId, admin_response || null, isTerminal, req.params.id, resolution_type || null, refund_amount ? parseInt(refund_amount) : null]
+    );
+    if (newStatus !== oldStatus) {
+      await client.query(
+        `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type, metadata)
+         VALUES ($1,$2,'admin','Trạng thái khiếu nại đã được cập nhật','status_change',$3)`,
+        [req.params.id, req.user.userId, JSON.stringify({ from: oldStatus, to: newStatus })]
+      );
+    }
+    if (resolution_type && message?.trim()) {
+      await client.query(
+        `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type, metadata)
+         VALUES ($1,$2,'admin',$3,'resolution',$4)`,
+        [req.params.id, req.user.userId, message.trim(), JSON.stringify({ resolution_type, refund_amount: refund_amount ? parseInt(refund_amount) : null, resolution_details: resolution_details || null })]
+      );
+    } else if (message?.trim()) {
+      await client.query(
+        `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type)
+         VALUES ($1,$2,'admin',$3,'message')`,
+        [req.params.id, req.user.userId, message.trim()]
+      );
+    }
+    if (['accepted', 'partial'].includes(resolution_type) && refund_amount && parseInt(refund_amount) > 0) {
+      const amt = parseInt(refund_amount);
+      const walletRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [comp.student_id]);
+      if (!walletRes.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(500).json({ message: 'Student wallet not found.' });
+      }
+      const wId = walletRes.rows[0].id;
+      await client.query('UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE id = $2', [amt, wId]);
+      await client.query(
+        `INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1, $2, 'REFUND', 'SUCCESS', $3)`,
+        [wId, amt, `Hoàn tiền khiếu nại #${comp.complaint_number || req.params.id}`]
+      );
+      // Refund settled: revoke course access so it drops out of "Khóa học của tôi"
+      if (comp.enrollment_id) {
+        await client.query(`UPDATE course_enrollments SET status='refunded', updated_at=NOW() WHERE id=$1`, [comp.enrollment_id]);
+      }
+    }
+    const statusLabels = {
+      resolved: 'Khiếu nại của bạn đã được giải quyết',
+      rejected: 'Khiếu nại của bạn đã bị từ chối',
+      closed: 'Khiếu nại của bạn đã được đóng',
+      processing: 'Khiếu nại của bạn đang được xử lý',
+      waiting_student: 'Vui lòng cung cấp thêm thông tin cho khiếu nại',
+    };
+    const resolutionLabels = { accepted: 'Khiếu nại của bạn đã được chấp nhận', rejected: 'Khiếu nại của bạn đã bị từ chối', partial: 'Khiếu nại của bạn được chấp nhận một phần' };
+    const notifTitle = resolutionLabels[resolution_type] || statusLabels[newStatus] || 'Cập nhật khiếu nại của bạn';
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1,'complaint_update',$2,$3,'support_agent',$4,'complaint')`,
+      [comp.student_id, notifTitle, message?.trim() || notifTitle, req.params.id]
+    );
+    await client.query('COMMIT');
+    return res.json({ complaint: updated.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('Admin update complaint error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
 
 async function startServer() {
   // Auto-migrate: add is_banned column if it doesn't exist yet
