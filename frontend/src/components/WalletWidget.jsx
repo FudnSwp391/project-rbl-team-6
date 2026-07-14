@@ -55,8 +55,20 @@ export default function WalletWidget({ token }) {
                 body: JSON.stringify({ amount: Number(amount), returnUrl, walletId: wallet?.id })
             });
             const data = await res.json();
-            if (data.success && data.url) {
-                window.location.href = data.url;
+            if (data.success && data.vnpUrl && data.params) {
+                // Dùng form redirect để tránh browser re-encode URL (gây sai chữ ký VNPAY)
+                const form = document.createElement('form');
+                form.method = 'GET';
+                form.action = data.vnpUrl;
+                for (const [key, value] of Object.entries(data.params)) {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = key;
+                    input.value = value;
+                    form.appendChild(input);
+                }
+                document.body.appendChild(form);
+                form.submit();
             } else {
                 alert(data.message || 'Có lỗi xảy ra');
                 setLoading(false);
