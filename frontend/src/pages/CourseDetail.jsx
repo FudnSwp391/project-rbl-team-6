@@ -325,7 +325,12 @@ export default function CourseDetail({ courseId }) {
               </div>
 
               {/* Action buttons */}
-              {enrolled ? (
+              {user && (user.id === c.tutor_id || user.userId === c.tutor_id) ? (
+                <button onClick={() => window.location.hash = '#/tutor-dashboard'} className="w-full py-3.5 rounded-xl bg-[#6366f1] text-white font-bold text-base flex items-center justify-center gap-2 hover:bg-[#4f46e5] transition-colors mb-3">
+                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>manage_accounts</span>
+                  Quản lý khóa học của bạn
+                </button>
+              ) : enrolled ? (
                 <button onClick={() => window.location.hash = '#/my-courses'} className="w-full py-3.5 rounded-xl bg-[#16a34a] text-white font-bold text-base flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors mb-3">
                   <span className="material-symbols-outlined" style={{ fontSize: 20 }}>check_circle</span>
                   Đã đăng ký (Đến lớp học)
