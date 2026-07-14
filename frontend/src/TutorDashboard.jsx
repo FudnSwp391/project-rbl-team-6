@@ -1631,6 +1631,30 @@ const TIME_SLOTS = [
   '04:00 PM','05:00 PM','06:00 PM','07:00 PM','08:00 PM',
 ]
 
+// Chuyển slot string ("09:00 AM") thành phút kể từ nửa đêm
+function parseSlotMins(slot) {
+  const [time, period] = slot.split(' ')
+  let [h, m] = time.split(':').map(Number)
+  if (period === 'PM' && h !== 12) h += 12
+  if (period === 'AM' && h === 12) h = 0
+  return h * 60 + m
+}
+
+// Kiểm tra slot có bị chặn bởi một slot đã chọn không (dựa theo duration)
+// VD: 09:00 AM đã chọn với 2h → 10:00 AM và 10:30 AM bị block
+function isSlotBlocked(slot, selectedSlots, durationMins) {
+  if (durationMins <= 60) return false // 1h: không block gì
+  const slotMins = parseSlotMins(slot)
+  for (const sel of selectedSlots) {
+    const selMins = parseSlotMins(sel)
+    // Slot bị block nếu nằm trong khoảng [selStart, selStart+duration) của một slot đã chọn
+    // hoặc nếu chọn slot này sẽ đè lên slot đã chọn khác
+    const overlap = slotMins < selMins + durationMins && slotMins + durationMins > selMins
+    if (overlap && slotMins !== selMins) return true
+  }
+  return false
+}
+
 // Badge hiĂ¡Â»Æ’n thĂ¡Â»â€¹ trĂ¡ÂºÂ¡ng thÄ‚Â¡i duyĂ¡Â»â€¡t
 function StatusBadge({ status }) {
   if (status === 'approved') return (
@@ -1836,10 +1860,13 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const toggleSlot = (day, slot) => {
     setAvailData(prev => {
       const current = prev[day] || []
-      const next = current.includes(slot)
-        ? current.filter(s => s !== slot)
-        : [...current, slot].sort()
-      return { ...prev, [day]: next }
+      // Nếu slot đang được chọn → bỏ chọn
+      if (current.includes(slot)) {
+        return { ...prev, [day]: current.filter(s => s !== slot) }
+      }
+      // Kiểm tra xem slot có bị block không
+      if (isSlotBlocked(slot, current, slotDuration)) return prev
+      return { ...prev, [day]: [...current, slot].sort() }
     })
   }
 
@@ -2187,11 +2214,18 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                     <p className="font-label-sm text-[12px] font-bold text-on-surface mb-1.5">{day}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {TIME_SLOTS.map(slot => {
-                        const active = (availData[day] || []).includes(slot)
+                        const active  = (availData[day] || []).includes(slot)
+                        const blocked = !active && isSlotBlocked(slot, availData[day] || [], slotDuration)
                         return (
                           <button key={slot} type="button"
                             onClick={() => toggleSlot(day, slot)}
-                            className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${active ? 'bg-primary text-on-primary border-primary' : 'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'}`}>
+                            disabled={blocked}
+                            title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
+                            className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
+                              active   ? 'bg-primary text-on-primary border-primary' :
+                              blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
+                                         'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'
+                            }`}>
                             {slot}
                           </button>
                         )
