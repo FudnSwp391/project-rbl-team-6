@@ -33,7 +33,7 @@ const authMiddleware = async (req, res, next) => {
 
 // --- GET Wallet Overview ---
 router.get('/', authMiddleware, async (req, res) => {
-  const userId = req.user?.id || req.user?.sub;
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
   if (!userId) return res.status(400).json({ error: 'User ID missing' });
 
   try {
@@ -76,7 +76,7 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // --- GET Transactions ---
 router.get('/transactions', authMiddleware, async (req, res) => {
-  const userId = req.user?.id || req.user?.sub;
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
   
   try {
     const walletResult = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [userId]);
@@ -97,7 +97,7 @@ router.get('/transactions', authMiddleware, async (req, res) => {
 
 // --- POST Deposit Request ---
 router.post('/deposit-request', authMiddleware, async (req, res) => {
-  const userId = req.user?.id || req.user?.sub;
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
   const { amount, method } = req.body;
 
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
@@ -128,7 +128,7 @@ router.post('/deposit-request', authMiddleware, async (req, res) => {
 
 // --- POST Withdraw Request ---
 router.post('/withdraw-request', authMiddleware, async (req, res) => {
-  const userId = req.user?.id || req.user?.sub;
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
   const { amount, method, accountDetails } = req.body;
 
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });

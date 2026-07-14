@@ -3589,6 +3589,8 @@ const tutorRequestRoutes = require("./routes/tutorRequestRoutes");
 const tutorInteractionRoutes = require("./routes/tutorInteractionRoutes");
 const studentProfileRoutes = require("./routes/studentProfileRoutes");
 const studentCourseRoutes = require("./routes/studentCourseRoutes");
+const walletRoutes = require("./routes/walletRoutes");
+const adminWalletRoutes = require("./routes/adminWalletRoutes");
 
 app.use("/api/classes/:classId/materials", materialRoutes);
 app.use("/api/classes", classRoutes);
@@ -3601,6 +3603,8 @@ app.use("/", tutorRequestRoutes);
 app.use("/", tutorInteractionRoutes);
 app.use("/api/student/profile", studentProfileRoutes);
 app.use("/", studentCourseRoutes);
+app.use("/api/wallet", walletRoutes);
+app.use("/api/admin/wallet", adminWalletRoutes);
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
