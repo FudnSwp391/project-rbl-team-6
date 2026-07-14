@@ -124,28 +124,22 @@ router.patch('/withdraw-requests/:id/approve', adminAuthMiddleware, async (req, 
     
     if (withdrawReq.status !== 'PENDING') throw new Error('Request is already processed');
 
-    // Deduct wallet balance
-    const walletResult = await client.query('UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE id = $2 AND balance >= $1 RETURNING *',
-      [withdrawReq.amount, withdrawReq.wallet_id]
-    );
+    // Note: Wallet balance was already deducted when the request was created.
+    // We only need to verify if the wallet still exists.
+    const walletResult = await client.query('SELECT id FROM wallets WHERE id = $1', [withdrawReq.wallet_id]);
     
     if (walletResult.rows.length === 0) {
-        throw new Error('Insufficient balance to approve withdrawal');
+        throw new Error('Wallet not found');
     }
 
-    // Update status
+    // Update status to APPROVED (Wait for tutor confirmation to COMPLETE)
     await client.query(
       'UPDATE withdraw_requests SET status = $1, admin_note = $2, updated_at = NOW() WHERE id = $3',
-      ['COMPLETED', note || null, id]
+      ['APPROVED', note || null, id]
     );
 
-    // Create transaction log
-    const desc = `Duyệt rút tiền về ${withdrawReq.method}`;
-    await client.query(
-      `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
-       VALUES ($1, $2, 'WITHDRAW', 'SUCCESS', $3, $4)`,
-      [withdrawReq.wallet_id, withdrawReq.amount, withdrawReq.method, desc]
-    );
+    // Note: We do NOT create a transaction log here. 
+    // The transaction log will be created when the tutor confirms receipt.
 
     await client.query('COMMIT');
     res.json({ success: true, message: 'Đã duyệt yêu cầu rút tiền' });
@@ -162,17 +156,38 @@ router.patch('/withdraw-requests/:id/approve', adminAuthMiddleware, async (req, 
 router.patch('/withdraw-requests/:id/reject', adminAuthMiddleware, async (req, res) => {
   const { id } = req.params;
   const { note } = req.body;
-  
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+    const result = await client.query(
       "UPDATE withdraw_requests SET status = 'REJECTED', admin_note = $1, updated_at = NOW() WHERE id = $2 AND status = 'PENDING' RETURNING *",
       [note, id]
     );
-    if (result.rows.length === 0) return res.status(400).json({ error: 'Request not found or already processed' });
-    res.json({ success: true, message: 'Đã từ chối yêu cầu rút tiền' });
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Request not found or already processed' });
+    }
+    const reqData = result.rows[0];
+
+    // Refund wallet balance
+    await client.query('UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE id = $2', [reqData.amount, reqData.wallet_id]);
+    
+    // Log transaction for refund
+    const desc = `Hoàn tiền do từ chối yêu cầu rút (Lý do: ${note || 'Không có'})`;
+    await client.query(
+      `INSERT INTO transactions (wallet_id, amount, type, status, description)
+       VALUES ($1, $2, 'DEPOSIT', 'SUCCESS', $3)`,
+      [reqData.wallet_id, reqData.amount, desc]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Đã từ chối yêu cầu rút tiền và hoàn tiền' });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error("Error rejecting withdraw:", error);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

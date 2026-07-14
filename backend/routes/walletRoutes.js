@@ -33,7 +33,7 @@ const authMiddleware = async (req, res, next) => {
 
 // --- GET Wallet Overview ---
 router.get('/', authMiddleware, async (req, res) => {
-  const userId = req.user?.id || req.user?.sub;
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
   if (!userId) return res.status(400).json({ error: 'User ID missing' });
 
   try {
@@ -76,7 +76,7 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // --- GET Transactions ---
 router.get('/transactions', authMiddleware, async (req, res) => {
-  const userId = req.user?.id || req.user?.sub;
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
   
   try {
     const walletResult = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [userId]);
@@ -97,7 +97,7 @@ router.get('/transactions', authMiddleware, async (req, res) => {
 
 // --- POST Deposit Request ---
 router.post('/deposit-request', authMiddleware, async (req, res) => {
-  const userId = req.user?.id || req.user?.sub;
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
   const { amount, method } = req.body;
 
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
@@ -128,30 +128,110 @@ router.post('/deposit-request', authMiddleware, async (req, res) => {
 
 // --- POST Withdraw Request ---
 router.post('/withdraw-request', authMiddleware, async (req, res) => {
-  const userId = req.user?.id || req.user?.sub;
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
   const { amount, method, accountDetails } = req.body;
 
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
 
+  const client = await pool.connect();
   try {
-    const walletResult = await pool.query('SELECT id, balance FROM wallets WHERE user_id = $1', [userId]);
-    if (walletResult.rows.length === 0) return res.status(400).json({ error: 'Wallet not found' });
+    await client.query('BEGIN');
+    
+    // Lock wallet row for update to prevent race conditions
+    const walletResult = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    if (walletResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Wallet not found' });
+    }
     
     const wallet = walletResult.rows[0];
     if (parseFloat(wallet.balance) < amount) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Insufficient balance' });
     }
+
+    // Deduct balance immediately
+    await client.query(
+      'UPDATE wallets SET balance = balance - $1 WHERE id = $2',
+      [amount, wallet.id]
+    );
+
     // Create a pending withdraw request
-    await pool.query(
+    await client.query(
       `INSERT INTO withdraw_requests (wallet_id, amount, method, account_details, status)
        VALUES ($1, $2, $3, $4, 'PENDING')`,
       [wallet.id, amount, method, accountDetails]
     );
 
+    await client.query('COMMIT');
     res.json({ success: true, message: 'Yêu cầu rút tiền đã được tạo và chờ duyệt' });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error("Error on withdraw:", error);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+// --- GET Withdraw Requests ---
+router.get('/withdraw-requests', authMiddleware, async (req, res) => {
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
+  try {
+    const walletResult = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [userId]);
+    if (walletResult.rows.length === 0) return res.json({ requests: [] });
+    
+    const reqResult = await pool.query(
+      'SELECT * FROM withdraw_requests WHERE wallet_id = $1 ORDER BY created_at DESC',
+      [walletResult.rows[0].id]
+    );
+    res.json({ requests: reqResult.rows });
+  } catch (error) {
+    console.error("Error fetching withdraw requests:", error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- CONFIRM Withdraw Request ---
+router.patch('/withdraw-requests/:id/confirm', authMiddleware, async (req, res) => {
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
+  const { id } = req.params;
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const walletResult = await client.query('SELECT id FROM wallets WHERE user_id = $1', [userId]);
+    if (walletResult.rows.length === 0) throw new Error('Wallet not found');
+    const walletId = walletResult.rows[0].id;
+
+    const reqResult = await client.query('SELECT * FROM withdraw_requests WHERE id = $1 AND wallet_id = $2 FOR UPDATE', [id, walletId]);
+    if (reqResult.rows.length === 0) throw new Error('Request not found');
+    
+    const withdrawReq = reqResult.rows[0];
+    if (withdrawReq.status !== 'APPROVED') throw new Error('Request must be APPROVED by admin first');
+
+    // Update status to COMPLETED
+    await client.query(
+      "UPDATE withdraw_requests SET status = 'COMPLETED', updated_at = NOW() WHERE id = $1",
+      [id]
+    );
+
+    // Create transaction log
+    const desc = `Rút tiền về ${withdrawReq.method}`;
+    await client.query(
+      `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
+       VALUES ($1, $2, 'WITHDRAW', 'SUCCESS', $3, $4)`,
+      [walletId, withdrawReq.amount, withdrawReq.method, desc]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Đã xác nhận nhận tiền thành công' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error confirming withdraw:", error);
+    res.status(400).json({ error: error.message || 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

@@ -1771,6 +1771,30 @@ const TIME_SLOTS = [
   '04:00 PM','05:00 PM','06:00 PM','07:00 PM','08:00 PM',
 ]
 
+// Chuyển slot string ("09:00 AM") thành phút kể từ nửa đêm
+function parseSlotMins(slot) {
+  const [time, period] = slot.split(' ')
+  let [h, m] = time.split(':').map(Number)
+  if (period === 'PM' && h !== 12) h += 12
+  if (period === 'AM' && h === 12) h = 0
+  return h * 60 + m
+}
+
+// Kiểm tra slot có bị chặn bởi một slot đã chọn không (dựa theo duration)
+// VD: 09:00 AM đã chọn với 2h → 10:00 AM và 10:30 AM bị block
+function isSlotBlocked(slot, selectedSlots, durationMins) {
+  if (durationMins <= 60) return false // 1h: không block gì
+  const slotMins = parseSlotMins(slot)
+  for (const sel of selectedSlots) {
+    const selMins = parseSlotMins(sel)
+    // Slot bị block nếu nằm trong khoảng [selStart, selStart+duration) của một slot đã chọn
+    // hoặc nếu chọn slot này sẽ đè lên slot đã chọn khác
+    const overlap = slotMins < selMins + durationMins && slotMins + durationMins > selMins
+    if (overlap && slotMins !== selMins) return true
+  }
+  return false
+}
+
 // Badge hiĂ¡Â»Æ’n thĂ¡Â»â€¹ trĂ¡ÂºÂ¡ng thÄ‚Â¡i duyĂ¡Â»â€¡t
 function StatusBadge({ status }) {
   if (status === 'approved') return (
@@ -1843,6 +1867,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const [availEdit, setAvailEdit]       = useState(false)
   const [availData, setAvailData]       = useState({})
   const [availSaving, setAvailSaving]   = useState(false)
+  const [slotDuration, setSlotDuration] = useState(60) // 60 | 120 | 180 phút
 
   useEffect(() => {
     async function load() {
@@ -1851,6 +1876,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         setProfile(data)
         setBioValue(data.bio_pending || data.bio || '')
         setAvailData(data.availability || {})
+        setSlotDuration(Number(data.slot_duration_mins) || 60)
         setAvatarUrl(data.picture || user?.picture || '')
         setCvForm({
           full_name: data.full_name || displayName,
@@ -1976,18 +2002,21 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const toggleSlot = (day, slot) => {
     setAvailData(prev => {
       const current = prev[day] || []
-      const next = current.includes(slot)
-        ? current.filter(s => s !== slot)
-        : [...current, slot].sort()
-      return { ...prev, [day]: next }
+      // Nếu slot đang được chọn → bỏ chọn
+      if (current.includes(slot)) {
+        return { ...prev, [day]: current.filter(s => s !== slot) }
+      }
+      // Kiểm tra xem slot có bị block không
+      if (isSlotBlocked(slot, current, slotDuration)) return prev
+      return { ...prev, [day]: [...current, slot].sort() }
     })
   }
 
   const handleAvailSave = async () => {
     setAvailSaving(true)
     try {
-      await updateTutorAvailability(availData)
-      setProfile(p => ({ ...p, availability: availData }))
+      await updateTutorAvailability(availData, slotDuration)
+      setProfile(p => ({ ...p, availability: availData, slot_duration_mins: slotDuration }))
       setAvailEdit(false)
     } catch { /* ignore */ }
     finally { setAvailSaving(false) }
@@ -2313,18 +2342,54 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             </div>
 
             {availEdit ? (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <p className="text-[12px] text-on-surface-variant">Click slots to toggle availability. No admin approval needed.</p>
+
+                {/* ── Chọn thời lượng slot ── */}
+                <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
+                  <p className="font-label-md text-[12px] font-bold text-on-surface mb-2 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-primary">schedule</span>
+                    Thời lượng mỗi buổi dạy
+                  </p>
+                  <div className="flex gap-2">
+                    {[{ value: 60, label: '1 tiếng', sub: '60 phút' }, { value: 120, label: '2 tiếng', sub: '120 phút' }, { value: 180, label: '3 tiếng', sub: '180 phút' }].map(opt => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setSlotDuration(opt.value)}
+                        className={`flex-1 py-2 px-3 rounded-xl border-2 transition-all text-center ${
+                          slotDuration === opt.value
+                            ? 'border-primary bg-primary text-on-primary'
+                            : 'border-outline-variant/50 text-on-surface-variant hover:border-primary/40 hover:bg-primary/5'
+                        }`}
+                      >
+                        <p className="font-bold text-[13px]">{opt.label}</p>
+                        <p className={`text-[10px] mt-0.5 ${slotDuration === opt.value ? 'text-on-primary/80' : 'text-outline'}`}>{opt.sub}</p>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant mt-2">
+                    ⚠️ Học phí sẽ tính theo thời lượng: <span className="font-semibold text-primary">{slotDuration === 60 ? '1×' : slotDuration === 120 ? '2×' : '3×'} giá mỗi giờ</span>
+                  </p>
+                </div>
+
                 {DAY_ORDER.map(day => (
                   <div key={day}>
                     <p className="font-label-sm text-[12px] font-bold text-on-surface mb-1.5">{day}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {TIME_SLOTS.map(slot => {
-                        const active = (availData[day] || []).includes(slot)
+                        const active  = (availData[day] || []).includes(slot)
+                        const blocked = !active && isSlotBlocked(slot, availData[day] || [], slotDuration)
                         return (
                           <button key={slot} type="button"
                             onClick={() => toggleSlot(day, slot)}
-                            className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${active ? 'bg-primary text-on-primary border-primary' : 'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'}`}>
+                            disabled={blocked}
+                            title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
+                            className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
+                              active   ? 'bg-primary text-on-primary border-primary' :
+                              blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
+                                         'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'
+                            }`}>
                             {slot}
                           </button>
                         )
@@ -2335,6 +2400,18 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
               </div>
             ) : (
               <div className="space-y-2">
+                {/* Badge thời lượng hiện tại */}
+                {profile?.slot_duration_mins && (
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="material-symbols-outlined text-[16px] text-primary">schedule</span>
+                    <span className="text-[12px] text-on-surface-variant">
+                      Mỗi buổi dạy:
+                    </span>
+                    <span className="text-[12px] font-bold text-primary bg-primary/8 px-2 py-0.5 rounded-full border border-primary/20">
+                      {profile.slot_duration_mins === 60 ? '1 tiếng' : profile.slot_duration_mins === 120 ? '2 tiếng' : profile.slot_duration_mins === 180 ? '3 tiếng' : `${profile.slot_duration_mins} phút`}
+                    </span>
+                  </div>
+                )}
                 {DAY_ORDER.map(day => {
                   const slots = (profile?.availability || {})[day] || []
                   return (
