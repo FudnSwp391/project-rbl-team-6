@@ -78,11 +78,26 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function requireTutor(req, res, next) {
+async function requireTutor(req, res, next) {
   if (req.user?.role !== "tutor") {
     return res.status(403).json({ message: "Từ chối truy cập: chỉ dành cho gia sư." });
   }
-  next();
+  try {
+    const profileRes = await pool.query(
+      "SELECT status FROM tutor_profiles WHERE user_id = $1",
+      [req.user.userId]
+    );
+    if (profileRes.rows.length === 0) {
+      return res.status(403).json({ message: "Bạn cần tạo hồ sơ gia sư và chờ duyệt trước khi sử dụng tính năng này." });
+    }
+    if (profileRes.rows[0].status !== "approved") {
+      return res.status(403).json({ message: "Hồ sơ gia sư của bạn đang chờ duyệt hoặc bị từ chối. Vui lòng quay lại sau." });
+    }
+    next();
+  } catch (error) {
+    console.error("requireTutor error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ khi xác thực quyền gia sư." });
+  }
 }
 
 // ΓöÇΓöÇΓöÇ Nodemailer: email helper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -3026,6 +3041,69 @@ app.get("/api/tutor/profile", verifyToken, async (req, res) => {
   }
 });
 
+// PATCH /api/tutor/profile/cv — gia sư cập nhật CV từ dashboard (kèm hình thức dạy)
+app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const existing = await pool.query("SELECT * FROM tutor_profiles WHERE user_id = $1", [userId]);
+    if (!existing.rows.length) return res.status(404).json({ message: "Không tìm thấy hồ sơ gia sư." });
+    const cur = existing.rows[0];
+    const b = req.body || {};
+
+    let methods = cur.teaching_methods;
+    if (b.teaching_methods !== undefined) {
+      try {
+        methods = Array.isArray(b.teaching_methods) ? b.teaching_methods : JSON.parse(b.teaching_methods || '[]');
+      } catch { methods = cur.teaching_methods; }
+    }
+
+    const result = await pool.query(
+      `UPDATE tutor_profiles SET
+         headline = $1, phone = $2, location = $3, subjects = $4,
+         hourly_rate = $5, experience_years = $6, bio = $7,
+         teaching_style = $8, demo_video_url = $9, teaching_methods = $10
+       WHERE user_id = $11 RETURNING *`,
+      [
+        b.headline !== undefined ? b.headline : cur.headline,
+        b.phone !== undefined ? b.phone : cur.phone,
+        b.location !== undefined ? b.location : cur.location,
+        b.subjects !== undefined ? b.subjects : cur.subjects,
+        b.hourly_rate !== undefined && b.hourly_rate !== '' ? parseFloat(b.hourly_rate) || null : cur.hourly_rate,
+        b.experience_years !== undefined && b.experience_years !== '' ? parseInt(b.experience_years) || 0 : cur.experience_years,
+        b.bio !== undefined ? b.bio : cur.bio,
+        b.teaching_style !== undefined ? b.teaching_style : cur.teaching_style,
+        b.demo_video_url !== undefined ? b.demo_video_url : cur.demo_video_url,
+        // Cột teaching_methods là text[] trong DB (không phải jsonb) — truyền mảng JS trực tiếp
+        Array.isArray(methods) ? methods : [],
+        userId,
+      ]
+    );
+
+    if (b.full_name && String(b.full_name).trim()) {
+      await pool.query("UPDATE users SET full_name = $1 WHERE id = $2", [String(b.full_name).trim(), userId]);
+    }
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Update tutor CV error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// PATCH /api/tutor/profile/submit — nộp lại hồ sơ cho admin duyệt
+app.patch("/api/tutor/profile/submit", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "UPDATE tutor_profiles SET status = 'pending', reject_reason = NULL WHERE user_id = $1 RETURNING *",
+      [req.user.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy hồ sơ gia sư." });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Submit tutor profile error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
 // Upload profile data (JSON based)
 app.post(
   "/api/tutor/profile",
@@ -3130,14 +3208,15 @@ app.post(
       }
 
       // Optional: save structured fields (separate query, non-fatal if columns not ready)
+      // Lưu ý: teaching_methods là text[] (truyền mảng JS), suitable_students là jsonb (stringify)
       try {
         await pool.query(
           `UPDATE tutor_profiles SET
-            teaching_methods  = $1::jsonb,
+            teaching_methods  = $1,
             suitable_students = $2::jsonb
            WHERE id = $3`,
           [
-            JSON.stringify(parsedTeachingMethods),
+            Array.isArray(parsedTeachingMethods) ? parsedTeachingMethods : [],
             JSON.stringify(parsedSuitableStudents),
             result.rows[0].id,
           ]
@@ -6438,107 +6517,91 @@ app.post('/api/exam-papers/:paperId/submit', verifyToken, async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/parent/overview
+// GET /api/parent/overview
 // Returns: stats, recent quiz attempts, available tutors, practice sessions
 app.get("/api/parent/overview", verifyToken, async (req, res) => {
   try {
-    // Total students in system
+    const parentId = req.user.userId;
+    // Total students of this parent
     const studentsRes = await pool.query(
-      `SELECT COUNT(*) as count FROM users WHERE role='student'`
+      `SELECT COUNT(*) as count FROM parent_children WHERE parent_id=$1`,
+      [parentId]
     );
-    // Total quiz attempts (submitted)
+    // Total quiz attempts
     const attemptsRes = await pool.query(
-      `SELECT COUNT(*) as count FROM quiz_attempts WHERE status='submitted'`
+      `SELECT COUNT(*) as count FROM quiz_attempts WHERE status='submitted' AND student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)`,
+      [parentId]
     );
-    // Total practice sessions (submitted)
+    // Total practice sessions
     const practiceRes = await pool.query(
-      `SELECT COUNT(*) as count FROM practice_sessions WHERE status='submitted'`
+      `SELECT COUNT(*) as count FROM practice_sessions WHERE status='submitted' AND student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)`,
+      [parentId]
     );
-    // Approved tutors
+    // Approved tutors teaching these kids
     const tutorsRes = await pool.query(
-      `SELECT COUNT(*) as count FROM tutor_profiles WHERE status='approved'`
+      `SELECT COUNT(DISTINCT tutor_id) as count FROM bookings WHERE student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)`,
+      [parentId]
     );
 
-    // Recent quiz attempts with student & quiz info
+    // Recent quiz attempts
     const recentAttemptsRes = await pool.query(`
-      SELECT
-        qa.id,
-        qa.score,
-        qa.status,
-        qa.submitted_at,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        q.title      AS quiz_title,
-        q.subject    AS quiz_subject,
-        q.total_questions
+      SELECT qa.id, qa.score, qa.status, qa.submitted_at, u.full_name AS student_name, u.picture AS student_picture, q.title AS quiz_title, q.subject AS quiz_subject, q.total_questions
       FROM quiz_attempts qa
       JOIN users u ON qa.student_id = u.id
       JOIN quizzes q ON qa.quiz_id = q.id
-      WHERE qa.status = 'submitted'
-      ORDER BY qa.submitted_at DESC
-      LIMIT 10
-    `);
+      WHERE qa.status = 'submitted' AND qa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY qa.submitted_at DESC LIMIT 10
+    `, [parentId]);
 
-    // Recent practice sessions
+    // Recent practice
     const recentPracticeRes = await pool.query(`
-      SELECT
-        ps.id,
-        ps.topic,
-        ps.difficulty,
-        ps.score,
-        ps.total_questions,
-        ps.total_correct,
-        ps.status,
-        ps.submitted_at,
-        u.full_name AS student_name,
-        u.picture   AS student_picture
+      SELECT ps.id, ps.topic, ps.difficulty, ps.score, ps.total_questions, ps.total_correct, ps.status, ps.submitted_at, u.full_name AS student_name, u.picture AS student_picture
       FROM practice_sessions ps
       JOIN users u ON ps.student_id = u.id
-      WHERE ps.status = 'submitted'
-      ORDER BY ps.submitted_at DESC
-      LIMIT 10
-    `);
+      WHERE ps.status = 'submitted' AND ps.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY ps.submitted_at DESC LIMIT 10
+    `, [parentId]);
 
-    // Available tutors list
-    const availableTutorsRes = await pool.query(`
-      SELECT
-        u.id,
-        u.full_name,
-        u.picture,
-        u.email,
-        tp.subjects,
-        tp.hourly_rate,
-        tp.headline,
-        tp.bio,
-        tp.experience_years,
-        tp.location
-      FROM tutor_profiles tp
-      JOIN users u ON tp.user_id = u.id
-      WHERE tp.status = 'approved'
-      ORDER BY tp.created_at DESC
-      LIMIT 20
-    `);
+    // Tutors list: First try "My Tutors", then "Suggested"
+    let myTutorsRes = await pool.query(`
+      SELECT DISTINCT u.id, u.full_name, u.picture, u.email, tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, 'my_tutor' as tutor_type
+      FROM bookings b
+      JOIN users u ON b.tutor_id = u.id
+      JOIN tutor_profiles tp ON tp.user_id = u.id
+      WHERE b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1) AND tp.status='approved'
+      LIMIT 10
+    `, [parentId]);
+
+    if (myTutorsRes.rows.length === 0) {
+      myTutorsRes = await pool.query(`
+        SELECT u.id, u.full_name, u.picture, u.email, tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, 'suggested' as tutor_type
+        FROM tutor_profiles tp
+        JOIN users u ON tp.user_id = u.id
+        WHERE tp.status = 'approved'
+        ORDER BY tp.created_at DESC
+        LIMIT 10
+      `);
+    }
 
     // Exam paper attempts
     const examAttemptsRes = await pool.query(`
-      SELECT
-        epa.id,
-        epa.score,
-        epa.status,
-        epa.submitted_at,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        ep.title     AS exam_title,
-        ep.subject   AS exam_subject,
-        ep.grade,
-        ep.year,
-        ep.total_questions
+      SELECT epa.id, epa.score, epa.status, epa.submitted_at, u.full_name AS student_name, u.picture AS student_picture, ep.title AS exam_title, ep.subject AS exam_subject, ep.grade, ep.year, ep.total_questions
       FROM exam_paper_attempts epa
       JOIN users u ON epa.student_id = u.id
       JOIN exam_papers ep ON epa.exam_paper_id = ep.id
-      WHERE epa.status = 'submitted'
-      ORDER BY epa.submitted_at DESC
-      LIMIT 10
-    `);
+      WHERE epa.status = 'submitted' AND epa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY epa.submitted_at DESC LIMIT 10
+    `, [parentId]);
+
+    // Upcoming classes (tutor_sessions where status=scheduled/ongoing)
+    const upcomingClassesRes = await pool.query(`
+      SELECT ts.id, ts.scheduled_at, ts.duration_mins, ts.subject, ts.status, u.full_name AS tutor_name, stu.full_name AS student_name
+      FROM tutor_sessions ts
+      JOIN users u ON ts.tutor_id = u.id
+      JOIN users stu ON ts.student_id = stu.id
+      WHERE ts.status IN ('scheduled', 'ongoing') AND ts.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY ts.scheduled_at ASC LIMIT 5
+    `, [parentId]);
 
     return res.json({
       stats: {
@@ -6549,8 +6612,9 @@ app.get("/api/parent/overview", verifyToken, async (req, res) => {
       },
       recent_quiz_attempts: recentAttemptsRes.rows,
       recent_practice_sessions: recentPracticeRes.rows,
-      available_tutors: availableTutorsRes.rows,
+      available_tutors: myTutorsRes.rows,
       recent_exam_attempts: examAttemptsRes.rows,
+      upcoming_classes: upcomingClassesRes.rows,
     });
   } catch (error) {
     console.error("Parent overview error:", error);
@@ -6562,22 +6626,20 @@ app.get("/api/parent/overview", verifyToken, async (req, res) => {
 // Returns list of all students with their quiz/practice stats
 app.get("/api/parent/students", verifyToken, async (req, res) => {
   try {
+    const parentId = req.user.userId;
     const studentsRes = await pool.query(`
       SELECT
-        u.id,
-        u.full_name,
-        u.email,
-        u.picture,
-        u.created_at,
+        u.id, u.full_name, u.email, u.picture, u.created_at,
         (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS quiz_attempts_count,
         (SELECT COUNT(*) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS practice_count,
         (SELECT ROUND(AVG(qa.score),1) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS avg_quiz_score,
         (SELECT ROUND(AVG(ps.score),1) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS avg_practice_score,
         (SELECT qa.submitted_at FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted' ORDER BY qa.submitted_at DESC LIMIT 1) AS last_activity
       FROM users u
-      WHERE u.role = 'student'
+      JOIN parent_children pc ON pc.student_id = u.id
+      WHERE u.role = 'student' AND pc.parent_id = $1
       ORDER BY last_activity DESC NULLS LAST
-    `);
+    `, [parentId]);
     return res.json({ students: studentsRes.rows });
   } catch (error) {
     console.error("Parent students error:", error);
@@ -6589,26 +6651,17 @@ app.get("/api/parent/students", verifyToken, async (req, res) => {
 // Returns all approved tutors with detailed profile
 app.get("/api/parent/tutors", verifyToken, async (req, res) => {
   try {
+    const parentId = req.user.userId;
     const res2 = await pool.query(`
-      SELECT
-        u.id,
-        u.full_name,
-        u.email,
-        u.picture,
-        tp.subjects,
-        tp.hourly_rate,
-        tp.headline,
-        tp.bio,
-        tp.experience_years,
-        tp.location,
-        tp.teaching_style,
-        tp.status,
-        tp.created_at
+      SELECT DISTINCT
+        u.id, u.full_name, u.email, u.picture,
+        tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, tp.teaching_style, tp.status, tp.created_at
       FROM tutor_profiles tp
       JOIN users u ON tp.user_id = u.id
-      WHERE tp.status = 'approved'
+      JOIN bookings b ON b.tutor_id = u.id
+      WHERE tp.status = 'approved' AND b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
       ORDER BY tp.created_at DESC
-    `);
+    `, [parentId]);
     return res.json({ tutors: res2.rows });
   } catch (error) {
     console.error("Parent tutors error:", error);
@@ -6620,69 +6673,34 @@ app.get("/api/parent/tutors", verifyToken, async (req, res) => {
 // Returns all quiz + practice + exam activity across all students
 app.get("/api/parent/activity", verifyToken, async (req, res) => {
   try {
+    const parentId = req.user.userId;
     const quizRes = await pool.query(`
-      SELECT
-        'quiz' AS type,
-        qa.id,
-        qa.score,
-        qa.submitted_at AS timestamp,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        q.title      AS title,
-        q.subject    AS subject,
-        q.total_questions
+      SELECT 'quiz' AS type, qa.id, qa.score, qa.submitted_at AS timestamp, u.full_name AS student_name, u.picture AS student_picture, q.title AS title, q.subject AS subject, q.total_questions
       FROM quiz_attempts qa
       JOIN users u ON qa.student_id=u.id
       JOIN quizzes q ON qa.quiz_id=q.id
-      WHERE qa.status='submitted'
-      ORDER BY qa.submitted_at DESC
-      LIMIT 50
-    `);
+      WHERE qa.status='submitted' AND qa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY qa.submitted_at DESC LIMIT 50
+    `, [parentId]);
 
     const practiceRes = await pool.query(`
-      SELECT
-        'practice' AS type,
-        ps.id,
-        ps.score,
-        ps.submitted_at AS timestamp,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        ps.topic     AS title,
-        ps.difficulty AS subject,
-        ps.total_questions
+      SELECT 'practice' AS type, ps.id, ps.score, ps.submitted_at AS timestamp, u.full_name AS student_name, u.picture AS student_picture, ps.topic AS title, ps.difficulty AS subject, ps.total_questions
       FROM practice_sessions ps
       JOIN users u ON ps.student_id=u.id
-      WHERE ps.status='submitted'
-      ORDER BY ps.submitted_at DESC
-      LIMIT 50
-    `);
+      WHERE ps.status='submitted' AND ps.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY ps.submitted_at DESC LIMIT 50
+    `, [parentId]);
 
     const examRes = await pool.query(`
-      SELECT
-        'exam' AS type,
-        epa.id,
-        epa.score,
-        epa.submitted_at AS timestamp,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        ep.title     AS title,
-        ep.subject   AS subject,
-        ep.total_questions
+      SELECT 'exam' AS type, epa.id, epa.score, epa.submitted_at AS timestamp, u.full_name AS student_name, u.picture AS student_picture, ep.title AS title, ep.subject AS subject, ep.total_questions
       FROM exam_paper_attempts epa
       JOIN users u ON epa.student_id=u.id
       JOIN exam_papers ep ON epa.exam_paper_id=ep.id
-      WHERE epa.status='submitted'
-      ORDER BY epa.submitted_at DESC
-      LIMIT 50
-    `);
+      WHERE epa.status='submitted' AND epa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY epa.submitted_at DESC LIMIT 50
+    `, [parentId]);
 
-    // Merge and sort by timestamp
-    const all = [
-      ...quizRes.rows,
-      ...practiceRes.rows,
-      ...examRes.rows,
-    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
+    const all = [...quizRes.rows, ...practiceRes.rows, ...examRes.rows].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     return res.json({ activities: all.slice(0, 50) });
   } catch (error) {
     console.error("Parent activity error:", error);
@@ -8350,7 +8368,8 @@ app.get("/api/tutors", async (req, res) => {
   const level    = (req.query.level  || "").trim();   // 'Cấp 1' | 'Cấp 2' | 'Cấp 3' | 'Đại học'
   if (!isNaN(minPrice)) { conditions.push(`tp.hourly_rate >= $${idx}`); values.push(minPrice); idx++; }
   if (!isNaN(maxPrice)) { conditions.push(`tp.hourly_rate <= $${idx}`); values.push(maxPrice); idx++; }
-  if (method)           { conditions.push(`$${idx} = ANY(tp.teaching_methods)`); values.push(method); idx++; }
+  // ILIKE ANY để khớp không phân biệt hoa/thường ('online' khớp cả 'Online')
+  if (method)           { conditions.push(`$${idx} ILIKE ANY(tp.teaching_methods)`); values.push(method); idx++; }
   if (level) {
     // suitable_students là jsonb (hiện đa số rỗng) → khớp nếu chứa level HOẶC chưa khai báo (cho qua)
     conditions.push(`(tp.suitable_students @> $${idx}::jsonb OR COALESCE(jsonb_array_length(tp.suitable_students), 0) = 0)`);
@@ -8380,6 +8399,7 @@ app.get("/api/tutors", async (req, res) => {
          u.id, u.full_name, u.picture,
          tp.bio, tp.subjects, tp.experience_years,
          tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
+         tp.teaching_methods,
          COALESCE(tp.avg_rating, 0)  AS avg_r,
          COALESCE(tp.review_count, 0) AS review_count
        FROM tutor_profiles tp
@@ -9094,6 +9114,36 @@ async function startServer() {
     console.error("⚠️  DB migration (teaching_methods) warning:", err.message);
   }
 
+  // Auto-migrate: hình thức học + thông tin buổi học trên bookings (online/offline, link meet, địa điểm...)
+  try {
+    await pool.query(`
+      ALTER TABLE bookings
+        ADD COLUMN IF NOT EXISTS teaching_method         TEXT,
+        ADD COLUMN IF NOT EXISTS meeting_link            TEXT,
+        ADD COLUMN IF NOT EXISTS meeting_password        TEXT,
+        ADD COLUMN IF NOT EXISTS location                TEXT,
+        ADD COLUMN IF NOT EXISTS location_note           TEXT,
+        ADD COLUMN IF NOT EXISTS session_topic           TEXT,
+        ADD COLUMN IF NOT EXISTS session_duration        INTEGER,
+        ADD COLUMN IF NOT EXISTS session_materials       TEXT,
+        ADD COLUMN IF NOT EXISTS session_homework        TEXT,
+        ADD COLUMN IF NOT EXISTS method_change_requested TEXT,
+        ADD COLUMN IF NOT EXISTS method_change_reason    TEXT,
+        ADD COLUMN IF NOT EXISTS method_change_status    TEXT,
+        ADD COLUMN IF NOT EXISTS reminded_24h_at         TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS reminded_1h_at          TIMESTAMPTZ
+    `);
+    await pool.query(`
+      ALTER TABLE tutor_profiles
+        ADD COLUMN IF NOT EXISTS location       TEXT,
+        ADD COLUMN IF NOT EXISTS teaching_style TEXT,
+        ADD COLUMN IF NOT EXISTS demo_video_url TEXT
+    `);
+    console.log("✅ DB migration: booking teaching_method + session info columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (booking teaching_method) warning:", err.message);
+  }
+
   // Auto-migrate: cert_type, issuer, issue_year on tutor_certificates
   try {
     await pool.query(`
@@ -9360,9 +9410,8 @@ async function startServer() {
 }
 
 
-app.get("/api/tutor/courses", verifyToken, async (req, res) => {
+app.get("/api/tutor/courses", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
     await ensureCourseSchema();
     const courses = await pool.query(
       `SELECT c.*,
@@ -9453,7 +9502,7 @@ async function saveCourseLessons(client, courseId, lessons = []) {
 }
 
 async function upsertTutorCourse(req, res, courseId = null) {
-  if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
+  // Role is already checked by requireTutor in the route handler
   await ensureCourseSchema();
   const { title, description, subject, level, price, thumbnailUrl, status, lessons, learningOutcomes, requirements } = req.body || {};
   const cleanTitle = String(title || "").trim();
@@ -9503,7 +9552,7 @@ async function upsertTutorCourse(req, res, courseId = null) {
   }
 }
 
-app.post("/api/tutor/courses", verifyToken, async (req, res) => {
+app.post("/api/tutor/courses", verifyToken, requireTutor, async (req, res) => {
   try {
     return await upsertTutorCourse(req, res);
   } catch (error) {
@@ -9512,7 +9561,7 @@ app.post("/api/tutor/courses", verifyToken, async (req, res) => {
   }
 });
 
-app.patch("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+app.patch("/api/tutor/courses/:id", verifyToken, requireTutor, async (req, res) => {
   try {
     return await upsertTutorCourse(req, res, req.params.id);
   } catch (error) {
@@ -9521,9 +9570,8 @@ app.patch("/api/tutor/courses/:id", verifyToken, async (req, res) => {
   }
 });
 
-app.delete("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+app.delete("/api/tutor/courses/:id", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
     await ensureCourseSchema();
     const result = await pool.query(
       "UPDATE courses SET status = 'archived', updated_at = NOW() WHERE id = $1 AND tutor_id = $2 RETURNING id",
@@ -9537,11 +9585,8 @@ app.delete("/api/tutor/courses/:id", verifyToken, async (req, res) => {
   }
 });
 
-app.get("/api/tutor/students", verifyToken, async (req, res) => {
+app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
 
     const tutorId = req.user.userId;
     const result = await pool.query(
@@ -9625,6 +9670,9 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
       `SELECT b.id, b.tutor_id, b.tutor_name, b.student_id, b.subject, b.lesson_date,
               b.time_slot, b.note, b.child_name, b.status, b.created_at,
               b.lesson_fee, b.escrow_tx_id, b.escrow_released_at, b.auto_release_at,
+              b.teaching_method, b.meeting_link, b.meeting_password, b.location, b.location_note,
+              b.session_topic, b.session_duration, b.session_materials, b.session_homework,
+              b.method_change_requested, b.method_change_reason, b.method_change_status,
               u_tutor.picture AS tutor_picture,
               u_student.picture AS student_picture, u_student.full_name AS "studentName",
               a.status AS attendance_status,
@@ -9657,8 +9705,13 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
     const tutorFilter = req.query.tutor || 'All Tutors';
 
     const result = await pool.query(
-      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date_str, b.time_slot, b.status
+      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date_str, b.time_slot, b.status,
+              b.teaching_method, b.meeting_link, b.location, b.location_note,
+              b.session_topic, b.session_duration,
+              b.method_change_requested, b.method_change_status,
+              tp.teaching_methods AS tutor_teaching_methods
        FROM bookings b
+       LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
        WHERE b.student_id = $1`,
        [studentId]
     );
@@ -9730,16 +9783,28 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
          if (status === 'completed') weeklyCompleted++;
       }
 
+      const methodSupport = parseMethodSupport(row.tutor_teaching_methods);
       sessions.push({
         id: row.id,
+        booking_id: row.id,
+        tutor_id: row.tutor_id,
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
         status: status,
         title: `Buổi học ${row.subject}`,
         tutor_name: row.tutor_name || 'Gia sư',
         xp_earned: status === 'completed' ? 80 : 0,
-        meeting_platform: 'Google Meet',
-        meeting_url: '',
+        teaching_method: row.teaching_method || null,
+        meeting_platform: row.teaching_method === 'offline' ? 'Offline' : 'Google Meet',
+        meeting_url: row.meeting_link || '',
+        location: row.location || '',
+        location_note: row.location_note || '',
+        session_topic: row.session_topic || '',
+        session_duration: row.session_duration || null,
+        method_change_requested: row.method_change_requested || null,
+        method_change_status: row.method_change_status || null,
+        tutor_supports_online: methodSupport.online,
+        tutor_supports_offline: methodSupport.offline,
         subject: row.subject || 'Khác'
       });
     });
@@ -9796,6 +9861,8 @@ app.get("/api/student/bookings", verifyToken, async (req, res) => {
               to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date,
               b.time_slot, b.note, b.child_name, b.status, b.created_at,
               b.lesson_fee, b.escrow_tx_id, b.escrow_released_at, b.auto_release_at,
+              b.teaching_method, b.meeting_link, b.location, b.location_note,
+              b.method_change_requested, b.method_change_status,
               u_tutor.full_name AS tutor_full_name,
               u_tutor.picture AS tutor_picture,
               tp.reputation_score, tp.subjects AS tutor_subjects,
@@ -9847,17 +9914,66 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Lấy chuỗi YYYY-MM-DD từ cột DATE của pg.
+// LƯU Ý: pg trả DATE thành JS Date ở local-midnight → toISOString() bị lùi 1 ngày (múi +07).
+// Phải đọc bằng getFullYear/getMonth/getDate (giờ local) để giữ đúng ngày.
+function lessonDateStr(lessonDate) {
+  if (!lessonDate) return '';
+  if (typeof lessonDate === 'string') return lessonDate.slice(0, 10);
+  const d = new Date(lessonDate);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Tính thời điểm bắt đầu buổi học từ lesson_date + time_slot (múi giờ VN +07:00)
+function lessonStartFrom(lessonDate, timeSlot) {
+  if (!lessonDate) return null;
+  const dateStr = lessonDateStr(lessonDate);
+  if (!dateStr) return null;
+  const m = String(timeSlot || '').match(/(\d+):(\d+)\s*(AM|PM)?/i);
+  let h = 0, min = 0;
+  if (m) {
+    h = parseInt(m[1], 10);
+    min = parseInt(m[2], 10);
+    if (m[3] && m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
+    if (m[3] && m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+  }
+  const d = new Date(`${dateStr}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+07:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// Chuẩn hóa hình thức dạy từ tutor_profiles.teaching_methods (JSONB mảng text tự do).
+// Chưa khai báo gì → coi như dạy cả 2 (không chặn đặt lịch).
+function parseMethodSupport(teachingMethods) {
+  const arr = Array.isArray(teachingMethods) ? teachingMethods : [];
+  const txt = arr.join(' ').toLowerCase();
+  const online  = /online|trực tuyến|truc tuyen/.test(txt);
+  const offline = /offline|trực tiếp|truc tiep|tại nhà|tai nha|tại địa điểm/.test(txt);
+  if (!online && !offline) return { online: true, offline: true };
+  return { online, offline };
+}
+
 // POST /api/bookings — tạo lịch học mới
 // Hỗ trợ cả định dạng cũ (lessonDate, timeSlot, tutorName) và mới (sessions, notes, childName)
 app.post("/api/bookings", verifyToken, async (req, res) => {
   try {
-    const { tutorId, tutorName, subject, lessonDate, timeSlot, note, sessions, date, notes, childName } = req.body || {};
+    const body = req.body || {};
+    // Chấp nhận cả camelCase (tutorId, lessonDate, timeSlot) lẫn snake_case (tutor_id, lesson_date, time_slot)
+    const tutorId    = body.tutorId    || body.tutor_id;
+    const tutorName  = body.tutorName  || body.tutor_name;
+    const lessonDate = body.lessonDate || body.lesson_date;
+    const timeSlot   = body.timeSlot   || body.time_slot;
+    const childName  = body.childName  || body.child_name;
+    const { subject, note, sessions, date, notes } = body;
+    let teachingMethod = String(body.teachingMethod || body.teaching_method || '').toLowerCase() || null;
+    if (teachingMethod && !['online', 'offline'].includes(teachingMethod)) {
+      return res.status(400).json({ message: "teaching_method phải là 'online' hoặc 'offline'." });
+    }
 
-    const bookingSessions = sessions && sessions.length > 0 
-      ? sessions 
+    const bookingSessions = sessions && sessions.length > 0
+      ? sessions
       : [{ date: lessonDate || date, timeSlot }];
 
-    if (!bookingSessions[0] || !bookingSessions[0].date || !bookingSessions[0].timeSlot) {
+    if (!bookingSessions[0] || !bookingSessions[0].date || !(bookingSessions[0].timeSlot || bookingSessions[0].time_slot)) {
       return res.status(400).json({ message: "Thiếu thông tin: cần lessonDate, timeSlot (hoặc mảng sessions)." });
     }
 
@@ -9866,8 +9982,8 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     // Nếu có tutorId, kiểm tra gia sư đó đã được duyệt và lấy tên nếu chưa truyền
     if (tutorId) {
       const tutorCheck = await pool.query(
-        `SELECT u.full_name FROM tutor_profiles tp 
-         JOIN users u ON tp.user_id = u.id 
+        `SELECT u.full_name, tp.teaching_methods FROM tutor_profiles tp
+         JOIN users u ON tp.user_id = u.id
          WHERE tp.user_id = $1 AND tp.status = 'approved'`,
         [tutorId]
       );
@@ -9876,6 +9992,19 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       }
       if (!finalTutorName) {
         finalTutorName = tutorCheck.rows[0].full_name;
+      }
+
+      // Hình thức học: validate theo hình thức gia sư hỗ trợ; nếu HS không chọn mà
+      // gia sư chỉ dạy 1 hình thức thì tự gán hình thức đó
+      const support = parseMethodSupport(tutorCheck.rows[0].teaching_methods);
+      if (teachingMethod && !support[teachingMethod]) {
+        return res.status(400).json({
+          message: `Gia sư này không dạy ${teachingMethod === 'online' ? 'online' : 'offline'}. Vui lòng chọn hình thức khác.`,
+        });
+      }
+      if (!teachingMethod) {
+        if (support.online && !support.offline) teachingMethod = 'online';
+        else if (!support.online && support.offline) teachingMethod = 'offline';
       }
     }
 
@@ -9919,8 +10048,8 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       
       // Chèn từng session
       for (const session of bookingSessions) {
-        const sessionDate = session.date || session.lessonDate;
-        const sessionTimeSlot = session.timeSlot;
+        const sessionDate = session.date || session.lessonDate || session.lesson_date;
+        const sessionTimeSlot = session.timeSlot || session.time_slot;
 
         if (!sessionDate || !sessionTimeSlot) continue;
 
@@ -9941,10 +10070,10 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         }
 
         const result = await client.query(
-          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, created_at`,
-          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins]
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at`,
+          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod]
         );
         const booking = result.rows[0];
 
@@ -10010,6 +10139,191 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Foreign key không hợp lệ (gia sư hoặc học sinh không tồn tại)." });
     }
     return res.status(500).json({ message: `DB error [${error.code || "?"}]: ${error.message}` });
+  }
+});
+
+// ─── Hình thức học & thông tin buổi học ─────────────────────────────────────
+
+// PATCH /api/bookings/:id/session-info — gia sư điền thông tin buổi học
+// (hình thức, link Meet/Zoom, địa điểm, chủ đề...) và thông báo cho học sinh
+app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const bookingRes = await pool.query(
+      `SELECT * FROM bookings WHERE id = $1 AND tutor_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    const booking = bookingRes.rows[0];
+    if (!["Pending", "Approved"].includes(booking.status)) {
+      return res.status(400).json({ message: "Chỉ điền thông tin cho buổi học đang chờ hoặc đã xác nhận." });
+    }
+
+    const mode = String(b.mode || '').toLowerCase();
+    const newMethod = ['online', 'offline'].includes(mode) ? mode : booking.teaching_method;
+    const finalLink = b.meetLink !== undefined ? (String(b.meetLink).trim() || null) : booking.meeting_link;
+    if (newMethod === 'online' && !finalLink) {
+      return res.status(400).json({ message: "Buổi học online cần link phòng học (Meet/Zoom)." });
+    }
+
+    const result = await pool.query(
+      `UPDATE bookings SET
+         teaching_method = $1, meeting_link = $2, meeting_password = $3,
+         location = $4, location_note = $5, session_topic = $6,
+         session_duration = $7, session_materials = $8, session_homework = $9
+       WHERE id = $10
+       RETURNING *`,
+      [
+        newMethod,
+        finalLink,
+        b.meetPassword !== undefined ? (b.meetPassword || null) : booking.meeting_password,
+        b.location !== undefined ? (b.location || null) : booking.location,
+        b.locationNote !== undefined ? (b.locationNote || null) : booking.location_note,
+        b.topic !== undefined ? (b.topic || null) : booking.session_topic,
+        b.duration !== undefined ? (parseInt(b.duration) || null) : booking.session_duration,
+        b.materials !== undefined ? (b.materials || null) : booking.session_materials,
+        b.homework !== undefined ? (b.homework || null) : booking.session_homework,
+        booking.id,
+      ]
+    );
+
+    if (b.notifyStudent !== false && booking.student_id) {
+      const dateStr = lessonDateStr(booking.lesson_date);
+      const methodChanged = booking.teaching_method && newMethod && newMethod !== booking.teaching_method;
+      const detail = newMethod === 'offline'
+        ? (result.rows[0].location ? `Địa điểm: ${result.rows[0].location}.` : '')
+        : (finalLink ? `Link phòng học: ${finalLink}` : '');
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'session_info', $2, $3, 'event_note', $4, 'booking')`,
+        [booking.student_id,
+         methodChanged ? 'Gia sư đổi hình thức buổi học' : 'Thông tin buổi học đã được cập nhật',
+         `Buổi học ${booking.subject || ''} ngày ${dateStr} (${booking.time_slot}) — hình thức: ${newMethod === 'offline' ? 'Offline (trực tiếp)' : 'Online'}. ${detail}`.trim(),
+         booking.id]
+      );
+    }
+
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("[session-info] PATCH error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// POST /api/bookings/:id/request-method-change — học sinh xin đổi hình thức học
+// (vd: hôm nay ốm không đến được, xin chuyển buổi offline sang online)
+app.post("/api/bookings/:id/request-method-change", verifyToken, async (req, res) => {
+  try {
+    const { requestedMethod, reason } = req.body || {};
+    const method = String(requestedMethod || '').toLowerCase();
+    if (!['online', 'offline'].includes(method)) {
+      return res.status(400).json({ message: "requestedMethod phải là 'online' hoặc 'offline'." });
+    }
+
+    const bookingRes = await pool.query(
+      `SELECT b.*, tp.teaching_methods
+       FROM bookings b
+       LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
+       WHERE b.id = $1 AND b.student_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    const booking = bookingRes.rows[0];
+
+    if (!["Pending", "Approved"].includes(booking.status)) {
+      return res.status(400).json({ message: "Chỉ đổi hình thức cho buổi học đang chờ hoặc đã xác nhận." });
+    }
+    if (booking.lesson_date && new Date(booking.lesson_date) < new Date(new Date().toDateString())) {
+      return res.status(400).json({ message: "Buổi học đã qua, không thể đổi hình thức." });
+    }
+    if ((booking.teaching_method || '') === method) {
+      return res.status(400).json({ message: "Buổi học đã ở hình thức này rồi." });
+    }
+    if (booking.method_change_status === 'pending') {
+      return res.status(409).json({ message: "Bạn đã gửi yêu cầu đổi hình thức, vui lòng chờ gia sư phản hồi." });
+    }
+    const support = parseMethodSupport(booking.teaching_methods);
+    if (!support[method]) {
+      return res.status(400).json({ message: `Gia sư này không hỗ trợ dạy ${method}. Bạn có thể nhắn tin trao đổi thêm với gia sư.` });
+    }
+
+    await pool.query(
+      `UPDATE bookings SET method_change_requested = $1, method_change_reason = $2, method_change_status = 'pending' WHERE id = $3`,
+      [method, String(reason || '').trim() || null, booking.id]
+    );
+
+    if (booking.tutor_id) {
+      const dateStr = lessonDateStr(booking.lesson_date);
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'method_change', 'Yêu cầu đổi hình thức học', $2, 'swap_horiz', $3, 'booking')`,
+        [booking.tutor_id,
+         `Học sinh xin đổi buổi học ${booking.subject || ''} ngày ${dateStr} (${booking.time_slot}) sang ${method === 'online' ? 'Online' : 'Offline'}.${reason ? ` Lý do: ${String(reason).trim()}` : ''} Vào Lịch trình → nhấn buổi học để phản hồi.`,
+         booking.id]
+      );
+    }
+    return res.json({
+      message: "Đã gửi yêu cầu đổi hình thức. Gia sư sẽ phản hồi sớm.",
+      method_change_requested: method,
+      method_change_status: 'pending',
+    });
+  } catch (error) {
+    console.error("[method-change] POST error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// PATCH /api/bookings/:id/method-change — gia sư chấp nhận / từ chối yêu cầu đổi hình thức
+app.patch("/api/bookings/:id/method-change", verifyToken, async (req, res) => {
+  try {
+    const { decision } = req.body || {};
+    if (!['accepted', 'declined'].includes(decision)) {
+      return res.status(400).json({ message: "decision phải là 'accepted' hoặc 'declined'." });
+    }
+    const bookingRes = await pool.query(
+      `SELECT * FROM bookings WHERE id = $1 AND tutor_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    const booking = bookingRes.rows[0];
+    if (booking.method_change_status !== 'pending' || !booking.method_change_requested) {
+      return res.status(400).json({ message: "Không có yêu cầu đổi hình thức nào đang chờ." });
+    }
+
+    const newMethod = booking.method_change_requested;
+    let result;
+    if (decision === 'accepted') {
+      result = await pool.query(
+        `UPDATE bookings SET teaching_method = $1, method_change_status = 'accepted' WHERE id = $2 RETURNING *`,
+        [newMethod, booking.id]
+      );
+    } else {
+      result = await pool.query(
+        `UPDATE bookings SET method_change_status = 'declined' WHERE id = $1 RETURNING *`,
+        [booking.id]
+      );
+    }
+
+    if (booking.student_id) {
+      const label = newMethod === 'online' ? 'Online' : 'Offline';
+      const extra = decision === 'accepted' && newMethod === 'online' && !booking.meeting_link
+        ? ' Gia sư sẽ gửi link phòng học trước giờ học.' : '';
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'method_change', $2, $3, $4, $5, 'booking')`,
+        [booking.student_id,
+         decision === 'accepted' ? `Đã đồng ý đổi sang ${label}` : 'Yêu cầu đổi hình thức bị từ chối',
+         decision === 'accepted'
+           ? `Gia sư đã đồng ý đổi buổi học ${booking.subject || ''} (${booking.time_slot}) sang ${label}.${extra}`
+           : `Gia sư từ chối đổi hình thức buổi học ${booking.subject || ''} (${booking.time_slot}). Buổi học giữ nguyên hình thức cũ.`,
+         decision === 'accepted' ? 'check_circle' : 'cancel',
+         booking.id]
+      );
+    }
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("[method-change] PATCH error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -10465,7 +10779,7 @@ async function callGeminiModel(model, prompt) {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+              body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.7,
@@ -10484,6 +10798,69 @@ async function callGeminiModel(model, prompt) {
     return { ok: false, status: 0, errText: err.message };
   }
 }
+
+// 2. Tạo URL Nạp Tiền VNPAY
+app.post('/api/payment/create-url', verifyToken, async (req, res) => {
+  try {
+      const { amount, returnUrl } = req.body;
+      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
+      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'Ví không tồn tại' });
+      const wId = String(walletRes.rows[0].id);
+
+      const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
+      const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
+      const vnpUrl = process.env.VNPAY_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
+      
+      let rawIp = req.headers['x-forwarded-for'] || (req.socket ? req.socket.remoteAddress : null) || '127.0.0.1';
+      if (typeof rawIp === 'string' && rawIp.includes(',')) rawIp = rawIp.split(',')[0].trim();
+      if (typeof rawIp === 'string' && rawIp.startsWith('::ffff:')) rawIp = rawIp.slice(7);
+      if (rawIp === '::1') rawIp = '127.0.0.1';
+      const ipAddr = rawIp || '127.0.0.1';
+
+      const date = new Date();
+      const createDate = moment(date).format('YYYYMMDDHHmmss');
+      const orderId = moment(date).format('DDHHmmss'); 
+
+      // Tất cả value PHẢI là String
+      let vnp_Params = {};
+      vnp_Params['vnp_Version']    = '2.1.0';
+      vnp_Params['vnp_Command']    = 'pay';
+      vnp_Params['vnp_TmnCode']    = tmnCode;
+      vnp_Params['vnp_Locale']     = 'vn';
+      vnp_Params['vnp_CurrCode']   = 'VND';
+      vnp_Params['vnp_TxnRef']     = orderId;
+      vnp_Params['vnp_OrderInfo']  = wId;
+      vnp_Params['vnp_OrderType']  = 'topup';
+      vnp_Params['vnp_Amount']     = String(amount * 100);
+      vnp_Params['vnp_ReturnUrl']  = returnUrl;
+      vnp_Params['vnp_IpAddr']     = ipAddr;
+      vnp_Params['vnp_CreateDate'] = createDate;
+
+      // Sắp xếp key theo alphabet rồi tự build signData
+      const sortedKeys = Object.keys(vnp_Params).sort();
+      const signParts = [];
+      for (const key of sortedKeys) {
+          const encKey = encodeURIComponent(key);
+          const encVal = encodeURIComponent(String(vnp_Params[key])).replace(/%20/g, '+');
+          signParts.push(encKey + '=' + encVal);
+      }
+      const signData = signParts.join('&');
+
+      const hmac = crypto.createHmac('sha512', secretKey);
+      const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest('hex');
+
+      vnp_Params['vnp_SecureHash'] = signed;
+
+      const queryString = new URLSearchParams(vnp_Params).toString();
+      const redirectUrl = `${vnpUrl}?${queryString}`;
+
+      // Trả về vnpUrl, params (để form redirect), và redirectUrl ( fallback)
+      res.json({ success: true, vnpUrl, params: vnp_Params, redirectUrl });
+  } catch (e) {
+      console.error('Create VNPAY URL Error:', e);
+      res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
 const askAiHandler = async (req, res) => {
   try {
@@ -10652,19 +11029,35 @@ app.post("/api/ask-ai", askAiHandler);
   // [POST] /api/feedbacks - Gia sư submit đánh giá
   app.post('/api/feedbacks', verifyToken, requireTutor, async (req, res) => {
     try {
-      const tutorId = req.user.id;
-      const { lesson_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note } = req.body;
+      const tutorId = req.user.id || req.user.userId;
+      const { lesson_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note, milestone_id } = req.body;
 
       // Validate data
       if (!student_id || !focus_rating || !understanding_level || !homework_status) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      // Insert feedback
+      // 1. Validate Time / Status (Micro-feedback constraint)
+      if (lesson_id) {
+        // Assume lesson_id refers to tutor_sessions or bookings
+        const sessionCheck = await pool.query(
+          `SELECT scheduled_at, duration_mins, status FROM tutor_sessions WHERE id = $1`,
+          [lesson_id]
+        );
+        if (sessionCheck.rows.length > 0) {
+          const session = sessionCheck.rows[0];
+          const endTime = new Date(new Date(session.scheduled_at).getTime() + session.duration_mins * 60000);
+          if (new Date() < endTime && session.status !== 'completed') {
+             return res.status(403).json({ error: "Chỉ được đánh giá sau khi buổi học kết thúc." });
+          }
+        }
+      }
+
+      // 2. Insert feedback
       const query = `
         INSERT INTO lesson_feedbacks 
-        (lesson_id, tutor_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (lesson_id, tutor_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note, milestone_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *
       `;
       const values = [
@@ -10675,11 +11068,37 @@ app.post("/api/ask-ai", askAiHandler);
         focus_rating, 
         understanding_level, 
         homework_status, 
-        tutor_note
+        tutor_note,
+        milestone_id || null
       ];
       
       const result = await pool.query(query, values);
       const data = result.rows[0];
+
+      // 3. Logic Early Warning
+      const recentFeedbacks = await pool.query(`
+        SELECT understanding_level, homework_status FROM lesson_feedbacks
+        WHERE student_id = $1 AND tutor_id = $2
+        ORDER BY created_at DESC LIMIT 3
+      `, [student_id, tutorId]);
+
+      if (recentFeedbacks.rows.length >= 2) {
+        const kemCount = recentFeedbacks.rows.filter(f => f.understanding_level === 'Kém').length;
+        const noHomeworkCount = recentFeedbacks.rows.filter(f => f.homework_status === 'Không').length;
+
+        if (kemCount >= 2 || noHomeworkCount >= 2) {
+           // Insert notification alert
+           await pool.query(`
+             INSERT INTO notifications (user_id, title, message, type)
+             VALUES (
+                (SELECT parent_id FROM parent_children WHERE child_id = $1 LIMIT 1),
+                'Cảnh báo kết quả học tập',
+                'Học sinh có dấu hiệu sa sút trong các buổi học gần đây. Vui lòng kiểm tra timeline!',
+                'alert'
+             )
+           `, [student_id]).catch(e => console.error('Early warning notification failed', e.message));
+        }
+      }
 
       res.status(201).json({ message: "Feedback submitted successfully", data });
     } catch (err) {
@@ -10715,12 +11134,9 @@ app.post("/api/ask-ai", askAiHandler);
 });
 
 
-app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
+app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req, res) => {
   const client = await pool.connect();
   try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
 
     const tutorId = req.user.userId;
     const { id } = req.params;
@@ -10897,11 +11313,8 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
   }
 });
 
-app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
+app.get("/api/tutor/earnings", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
 
     const tutorId = req.user.userId;
     const [profileResult, walletResult] = await Promise.all([
@@ -11392,72 +11805,11 @@ app.get('/api/payment/wallet', verifyToken, async (req, res) => {
   }
 });
 
-// 2. Tạo URL Nạp Tiền VNPAY
-app.post('/api/payment/create-url', verifyToken, async (req, res) => {
-  try {
-      const { amount, returnUrl } = req.body;
-      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
-      const wId = walletRes.rows[0].id;
-
-      const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
-      const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
-      let vnpUrl = process.env.VNPAY_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
-      
-      const ipAddr = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.socket.remoteAddress || req.connection.socket.remoteAddress || '127.0.0.1';
-
-      let date = new Date();
-      let createDate = moment(date).format('YYYYMMDDHHmmss');
-      let orderId = moment(date).format('DDHHmmss'); 
-
-      let vnp_Params = {
-          'vnp_Version': '2.1.0',
-          'vnp_Command': 'pay',
-          'vnp_TmnCode': tmnCode,
-          'vnp_Locale': 'vn',
-          'vnp_CurrCode': 'VND',
-          'vnp_TxnRef': orderId,
-          'vnp_OrderInfo': wId, 
-          'vnp_OrderType': 'topup',
-          'vnp_Amount': amount * 100, 
-          'vnp_ReturnUrl': returnUrl,
-          'vnp_IpAddr': ipAddr,
-          'vnp_CreateDate': createDate
-      };
-
-      function sortObject(obj) {
-          let sorted = {};
-          let str = [];
-          let key;
-          for (key in obj){
-              if (Object.prototype.hasOwnProperty.call(obj, key)) { str.push(encodeURIComponent(key)); }
-          }
-          str.sort();
-          for (key = 0; key < str.length; key++) {
-              sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+");
-          }
-          return sorted;
-      }
-
-      vnp_Params = sortObject(vnp_Params);
-      const signData = querystring.stringify(vnp_Params, { encode: false });
-      const hmac = crypto.createHmac("sha512", secretKey);
-      const signed = hmac.update(new Buffer.from(signData, 'utf-8')).digest("hex"); 
-      
-      vnp_Params['vnp_SecureHash'] = signed;
-      vnpUrl += '?' + querystring.stringify(vnp_Params, { encode: false });
-
-      res.json({ success: true, url: vnpUrl });
-  } catch (e) {
-      console.error('Create VNPAY URL Error:', e);
-      res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
 
 // 3. VNPAY IPN Webhook
 app.get('/api/payment/vnpay-ipn', async (req, res) => {
   try {
-      let vnp_Params = req.query;
+      let vnp_Params = { ...req.query };
       const secureHash = vnp_Params['vnp_SecureHash'];
       const amount = vnp_Params['vnp_Amount'] / 100;
       const orderId = vnp_Params['vnp_TxnRef'];
@@ -11467,21 +11819,22 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
       delete vnp_Params['vnp_SecureHash'];
       delete vnp_Params['vnp_SecureHashType'];
 
-      function sortObject(obj) {
-          let sorted = {};
-          let str = [];
-          let key;
-          for (key in obj){ if (Object.prototype.hasOwnProperty.call(obj, key)) { str.push(encodeURIComponent(key)); } }
-          str.sort();
-          for (key = 0; key < str.length; key++) { sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+"); }
-          return sorted;
+      // Sắp xếp key theo alphabet rồi tự build query string
+      const sortedKeys = Object.keys(vnp_Params).sort();
+      const signParts = [];
+      for (const key of sortedKeys) {
+          const encKey = encodeURIComponent(key);
+          const encVal = encodeURIComponent(String(vnp_Params[key])).replace(/%20/g, '+');
+          signParts.push(encKey + '=' + encVal);
       }
+      const signData = signParts.join('&');
 
-      vnp_Params = sortObject(vnp_Params);
       const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
-      const signData = querystring.stringify(vnp_Params, { encode: false });
-      const hmac = crypto.createHmac("sha512", secretKey);
-      const signed = hmac.update(new Buffer.from(signData, 'utf-8')).digest("hex");     
+      const hmac = crypto.createHmac('sha512', secretKey);
+      const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest('hex');
+
+      console.log('[VNPAY IPN] signData:', signData);
+      console.log('[VNPAY IPN] signed:', signed, '| secureHash:', secureHash);
 
       if (secureHash !== signed) {
           return res.status(200).json({ RspCode: '97', Message: 'Checksum failed' });
@@ -13694,6 +14047,76 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
   }, 5 * 60 * 1000); // chạy mỗi 5 phút
 
 
+  // ── Cron: Nhắc lịch trước buổi học (mốc 24h và 1h, cho cả 2 phía) ────────
+  setInterval(async () => {
+    try {
+      const due = await pool.query(`
+        SELECT b.id, b.student_id, b.tutor_id, b.tutor_name, b.subject,
+               b.lesson_date, b.time_slot, b.teaching_method, b.meeting_link, b.location,
+               b.reminded_24h_at, b.reminded_1h_at,
+               u.full_name AS student_name
+        FROM bookings b
+        LEFT JOIN users u ON u.id = b.student_id
+        WHERE b.status = 'Approved'
+          AND b.lesson_date BETWEEN CURRENT_DATE - 1 AND CURRENT_DATE + 2
+          AND (b.reminded_24h_at IS NULL OR b.reminded_1h_at IS NULL)
+      `);
+
+      const now = new Date();
+      for (const b of due.rows) {
+        const start = lessonStartFrom(b.lesson_date, b.time_slot);
+        if (!start || start <= now) continue;
+        const msLeft = start - now;
+        const dateStr = lessonDateStr(b.lesson_date);
+        const methodTxt = b.teaching_method === 'online'
+          ? (b.meeting_link ? `Học Online — link: ${b.meeting_link}` : 'Học Online — gia sư sẽ gửi link phòng học trước giờ.')
+          : b.teaching_method === 'offline'
+            ? (b.location ? `Học Offline tại: ${b.location}.` : 'Học Offline — địa điểm xem trong ghi chú hoặc tin nhắn.')
+            : '';
+        const missingLinkWarn = b.teaching_method === 'online' && !b.meeting_link;
+
+        const send = (userId, title, body) => pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+           VALUES ($1, 'lesson_reminder', $2, $3, 'alarm', $4, 'booking')`,
+          [userId, title, body, b.id]
+        );
+
+        // Claim TRƯỚC khi gửi (UPDATE có điều kiện) — chống gửi trùng khi có
+        // 2 process cùng chạy (nodemon restart race / bind trùng cổng trên Windows)
+        if (!b.reminded_1h_at && msLeft <= 60 * 60 * 1000) {
+          const claim = await pool.query(
+            `UPDATE bookings SET reminded_1h_at = NOW(), reminded_24h_at = COALESCE(reminded_24h_at, NOW())
+             WHERE id = $1 AND reminded_1h_at IS NULL RETURNING id`,
+            [b.id]
+          );
+          if (!claim.rowCount) continue;
+          if (b.student_id) await send(b.student_id, 'Sắp đến giờ học (còn ~1 tiếng)',
+            `Buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'} lúc ${b.time_slot} ngày ${dateStr}. ${methodTxt}`.trim());
+          if (b.tutor_id) await send(b.tutor_id, 'Sắp đến giờ dạy (còn ~1 tiếng)',
+            `Buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''} lúc ${b.time_slot} ngày ${dateStr}.${missingLinkWarn ? ' ⚠️ Chưa gắn link phòng học — hãy vào Lịch trình gắn ngay!' : ''}`);
+          console.log(`🔔 Reminder 1h sent for booking ${b.id}`);
+        } else if (!b.reminded_24h_at && msLeft <= 24 * 60 * 60 * 1000) {
+          const claim = await pool.query(
+            `UPDATE bookings SET reminded_24h_at = NOW()
+             WHERE id = $1 AND reminded_24h_at IS NULL RETURNING id`,
+            [b.id]
+          );
+          if (!claim.rowCount) continue;
+          if (b.student_id) await send(b.student_id, 'Nhắc lịch: buổi học trong 24h tới',
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'}. ${methodTxt}`.trim());
+          if (b.tutor_id) await send(b.tutor_id, 'Nhắc lịch: buổi dạy trong 24h tới',
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''}.${missingLinkWarn ? ' Nhớ gắn link phòng học trong Lịch trình → bấm vào buổi học.' : ''}`);
+          console.log(`🔔 Reminder 24h sent for booking ${b.id}`);
+        }
+      }
+    } catch (err) {
+      if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
+        console.error('❌ Cron lesson-reminder error:', err.message);
+      }
+    }
+  }, 5 * 60 * 1000); // chạy mỗi 5 phút
+
+
   // ── Cron: Tự động hủy lịch nếu Gia sư không duyệt sau 24h ───────────────
   setInterval(async () => {
     try {
@@ -13809,6 +14232,149 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
   } else {
     console.log('⏸️  Fraud intel worker disabled (FRAUD_INTEL_WORKER_ENABLED=false).');
   }
+
+  // ==========================================
+  // ADVANCED FEATURES APIs
+  // ==========================================
+
+  // --- Milestones ---
+  app.post('/api/milestones', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const { class_id, title, target_date } = req.body;
+      const result = await pool.query(
+        `INSERT INTO milestones (class_id, tutor_id, title, target_date) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [class_id, req.user.userId || req.user.id, title, target_date]
+      );
+      res.json({ message: "Milestone created", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/milestones/:class_id', verifyToken, async (req, res) => {
+    try {
+      const result = await pool.query(`SELECT * FROM milestones WHERE class_id = $1 ORDER BY created_at ASC`, [req.params.class_id]);
+      res.json({ data: result.rows });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put('/api/milestones/:id/complete', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const evidenceCheck = await pool.query(`SELECT count(*) FROM evidences WHERE milestone_id = $1`, [id]);
+      if (parseInt(evidenceCheck.rows[0].count) === 0) {
+        return res.status(400).json({ error: "Bắt buộc phải có ít nhất 1 minh chứng (evidence) để hoàn thành chặng này." });
+      }
+      const result = await pool.query(`UPDATE milestones SET status = 'done', updated_at = NOW() WHERE id = $1 RETURNING *`, [id]);
+      res.json({ message: "Milestone marked as done", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Evidences ---
+  app.post('/api/evidences', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const { milestone_id, file_url, file_type, description } = req.body;
+      const result = await pool.query(
+        `INSERT INTO evidences (milestone_id, file_url, file_type, description) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [milestone_id, file_url, file_type, description]
+      );
+      res.json({ message: "Evidence uploaded", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Predictive Trend ---
+  app.get('/api/students/:id/predictive-trend', verifyToken, async (req, res) => {
+    try {
+      const studentId = req.params.id;
+      const result = await pool.query(`
+        SELECT understanding_level FROM lesson_feedbacks
+        WHERE student_id = $1 ORDER BY created_at DESC LIMIT 5
+      `, [studentId]);
+      
+      const feedbacks = result.rows;
+      if (feedbacks.length < 3) {
+        return res.json({ data: { status: 'Gathering Data', score: null, message: 'Đang thu thập dữ liệu. Cần ít nhất 3 buổi học.' } });
+      }
+
+      // Time-weighted: latest is most heavily weighted
+      let score = 0;
+      let totalWeight = 0;
+      feedbacks.forEach((fb, index) => {
+         const weight = 5 - index; // Latest = 5, oldest = 1
+         totalWeight += weight;
+         if (fb.understanding_level === 'Tốt') score += weight * 1;
+         else if (fb.understanding_level === 'Tạm') score += weight * 0.5;
+         else score += weight * 0;
+      });
+      const trendScore = score / totalWeight; // 0.0 to 1.0
+
+      let status = 'Green';
+      let message = 'Đúng tiến độ, con đang học rất tốt!';
+      if (trendScore < 0.5) {
+         status = 'Red';
+         message = 'Cần can thiệp! Tốc độ học hiện tại chưa đạt yêu cầu.';
+      } else if (trendScore < 0.75) {
+         status = 'Yellow';
+         message = 'Chậm nhẹ. Cần cố gắng hơn ở các bài tiếp theo.';
+      }
+
+      res.json({ data: { status, score: trendScore, message } });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Parent Pulse Check ---
+  app.post('/api/parent-feedbacks', verifyToken, async (req, res) => {
+    try {
+      const { student_id, tutor_id, course_id, evaluation } = req.body;
+      const result = await pool.query(
+        `INSERT INTO parent_feedbacks (student_id, tutor_id, course_id, evaluation) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [student_id, tutor_id, course_id, evaluation]
+      );
+
+      if (evaluation === 'Không đổi' || evaluation === 'Kém đi') {
+        const tutorFbs = await pool.query(`
+          SELECT understanding_level FROM lesson_feedbacks 
+          WHERE student_id = $1 AND tutor_id = $2 
+          ORDER BY created_at DESC LIMIT 4
+        `, [student_id, tutor_id]);
+        
+        const totCount = tutorFbs.rows.filter(f => f.understanding_level === 'Tốt').length;
+        if (tutorFbs.rows.length > 0 && (totCount / tutorFbs.rows.length) > 0.75) {
+           await pool.query(`
+             INSERT INTO notifications (user_id, title, message, type)
+             VALUES ((SELECT id FROM users WHERE role = 'admin' LIMIT 1), 'Cảnh báo Lệch Pha', 'Phụ huynh báo Kém nhưng Gia sư báo Tốt.', 'alert')
+           `).catch(console.error);
+        }
+      }
+      res.json({ message: "Cảm ơn bạn đã đánh giá!", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Dispute Center ---
+  app.post('/api/disputes', verifyToken, async (req, res) => {
+    try {
+      const { session_id, reason } = req.body;
+      const parent_id = req.user.userId || req.user.id;
+      const result = await pool.query(
+        `INSERT INTO disputes (session_id, parent_id, reason) VALUES ($1, $2, $3) RETURNING *`,
+        [session_id, parent_id, reason]
+      );
+      res.json({ message: "Báo cáo sự cố thành công. Chúng tôi đang tạm giữ tiền và sẽ liên hệ lại.", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
 
   app.listen(port, () => {
     console.log(`🚀 Server is running on http://localhost:${port}`);

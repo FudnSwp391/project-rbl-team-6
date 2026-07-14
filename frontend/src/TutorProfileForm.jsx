@@ -458,6 +458,15 @@ export default function TutorProfileForm() {
         certificate_urls = await Promise.all(uploadPromises)
       }
 
+      const finalCertMetadata = [...certMetadata]
+      for (let i = 0; i < certificateFiles.length; i++) {
+        const file = certificateFiles[i]
+        if (file && !finalCertMetadata[i]?.url) {
+          const uploadedUrl = await uploadProofFile(file, 'certificates')
+          finalCertMetadata[i].url = uploadedUrl
+        }
+      }
+
       // ── Chuẩn bị JSON Payload ──────────────────────────────────────────────
       const payload = {
         first_name: firstName.trim(),
@@ -477,7 +486,7 @@ export default function TutorProfileForm() {
         qualifications: qualifications.trim(),
         teaching_methods: JSON.stringify(teachingMethods.filter(m => m.trim())),
         suitable_students: JSON.stringify(suitableStudents),
-        cert_metadata: JSON.stringify(certMetadata),
+        cert_metadata: JSON.stringify(finalCertMetadata),
         certificate_urls: JSON.stringify(certificate_urls),
         profile_photo_url,
         cccd_url: cccd_front_url,         // backward compat: gửi mặt trước làm cccd_url chính
