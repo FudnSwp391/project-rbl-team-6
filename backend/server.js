@@ -10471,6 +10471,7 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
     const result = await pool.query(`
       SELECT d.id, d.reason, d.status, d.admin_note, d.created_at, d.resolved_at,
              d.booking_id, d.target_type, d.course_id, d.tutor_id AS d_tutor_id, d.severity, d.penalty_type, d.raised_by_parent, d.evidence_url,
+             d.tutor_response, d.tutor_response_at,
              b.subject, to_char(b.lesson_date,'YYYY-MM-DD') AS lesson_date,
              b.lesson_fee, b.tutor_name,
              c.title AS course_title,
@@ -10512,6 +10513,26 @@ function lessonStartFrom(lessonDate, timeSlot) {
   if (!dateStr) return null;
   const m = String(timeSlot || '').match(/(\d+):(\d+)\s*(AM|PM)?/i);
   let h = 0, min = 0;
+  if (m) {
+    h = parseInt(m[1], 10);
+    min = parseInt(m[2], 10);
+    if (m[3] && m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
+    if (m[3] && m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+  }
+  const d = new Date(`${dateStr}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+07:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// Tính thời điểm kết thúc buổi học từ lesson_date + time_slot (múi giờ VN +07:00)
+// time_slot dạng "8:00 AM - 9:00 AM" → lấy phần sau dấu "-"
+function lessonEndFrom(lessonDate, timeSlot) {
+  if (!lessonDate) return null;
+  const dateStr = lessonDateStr(lessonDate);
+  if (!dateStr) return null;
+  const parts = String(timeSlot || '').split('-');
+  const endPart = parts[1] || parts[0] || '';
+  const m = endPart.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+  let h = 1, min = 0;
   if (m) {
     h = parseInt(m[1], 10);
     min = parseInt(m[2], 10);
@@ -12549,7 +12570,17 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     const bookingRes = await client.query(bookingQuery, queryParams);
     if (!bookingRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy lịch học hoặc bạn không có quyền truy cập.' });
     const booking = bookingRes.rows[0];
-    
+
+    const sessionStart = lessonStartFrom(booking.lesson_date, booking.time_slot);
+    const sessionEnd = lessonEndFrom(booking.lesson_date, booking.time_slot);
+    const now = new Date();
+    if (sessionStart && now < sessionStart) {
+      return res.status(400).json({ message: 'Buổi học chưa diễn ra.' });
+    }
+    if (sessionEnd && (now - sessionEnd) > 48 * 3600000) {
+      return res.status(400).json({ message: 'Đã quá thời hạn báo cáo buổi học này (48 giờ sau khi kết thúc).' });
+    }
+
     if (!booking.escrow_tx_id) return res.status(400).json({ message: 'Lịch học này không có giao dịch escrow để khiếu nại.' });
 
     const existingDispute = await client.query(
@@ -12595,6 +12626,53 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Report error:', e);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/bookings/disputes/:disputeId/tutor-response — gia sư giải trình cho 1 dispute liên quan tới mình
+app.patch('/api/bookings/disputes/:disputeId/tutor-response', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { response } = req.body;
+    if (!response?.trim()) return res.status(400).json({ message: 'Vui lòng nhập nội dung giải trình.' });
+
+    const dRes = await client.query('SELECT * FROM disputes WHERE id=$1', [req.params.disputeId]);
+    if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const dispute = dRes.rows[0];
+
+    if (dispute.tutor_id !== req.user.userId) {
+      return res.status(403).json({ message: 'Bạn không có quyền phản hồi khiếu nại này.' });
+    }
+    if (dispute.status !== 'OPEN') {
+      return res.status(409).json({ message: 'Khiếu nại đã được xử lý, không thể phản hồi.' });
+    }
+
+    await client.query('BEGIN');
+    const updated = await client.query(
+      `UPDATE disputes SET tutor_response=$1, tutor_response_at=NOW() WHERE id=$2 RETURNING *`,
+      [response.trim(), req.params.disputeId]
+    );
+
+    const admins = await client.query("SELECT id FROM users WHERE role='admin'");
+    for (const admin of admins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_tutor_responded', eventType: 'dispute_tutor_responded',
+        data: { forAdmin: true, disputeId: req.params.disputeId },
+        refId: req.params.disputeId, refType: 'dispute',
+        sourceType: 'dispute', sourceId: req.params.disputeId,
+        idempotencyKey: `dispute:${req.params.disputeId}:tutor_responded:${admin.id}`,
+      });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, dispute: updated.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('PATCH tutor-response error:', e);
     return res.status(500).json({ message: 'Lỗi máy chủ.' });
   } finally {
     client.release();
