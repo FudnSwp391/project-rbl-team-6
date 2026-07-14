@@ -133,25 +133,44 @@ router.post('/withdraw-request', authMiddleware, async (req, res) => {
 
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
 
+  const client = await pool.connect();
   try {
-    const walletResult = await pool.query('SELECT id, balance FROM wallets WHERE user_id = $1', [userId]);
-    if (walletResult.rows.length === 0) return res.status(400).json({ error: 'Wallet not found' });
+    await client.query('BEGIN');
+    
+    // Lock wallet row for update to prevent race conditions
+    const walletResult = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    if (walletResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Wallet not found' });
+    }
     
     const wallet = walletResult.rows[0];
     if (parseFloat(wallet.balance) < amount) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Insufficient balance' });
     }
+
+    // Deduct balance immediately
+    await client.query(
+      'UPDATE wallets SET balance = balance - $1 WHERE id = $2',
+      [amount, wallet.id]
+    );
+
     // Create a pending withdraw request
-    await pool.query(
+    await client.query(
       `INSERT INTO withdraw_requests (wallet_id, amount, method, account_details, status)
        VALUES ($1, $2, $3, $4, 'PENDING')`,
       [wallet.id, amount, method, accountDetails]
     );
 
+    await client.query('COMMIT');
     res.json({ success: true, message: 'Yêu cầu rút tiền đã được tạo và chờ duyệt' });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error("Error on withdraw:", error);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 
