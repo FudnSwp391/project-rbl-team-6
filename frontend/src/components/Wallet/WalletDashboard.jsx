@@ -143,7 +143,7 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
         </div>
 
         {/* Stat Cards Row */}
-        <div className="col-span-12 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="col-span-12 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-outline-variant shadow-sm flex items-center space-x-4">
             <div className="p-3 bg-red-50 rounded-xl">
               <span className="material-symbols-outlined text-red-600">arrow_upward</span>
@@ -158,8 +158,17 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
               <span className="material-symbols-outlined text-orange-600">hourglass_empty</span>
             </div>
             <div>
-              <p className="text-sm font-medium text-on-surface-variant">Tiền đang chờ rút</p>
+              <p className="text-sm font-medium text-on-surface-variant">Đang chờ duyệt rút</p>
               <p className="text-xl font-bold text-on-surface">{stats.pendingWithdraw.toLocaleString()}đ</p>
+            </div>
+          </div>
+          <div className="bg-white p-6 rounded-2xl border border-outline-variant shadow-sm flex items-center space-x-4">
+            <div className="p-3 bg-blue-50 rounded-xl">
+              <span className="material-symbols-outlined text-blue-600">lock_clock</span>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-on-surface-variant">Tiền đang tạm giữ</p>
+              <p className="text-xl font-bold text-on-surface">{Number(wallet?.held_balance || 0).toLocaleString()}đ</p>
             </div>
           </div>
         </div>
