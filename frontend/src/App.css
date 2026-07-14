@@ -114,9 +114,21 @@
   color: var(--primary);
   font-weight: 700;
   padding-inline: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: .01em;
   transition: color .25s ease, border-color .25s ease, background .4s ease,
               transform .2s cubic-bezier(.34, 1.56, .64, 1), box-shadow .25s ease;
 }
+.btn-outline .material-symbols-outlined {
+  font-size: 18px;
+  transition: transform .25s ease;
+}
+.btn-outline:hover .material-symbols-outlined { transform: translateX(3px); }
 .btn-outline::after {
   content: '';
   position: absolute;
@@ -543,6 +555,11 @@
   color: var(--on-surface-variant);
   line-height: 24px;
   flex-grow: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .tutor-foot {
@@ -559,18 +576,22 @@
   margin: 0;
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: 3px;
+  min-width: 0;
 }
 
 .price strong {
-  color: var(--on-surface);
-  font-size: 28px;
-  line-height: 34px;
+  color: var(--primary);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
 }
 
 .price span {
   color: var(--outline);
-  font-size: 14px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .site-footer {

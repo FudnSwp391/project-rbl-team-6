@@ -148,7 +148,7 @@ function TutorCard({ tutor, isMock, onFav }) {
               e.stopPropagation();
               handleViewProfile();
             }}
-            className="btn-shine px-5 py-2 border border-[#00288e] text-[#00288e] hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 rounded-lg text-sm font-semibold transition-all"
+            className="btn-shine whitespace-nowrap shrink-0 px-5 py-2 border border-[#00288e] text-[#00288e] hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 rounded-lg text-sm font-semibold transition-all"
           >
             Xem Hồ Sơ
           </button>

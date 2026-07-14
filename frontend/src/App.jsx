@@ -239,6 +239,14 @@ function formatTimeAgo(dateStr) {
   return `${Math.floor(diff / 86400)} ngày trước`
 }
 
+// Giá/giờ: >=1000 coi là VND, <1000 là data test USD cũ, 0/null = thỏa thuận
+function fmtHourlyRate(val) {
+  const n = Number(val)
+  if (!n) return 'Thỏa thuận'
+  if (n >= 1000) return new Intl.NumberFormat('vi-VN').format(n) + 'đ'
+  return `$${n}`
+}
+
 // Map 1 dòng gia sư từ /api/tutors → shape mà card "Gia Sư Nổi Bật" cần
 function mapApiTutor(t) {
   return {
@@ -531,10 +539,15 @@ function HomePage({ onGoSignIn }) {
 
                   <p className="desc">{tutor.description}</p>
                   <div className="tutor-foot">
-                    <p className="price">
-                      <strong>${tutor.rate}</strong>
-                      <span>/giờ</span>
-                    </p>
+                    {(() => {
+                      const rate = fmtHourlyRate(tutor.rate)
+                      return (
+                        <p className="price">
+                          <strong>{rate}</strong>
+                          {rate !== 'Thỏa thuận' && <span>/giờ</span>}
+                        </p>
+                      )
+                    })()}
                     <button
                       type="button"
                       className="btn btn-outline"
@@ -548,6 +561,7 @@ function HomePage({ onGoSignIn }) {
                       }}
                     >
                       Xem Hồ Sơ
+                      <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
                     </button>
                   </div>
                 </article>
