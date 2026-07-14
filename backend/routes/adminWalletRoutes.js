@@ -132,19 +132,14 @@ router.patch('/withdraw-requests/:id/approve', adminAuthMiddleware, async (req, 
         throw new Error('Wallet not found');
     }
 
-    // Update status
+    // Update status to APPROVED (Wait for tutor confirmation to COMPLETE)
     await client.query(
       'UPDATE withdraw_requests SET status = $1, admin_note = $2, updated_at = NOW() WHERE id = $3',
-      ['COMPLETED', note || null, id]
+      ['APPROVED', note || null, id]
     );
 
-    // Create transaction log
-    const desc = `Duyệt rút tiền về ${withdrawReq.method}`;
-    await client.query(
-      `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
-       VALUES ($1, $2, 'WITHDRAW', 'SUCCESS', $3, $4)`,
-      [withdrawReq.wallet_id, withdrawReq.amount, withdrawReq.method, desc]
-    );
+    // Note: We do NOT create a transaction log here. 
+    // The transaction log will be created when the tutor confirms receipt.
 
     await client.query('COMMIT');
     res.json({ success: true, message: 'Đã duyệt yêu cầu rút tiền' });

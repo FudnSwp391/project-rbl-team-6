@@ -173,5 +173,66 @@ router.post('/withdraw-request', authMiddleware, async (req, res) => {
     client.release();
   }
 });
+// --- GET Withdraw Requests ---
+router.get('/withdraw-requests', authMiddleware, async (req, res) => {
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
+  try {
+    const walletResult = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [userId]);
+    if (walletResult.rows.length === 0) return res.json({ requests: [] });
+    
+    const reqResult = await pool.query(
+      'SELECT * FROM withdraw_requests WHERE wallet_id = $1 ORDER BY created_at DESC',
+      [walletResult.rows[0].id]
+    );
+    res.json({ requests: reqResult.rows });
+  } catch (error) {
+    console.error("Error fetching withdraw requests:", error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- CONFIRM Withdraw Request ---
+router.patch('/withdraw-requests/:id/confirm', authMiddleware, async (req, res) => {
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
+  const { id } = req.params;
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const walletResult = await client.query('SELECT id FROM wallets WHERE user_id = $1', [userId]);
+    if (walletResult.rows.length === 0) throw new Error('Wallet not found');
+    const walletId = walletResult.rows[0].id;
+
+    const reqResult = await client.query('SELECT * FROM withdraw_requests WHERE id = $1 AND wallet_id = $2 FOR UPDATE', [id, walletId]);
+    if (reqResult.rows.length === 0) throw new Error('Request not found');
+    
+    const withdrawReq = reqResult.rows[0];
+    if (withdrawReq.status !== 'APPROVED') throw new Error('Request must be APPROVED by admin first');
+
+    // Update status to COMPLETED
+    await client.query(
+      "UPDATE withdraw_requests SET status = 'COMPLETED', updated_at = NOW() WHERE id = $1",
+      [id]
+    );
+
+    // Create transaction log
+    const desc = `Rút tiền về ${withdrawReq.method}`;
+    await client.query(
+      `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
+       VALUES ($1, $2, 'WITHDRAW', 'SUCCESS', $3, $4)`,
+      [walletId, withdrawReq.amount, withdrawReq.method, desc]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Đã xác nhận nhận tiền thành công' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error confirming withdraw:", error);
+    res.status(400).json({ error: error.message || 'Server error' });
+  } finally {
+    client.release();
+  }
+});
 
 module.exports = router;

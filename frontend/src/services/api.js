@@ -704,6 +704,8 @@ export const getWalletOverview = async () => request('/api/wallet');
 export const getWalletTransactions = async () => request('/api/wallet/transactions');
 export const depositRequest = async (data) => request('/api/wallet/deposit-request', { method: 'POST', body: JSON.stringify(data) });
 export const withdrawRequest = async (data) => request('/api/wallet/withdraw-request', { method: 'POST', body: JSON.stringify(data) });
+export const getWithdrawRequests = async () => request('/api/wallet/withdraw-requests');
+export const confirmWithdrawRequest = async (id) => request(`/api/wallet/withdraw-requests/${id}/confirm`, { method: 'PATCH' });
 export const getAdminDepositRequests = async () => request('/api/admin/wallet/deposit-requests');
 export const getAdminWithdrawRequests = async () => request('/api/admin/wallet/withdraw-requests');
 export const approveDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });
