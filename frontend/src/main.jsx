@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { GoogleOAuthProvider } from '@react-oauth/google'
+import { Toaster } from 'react-hot-toast'
 import { AuthProvider } from './AuthContext'   // ← NEW: Auth state wrapper
 import './index.css'
 import App from './App.jsx'
@@ -16,6 +17,8 @@ createRoot(document.getElementById('root')).render(
         <App />
         {/* Chatbox AI nổi — hiện ở mọi trang */}
         <AIChatWidget />
+        {/* Global Toast và Poller */}
+        <Toaster position="bottom-right" reverseOrder={false} />
       </AuthProvider>
     </GoogleOAuthProvider>
   </StrictMode>,
