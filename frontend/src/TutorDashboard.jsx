@@ -11,7 +11,8 @@ import TutorFeedbackModal from './components/MicroFeedback/TutorFeedbackModal'
 import { getBookings, updateBookingStatus,
          getTutorProfile, updateTutorBio, updateTutorAvatar, updateTutorCv, submitTutorProfile,
          addTutorCredential, deleteTutorCredential,
-         updateTutorAvailability, getUnreadCount, getTutorStudents, markBookingAttendance, getTutorEarnings } from './services/api'
+         updateTutorAvailability, getUnreadCount, getTutorStudents, markBookingAttendance, getTutorEarnings,
+         saveSessionInfo, resolveMethodChange } from './services/api'
 import ProofUploader from './components/ProofUploader'
 import TutorCoursesTab from './components/TutorCourses'
 import { uploadAvatarFile, uploadDemoVideo } from './services/upload'
@@ -1067,6 +1068,22 @@ function normalizeBookingDate(value) {
   return Number.isNaN(parsed.getTime()) ? '' : toDateKey(parsed)
 }
 
+// ── Hình thức dạy: chuẩn hóa từ teaching_methods (mảng text tự do) ──────────
+function methodSupportOf(methods) {
+  const txt = (Array.isArray(methods) ? methods : []).join(' ').toLowerCase()
+  const online  = /online|trực tuyến|truc tuyen/.test(txt)
+  const offline = /offline|trực tiếp|truc tiep|tại nhà|tai nha|tại địa điểm/.test(txt)
+  return { online, offline }
+}
+function methodChoiceOf(methods) {
+  const s = methodSupportOf(methods)
+  if (s.online && s.offline) return 'both'
+  if (s.online) return 'online'
+  if (s.offline) return 'offline'
+  return ''
+}
+const METHOD_LABELS = { online: 'Online', offline: 'Offline (truc tiep)', both: 'Ca hai (Online + Offline)' }
+
 function MyScheduleTab() {
   const [view, setView] = useState('week')
   const [cursor, setCursor] = useState(new Date())
@@ -1098,12 +1115,22 @@ function MyScheduleTab() {
     return () => { active = false }
   }, [])
 
+  // Thông tin buổi học đọc từ DB (bookings) — học sinh cũng thấy được, thay cho localStorage cũ
   useEffect(() => {
     const map = {}
     bookings.filter(b => String(b.status).toLowerCase() === 'approved').forEach(b => {
-      const saved = localStorage.getItem(`session_info_booking-${b.id}`)
-      if (saved) {
-        try { map[`booking-${b.id}`] = JSON.parse(saved) } catch {}
+      if (b.teaching_method || b.meeting_link || b.location || b.session_topic) {
+        map[`booking-${b.id}`] = {
+          mode: b.teaching_method || (b.meeting_link ? 'online' : 'offline'),
+          meetLink: b.meeting_link || '',
+          meetPassword: b.meeting_password || '',
+          location: b.location || '',
+          locationNote: b.location_note || '',
+          topic: b.session_topic || '',
+          duration: b.session_duration ? String(b.session_duration) : '60',
+          materials: b.session_materials || '',
+          homework: b.session_homework || '',
+        }
       }
     })
     setSessionInfoMap(map)
@@ -1191,17 +1218,14 @@ function MyScheduleTab() {
       {sessionModal && (
         <SessionInfoModal
           event={sessionModal}
-          onClose={() => {
-            const map = {}
-            bookings.filter(b => String(b.status).toLowerCase() === 'approved').forEach(b => {
-              const saved = localStorage.getItem(`session_info_booking-${b.id}`)
-              if (saved) {
-                try { map[`booking-${b.id}`] = JSON.parse(saved) } catch {}
-              }
-            })
-            setSessionInfoMap(map)
-            setSessionModal(null)
+          booking={bookings.find(b => `booking-${b.id}` === sessionModal.id) || null}
+          onSaved={async () => {
+            try {
+              const fresh = await getBookings()
+              setBookings(Array.isArray(fresh) ? fresh : [])
+            } catch {}
           }}
+          onClose={() => setSessionModal(null)}
         />
       )}
     </div>
@@ -1306,28 +1330,33 @@ function ScheduleEventPill({ event, onClick, hasInfo }) {
 }
 
 // ─── Session Info Modal ─────────────────────────────────────────────────────
-function SessionInfoModal({ event, onClose }) {
-  const storageKey = `session_info_${event.id}`
-  const [form, setForm] = useState(() => {
-    try {
-      const saved = localStorage.getItem(storageKey)
-      return saved ? JSON.parse(saved) : {
-        mode: 'online', meetLink: '', meetPassword: '',
-        location: '', locationNote: '',
-        topic: '', duration: '60', materials: '', homework: '',
-        notifyStudent: true,
-      }
-    } catch {
-      return { mode: 'online', meetLink: '', meetPassword: '', location: '', locationNote: '', topic: '', duration: '60', materials: '', homework: '', notifyStudent: true }
-    }
-  })
+function SessionInfoModal({ event, booking, onClose, onSaved }) {
+  const [form, setForm] = useState(() => ({
+    mode: booking?.teaching_method || (booking?.meeting_link ? 'online' : 'online'),
+    meetLink: booking?.meeting_link || '',
+    meetPassword: booking?.meeting_password || '',
+    location: booking?.location || '',
+    locationNote: booking?.location_note || '',
+    topic: booking?.session_topic || '',
+    duration: booking?.session_duration ? String(booking.session_duration) : '60',
+    materials: booking?.session_materials || '',
+    homework: booking?.session_homework || '',
+    notifyStudent: true,
+  }))
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [changeStatus, setChangeStatus] = useState(booking?.method_change_status || null)
+  const [resolving, setResolving] = useState(false)
 
   const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setError('')
+    if (!booking?.id) {
+      setError('Không tìm thấy buổi học tương ứng. Vui lòng tải lại trang.')
+      return
+    }
     if (form.mode === 'online' && !form.meetLink.trim()) {
       setError('Vui lòng nhập link phòng học online.')
       return
@@ -1336,9 +1365,33 @@ function SessionInfoModal({ event, onClose }) {
       setError('Vui lòng nhập địa điểm học offline.')
       return
     }
-    localStorage.setItem(storageKey, JSON.stringify(form))
-    setSaved(true)
-    setTimeout(() => { setSaved(false); onClose() }, 900)
+    setSaving(true)
+    try {
+      await saveSessionInfo(booking.id, form)
+      if (onSaved) await onSaved()
+      setSaved(true)
+      setTimeout(() => { setSaved(false); onClose() }, 900)
+    } catch (e) {
+      setError(e.message || 'Lưu thông tin buổi học thất bại.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleResolveChange = async (decision) => {
+    if (!booking?.id) return
+    setResolving(true)
+    setError('')
+    try {
+      await resolveMethodChange(booking.id, decision)
+      setChangeStatus(decision)
+      if (decision === 'accepted') set('mode', booking.method_change_requested)
+      if (onSaved) await onSaved()
+    } catch (e) {
+      setError(e.message || 'Phản hồi yêu cầu thất bại.')
+    } finally {
+      setResolving(false)
+    }
   }
 
   const inputCls = 'w-full h-10 px-3 rounded-xl border border-outline-variant text-[14px] text-on-surface outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 bg-white transition-all'
@@ -1391,6 +1444,48 @@ function SessionInfoModal({ event, onClose }) {
 
         {/* ── Scrollable Body ── */}
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
+
+          {/* Yêu cầu đổi hình thức từ học sinh */}
+          {booking?.method_change_requested && changeStatus === 'pending' && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+              <div className="flex items-start gap-2.5">
+                <span className="material-symbols-outlined text-amber-600 text-[20px] shrink-0">swap_horiz</span>
+                <div className="min-w-0">
+                  <p className="text-[13px] font-bold text-amber-800">
+                    Học sinh xin đổi sang {booking.method_change_requested === 'online' ? 'Online' : 'Offline'}
+                  </p>
+                  {booking.method_change_reason && (
+                    <p className="text-[12px] text-amber-700 mt-0.5">Lý do: {booking.method_change_reason}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" disabled={resolving}
+                  onClick={() => handleResolveChange('accepted')}
+                  className="h-9 px-4 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold flex items-center gap-1.5 hover:bg-[#15803d] transition-colors disabled:opacity-60">
+                  <span className="material-symbols-outlined text-[15px]">check</span>
+                  Đồng ý đổi
+                </button>
+                <button type="button" disabled={resolving}
+                  onClick={() => handleResolveChange('declined')}
+                  className="h-9 px-4 rounded-lg border border-amber-300 text-amber-700 text-[12px] font-bold flex items-center gap-1.5 hover:bg-amber-100 transition-colors disabled:opacity-60">
+                  <span className="material-symbols-outlined text-[15px]">close</span>
+                  Từ chối
+                </button>
+              </div>
+              {booking.method_change_requested === 'online' && (
+                <p className="text-[11px] text-amber-600">Nếu đồng ý, nhớ điền link phòng học online bên dưới rồi bấm Lưu.</p>
+              )}
+            </div>
+          )}
+          {changeStatus === 'accepted' && booking?.method_change_requested && (
+            <div className="bg-green-50 border border-green-200 rounded-2xl px-4 py-3 flex items-center gap-2">
+              <span className="material-symbols-outlined text-[#16a34a] text-[18px]">check_circle</span>
+              <p className="text-[12px] font-semibold text-green-800">
+                Đã đồng ý đổi sang {booking.method_change_requested === 'online' ? 'Online' : 'Offline'} — học sinh đã được thông báo.
+              </p>
+            </div>
+          )}
 
           {/* CARD 1 — Hình thức học */}
           <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
@@ -1583,7 +1678,8 @@ function SessionInfoModal({ event, onClose }) {
             </button>
             <button
               onClick={handleSave}
-              className={`h-10 px-6 rounded-xl text-[13px] font-bold flex items-center gap-2 transition-all shadow-sm ${
+              disabled={saving}
+              className={`h-10 px-6 rounded-xl text-[13px] font-bold flex items-center gap-2 transition-all shadow-sm disabled:opacity-60 ${
                 saved
                   ? 'bg-[#16a34a] text-white'
                   : 'bg-primary text-on-primary hover:bg-[#1e40af]'
@@ -1595,7 +1691,7 @@ function SessionInfoModal({ event, onClose }) {
               >
                 {saved ? 'check_circle' : 'save'}
               </span>
-              {saved ? 'Đã lưu!' : 'Lưu thông tin'}
+              {saved ? 'Đã lưu!' : saving ? 'Đang lưu...' : 'Lưu & gửi cho học sinh'}
             </button>
           </div>
         </div>
@@ -1668,6 +1764,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     bio: '',
     teaching_style: '',
     demo_video_url: '',
+    teaching_methods: [],
   })
   const [cvSaving, setCvSaving]         = useState(false)
   const [videoUploading, setVideoUploading] = useState(false)
@@ -1705,6 +1802,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
           bio: data.bio || '',
           teaching_style: data.teaching_style || '',
           demo_video_url: data.demo_video_url || '',
+          teaching_methods: Array.isArray(data.teaching_methods) ? data.teaching_methods : [],
         })
       } catch (e) {
         setProfile({ bio: '', bio_status: 'approved', status: 'draft', credentials: [], availability: {} })
@@ -2063,6 +2161,27 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                   <CvInput label="Hoc phi / gio" type="number" value={cvForm.hourly_rate} onChange={v => setCvForm(f => ({ ...f, hourly_rate: v }))} />
                   <CvInput label="So nam kinh nghiem" type="number" value={cvForm.experience_years} onChange={v => setCvForm(f => ({ ...f, experience_years: v }))} />
                 </div>
+                <div>
+                  <label className="block text-[12px] font-semibold text-on-surface mb-1.5">Hinh thuc day</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { v: 'online',  icon: 'videocam',    label: 'Online' },
+                      { v: 'offline', icon: 'location_on', label: 'Offline' },
+                      { v: 'both',    icon: 'sync_alt',    label: 'Ca hai' },
+                    ].map(opt => {
+                      const active = methodChoiceOf(cvForm.teaching_methods) === opt.v
+                      return (
+                        <button key={opt.v} type="button"
+                          onClick={() => setCvForm(f => ({ ...f, teaching_methods: opt.v === 'both' ? ['online', 'offline'] : [opt.v] }))}
+                          className={`h-11 rounded-xl border text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-colors ${active ? 'border-primary bg-primary/5 text-primary' : 'border-outline-variant text-on-surface-variant hover:bg-surface-container'}`}>
+                          <span className="material-symbols-outlined text-[17px]">{opt.icon}</span>
+                          {opt.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-outline">Hoc sinh chi dat lich duoc theo hinh thuc ban chon. Chon "Ca hai" de linh hoat nhat.</p>
+                </div>
                 <CvTextarea label="Gioi thieu ban than" rows={4} value={cvForm.bio} onChange={v => setCvForm(f => ({ ...f, bio: v }))} />
                 <CvTextarea label="Phong cach giang day" rows={3} value={cvForm.teaching_style} onChange={v => setCvForm(f => ({ ...f, teaching_style: v }))} />
                 <div>
@@ -2091,6 +2210,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                 <InfoItem label="Hoc phi" value={profile?.hourly_rate ? `${profile.hourly_rate}/hr` : ''} />
                 <InfoItem label="Kinh nghiem" value={profile?.experience_years ? `${profile.experience_years} nam` : ''} />
                 <InfoItem label="Dien thoai" value={profile?.phone} />
+                <InfoItem label="Hinh thuc day" value={METHOD_LABELS[methodChoiceOf(profile?.teaching_methods)] || 'Chua chon'} />
                 <div className="md:col-span-2"><InfoItem label="Phong cach day" value={profile?.teaching_style} /></div>
                 {profile?.demo_video_url && <div className="md:col-span-2"><p className="font-semibold text-on-surface mb-2">Video demo</p><video className="w-full max-h-72 rounded-xl bg-black" src={profile.demo_video_url} controls /></div>}
               </div>

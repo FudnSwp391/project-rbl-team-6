@@ -14,6 +14,7 @@ export default function BookingConfirmationModal({
   subject,
   notes,
   childName,
+  teachingMethod,
   isSubmitting,
   submitError,
   bookingSuccessData,
@@ -23,6 +24,15 @@ export default function BookingConfirmationModal({
   if (!isOpen) return null;
   const sessionItems = sessions.length ? sessions : (date && timeSlot ? [{ date, timeSlot }] : []);
   const hasMultipleSessions = sessionItems.length > 1;
+
+  // Giống fmtPrice ở FindTutors/AIChatWidget: >=1000 hiểu là VND, ngược lại là USD
+  const formatRate = (v) => {
+    const n = Number(v);
+    if (!v || Number.isNaN(n) || n <= 0) return 'Thỏa thuận';
+    return n >= 1000
+      ? `${new Intl.NumberFormat('vi-VN').format(n)}đ/giờ`
+      : `$${n}/hour`;
+  };
 
   // Formatting date string nicely
   const formatDate = (dateStr) => {
@@ -121,7 +131,7 @@ export default function BookingConfirmationModal({
                 )}
                 <div className="col-span-2">
                   <span className="text-on-surface-variant block font-medium">Rate</span>
-                  <span className="text-primary font-bold">${tutor.rate}/hour</span>
+                  <span className="text-primary font-bold">{formatRate(tutor.rate)}</span>
                 </div>
               </div>
             </div>
@@ -236,12 +246,35 @@ export default function BookingConfirmationModal({
                       </div>
                     )}
 
+                    {teachingMethod && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-on-surface-variant flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[18px]">
+                            {teachingMethod === 'online' ? 'videocam' : 'location_on'}
+                          </span>
+                          Hình thức:
+                        </span>
+                        <span className="text-on-surface font-semibold">
+                          {teachingMethod === 'online' ? 'Online' : 'Offline (trực tiếp)'}
+                        </span>
+                      </div>
+                    )}
+
                     <div className="flex justify-between items-center pt-2 border-t border-outline-variant/10">
                       <span className="text-on-surface-variant font-medium">Session Rate:</span>
-                      <span className="text-primary text-lg font-bold">${tutor.rate}/hour</span>
+                      <span className="text-primary text-lg font-bold">{formatRate(tutor.rate)}</span>
                     </div>
                   </div>
                 </div>
+
+                {teachingMethod && (
+                  <p className="text-[12px] text-on-surface-variant/80 flex items-start gap-1.5 px-1">
+                    <span className="material-symbols-outlined text-[15px] shrink-0">info</span>
+                    {teachingMethod === 'online'
+                      ? 'Buổi học Online: gia sư sẽ gửi link phòng học (Meet/Zoom) trước giờ học — bạn sẽ thấy trong Lịch học.'
+                      : 'Buổi học Offline: địa điểm học sẽ được trao đổi qua ghi chú bên dưới hoặc tin nhắn với gia sư.'}
+                  </p>
+                )}
 
                 {/* Optional description notes summary */}
                 {notes && (

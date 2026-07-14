@@ -173,6 +173,8 @@ export async function createBooking(bookingData) {
     tutor_name,
     studentId,
     childName,
+    teachingMethod,
+    teaching_method,
   } = bookingData || {};
 
   // Resolve tutorId — accept both camelCase and snake_case
@@ -201,6 +203,7 @@ export async function createBooking(bookingData) {
       tutor_name:  resolvedTutorName,
       subject:     subject || null,
       note:        resolvedNote,
+      teaching_method: teachingMethod || teaching_method || null,
     };
     console.log('[createBooking] Sending payload to /api/bookings:', payload);
     const result = await request('/api/bookings', {
@@ -263,6 +266,33 @@ export async function updateBookingStatus(bookingId, status) {
 
 export async function getTutorStudents() {
   return request('/api/tutor/students');
+}
+
+/**
+ * Gia sư lưu thông tin buổi học (hình thức, link Meet/Zoom, địa điểm, chủ đề...).
+ * Lưu vào DB để học sinh nhìn thấy — thay cho localStorage cũ.
+ */
+export async function saveSessionInfo(bookingId, info) {
+  return request(`/api/bookings/${bookingId}/session-info`, {
+    method: 'PATCH',
+    body: JSON.stringify(info),
+  });
+}
+
+/** Học sinh xin đổi hình thức học (online/offline) cho một buổi học. */
+export async function requestMethodChange(bookingId, requestedMethod, reason = '') {
+  return request(`/api/bookings/${bookingId}/request-method-change`, {
+    method: 'POST',
+    body: JSON.stringify({ requestedMethod, reason }),
+  });
+}
+
+/** Gia sư chấp nhận / từ chối yêu cầu đổi hình thức. */
+export async function resolveMethodChange(bookingId, decision) {
+  return request(`/api/bookings/${bookingId}/method-change`, {
+    method: 'PATCH',
+    body: JSON.stringify({ decision }),
+  });
 }
 
 export async function markBookingAttendance(bookingId, status, note = '') {

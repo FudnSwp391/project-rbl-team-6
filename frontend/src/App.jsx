@@ -4,6 +4,7 @@
  */
 import { useEffect, useState, useRef } from 'react'
 import './App.css'
+import { methodSupport } from './utils/teachingMethod'
 import SignIn from './SignIn'
 import SignUp from './SignUp'
 import AdminDashboard from './AdminDashboard'
@@ -247,6 +248,7 @@ function mapApiTutor(t) {
     rating: Number(t.avg_r || 0).toFixed(1),
     reviews: t.review_count || 0,
     rate: t.hourly_rate || 0,
+    methods: Array.isArray(t.teaching_methods) ? t.teaching_methods : [],
     description: t.bio || '',
     avatar: t.profile_photo_url || t.picture
       || `https://ui-avatars.com/api/?name=${encodeURIComponent(t.full_name || 'Tutor')}&background=00288e&color=fff&size=128`,
@@ -515,6 +517,16 @@ function HomePage({ onGoSignIn }) {
                         {subject}
                       </span>
                     ))}
+                    {(() => {
+                      const ms = methodSupport(tutor.methods)
+                      if (!ms.declared) return null
+                      return (
+                        <>
+                          {ms.online && <span className="chip" style={{ background: '#e0f2fe', color: '#0369a1' }}>Online</span>}
+                          {ms.offline && <span className="chip" style={{ background: '#dcfce7', color: '#15803d' }}>Offline</span>}
+                        </>
+                      )
+                    })()}
                   </div>
 
                   <p className="desc">{tutor.description}</p>
