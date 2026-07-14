@@ -97,50 +97,8 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
     setIsSubmitting(true)
     try {
       // ── Tutor: kiểm tra email trước, rồi mới lưu sessionStorage ────────────
-      if (role === 'tutor') {
-        const checkResp = await fetch(`${apiBaseUrl}/api/auth/check-email`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: formData.email.trim() }),
-        })
-        if (!checkResp.ok) {
-          const checkData = await checkResp.json()
-          if (checkData?.isGoogleAccount) setIsGoogleError(true)
-          throw new Error(checkData?.message || 'Email này đã được đăng ký.')
-        }
-        sessionStorage.setItem('pendingTutorReg', JSON.stringify({
-          fullName: formData.fullName.trim(),
-          email: formData.email.trim(),
-          password: formData.password,
-          role: 'tutor',
-        }))
-        window.location.hash = '/tutor-profile'
-        return
-      }
+      // ── Đăng ký API ngay cho tất cả role ────────────────
 
-      // ── Student: kiểm tra email trước, lưu sessionStorage, chuyển sang Complete Profile ────────────
-      if (role === 'student') {
-        const checkResp = await fetch(`${apiBaseUrl}/api/auth/check-email`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: formData.email.trim() }),
-        })
-        if (!checkResp.ok) {
-          const checkData = await checkResp.json()
-          if (checkData?.isGoogleAccount) setIsGoogleError(true)
-          throw new Error(checkData?.message || 'Email này đã được đăng ký.')
-        }
-        sessionStorage.setItem('pendingStudentReg', JSON.stringify({
-          fullName: formData.fullName.trim(),
-          email: formData.email.trim(),
-          password: formData.password,
-          role: 'student',
-        }))
-        window.location.hash = '/complete-student-profile'
-        return
-      }
-
-      // ── Parent: đăng ký API ngay ────────────────
       const response = await fetch(`${apiBaseUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

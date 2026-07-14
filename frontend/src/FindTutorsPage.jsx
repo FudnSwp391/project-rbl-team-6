@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { methodSupport } from './utils/teachingMethod';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -117,6 +118,24 @@ function TutorCard({ tutor, isMock, onFav }) {
           {subjects.map(s => (
             <span key={s} className="bg-[#00288e]/10 text-[#00288e] px-2.5 py-1 rounded-full text-xs font-medium">{s}</span>
           ))}
+          {(() => {
+            const ms = methodSupport(tutor.teaching_methods);
+            if (!ms.declared) return null;
+            return (
+              <>
+                {ms.online && (
+                  <span className="bg-[#e0f2fe] text-[#0369a1] px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[13px]">videocam</span>Online
+                  </span>
+                )}
+                {ms.offline && (
+                  <span className="bg-[#dcfce7] text-[#15803d] px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[13px]">location_on</span>Offline
+                  </span>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         <div className="mt-auto flex items-center justify-between">

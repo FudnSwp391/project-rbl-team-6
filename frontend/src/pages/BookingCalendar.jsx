@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../AuthContext';
 import { getTutorDetail, getTutorAvailability, createBooking } from '../services/api';
 import BookingConfirmationModal from '../components/BookingConfirmationModal';
+import { methodSupport, methodLabel, METHOD_OPTIONS } from '../utils/teachingMethod';
 
 const toDateKey = (date) => {
   const value = new Date(date);
@@ -41,6 +42,7 @@ function normalizeBookingTutor(tutor = {}, fallbackId = '') {
     tutor_id: tutor.tutor_id || tutor.tutorId || tutor.user_id || tutor.userId || tutor.id || fallbackId,
     name: tutor.name || tutor.full_name || tutor.tutorName || 'Tutor',
     avatar: tutor.avatar || tutor.picture || tutor.tutorAvatar || '',
+    rate: tutor.rate ?? tutor.hourly_rate ?? tutor.hourlyRate ?? null,
     subjects: Array.isArray(tutor.subjects) && tutor.subjects.length ? tutor.subjects : [subject],
     availability: tutor.availability || {},
   };
@@ -80,6 +82,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   const [selectedTimeSlot, setSelectedTimeSlot] = useState('');
   const [selectedBookings, setSelectedBookings] = useState({});
   const [subject, setSubject]                   = useState('');
+  const [teachingMethod, setTeachingMethod]     = useState('');
   const [notes, setNotes]                       = useState('');
   const [selectedChild, setSelectedChild]       = useState('');
 
@@ -135,6 +138,10 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
           setBookedSlots(bookedData);
           if (tutorData.subjects?.length > 0) setSubject(tutorData.subjects[0]);
           if (user?.role === 'parent') setSelectedChild(CHILDREN[0].name);
+          // Gia sư chỉ dạy 1 hình thức → tự chọn luôn hình thức đó
+          const ms = methodSupport(tutorData.teaching_methods);
+          if (ms.online && !ms.offline) setTeachingMethod('online');
+          else if (!ms.online && ms.offline) setTeachingMethod('offline');
           setLoading(false);
         }
       } catch (err) {
@@ -290,6 +297,13 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       return;
     }
 
+    // Gia sư dạy cả 2 hình thức → bắt buộc học sinh chọn 1
+    const ms = methodSupport(tutor.teaching_methods);
+    if (ms.online && ms.offline && !teachingMethod) {
+      setSubmitError('Vui lòng chọn hình thức học (Online hoặc Offline).');
+      return;
+    }
+
     // ── Build payload (matches backend: tutor_id, lesson_date, time_slot) ─
     const bookingPayload = {
       tutorId:   String(tutorIdToSend),
@@ -297,6 +311,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       sessions:  sessions.map(s => ({ date: s.date, timeSlot: s.timeSlot })),
       subject:   subject || (tutor.subjects?.[0] ?? null),
       notes:     notes || null,
+      teachingMethod: teachingMethod || null,
     };
 
     console.log('[BookingCalendar] handleConfirmBooking payload:', JSON.stringify(bookingPayload, null, 2));
@@ -599,6 +614,59 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                 </div>
               )}
 
+              {/* Hình thức học (online / offline) */}
+              {(() => {
+                const ms = methodSupport(tutor?.teaching_methods);
+                const both = ms.online && ms.offline;
+                const single = !both ? (ms.online ? 'online' : 'offline') : null;
+                const hint = METHOD_OPTIONS.find(o => o.value === (teachingMethod || single))?.hint;
+                return (
+                  <div style={S.formGroup}>
+                    <label style={S.label}>Hình thức học</label>
+                    {both ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        {METHOD_OPTIONS.map(opt => {
+                          const active = teachingMethod === opt.value;
+                          return (
+                            <button key={opt.value} type="button"
+                              onClick={() => setTeachingMethod(opt.value)}
+                              style={{
+                                height: 42, borderRadius: 12, cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                fontSize: 13, fontWeight: 600,
+                                border: active ? '2px solid var(--primary, #00288e)' : '1px solid #d6d9e0',
+                                background: active ? 'rgba(0,40,142,0.06)' : '#fff',
+                                color: active ? 'var(--primary, #00288e)' : '#5d5f6f',
+                                transition: 'all .15s',
+                              }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{opt.icon}</span>
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{
+                        height: 42, borderRadius: 12, display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '0 12px', border: '1px solid #d6d9e0', background: '#f6f7fb',
+                        fontSize: 13, fontWeight: 600, color: '#3a3d4d',
+                      }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 17, color: 'var(--primary, #00288e)' }}>
+                          {single === 'online' ? 'videocam' : 'location_on'}
+                        </span>
+                        {methodLabel(single)} — gia sư chỉ dạy hình thức này
+                      </div>
+                    )}
+                    {hint && (
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: '#8a8ca0', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>info</span>
+                        {hint}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Notes */}
               <div style={S.formGroup}>
                 <label htmlFor="booking-notes" style={S.label}>Topics / Notes</label>
@@ -658,6 +726,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
           sessions={selectedBookingItems}
           subject={subject}
           notes={notes}
+          teachingMethod={teachingMethod}
           childName={user?.role === 'parent' ? selectedChild : null}
           isSubmitting={isSubmitting}
           submitError={submitError}
