@@ -124,7 +124,7 @@ export default function CourseMarketplace() {
   const CourseCard = ({ course }) => {
     const imageUrl = getCourseImageUrl(course);
     const tutorName = course.tutor_name || course.tutorName || 'Gia sư EduX';
-    const rating = course.rating || course.averageRating || 0;
+    const rating = Number(course.avg_rating) || course.rating || course.averageRating || 0;
     const reviewCount = course.review_count || course.reviewCount || course.reviews || 0;
     const isVerified = course.verified || course.tutorVerified || rating >= 4.5;
 
