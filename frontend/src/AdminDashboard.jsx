@@ -25,6 +25,7 @@ import WithdrawalRequests     from './admin/transactions/WithdrawalRequests'
 import AICaseResolutions      from './admin/transactions/AICaseResolutions'
 import AdminCopilot           from './admin/copilot/AdminCopilot'
 
+import CourseComplaintsAdminView from './admin/services/CourseComplaints'
 import Violations from './admin/services/Violations'
 import Moderation from './admin/services/Moderation'
 import SemanticModeration from './admin/semantic/SemanticModeration'
@@ -481,7 +482,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-audit'         && <AuditLogs token={token} />}
           
           {/* ── Service Management Module ── */}
-          {activeView === 'sm-complaints'    && <ComplaintsView token={token} />}
+          {activeView === 'sm-complaints'    && <CourseComplaintsAdminView token={token} />}
           {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
           {activeView === 'sm-violations'    && <Violations token={token} />}
           {activeView === 'sm-moderation'    && <Moderation token={token} />}
