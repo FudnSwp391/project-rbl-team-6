@@ -1414,6 +1414,16 @@ function SessionInfoModal({ event, booking, onClose, onSaved }) {
 
   const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
 
+  // Hình thức do học sinh chọn khi đặt lịch → khóa, gia sư không tự đổi được
+  // (chỉ đổi qua luồng học sinh gửi yêu cầu). Booking cũ không có → cho chọn.
+  const lockedMethod = (() => {
+    const m = String(
+      (changeStatus === 'accepted' && booking?.method_change_requested) ||
+      booking?.teaching_method || ''
+    ).toLowerCase()
+    return m === 'online' || m === 'offline' ? m : null
+  })()
+
   const handleSave = async () => {
     setError('')
     if (!booking?.id) {
@@ -1557,7 +1567,36 @@ function SessionInfoModal({ event, booking, onClose, onSaved }) {
               <p className="text-[12px] font-bold text-on-surface uppercase tracking-wider">Hình thức học</p>
             </div>
             <div className="p-4 space-y-4">
-              {/* Toggle Online / Offline */}
+              {/* Hình thức đã được học sinh chọn khi đặt lịch → hiển thị cố định */}
+              {lockedMethod ? (
+                <div className={`flex items-center gap-3 p-4 rounded-xl border-2 ${
+                  lockedMethod === 'online' ? 'border-primary bg-primary/5' : 'border-[#16a34a] bg-[#f0fdf4]'
+                }`}>
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                    lockedMethod === 'online' ? 'bg-primary text-on-primary' : 'bg-[#16a34a] text-white'
+                  }`}>
+                    <span className="material-symbols-outlined text-[22px]">
+                      {lockedMethod === 'online' ? 'videocam' : 'location_on'}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className={`font-bold text-[13px] ${lockedMethod === 'online' ? 'text-primary' : 'text-[#16a34a]'}`}>
+                        {lockedMethod === 'online' ? 'Online' : 'Offline'}
+                      </p>
+                      <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-white border ${
+                        lockedMethod === 'online' ? 'border-primary/30 text-primary' : 'border-[#16a34a]/30 text-[#16a34a]'
+                      }`}>
+                        <span className="material-symbols-outlined text-[11px]">lock</span>
+                        Học sinh đã chọn
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-on-surface-variant mt-0.5">
+                      {lockedMethod === 'online' ? 'Zoom · Meet · Teams' : 'Học trực tiếp'} — hình thức do học sinh chọn khi đặt lịch, chỉ thay đổi khi học sinh gửi yêu cầu đổi.
+                    </p>
+                  </div>
+                </div>
+              ) : (
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { value: 'online',  icon: 'videocam',    label: 'Online',  sub: 'Zoom · Meet · Teams' },
@@ -1601,6 +1640,7 @@ function SessionInfoModal({ event, booking, onClose, onSaved }) {
                   )
                 })}
               </div>
+              )}
 
               {/* Online fields */}
               {form.mode === 'online' && (
