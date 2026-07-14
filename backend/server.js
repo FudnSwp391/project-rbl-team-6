@@ -3022,6 +3022,69 @@ app.get("/api/tutor/profile", verifyToken, async (req, res) => {
   }
 });
 
+// PATCH /api/tutor/profile/cv — gia sư cập nhật CV từ dashboard (kèm hình thức dạy)
+app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const existing = await pool.query("SELECT * FROM tutor_profiles WHERE user_id = $1", [userId]);
+    if (!existing.rows.length) return res.status(404).json({ message: "Không tìm thấy hồ sơ gia sư." });
+    const cur = existing.rows[0];
+    const b = req.body || {};
+
+    let methods = cur.teaching_methods;
+    if (b.teaching_methods !== undefined) {
+      try {
+        methods = Array.isArray(b.teaching_methods) ? b.teaching_methods : JSON.parse(b.teaching_methods || '[]');
+      } catch { methods = cur.teaching_methods; }
+    }
+
+    const result = await pool.query(
+      `UPDATE tutor_profiles SET
+         headline = $1, phone = $2, location = $3, subjects = $4,
+         hourly_rate = $5, experience_years = $6, bio = $7,
+         teaching_style = $8, demo_video_url = $9, teaching_methods = $10
+       WHERE user_id = $11 RETURNING *`,
+      [
+        b.headline !== undefined ? b.headline : cur.headline,
+        b.phone !== undefined ? b.phone : cur.phone,
+        b.location !== undefined ? b.location : cur.location,
+        b.subjects !== undefined ? b.subjects : cur.subjects,
+        b.hourly_rate !== undefined && b.hourly_rate !== '' ? parseFloat(b.hourly_rate) || null : cur.hourly_rate,
+        b.experience_years !== undefined && b.experience_years !== '' ? parseInt(b.experience_years) || 0 : cur.experience_years,
+        b.bio !== undefined ? b.bio : cur.bio,
+        b.teaching_style !== undefined ? b.teaching_style : cur.teaching_style,
+        b.demo_video_url !== undefined ? b.demo_video_url : cur.demo_video_url,
+        // Cột teaching_methods là text[] trong DB (không phải jsonb) — truyền mảng JS trực tiếp
+        Array.isArray(methods) ? methods : [],
+        userId,
+      ]
+    );
+
+    if (b.full_name && String(b.full_name).trim()) {
+      await pool.query("UPDATE users SET full_name = $1 WHERE id = $2", [String(b.full_name).trim(), userId]);
+    }
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Update tutor CV error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// PATCH /api/tutor/profile/submit — nộp lại hồ sơ cho admin duyệt
+app.patch("/api/tutor/profile/submit", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "UPDATE tutor_profiles SET status = 'pending', reject_reason = NULL WHERE user_id = $1 RETURNING *",
+      [req.user.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy hồ sơ gia sư." });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Submit tutor profile error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
 // Upload profile data (JSON based)
 app.post(
   "/api/tutor/profile",
@@ -3126,14 +3189,15 @@ app.post(
       }
 
       // Optional: save structured fields (separate query, non-fatal if columns not ready)
+      // Lưu ý: teaching_methods là text[] (truyền mảng JS), suitable_students là jsonb (stringify)
       try {
         await pool.query(
           `UPDATE tutor_profiles SET
-            teaching_methods  = $1::jsonb,
+            teaching_methods  = $1,
             suitable_students = $2::jsonb
            WHERE id = $3`,
           [
-            JSON.stringify(parsedTeachingMethods),
+            Array.isArray(parsedTeachingMethods) ? parsedTeachingMethods : [],
             JSON.stringify(parsedSuitableStudents),
             result.rows[0].id,
           ]
@@ -8342,7 +8406,8 @@ app.get("/api/tutors", async (req, res) => {
   const level    = (req.query.level  || "").trim();   // 'Cấp 1' | 'Cấp 2' | 'Cấp 3' | 'Đại học'
   if (!isNaN(minPrice)) { conditions.push(`tp.hourly_rate >= $${idx}`); values.push(minPrice); idx++; }
   if (!isNaN(maxPrice)) { conditions.push(`tp.hourly_rate <= $${idx}`); values.push(maxPrice); idx++; }
-  if (method)           { conditions.push(`$${idx} = ANY(tp.teaching_methods)`); values.push(method); idx++; }
+  // ILIKE ANY để khớp không phân biệt hoa/thường ('online' khớp cả 'Online')
+  if (method)           { conditions.push(`$${idx} ILIKE ANY(tp.teaching_methods)`); values.push(method); idx++; }
   if (level) {
     // suitable_students là jsonb (hiện đa số rỗng) → khớp nếu chứa level HOẶC chưa khai báo (cho qua)
     conditions.push(`(tp.suitable_students @> $${idx}::jsonb OR COALESCE(jsonb_array_length(tp.suitable_students), 0) = 0)`);
@@ -8372,6 +8437,7 @@ app.get("/api/tutors", async (req, res) => {
          u.id, u.full_name, u.picture,
          tp.bio, tp.subjects, tp.experience_years,
          tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
+         tp.teaching_methods,
          COALESCE(tp.avg_rating, 0)  AS avg_r,
          COALESCE(tp.review_count, 0) AS review_count
        FROM tutor_profiles tp
@@ -9086,6 +9152,36 @@ async function startServer() {
     console.error("⚠️  DB migration (teaching_methods) warning:", err.message);
   }
 
+  // Auto-migrate: hình thức học + thông tin buổi học trên bookings (online/offline, link meet, địa điểm...)
+  try {
+    await pool.query(`
+      ALTER TABLE bookings
+        ADD COLUMN IF NOT EXISTS teaching_method         TEXT,
+        ADD COLUMN IF NOT EXISTS meeting_link            TEXT,
+        ADD COLUMN IF NOT EXISTS meeting_password        TEXT,
+        ADD COLUMN IF NOT EXISTS location                TEXT,
+        ADD COLUMN IF NOT EXISTS location_note           TEXT,
+        ADD COLUMN IF NOT EXISTS session_topic           TEXT,
+        ADD COLUMN IF NOT EXISTS session_duration        INTEGER,
+        ADD COLUMN IF NOT EXISTS session_materials       TEXT,
+        ADD COLUMN IF NOT EXISTS session_homework        TEXT,
+        ADD COLUMN IF NOT EXISTS method_change_requested TEXT,
+        ADD COLUMN IF NOT EXISTS method_change_reason    TEXT,
+        ADD COLUMN IF NOT EXISTS method_change_status    TEXT,
+        ADD COLUMN IF NOT EXISTS reminded_24h_at         TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS reminded_1h_at          TIMESTAMPTZ
+    `);
+    await pool.query(`
+      ALTER TABLE tutor_profiles
+        ADD COLUMN IF NOT EXISTS location       TEXT,
+        ADD COLUMN IF NOT EXISTS teaching_style TEXT,
+        ADD COLUMN IF NOT EXISTS demo_video_url TEXT
+    `);
+    console.log("✅ DB migration: booking teaching_method + session info columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (booking teaching_method) warning:", err.message);
+  }
+
   // Auto-migrate: cert_type, issuer, issue_year on tutor_certificates
   try {
     await pool.query(`
@@ -9617,6 +9713,9 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
       `SELECT b.id, b.tutor_id, b.tutor_name, b.student_id, b.subject, b.lesson_date,
               b.time_slot, b.note, b.child_name, b.status, b.created_at,
               b.lesson_fee, b.escrow_tx_id, b.escrow_released_at, b.auto_release_at,
+              b.teaching_method, b.meeting_link, b.meeting_password, b.location, b.location_note,
+              b.session_topic, b.session_duration, b.session_materials, b.session_homework,
+              b.method_change_requested, b.method_change_reason, b.method_change_status,
               u_tutor.picture AS tutor_picture,
               u_student.picture AS student_picture, u_student.full_name AS "studentName",
               a.status AS attendance_status,
@@ -9649,8 +9748,13 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
     const tutorFilter = req.query.tutor || 'All Tutors';
 
     const result = await pool.query(
-      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date_str, b.time_slot, b.status
+      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date_str, b.time_slot, b.status,
+              b.teaching_method, b.meeting_link, b.location, b.location_note,
+              b.session_topic, b.session_duration,
+              b.method_change_requested, b.method_change_status,
+              tp.teaching_methods AS tutor_teaching_methods
        FROM bookings b
+       LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
        WHERE b.student_id = $1`,
        [studentId]
     );
@@ -9722,16 +9826,28 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
          if (status === 'completed') weeklyCompleted++;
       }
 
+      const methodSupport = parseMethodSupport(row.tutor_teaching_methods);
       sessions.push({
         id: row.id,
+        booking_id: row.id,
+        tutor_id: row.tutor_id,
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
         status: status,
         title: `Buổi học ${row.subject}`,
         tutor_name: row.tutor_name || 'Gia sư',
         xp_earned: status === 'completed' ? 80 : 0,
-        meeting_platform: 'Google Meet',
-        meeting_url: '',
+        teaching_method: row.teaching_method || null,
+        meeting_platform: row.teaching_method === 'offline' ? 'Offline' : 'Google Meet',
+        meeting_url: row.meeting_link || '',
+        location: row.location || '',
+        location_note: row.location_note || '',
+        session_topic: row.session_topic || '',
+        session_duration: row.session_duration || null,
+        method_change_requested: row.method_change_requested || null,
+        method_change_status: row.method_change_status || null,
+        tutor_supports_online: methodSupport.online,
+        tutor_supports_offline: methodSupport.offline,
         subject: row.subject || 'Khác'
       });
     });
@@ -9788,6 +9904,8 @@ app.get("/api/student/bookings", verifyToken, async (req, res) => {
               to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date,
               b.time_slot, b.note, b.child_name, b.status, b.created_at,
               b.lesson_fee, b.escrow_tx_id, b.escrow_released_at, b.auto_release_at,
+              b.teaching_method, b.meeting_link, b.location, b.location_note,
+              b.method_change_requested, b.method_change_status,
               u_tutor.full_name AS tutor_full_name,
               u_tutor.picture AS tutor_picture,
               tp.reputation_score, tp.subjects AS tutor_subjects,
@@ -9839,17 +9957,66 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Lấy chuỗi YYYY-MM-DD từ cột DATE của pg.
+// LƯU Ý: pg trả DATE thành JS Date ở local-midnight → toISOString() bị lùi 1 ngày (múi +07).
+// Phải đọc bằng getFullYear/getMonth/getDate (giờ local) để giữ đúng ngày.
+function lessonDateStr(lessonDate) {
+  if (!lessonDate) return '';
+  if (typeof lessonDate === 'string') return lessonDate.slice(0, 10);
+  const d = new Date(lessonDate);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Tính thời điểm bắt đầu buổi học từ lesson_date + time_slot (múi giờ VN +07:00)
+function lessonStartFrom(lessonDate, timeSlot) {
+  if (!lessonDate) return null;
+  const dateStr = lessonDateStr(lessonDate);
+  if (!dateStr) return null;
+  const m = String(timeSlot || '').match(/(\d+):(\d+)\s*(AM|PM)?/i);
+  let h = 0, min = 0;
+  if (m) {
+    h = parseInt(m[1], 10);
+    min = parseInt(m[2], 10);
+    if (m[3] && m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
+    if (m[3] && m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+  }
+  const d = new Date(`${dateStr}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+07:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// Chuẩn hóa hình thức dạy từ tutor_profiles.teaching_methods (JSONB mảng text tự do).
+// Chưa khai báo gì → coi như dạy cả 2 (không chặn đặt lịch).
+function parseMethodSupport(teachingMethods) {
+  const arr = Array.isArray(teachingMethods) ? teachingMethods : [];
+  const txt = arr.join(' ').toLowerCase();
+  const online  = /online|trực tuyến|truc tuyen/.test(txt);
+  const offline = /offline|trực tiếp|truc tiep|tại nhà|tai nha|tại địa điểm/.test(txt);
+  if (!online && !offline) return { online: true, offline: true };
+  return { online, offline };
+}
+
 // POST /api/bookings — tạo lịch học mới
 // Hỗ trợ cả định dạng cũ (lessonDate, timeSlot, tutorName) và mới (sessions, notes, childName)
 app.post("/api/bookings", verifyToken, async (req, res) => {
   try {
-    const { tutorId, tutorName, subject, lessonDate, timeSlot, note, sessions, date, notes, childName } = req.body || {};
+    const body = req.body || {};
+    // Chấp nhận cả camelCase (tutorId, lessonDate, timeSlot) lẫn snake_case (tutor_id, lesson_date, time_slot)
+    const tutorId    = body.tutorId    || body.tutor_id;
+    const tutorName  = body.tutorName  || body.tutor_name;
+    const lessonDate = body.lessonDate || body.lesson_date;
+    const timeSlot   = body.timeSlot   || body.time_slot;
+    const childName  = body.childName  || body.child_name;
+    const { subject, note, sessions, date, notes } = body;
+    let teachingMethod = String(body.teachingMethod || body.teaching_method || '').toLowerCase() || null;
+    if (teachingMethod && !['online', 'offline'].includes(teachingMethod)) {
+      return res.status(400).json({ message: "teaching_method phải là 'online' hoặc 'offline'." });
+    }
 
-    const bookingSessions = sessions && sessions.length > 0 
-      ? sessions 
+    const bookingSessions = sessions && sessions.length > 0
+      ? sessions
       : [{ date: lessonDate || date, timeSlot }];
 
-    if (!bookingSessions[0] || !bookingSessions[0].date || !bookingSessions[0].timeSlot) {
+    if (!bookingSessions[0] || !bookingSessions[0].date || !(bookingSessions[0].timeSlot || bookingSessions[0].time_slot)) {
       return res.status(400).json({ message: "Thiếu thông tin: cần lessonDate, timeSlot (hoặc mảng sessions)." });
     }
 
@@ -9858,8 +10025,8 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     // Nếu có tutorId, kiểm tra gia sư đó đã được duyệt và lấy tên nếu chưa truyền
     if (tutorId) {
       const tutorCheck = await pool.query(
-        `SELECT u.full_name FROM tutor_profiles tp 
-         JOIN users u ON tp.user_id = u.id 
+        `SELECT u.full_name, tp.teaching_methods FROM tutor_profiles tp
+         JOIN users u ON tp.user_id = u.id
          WHERE tp.user_id = $1 AND tp.status = 'approved'`,
         [tutorId]
       );
@@ -9868,6 +10035,19 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       }
       if (!finalTutorName) {
         finalTutorName = tutorCheck.rows[0].full_name;
+      }
+
+      // Hình thức học: validate theo hình thức gia sư hỗ trợ; nếu HS không chọn mà
+      // gia sư chỉ dạy 1 hình thức thì tự gán hình thức đó
+      const support = parseMethodSupport(tutorCheck.rows[0].teaching_methods);
+      if (teachingMethod && !support[teachingMethod]) {
+        return res.status(400).json({
+          message: `Gia sư này không dạy ${teachingMethod === 'online' ? 'online' : 'offline'}. Vui lòng chọn hình thức khác.`,
+        });
+      }
+      if (!teachingMethod) {
+        if (support.online && !support.offline) teachingMethod = 'online';
+        else if (!support.online && support.offline) teachingMethod = 'offline';
       }
     }
 
@@ -9904,8 +10084,8 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       
       // Chèn từng session
       for (const session of bookingSessions) {
-        const sessionDate = session.date || session.lessonDate;
-        const sessionTimeSlot = session.timeSlot;
+        const sessionDate = session.date || session.lessonDate || session.lesson_date;
+        const sessionTimeSlot = session.timeSlot || session.time_slot;
 
         if (!sessionDate || !sessionTimeSlot) continue;
 
@@ -9926,10 +10106,10 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         }
 
         const result = await client.query(
-          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, created_at`,
-          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking]
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, teaching_method)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, teaching_method, created_at`,
+          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, teachingMethod]
         );
         const booking = result.rows[0];
 
@@ -9995,6 +10175,191 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Foreign key không hợp lệ (gia sư hoặc học sinh không tồn tại)." });
     }
     return res.status(500).json({ message: `DB error [${error.code || "?"}]: ${error.message}` });
+  }
+});
+
+// ─── Hình thức học & thông tin buổi học ─────────────────────────────────────
+
+// PATCH /api/bookings/:id/session-info — gia sư điền thông tin buổi học
+// (hình thức, link Meet/Zoom, địa điểm, chủ đề...) và thông báo cho học sinh
+app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const bookingRes = await pool.query(
+      `SELECT * FROM bookings WHERE id = $1 AND tutor_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    const booking = bookingRes.rows[0];
+    if (!["Pending", "Approved"].includes(booking.status)) {
+      return res.status(400).json({ message: "Chỉ điền thông tin cho buổi học đang chờ hoặc đã xác nhận." });
+    }
+
+    const mode = String(b.mode || '').toLowerCase();
+    const newMethod = ['online', 'offline'].includes(mode) ? mode : booking.teaching_method;
+    const finalLink = b.meetLink !== undefined ? (String(b.meetLink).trim() || null) : booking.meeting_link;
+    if (newMethod === 'online' && !finalLink) {
+      return res.status(400).json({ message: "Buổi học online cần link phòng học (Meet/Zoom)." });
+    }
+
+    const result = await pool.query(
+      `UPDATE bookings SET
+         teaching_method = $1, meeting_link = $2, meeting_password = $3,
+         location = $4, location_note = $5, session_topic = $6,
+         session_duration = $7, session_materials = $8, session_homework = $9
+       WHERE id = $10
+       RETURNING *`,
+      [
+        newMethod,
+        finalLink,
+        b.meetPassword !== undefined ? (b.meetPassword || null) : booking.meeting_password,
+        b.location !== undefined ? (b.location || null) : booking.location,
+        b.locationNote !== undefined ? (b.locationNote || null) : booking.location_note,
+        b.topic !== undefined ? (b.topic || null) : booking.session_topic,
+        b.duration !== undefined ? (parseInt(b.duration) || null) : booking.session_duration,
+        b.materials !== undefined ? (b.materials || null) : booking.session_materials,
+        b.homework !== undefined ? (b.homework || null) : booking.session_homework,
+        booking.id,
+      ]
+    );
+
+    if (b.notifyStudent !== false && booking.student_id) {
+      const dateStr = lessonDateStr(booking.lesson_date);
+      const methodChanged = booking.teaching_method && newMethod && newMethod !== booking.teaching_method;
+      const detail = newMethod === 'offline'
+        ? (result.rows[0].location ? `Địa điểm: ${result.rows[0].location}.` : '')
+        : (finalLink ? `Link phòng học: ${finalLink}` : '');
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'session_info', $2, $3, 'event_note', $4, 'booking')`,
+        [booking.student_id,
+         methodChanged ? 'Gia sư đổi hình thức buổi học' : 'Thông tin buổi học đã được cập nhật',
+         `Buổi học ${booking.subject || ''} ngày ${dateStr} (${booking.time_slot}) — hình thức: ${newMethod === 'offline' ? 'Offline (trực tiếp)' : 'Online'}. ${detail}`.trim(),
+         booking.id]
+      );
+    }
+
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("[session-info] PATCH error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// POST /api/bookings/:id/request-method-change — học sinh xin đổi hình thức học
+// (vd: hôm nay ốm không đến được, xin chuyển buổi offline sang online)
+app.post("/api/bookings/:id/request-method-change", verifyToken, async (req, res) => {
+  try {
+    const { requestedMethod, reason } = req.body || {};
+    const method = String(requestedMethod || '').toLowerCase();
+    if (!['online', 'offline'].includes(method)) {
+      return res.status(400).json({ message: "requestedMethod phải là 'online' hoặc 'offline'." });
+    }
+
+    const bookingRes = await pool.query(
+      `SELECT b.*, tp.teaching_methods
+       FROM bookings b
+       LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
+       WHERE b.id = $1 AND b.student_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    const booking = bookingRes.rows[0];
+
+    if (!["Pending", "Approved"].includes(booking.status)) {
+      return res.status(400).json({ message: "Chỉ đổi hình thức cho buổi học đang chờ hoặc đã xác nhận." });
+    }
+    if (booking.lesson_date && new Date(booking.lesson_date) < new Date(new Date().toDateString())) {
+      return res.status(400).json({ message: "Buổi học đã qua, không thể đổi hình thức." });
+    }
+    if ((booking.teaching_method || '') === method) {
+      return res.status(400).json({ message: "Buổi học đã ở hình thức này rồi." });
+    }
+    if (booking.method_change_status === 'pending') {
+      return res.status(409).json({ message: "Bạn đã gửi yêu cầu đổi hình thức, vui lòng chờ gia sư phản hồi." });
+    }
+    const support = parseMethodSupport(booking.teaching_methods);
+    if (!support[method]) {
+      return res.status(400).json({ message: `Gia sư này không hỗ trợ dạy ${method}. Bạn có thể nhắn tin trao đổi thêm với gia sư.` });
+    }
+
+    await pool.query(
+      `UPDATE bookings SET method_change_requested = $1, method_change_reason = $2, method_change_status = 'pending' WHERE id = $3`,
+      [method, String(reason || '').trim() || null, booking.id]
+    );
+
+    if (booking.tutor_id) {
+      const dateStr = lessonDateStr(booking.lesson_date);
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'method_change', 'Yêu cầu đổi hình thức học', $2, 'swap_horiz', $3, 'booking')`,
+        [booking.tutor_id,
+         `Học sinh xin đổi buổi học ${booking.subject || ''} ngày ${dateStr} (${booking.time_slot}) sang ${method === 'online' ? 'Online' : 'Offline'}.${reason ? ` Lý do: ${String(reason).trim()}` : ''} Vào Lịch trình → nhấn buổi học để phản hồi.`,
+         booking.id]
+      );
+    }
+    return res.json({
+      message: "Đã gửi yêu cầu đổi hình thức. Gia sư sẽ phản hồi sớm.",
+      method_change_requested: method,
+      method_change_status: 'pending',
+    });
+  } catch (error) {
+    console.error("[method-change] POST error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// PATCH /api/bookings/:id/method-change — gia sư chấp nhận / từ chối yêu cầu đổi hình thức
+app.patch("/api/bookings/:id/method-change", verifyToken, async (req, res) => {
+  try {
+    const { decision } = req.body || {};
+    if (!['accepted', 'declined'].includes(decision)) {
+      return res.status(400).json({ message: "decision phải là 'accepted' hoặc 'declined'." });
+    }
+    const bookingRes = await pool.query(
+      `SELECT * FROM bookings WHERE id = $1 AND tutor_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    const booking = bookingRes.rows[0];
+    if (booking.method_change_status !== 'pending' || !booking.method_change_requested) {
+      return res.status(400).json({ message: "Không có yêu cầu đổi hình thức nào đang chờ." });
+    }
+
+    const newMethod = booking.method_change_requested;
+    let result;
+    if (decision === 'accepted') {
+      result = await pool.query(
+        `UPDATE bookings SET teaching_method = $1, method_change_status = 'accepted' WHERE id = $2 RETURNING *`,
+        [newMethod, booking.id]
+      );
+    } else {
+      result = await pool.query(
+        `UPDATE bookings SET method_change_status = 'declined' WHERE id = $1 RETURNING *`,
+        [booking.id]
+      );
+    }
+
+    if (booking.student_id) {
+      const label = newMethod === 'online' ? 'Online' : 'Offline';
+      const extra = decision === 'accepted' && newMethod === 'online' && !booking.meeting_link
+        ? ' Gia sư sẽ gửi link phòng học trước giờ học.' : '';
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'method_change', $2, $3, $4, $5, 'booking')`,
+        [booking.student_id,
+         decision === 'accepted' ? `Đã đồng ý đổi sang ${label}` : 'Yêu cầu đổi hình thức bị từ chối',
+         decision === 'accepted'
+           ? `Gia sư đã đồng ý đổi buổi học ${booking.subject || ''} (${booking.time_slot}) sang ${label}.${extra}`
+           : `Gia sư từ chối đổi hình thức buổi học ${booking.subject || ''} (${booking.time_slot}). Buổi học giữ nguyên hình thức cũ.`,
+         decision === 'accepted' ? 'check_circle' : 'cancel',
+         booking.id]
+      );
+    }
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("[method-change] PATCH error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -13607,6 +13972,76 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     } catch (err) {
       if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
         console.error('❌ Cron auto-release error:', err.message);
+      }
+    }
+  }, 5 * 60 * 1000); // chạy mỗi 5 phút
+
+
+  // ── Cron: Nhắc lịch trước buổi học (mốc 24h và 1h, cho cả 2 phía) ────────
+  setInterval(async () => {
+    try {
+      const due = await pool.query(`
+        SELECT b.id, b.student_id, b.tutor_id, b.tutor_name, b.subject,
+               b.lesson_date, b.time_slot, b.teaching_method, b.meeting_link, b.location,
+               b.reminded_24h_at, b.reminded_1h_at,
+               u.full_name AS student_name
+        FROM bookings b
+        LEFT JOIN users u ON u.id = b.student_id
+        WHERE b.status = 'Approved'
+          AND b.lesson_date BETWEEN CURRENT_DATE - 1 AND CURRENT_DATE + 2
+          AND (b.reminded_24h_at IS NULL OR b.reminded_1h_at IS NULL)
+      `);
+
+      const now = new Date();
+      for (const b of due.rows) {
+        const start = lessonStartFrom(b.lesson_date, b.time_slot);
+        if (!start || start <= now) continue;
+        const msLeft = start - now;
+        const dateStr = lessonDateStr(b.lesson_date);
+        const methodTxt = b.teaching_method === 'online'
+          ? (b.meeting_link ? `Học Online — link: ${b.meeting_link}` : 'Học Online — gia sư sẽ gửi link phòng học trước giờ.')
+          : b.teaching_method === 'offline'
+            ? (b.location ? `Học Offline tại: ${b.location}.` : 'Học Offline — địa điểm xem trong ghi chú hoặc tin nhắn.')
+            : '';
+        const missingLinkWarn = b.teaching_method === 'online' && !b.meeting_link;
+
+        const send = (userId, title, body) => pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+           VALUES ($1, 'lesson_reminder', $2, $3, 'alarm', $4, 'booking')`,
+          [userId, title, body, b.id]
+        );
+
+        // Claim TRƯỚC khi gửi (UPDATE có điều kiện) — chống gửi trùng khi có
+        // 2 process cùng chạy (nodemon restart race / bind trùng cổng trên Windows)
+        if (!b.reminded_1h_at && msLeft <= 60 * 60 * 1000) {
+          const claim = await pool.query(
+            `UPDATE bookings SET reminded_1h_at = NOW(), reminded_24h_at = COALESCE(reminded_24h_at, NOW())
+             WHERE id = $1 AND reminded_1h_at IS NULL RETURNING id`,
+            [b.id]
+          );
+          if (!claim.rowCount) continue;
+          if (b.student_id) await send(b.student_id, 'Sắp đến giờ học (còn ~1 tiếng)',
+            `Buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'} lúc ${b.time_slot} ngày ${dateStr}. ${methodTxt}`.trim());
+          if (b.tutor_id) await send(b.tutor_id, 'Sắp đến giờ dạy (còn ~1 tiếng)',
+            `Buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''} lúc ${b.time_slot} ngày ${dateStr}.${missingLinkWarn ? ' ⚠️ Chưa gắn link phòng học — hãy vào Lịch trình gắn ngay!' : ''}`);
+          console.log(`🔔 Reminder 1h sent for booking ${b.id}`);
+        } else if (!b.reminded_24h_at && msLeft <= 24 * 60 * 60 * 1000) {
+          const claim = await pool.query(
+            `UPDATE bookings SET reminded_24h_at = NOW()
+             WHERE id = $1 AND reminded_24h_at IS NULL RETURNING id`,
+            [b.id]
+          );
+          if (!claim.rowCount) continue;
+          if (b.student_id) await send(b.student_id, 'Nhắc lịch: buổi học trong 24h tới',
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'}. ${methodTxt}`.trim());
+          if (b.tutor_id) await send(b.tutor_id, 'Nhắc lịch: buổi dạy trong 24h tới',
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''}.${missingLinkWarn ? ' Nhớ gắn link phòng học trong Lịch trình → bấm vào buổi học.' : ''}`);
+          console.log(`🔔 Reminder 24h sent for booking ${b.id}`);
+        }
+      }
+    } catch (err) {
+      if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
+        console.error('❌ Cron lesson-reminder error:', err.message);
       }
     }
   }, 5 * 60 * 1000); // chạy mỗi 5 phút

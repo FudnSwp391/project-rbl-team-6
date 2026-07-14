@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../AuthContext';
+import { methodSupport, methodLabel, METHOD_OPTIONS } from '../utils/teachingMethod';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 const TIME_SLOTS = ['08:00–10:00', '10:00–12:00', '14:00–16:00', '16:00–18:00', '18:00–20:00', '20:00–22:00'];
@@ -8,10 +9,14 @@ export default function BookingModal({ tutor, onClose }) {
   const { user, token } = useAuth();
   const subjects = Array.isArray(tutor?.subjects) ? tutor.subjects : (tutor?.subjects || '').split(',').map(s => s.trim()).filter(Boolean);
   const today = new Date().toISOString().slice(0, 10);
+  const ms = methodSupport(tutor?.teaching_methods);
+  const bothMethods = ms.online && ms.offline;
+  const singleMethod = !bothMethods ? (ms.online ? 'online' : 'offline') : null;
 
   const [subject, setSubject] = useState(subjects[0] || '');
   const [date, setDate]       = useState('');
   const [slot, setSlot]       = useState(TIME_SLOTS[0]);
+  const [method, setMethod]   = useState(singleMethod || '');
   const [note, setNote]       = useState('');
   const [busy, setBusy]       = useState(false);
   const [error, setError]     = useState('');
@@ -20,6 +25,7 @@ export default function BookingModal({ tutor, onClose }) {
   const submit = async (e) => {
     e.preventDefault();
     if (!date) { setError('Vui lòng chọn ngày học.'); return; }
+    if (bothMethods && !method) { setError('Vui lòng chọn hình thức học (Online/Offline).'); return; }
     setBusy(true); setError('');
     try {
       const res = await fetch(`${API_BASE}/api/bookings`, {
@@ -28,6 +34,7 @@ export default function BookingModal({ tutor, onClose }) {
         body: JSON.stringify({
           tutor_id: tutor.id, tutor_name: tutor.full_name,
           subject, lesson_date: date, time_slot: slot, note,
+          teaching_method: method || null,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -90,6 +97,36 @@ export default function BookingModal({ tutor, onClose }) {
                   className="w-full px-3 py-2 rounded-lg border border-[#d6d9e0] text-sm focus:outline-none focus:border-[#00288e]">
                   {TIME_SLOTS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-[#444653] mb-1">Hình thức học</label>
+                {bothMethods ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    {METHOD_OPTIONS.map(opt => (
+                      <button key={opt.value} type="button" onClick={() => setMethod(opt.value)}
+                        className={`h-10 rounded-lg border text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                          method === opt.value
+                            ? 'border-[#00288e] bg-[#00288e]/5 text-[#00288e]'
+                            : 'border-[#d6d9e0] text-[#5d5f6f] hover:bg-[#f6f7fb]'
+                        }`}>
+                        <span className="material-symbols-outlined text-[16px]">{opt.icon}</span>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="h-10 rounded-lg border border-[#d6d9e0] bg-[#f6f7fb] px-3 flex items-center gap-2 text-sm font-semibold text-[#3a3d4d]">
+                    <span className="material-symbols-outlined text-[16px] text-[#00288e]">
+                      {singleMethod === 'online' ? 'videocam' : 'location_on'}
+                    </span>
+                    {methodLabel(singleMethod)} — gia sư chỉ dạy hình thức này
+                  </div>
+                )}
+                {(method || singleMethod) && (
+                  <p className="mt-1 text-xs text-[#8a8ca0]">
+                    {METHOD_OPTIONS.find(o => o.value === (method || singleMethod))?.hint}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-semibold text-[#444653] mb-1">Ghi chú (tuỳ chọn)</label>
