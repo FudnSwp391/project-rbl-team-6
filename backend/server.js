@@ -10944,6 +10944,24 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
     const { tutor_id, tutor_name, subject, time_slot, note, child_name, duration_mins } = req.body;
     
     if (!tutor_id) return res.status(400).json({ message: 'Thiếu tutor_id.' });
+
+    // ── Rate Limit / Cooldown chống spam ──
+    // Kiểm tra xem học sinh có vừa tạo yêu cầu Học Ngay nào trong vòng 2 phút qua không
+    const recentRes = await pool.query(
+      `SELECT created_at FROM bookings 
+       WHERE student_id = $1 AND booking_type = 'Instant' 
+       ORDER BY created_at DESC LIMIT 1`,
+      [req.user.userId]
+    );
+    if (recentRes.rows.length > 0) {
+      const lastBookingTime = new Date(recentRes.rows[0].created_at).getTime();
+      const elapsedMs = Date.now() - lastBookingTime;
+      const cooldownMs = 2 * 60 * 1000; // 2 phút
+      if (elapsedMs < cooldownMs) {
+        const waitSec = Math.ceil((cooldownMs - elapsedMs) / 1000);
+        return res.status(429).json({ message: `Vui lòng đợi thêm ${waitSec} giây trước khi gửi yêu cầu Học Ngay mới.` });
+      }
+    }
     
     const tRes = await pool.query('SELECT instant_price, availability_status FROM tutor_profiles WHERE user_id = $1', [tutor_id]);
     if (!tRes.rows.length) {
