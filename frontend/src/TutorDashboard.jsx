@@ -1209,29 +1209,29 @@ function TutorEarningsTab() {
     <div className="space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">Earnings</h2>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Thu Nhập</h2>
           <p className="font-body-md text-body-md text-on-surface-variant">
-            Track real income from approved lessons and attendance records.
+            Theo dõi doanh thu thực tế từ các buổi học đã điểm danh và phê duyệt.
           </p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-4 py-2 text-primary font-label-md w-fit">
           <span className="material-symbols-outlined text-[18px]">payments</span>
-          Rate: {formatMoney(data?.hourlyRate || 0)}/hour
+          Mức lương: {formatMoney(data?.hourlyRate || 0)}/giờ
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-md">
-        <EarningStatCard icon="account_balance_wallet" label="This Month" value={formatMoney(summary.thisMonthEarned || 0)} tone="primary" />
-        <EarningStatCard icon="verified" label="Total Earned" value={formatMoney(summary.totalEarned || 0)} tone="success" />
-        <EarningStatCard icon="hourglass_top" label="Waiting Attendance" value={formatMoney(summary.pendingAmount || 0)} tone="warning" />
+        <EarningStatCard icon="account_balance_wallet" label="Tháng này" value={formatMoney(summary.thisMonthEarned || 0)} tone="primary" />
+        <EarningStatCard icon="verified" label="Tổng thu nhập" value={formatMoney(summary.totalEarned || 0)} tone="success" />
+        <EarningStatCard icon="hourglass_top" label="Chờ điểm danh" value={formatMoney(summary.pendingAttendanceAmount || 0)} tone="warning" />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-lg">
         <div className="xl:col-span-2 bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm">
           <div className="flex items-center justify-between mb-5">
             <div>
-              <h3 className="font-headline-md text-headline-md text-on-surface">Last 6 Months</h3>
-              <p className="text-[13px] text-on-surface-variant">Only lessons marked present are counted as earned.</p>
+              <h3 className="font-headline-md text-headline-md text-on-surface">6 Tháng Gần Nhất</h3>
+              <p className="text-[13px] text-on-surface-variant">Chỉ tính các buổi học đã được đánh dấu "Có mặt".</p>
             </div>
           </div>
           <div className="h-64 flex items-end gap-3 border-b border-outline-variant/20 pt-6">
@@ -1250,12 +1250,16 @@ function TutorEarningsTab() {
         </div>
 
         <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm space-y-4">
-          <h3 className="font-headline-md text-headline-md text-on-surface">Lesson Status</h3>
-          <EarningMiniStat label="Paid lessons" value={summary.completedLessons || 0} color="text-[#16a34a]" />
-          <EarningMiniStat label="Need attendance" value={summary.pendingLessons || 0} color="text-amber-600" />
-          <EarningMiniStat label="No charge" value={summary.noChargeLessons || 0} color="text-red-600" />
+          <h3 className="font-headline-md text-headline-md text-on-surface">Thống Kê Buổi Học</h3>
+          <EarningMiniStat label="Đã nhận tiền" value={summary.completedLessons || 0} color="text-[#16a34a]" />
+          <EarningMiniStat label="Chờ giải ngân" value={summary.pendingReleaseLessons || 0} color="text-blue-600" />
+          <EarningMiniStat label="Cần điểm danh" value={summary.pendingAttendanceLessons || 0} color="text-amber-600" />
+          {summary.disputedLessons > 0 && (
+            <EarningMiniStat label="Đang khiếu nại" value={summary.disputedLessons || 0} color="text-orange-600" />
+          )}
+          <EarningMiniStat label="Không tính phí" value={summary.noChargeLessons || 0} color="text-red-600" />
           <div className="rounded-xl bg-surface-container-low p-3 text-[12px] text-on-surface-variant">
-            Tip: mark attendance in Students after each lesson. Present lessons become earned automatically.
+            Mẹo: Hãy điểm danh trong mục Học sinh sau mỗi buổi. Các buổi học có mặt sẽ tự động tính phí.
           </div>
         </div>
       </div>
@@ -1263,13 +1267,13 @@ function TutorEarningsTab() {
       <div className="bg-white/80 border border-outline-variant/20 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-5 border-b border-outline-variant/20 flex items-center justify-between">
           <div>
-            <h3 className="font-headline-md text-headline-md text-on-surface">Transactions</h3>
-            <p className="text-[13px] text-on-surface-variant">Real lesson records from Supabase bookings.</p>
+            <h3 className="font-headline-md text-headline-md text-on-surface">Lịch Sử Giao Dịch</h3>
+            <p className="text-[13px] text-on-surface-variant">Các buổi học thực tế được ghi nhận trên hệ thống.</p>
           </div>
         </div>
         {transactions.length === 0 ? (
           <div className="p-10 text-center text-on-surface-variant">
-            No approved lessons yet.
+            Chưa có buổi học nào được phê duyệt.
           </div>
         ) : (
           <div className="divide-y divide-outline-variant/20">
@@ -1314,6 +1318,10 @@ function EarningMiniStat({ label, value, color }) {
 
 function EarningTransactionRow({ item }) {
   const status = earningStatusConfig(item.paymentStatus)
+  const attendanceDisplay = item.attendanceStatus === 'present' ? 'Có mặt' 
+                          : item.attendanceStatus === 'absent' ? 'Vắng mặt' 
+                          : item.attendanceStatus === 'excused' ? 'Có phép' 
+                          : 'Chưa điểm danh';
   return (
     <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.2fr_1fr_auto] gap-3 items-center">
       <div className="flex items-center gap-3">
@@ -1322,7 +1330,7 @@ function EarningTransactionRow({ item }) {
         </div>
         <div>
           <p className="font-label-md text-label-md text-on-surface">{item.studentName}</p>
-          <p className="text-[13px] text-on-surface-variant">{item.subject || 'General'} - {item.date} - {item.timeSlot}</p>
+          <p className="text-[13px] text-on-surface-variant">{item.subject || 'Chung'} - {item.date} - {item.timeSlot}</p>
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -1330,7 +1338,7 @@ function EarningTransactionRow({ item }) {
           {status.label}
         </span>
         <span className="px-2 py-1 rounded-full border border-outline-variant/30 text-[11px] font-bold text-on-surface-variant">
-          Attendance: {item.attendanceStatus}
+          Điểm danh: {attendanceDisplay}
         </span>
       </div>
       <div className="text-left lg:text-right">
@@ -1343,13 +1351,19 @@ function EarningTransactionRow({ item }) {
 }
 
 function earningStatusConfig(status) {
-  if (status === 'earned') {
-    return { label: 'Earned', classes: 'bg-[#dcfce7] text-[#16a34a] border-[#86efac]' }
+  if (status === 'released') {
+    return { label: 'Đã nhận tiền', classes: 'bg-[#dcfce7] text-[#16a34a] border-[#86efac]' }
+  }
+  if (status === 'pending_release') {
+    return { label: 'Chờ giải ngân', classes: 'bg-blue-50 text-blue-700 border-blue-200' }
   }
   if (status === 'pending_attendance') {
-    return { label: 'Waiting attendance', classes: 'bg-amber-50 text-amber-700 border-amber-200' }
+    return { label: 'Chờ điểm danh', classes: 'bg-amber-50 text-amber-700 border-amber-200' }
   }
-  return { label: 'No charge', classes: 'bg-red-50 text-red-600 border-red-200' }
+  if (status === 'disputed') {
+    return { label: 'Đang khiếu nại', classes: 'bg-orange-50 text-orange-700 border-orange-200' }
+  }
+  return { label: 'Không tính phí', classes: 'bg-red-50 text-red-600 border-red-200' }
 }
 
 function formatMoney(value) {
