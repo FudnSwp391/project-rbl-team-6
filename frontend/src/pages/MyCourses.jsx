@@ -6,6 +6,7 @@ import { apiRequest } from '../services/api';
 export default function MyCourses() {
   const { user, logout } = useAuth();
   const [filter, setFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [courses, setCourses] = useState([]);
@@ -71,6 +72,11 @@ export default function MyCourses() {
   };
 
   const filteredCourses = courses.filter(course => {
+    // Lọc theo search
+    if (searchQuery && !course.title?.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false;
+    }
+    // Lọc theo trạng thái
     if (filter === 'all') return true;
     if (filter === 'active') return (course.progress_percent || 0) < 100;
     if (filter === 'completed') return (course.progress_percent || 0) >= 100;
@@ -125,7 +131,13 @@ export default function MyCourses() {
             <div className="flex flex-col md:flex-row gap-md mb-xl">
               <div className="relative flex-grow">
                 <span className="material-symbols-outlined absolute left-md top-1/2 -translate-y-1/2 text-outline">search</span>
-                <input className="w-full pl-xl pr-md py-md bg-surface-container-lowest border border-outline-variant rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all" placeholder="Tìm kiếm khóa học của bạn..." type="text" />
+                <input 
+                  className="w-full pl-xl pr-md py-md bg-surface-container-lowest border border-outline-variant rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all" 
+                  placeholder="Tìm kiếm khóa học của bạn..." 
+                  type="text" 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
               </div>
               <select 
                 className="px-md py-md bg-surface-container-lowest border border-outline-variant rounded-lg text-label-md font-label-md text-on-surface-variant min-w-[160px] focus:border-primary outline-none cursor-pointer"
@@ -158,7 +170,7 @@ export default function MyCourses() {
             {!loading && !error && filteredCourses.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-lg">
                 {filteredCourses.map(course => (
-                  <div key={course.enrollment_id} className="bg-surface-container-lowest rounded-xl border border-outline-variant overflow-hidden flex flex-col hover:shadow-md hover:-translate-y-1 transition-all cursor-pointer" onClick={() => window.location.hash = `/course/${course.course_id}`}>
+                  <div key={course.enrollment_id} className="bg-surface-container-lowest rounded-xl border border-outline-variant overflow-hidden flex flex-col hover:shadow-md hover:-translate-y-1 transition-all cursor-pointer" onClick={() => window.location.hash = `/course-player/${course.course_id}`}>
                     <div className="relative aspect-video overflow-hidden bg-surface-variant">
                       <img alt={course.title} className="w-full h-full object-cover" src={course.thumbnail_url || "https://images.unsplash.com/photo-1561070791-2526d30994b5?q=80&w=2000&auto=format&fit=crop"} />
                       <span className="absolute top-md left-md bg-primary text-white text-[10px] uppercase tracking-wider font-bold px-sm py-xs rounded-full">
@@ -181,13 +193,18 @@ export default function MyCourses() {
                         <div className="w-full bg-surface-container h-1.5 rounded-full mb-md overflow-hidden">
                           <div className={`${(course.progress_percent || 0) >= 100 ? 'bg-outline-variant' : 'bg-primary'} h-full rounded-full`} style={{ width: (course.progress_percent || 0) + '%' }}></div>
                         </div>
-                        {(course.progress_percent || 0) >= 100 ? (
+                        {course.total_lessons === 0 ? (
+                          <button className="w-full py-md bg-surface-container-high text-on-surface-variant font-label-md rounded-lg flex items-center justify-center gap-xs cursor-not-allowed">
+                            <span className="material-symbols-outlined text-[18px]">update</span>
+                            Bài học đang cập nhật
+                          </button>
+                        ) : (course.progress_percent || 0) >= 100 ? (
                           <button className="w-full py-md bg-secondary-container text-primary font-label-md rounded-lg hover:bg-surface-container-high transition-colors flex items-center justify-center gap-xs">
                             <span className="material-symbols-outlined text-[18px]">workspace_premium</span>
                             Xem chứng chỉ
                           </button>
                         ) : (
-                          <button className="w-full py-md bg-primary text-white font-label-md rounded-lg hover:bg-primary-container transition-colors flex items-center justify-center gap-xs" onClick={(e) => { e.stopPropagation(); window.location.hash = `/course/${course.course_id}`; }}>
+                          <button className="w-full py-md bg-primary text-white font-label-md rounded-lg hover:bg-primary-container transition-colors flex items-center justify-center gap-xs" onClick={(e) => { e.stopPropagation(); window.location.hash = `/course-player/${course.course_id}`; }}>
                             <span className="material-symbols-outlined text-[18px]">play_circle</span>
                             Tiếp tục học
                           </button>

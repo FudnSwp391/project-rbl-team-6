@@ -1038,7 +1038,7 @@ function App() {
   // ── Route: Course Detail (protected) ──
   if (routeName === 'courseplayer') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
-    return <CoursePlayer courseId={route.id} onGoHome={() => navigateTo('home')} />
+    return <CoursePlayer courseId={route.id} onGoHome={() => navigateTo('mycourses')} />
   }
 
   if (routeName === 'coursedetail') {
