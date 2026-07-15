@@ -1209,29 +1209,29 @@ function TutorEarningsTab() {
     <div className="space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">Earnings</h2>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Thu Nhập</h2>
           <p className="font-body-md text-body-md text-on-surface-variant">
-            Track real income from approved lessons and attendance records.
+            Theo dõi doanh thu thực tế từ các buổi học đã điểm danh và phê duyệt.
           </p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-4 py-2 text-primary font-label-md w-fit">
           <span className="material-symbols-outlined text-[18px]">payments</span>
-          Rate: {formatMoney(data?.hourlyRate || 0)}/hour
+          Mức lương: {formatMoney(data?.hourlyRate || 0)}/giờ
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-md">
-        <EarningStatCard icon="account_balance_wallet" label="This Month" value={formatMoney(summary.thisMonthEarned || 0)} tone="primary" />
-        <EarningStatCard icon="verified" label="Total Earned" value={formatMoney(summary.totalEarned || 0)} tone="success" />
-        <EarningStatCard icon="hourglass_top" label="Waiting Attendance" value={formatMoney(summary.pendingAmount || 0)} tone="warning" />
+        <EarningStatCard icon="account_balance_wallet" label="Tháng này" value={formatMoney(summary.thisMonthEarned || 0)} tone="primary" />
+        <EarningStatCard icon="verified" label="Tổng thu nhập" value={formatMoney(summary.totalEarned || 0)} tone="success" />
+        <EarningStatCard icon="hourglass_top" label="Chờ điểm danh" value={formatMoney(summary.pendingAttendanceAmount || 0)} tone="warning" />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-lg">
         <div className="xl:col-span-2 bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm">
           <div className="flex items-center justify-between mb-5">
             <div>
-              <h3 className="font-headline-md text-headline-md text-on-surface">Last 6 Months</h3>
-              <p className="text-[13px] text-on-surface-variant">Only lessons marked present are counted as earned.</p>
+              <h3 className="font-headline-md text-headline-md text-on-surface">6 Tháng Gần Nhất</h3>
+              <p className="text-[13px] text-on-surface-variant">Chỉ tính các buổi học đã được đánh dấu "Có mặt".</p>
             </div>
           </div>
           <div className="h-64 flex items-end gap-3 border-b border-outline-variant/20 pt-6">
@@ -1250,12 +1250,16 @@ function TutorEarningsTab() {
         </div>
 
         <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm space-y-4">
-          <h3 className="font-headline-md text-headline-md text-on-surface">Lesson Status</h3>
-          <EarningMiniStat label="Paid lessons" value={summary.completedLessons || 0} color="text-[#16a34a]" />
-          <EarningMiniStat label="Need attendance" value={summary.pendingLessons || 0} color="text-amber-600" />
-          <EarningMiniStat label="No charge" value={summary.noChargeLessons || 0} color="text-red-600" />
+          <h3 className="font-headline-md text-headline-md text-on-surface">Thống Kê Buổi Học</h3>
+          <EarningMiniStat label="Đã nhận tiền" value={summary.completedLessons || 0} color="text-[#16a34a]" />
+          <EarningMiniStat label="Chờ giải ngân" value={summary.pendingReleaseLessons || 0} color="text-blue-600" />
+          <EarningMiniStat label="Cần điểm danh" value={summary.pendingAttendanceLessons || 0} color="text-amber-600" />
+          {summary.disputedLessons > 0 && (
+            <EarningMiniStat label="Đang khiếu nại" value={summary.disputedLessons || 0} color="text-orange-600" />
+          )}
+          <EarningMiniStat label="Không tính phí" value={summary.noChargeLessons || 0} color="text-red-600" />
           <div className="rounded-xl bg-surface-container-low p-3 text-[12px] text-on-surface-variant">
-            Tip: mark attendance in Students after each lesson. Present lessons become earned automatically.
+            Mẹo: Hãy điểm danh trong mục Học sinh sau mỗi buổi. Các buổi học có mặt sẽ tự động tính phí.
           </div>
         </div>
       </div>
@@ -1263,13 +1267,13 @@ function TutorEarningsTab() {
       <div className="bg-white/80 border border-outline-variant/20 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-5 border-b border-outline-variant/20 flex items-center justify-between">
           <div>
-            <h3 className="font-headline-md text-headline-md text-on-surface">Transactions</h3>
-            <p className="text-[13px] text-on-surface-variant">Real lesson records from Supabase bookings.</p>
+            <h3 className="font-headline-md text-headline-md text-on-surface">Lịch Sử Giao Dịch</h3>
+            <p className="text-[13px] text-on-surface-variant">Các buổi học thực tế được ghi nhận trên hệ thống.</p>
           </div>
         </div>
         {transactions.length === 0 ? (
           <div className="p-10 text-center text-on-surface-variant">
-            No approved lessons yet.
+            Chưa có buổi học nào được phê duyệt.
           </div>
         ) : (
           <div className="divide-y divide-outline-variant/20">
@@ -1314,6 +1318,10 @@ function EarningMiniStat({ label, value, color }) {
 
 function EarningTransactionRow({ item }) {
   const status = earningStatusConfig(item.paymentStatus)
+  const attendanceDisplay = item.attendanceStatus === 'present' ? 'Có mặt' 
+                          : item.attendanceStatus === 'absent' ? 'Vắng mặt' 
+                          : item.attendanceStatus === 'excused' ? 'Có phép' 
+                          : 'Chưa điểm danh';
   return (
     <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.2fr_1fr_auto] gap-3 items-center">
       <div className="flex items-center gap-3">
@@ -1322,7 +1330,7 @@ function EarningTransactionRow({ item }) {
         </div>
         <div>
           <p className="font-label-md text-label-md text-on-surface">{item.studentName}</p>
-          <p className="text-[13px] text-on-surface-variant">{item.subject || 'General'} - {item.date} - {item.timeSlot}</p>
+          <p className="text-[13px] text-on-surface-variant">{item.subject || 'Chung'} - {item.date} - {item.timeSlot}</p>
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -1330,7 +1338,7 @@ function EarningTransactionRow({ item }) {
           {status.label}
         </span>
         <span className="px-2 py-1 rounded-full border border-outline-variant/30 text-[11px] font-bold text-on-surface-variant">
-          Attendance: {item.attendanceStatus}
+          Điểm danh: {attendanceDisplay}
         </span>
       </div>
       <div className="text-left lg:text-right">
@@ -1343,13 +1351,19 @@ function EarningTransactionRow({ item }) {
 }
 
 function earningStatusConfig(status) {
-  if (status === 'earned') {
-    return { label: 'Earned', classes: 'bg-[#dcfce7] text-[#16a34a] border-[#86efac]' }
+  if (status === 'released') {
+    return { label: 'Đã nhận tiền', classes: 'bg-[#dcfce7] text-[#16a34a] border-[#86efac]' }
+  }
+  if (status === 'pending_release') {
+    return { label: 'Chờ giải ngân', classes: 'bg-blue-50 text-blue-700 border-blue-200' }
   }
   if (status === 'pending_attendance') {
-    return { label: 'Waiting attendance', classes: 'bg-amber-50 text-amber-700 border-amber-200' }
+    return { label: 'Chờ điểm danh', classes: 'bg-amber-50 text-amber-700 border-amber-200' }
   }
-  return { label: 'No charge', classes: 'bg-red-50 text-red-600 border-red-200' }
+  if (status === 'disputed') {
+    return { label: 'Đang khiếu nại', classes: 'bg-orange-50 text-orange-700 border-orange-200' }
+  }
+  return { label: 'Không tính phí', classes: 'bg-red-50 text-red-600 border-red-200' }
 }
 
 function formatMoney(value) {
@@ -1402,7 +1416,9 @@ function TutorStudentsTab() {
   const totalAbsent = students.reduce((sum, student) => sum + (student.absentCount || 0), 0)
   const markedLessons = students.reduce((sum, student) => sum + (student.markedLessons || 0), 0)
   const presentLessons = students.reduce((sum, student) => sum + (student.presentCount || 0), 0)
-  const attendanceRate = markedLessons ? Math.round((presentLessons / markedLessons) * 100) : 0
+  const excusedLessons = students.reduce((sum, student) => sum + (student.excusedCount || 0), 0)
+  const rateBase = markedLessons - excusedLessons
+  const attendanceRate = rateBase > 0 ? Math.round((presentLessons / rateBase) * 100) : 0
 
   const handleAttendance = async (lesson, status) => {
     setSavingId(lesson.bookingId)
@@ -1456,37 +1472,37 @@ function TutorStudentsTab() {
     <div className="space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">Students</h2>
-          <p className="font-body-md text-body-md text-on-surface-variant">Manage students, approved lessons, attendance, absences, and class notes.</p>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Quản Lý Học Sinh</h2>
+          <p className="font-body-md text-body-md text-on-surface-variant">Quản lý danh sách học sinh, điểm danh, xin phép và ghi chú buổi học.</p>
         </div>
         <button onClick={loadStudents} className="h-10 px-4 border border-outline-variant rounded-xl text-on-surface-variant font-label-md hover:bg-surface-container transition-colors flex items-center gap-2">
-          <span className="material-symbols-outlined text-[18px]">refresh</span>Refresh
+          <span className="material-symbols-outlined text-[18px]">refresh</span>Làm mới
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StudentStatCard icon="groups" label="Students" value={totalStudents} />
-        <StudentStatCard icon="event_available" label="Lessons" value={totalLessons} />
-        <StudentStatCard icon="person_off" label="Absences" value={totalAbsent} />
-        <StudentStatCard icon="fact_check" label="Attendance" value={markedLessons ? `${attendanceRate}%` : '--'} />
+        <StudentStatCard icon="groups" label="Học sinh" value={totalStudents} />
+        <StudentStatCard icon="event_available" label="Buổi học" value={totalLessons} />
+        <StudentStatCard icon="person_off" label="Vắng mặt" value={totalAbsent} />
+        <StudentStatCard icon="fact_check" label="Chuyên cần" value={markedLessons ? `${attendanceRate}%` : '--'} />
       </div>
 
       {error && <p className="text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
 
       {loading ? (
-        <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-12 text-center text-on-surface-variant">Loading students...</div>
+        <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-12 text-center text-on-surface-variant">Đang tải dữ liệu học sinh...</div>
       ) : students.length === 0 ? (
         <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-12 text-center">
           <span className="material-symbols-outlined text-[48px] text-outline">group_off</span>
-          <h3 className="font-headline-md text-headline-md text-on-surface mt-2">No students yet</h3>
-          <p className="text-on-surface-variant mt-1">Students will appear here after you approve booking requests.</p>
+          <h3 className="font-headline-md text-headline-md text-on-surface mt-2">Chưa có học sinh nào</h3>
+          <p className="text-on-surface-variant mt-1">Học sinh sẽ hiển thị ở đây sau khi bạn chấp nhận yêu cầu học.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
           <div className="bg-white/80 border border-outline-variant/20 rounded-2xl shadow-sm overflow-hidden">
             <div className="p-4 border-b border-outline-variant/20">
-              <h3 className="font-headline-md text-headline-md text-on-surface">Student List</h3>
-              <p className="text-[12px] text-on-surface-variant">Select a student to view lesson records.</p>
+              <h3 className="font-headline-md text-headline-md text-on-surface">Danh sách học sinh</h3>
+              <p className="text-[12px] text-on-surface-variant">Chọn một học sinh để xem lịch sử buổi học.</p>
             </div>
             <div className="divide-y divide-outline-variant/10 max-h-[620px] overflow-auto">
               {students.map((student) => {
@@ -1497,9 +1513,9 @@ function TutorStudentsTab() {
                     {student.studentAvatar ? <img src={student.studentAvatar} alt={student.studentName} className="w-12 h-12 rounded-full object-cover" /> : <div className="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">{(student.childName || student.studentName || 'S').charAt(0)}</div>}
                     <div className="min-w-0 flex-1">
                       <p className="font-label-md text-label-md text-on-surface truncate">{student.childName || student.studentName}</p>
-                      {student.childName && <p className="text-[12px] text-on-surface-variant truncate">Parent: {student.studentName}</p>}
-                      <p className="text-[12px] text-primary truncate">{student.subjects.join(', ') || 'General'}</p>
-                      <div className="flex gap-2 mt-2 text-[11px]"><span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">{student.totalLessons} lessons</span><span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600">{student.absentCount} absent</span></div>
+                      {student.childName && <p className="text-[12px] text-on-surface-variant truncate">Phụ huynh: {student.studentName}</p>}
+                      <p className="text-[12px] text-primary truncate">{student.subjects.join(', ') || 'Chung'}</p>
+                      <div className="flex gap-2 mt-2 text-[11px]"><span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">{student.totalLessons} buổi</span><span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600">{student.absentCount} vắng</span></div>
                     </div>
                   </button>
                 )
@@ -1511,8 +1527,8 @@ function TutorStudentsTab() {
             <StudentDetailCard student={selectedStudent} />
             <div className="bg-white/80 border border-outline-variant/20 rounded-2xl shadow-sm overflow-hidden">
               <div className="p-4 border-b border-outline-variant/20 flex items-center justify-between gap-3">
-                <div><h3 className="font-headline-md text-headline-md text-on-surface">Lesson Attendance</h3><p className="text-[12px] text-on-surface-variant">Mark attendance for approved lessons. Pending requests cannot be marked yet.</p></div>
-                <span className="text-[12px] font-bold text-on-surface-variant">{selectedStudent?.lessons?.length || 0} records</span>
+                <div><h3 className="font-headline-md text-headline-md text-on-surface">Điểm danh & Ghi chú</h3><p className="text-[12px] text-on-surface-variant">Chỉ có thể điểm danh các buổi học đã được phê duyệt.</p></div>
+                <span className="text-[12px] font-bold text-on-surface-variant">{selectedStudent?.lessons?.length || 0} bản ghi</span>
               </div>
               <div className="divide-y divide-outline-variant/10">
                 {(selectedStudent?.lessons || []).map((lesson) => <AttendanceRow key={lesson.bookingId} lesson={lesson} saving={savingId === lesson.bookingId} note={attendanceNotes[lesson.bookingId] ?? lesson.attendanceNote ?? ''} onNoteChange={(value) => setAttendanceNotes((prev) => ({ ...prev, [lesson.bookingId]: value }))} onMark={(status) => handleAttendance(lesson, status)} onFeedback={() => setFeedbackLesson(lesson)} />)}
@@ -1541,7 +1557,7 @@ function StudentStatCard({ icon, label, value }) {
 
 function StudentDetailCard({ student }) {
   if (!student) return null
-  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Selected student</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'No email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Lessons</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Absent</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Rate</p></div></div></div>{student.nextLesson && <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Next lesson: <strong>{student.nextLesson.date}</strong> at <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div>}</div>
+  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Đang chọn</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'Chưa có email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Buổi</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Vắng</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Tỉ lệ</p></div></div></div>{student.nextLesson && <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Buổi tiếp theo: <strong>{student.nextLesson.date}</strong> lúc <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div>}</div>
 }
 
 function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback }) {
@@ -1595,11 +1611,15 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
   return (
     <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center">
       <div>
-        <p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'General'}</p>
+        <p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'Chung'}</p>
         <p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p>
         <div className="flex gap-2 items-center mt-2">
           <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>
-            {lesson.attendanceStatus || lesson.bookingStatus}
+            {lesson.attendanceStatus === 'present' ? 'Có mặt' 
+            : lesson.attendanceStatus === 'absent' ? 'Vắng mặt'
+            : lesson.attendanceStatus === 'excused' ? 'Có phép'
+            : lesson.bookingStatus === 'Approved' ? 'Chưa điểm danh'
+            : lesson.bookingStatus}
           </span>
           {checkInTime && (
             <span className="inline-flex px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200 text-[11px] font-bold items-center gap-1">
@@ -1612,7 +1632,7 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
       <input 
         value={note} 
         onChange={(e) => onNoteChange(e.target.value)} 
-        placeholder="Attendance note..." 
+        placeholder="Ghi chú buổi học..." 
         disabled={!approved || saving} 
         className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" 
       />
@@ -1627,11 +1647,11 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
             Bắt đầu dạy
           </button>
         )}
-        <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Present</button>
-        <button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Absent</button>
-        <button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Excused</button>
+        <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Có mặt</button>
+        <button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Vắng</button>
+        <button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Có phép</button>
         <button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1">
-          <span className="material-symbols-outlined text-[14px]">edit_note</span>Feedback
+          <span className="material-symbols-outlined text-[14px]">edit_note</span>Đánh giá
         </button>
       </div>
     </div>
@@ -1775,23 +1795,30 @@ function MyScheduleTab() {
   const eventsForDate = (date) => {
     const dayName = getDayName(date)
     const dateKey = toDateKey(date)
-    const availableSlots = (availability[dayName] || []).map((time) => ({
-      id: `available-${dateKey}-${time}`,
-      type: 'available',
-      time,
-      title: 'Available for booking',
-      meta: dayName,
-    }))
+    
     const bookedSlots = approvedBookings
       .filter((booking) => normalizeBookingDate(booking.lesson_date || booking.date) === dateKey)
       .map((booking) => ({
         id: `booking-${booking.id}`,
         type: 'booking',
         time: booking.time_slot || booking.timeSlot || booking.time || 'Scheduled',
-        title: booking.subject || 'Class',
-        meta: booking.childName || booking.studentName || 'Student',
+        title: booking.subject || 'Lớp học',
+        meta: booking.childName || booking.studentName || 'Học sinh',
       }))
-    return [...bookedSlots, ...availableSlots].sort((a, b) => String(a.time).localeCompare(String(b.time)))
+      
+    const bookedTimesMins = bookedSlots.map(b => parseTimeToMinutes(b.time));
+
+    const availableSlots = (availability[dayName] || [])
+      .filter(time => !bookedTimesMins.includes(parseTimeToMinutes(time)))
+      .map((time) => ({
+        id: `available-${dateKey}-${time}`,
+        type: 'available',
+        time,
+        title: 'Trống',
+        meta: dayName,
+      }))
+      
+    return [...bookedSlots, ...availableSlots].sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time))
   }
 
   const goPrev = () => setCursor((current) => view === 'week' ? addDays(current, -7) : addMonths(current, -1))
@@ -1802,31 +1829,31 @@ function MyScheduleTab() {
     <div className="space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">My Schedule</h2>
-          <p className="font-body-md text-body-md text-on-surface-variant">View your availability and approved classes by week or month.</p>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Lịch giảng dạy</h2>
+          <p className="font-body-md text-body-md text-on-surface-variant">Xem thời gian rảnh và lịch dạy đã duyệt theo tuần hoặc tháng.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex p-1 bg-surface-container-low rounded-xl border border-outline-variant/30">
-            <button type="button" onClick={() => setView('week')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'week' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Week</button>
-            <button type="button" onClick={() => setView('month')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'month' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Month</button>
+            <button type="button" onClick={() => setView('week')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'week' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Tuần</button>
+            <button type="button" onClick={() => setView('month')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'month' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Tháng</button>
           </div>
-          <button onClick={goToday} className="h-10 px-4 border border-outline-variant rounded-xl text-on-surface-variant font-label-md hover:bg-surface-container transition-colors">Today</button>
+          <button onClick={goToday} className="h-10 px-4 border border-outline-variant rounded-xl text-on-surface-variant font-label-md hover:bg-surface-container transition-colors">Hôm nay</button>
           <button onClick={goPrev} className="w-10 h-10 border border-outline-variant rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"><span className="material-symbols-outlined text-[18px]">chevron_left</span></button>
           <button onClick={goNext} className="w-10 h-10 border border-outline-variant rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"><span className="material-symbols-outlined text-[18px]">chevron_right</span></button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ScheduleSummaryCard icon="event_available" label="Available Slots" value={totalAvailable} />
-        <ScheduleSummaryCard icon="school" label="Approved Classes" value={totalClasses} />
-        <ScheduleSummaryCard icon="calendar_month" label={view === 'week' ? 'Current Week' : 'Current Month'} value={view === 'week' ? `${formatShortDate(weekDates[0])} - ${formatShortDate(weekDates[6])}` : formatMonthTitle(cursor)} />
+        <ScheduleSummaryCard icon="event_available" label="LỊCH TRỐNG" value={totalAvailable} />
+        <ScheduleSummaryCard icon="school" label="LỚP ĐÃ DUYỆT" value={totalClasses} />
+        <ScheduleSummaryCard icon="calendar_month" label={view === 'week' ? 'TUẦN HIỆN TẠI' : 'THÁNG HIỆN TẠI'} value={view === 'week' ? `${formatShortDate(weekDates[0])} - ${formatShortDate(weekDates[6])}` : formatMonthTitle(cursor)} />
       </div>
 
       {error && <p className="text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
 
       <div className="bg-white/80 backdrop-blur-md border border-outline-variant/20 shadow-sm rounded-2xl overflow-hidden">
         {loading ? (
-          <div className="min-h-[320px] flex items-center justify-center text-on-surface-variant">Loading schedule...</div>
+          <div className="min-h-[320px] flex items-center justify-center text-on-surface-variant">Đang tải lịch trình...</div>
         ) : view === 'week' ? (
           <div className="border-t border-outline-variant/20 relative">
             <TimeGridWeekView weekDates={weekDates} eventsForDate={eventsForDate} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />
@@ -1994,7 +2021,7 @@ function TimeGridWeekView({ weekDates, eventsForDate, onEventClick, sessionInfoM
                                 {isBooking && hasInfo && <span className="material-symbols-outlined text-[12px]">check_circle</span>}
                               </div>
                               <div className="font-semibold truncate text-[11px] leading-tight mt-0.5">
-                                {isBooking ? event.title : 'Available'}
+                                {isBooking ? event.title : 'Trống'}
                               </div>
                               {isBooking && (
                                 <div className="truncate opacity-80 text-[10px] leading-tight mt-0.5">{event.meta}</div>
@@ -2046,7 +2073,7 @@ function ScheduleMonthCell({ date, events, isCurrentMonth, onEventClick, session
             )}
           </div>
         ))}
-        {events.length > 3 && <p className="text-[10px] text-outline">+{events.length - 3} more</p>}
+        {events.length > 3 && <p className="text-[10px] text-outline">+{events.length - 3} lớp khác</p>}
       </div>
     </div>
   )
