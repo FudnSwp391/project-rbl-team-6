@@ -137,42 +137,84 @@ export default function TutorDashboard() {
     return () => clearInterval(timer)
   }, [])
 
-  // Supabase realtime for Instant Bookings
+  // ── Instant Booking: Nhận yêu cầu realtime + polling fallback ──
+  // Dùng polling mỗi 3 giây làm primary (đảm bảo luôn hoạt động kể cả khi
+  // Supabase Realtime chưa được cấu hình ở frontend).
+  // Supabase Realtime (khi có) dùng làm fast-path để popup nhanh hơn.
   useEffect(() => {
-    if (!user?.id || !supabase) return;
-    const channel = supabase
-      .channel('tutor-instant-requests')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'bookings', filter: `tutor_id=eq.${user.id}` },
-        (payload) => {
-          if (payload.new.booking_type === 'Instant' && payload.new.status === 'Pending') {
-            setInstantRequest(payload.new);
-            // Play notification sound if needed
-            try { new Audio('/notification.mp3').play().catch(()=>{}) } catch(e){}
-          }
+    if (!user?.id || !token) return;
+
+    let lastSeenId = null; // Tránh hiển thị popup trùng
+
+    // ── Hàm poll backend mỗi 3 giây ──
+    const pollPending = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/tutor/instant-pending`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const booking = data.booking;
+
+        if (booking && booking.id !== lastSeenId) {
+          // Có yêu cầu mới chưa thấy → hiển thị popup
+          lastSeenId = booking.id;
+          setInstantRequest(booking);
+          setInstantCountdown(booking.seconds_left ?? 60);
+          try { new Audio('/notification.mp3').play().catch(() => {}) } catch (e) {}
+        } else if (!booking && lastSeenId) {
+          // Yêu cầu đã hết hạn hoặc bị xử lý → ẩn popup
+          setInstantRequest(prev => {
+            if (prev?.id === lastSeenId) { lastSeenId = null; return null; }
+            return prev;
+          });
         }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'bookings', filter: `tutor_id=eq.${user.id}` },
-        (payload) => {
-          if (payload.new.booking_type === 'Instant' && payload.new.status !== 'Pending') {
-            setInstantRequest(prev => prev?.id === payload.new.id ? null : prev);
+      } catch (e) { /* bỏ qua lỗi mạng */ }
+    };
+
+    // Poll ngay lần đầu, sau đó mỗi 3 giây
+    pollPending();
+    const pollInterval = setInterval(pollPending, 3000);
+
+    // ── Supabase Realtime fast-path (chỉ khi supabase client có sẵn) ──
+    let channel = null;
+    if (supabase) {
+      channel = supabase
+        .channel(`tutor-instant-${user.id}`)
+        .on('postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'bookings', filter: `tutor_id=eq.${user.id}` },
+          (payload) => {
+            if (payload.new.booking_type === 'Instant' && payload.new.status === 'Pending') {
+              if (payload.new.id !== lastSeenId) {
+                lastSeenId = payload.new.id;
+                // Trigger poll để lấy đủ thông tin (tên học sinh, ảnh, seconds_left)
+                pollPending();
+              }
+            }
           }
-        }
-      )
-      .subscribe();
+        )
+        .on('postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'bookings', filter: `tutor_id=eq.${user.id}` },
+          (payload) => {
+            if (payload.new.booking_type === 'Instant' && payload.new.status !== 'Pending') {
+              setInstantRequest(prev => prev?.id === payload.new.id ? null : prev);
+              if (lastSeenId === payload.new.id) lastSeenId = null;
+            }
+          }
+        )
+        .subscribe();
+    }
 
     return () => {
-      supabase.removeChannel(channel);
+      clearInterval(pollInterval);
+      if (channel && supabase) supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [user?.id, token]);
 
   // Đếm ngược 60 giây khi có yêu cầu Học Ngay
   useEffect(() => {
     if (!instantRequest) { setInstantCountdown(60); return; }
-    setInstantCountdown(60);
+    // Không reset về 60 — giá trị đã được polling set từ server (seconds_left chính xác)
     const interval = setInterval(() => {
       setInstantCountdown(prev => {
         if (prev <= 1) { clearInterval(interval); return 0; }

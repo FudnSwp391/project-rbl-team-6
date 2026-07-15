@@ -3261,6 +3261,38 @@ app.put('/api/tutor/instant-settings', verifyToken, requireTutor, async (req, re
   }
 });
 
+// GET /api/tutor/instant-pending — Gia sư poll kiểm tra có yêu cầu Học Ngay đang chờ không
+// Dùng khi Supabase Realtime không khả dụng ở frontend
+app.get('/api/tutor/instant-pending', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.id, b.student_id, b.student_name, b.subject, b.lesson_fee,
+              b.duration_mins, b.note, b.created_at,
+              u.full_name AS student_full_name, u.picture AS student_picture
+       FROM bookings b
+       LEFT JOIN users u ON u.id = b.student_id
+       WHERE b.tutor_id = $1
+         AND b.booking_type = 'Instant'
+         AND b.status = 'Pending'
+         AND b.created_at > NOW() - INTERVAL '70 seconds'
+       ORDER BY b.created_at DESC
+       LIMIT 1`,
+      [req.user.userId]
+    );
+    const booking = result.rows[0] || null;
+    if (booking) {
+      // Tính số giây còn lại trước khi timeout
+      const elapsed = Math.floor((Date.now() - new Date(booking.created_at).getTime()) / 1000);
+      booking.seconds_left = Math.max(0, 60 - elapsed);
+      booking.student_name = booking.student_name || booking.student_full_name || 'Học viên';
+    }
+    res.json({ booking });
+  } catch (err) {
+    console.error('GET /api/tutor/instant-pending error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 // PATCH /api/tutor/profile/submit — nộp lại hồ sơ cho admin duyệt
 app.patch("/api/tutor/profile/submit", verifyToken, async (req, res) => {
   try {
