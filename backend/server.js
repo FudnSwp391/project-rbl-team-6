@@ -2558,11 +2558,16 @@ async function processNotificationOutbox(limit = 20) {
         continue;
       }
       try {
+        // EMAIL_DEMO_REDIRECT: hộp thư chung cho demo — mọi email đổ về 1 địa
+        // chỉ, tiêu đề ghi kèm người nhận gốc. Bỏ biến env này để gửi thật.
+        const demoRedirect = (process.env.EMAIL_DEMO_REDIRECT || '').trim();
         const info = await emailTransporter.sendMail({
           from: process.env.SMTP_FROM || process.env.SMTP_USER,
-          to: row.email,
+          to: demoRedirect || row.email,
           replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
-          subject: row.subject || row.title || 'EduX',
+          subject: demoRedirect
+            ? `${row.subject || row.title || 'EduX'} [gửi cho: ${row.email}]`
+            : (row.subject || row.title || 'EduX'),
           text: row.body,
           html: row.html_body || undefined,
           headers: { 'X-Mailer': 'EduX Notification System' },
