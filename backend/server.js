@@ -8036,7 +8036,20 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
         created_at        TIMESTAMP DEFAULT NOW()
       )
     `);
-    console.log('[DB] tutor_homeworks table ready');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_homework_submissions (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        homework_id   UUID REFERENCES tutor_homeworks(id) ON DELETE CASCADE,
+        student_id    UUID REFERENCES users(id),
+        file_url      TEXT NOT NULL,
+        status        VARCHAR(50) DEFAULT 'Submitted',
+        score         INTEGER,
+        feedback      TEXT,
+        submitted_at  TIMESTAMP DEFAULT NOW(),
+        UNIQUE(homework_id, student_id)
+      )
+    `);
+    console.log('[DB] tutor_homeworks and tutor_homework_submissions tables ready');
   } catch (err) {
     console.error('Error creating tutor_homeworks:', err);
   }
