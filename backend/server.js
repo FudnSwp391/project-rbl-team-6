@@ -12422,7 +12422,7 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
     }
 
     const bookingResult = await client.query(
-      `SELECT b.id, b.tutor_id, b.student_id, b.escrow_tx_id,
+      `SELECT b.id, b.tutor_id, b.student_id, b.escrow_tx_id, b.escrow_released_at,
               b.payer_wallet_id, b.lesson_fee, b.subject, b.lesson_date, b.booking_type
        FROM bookings b
        WHERE b.id = $1 AND b.tutor_id = $2 AND b.status IN ('Approved', 'InProgress')
@@ -12448,8 +12448,8 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
       [booking.id, booking.tutor_id, booking.student_id, status, note?.trim() || null]
     );
 
-    // ── PRESENT: Giải ngân ngay lập tức vào ví gia sư ──
-    if (status === 'present' && booking.escrow_tx_id && lessonFee > 0) {
+    // ── PRESENT: Giải ngân ngay lập tức vào ví gia sư (Chỉ nếu chưa giải ngân) ──
+    if (status === 'present' && booking.escrow_tx_id && lessonFee > 0 && !booking.escrow_released_at) {
       // Lấy ví gia sư và admin
       const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
       const tutorWalletId = tw.rows[0]?.id || null;
@@ -12542,7 +12542,7 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
     }
 
     // ── ABSENT / EXCUSED: Hoàn tiền 100% cho học sinh (Batch 16.1: refund_logs) ──
-    if (['absent', 'excused'].includes(status) && booking.escrow_tx_id && lessonFee > 0) {
+    if (['absent', 'excused'].includes(status) && booking.escrow_tx_id && lessonFee > 0 && !booking.escrow_released_at) {
       const reasonCode = status === 'absent' ? 'ATTENDANCE_ABSENT' : 'ATTENDANCE_EXCUSED';
 
       // Idempotency guard (UNIQUE(target,student)) — skip if already refunded
@@ -12577,7 +12577,7 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
     }
 
     // ── INSTANT LEARNING: Handle money and status ──
-    if (booking.booking_type === 'Instant' && lessonFee > 0) {
+    if (booking.booking_type === 'Instant' && lessonFee > 0 && !booking.escrow_released_at) {
       if (status === 'present') {
         const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
         const tutorWalletId = tw.rows[0]?.id || null;
