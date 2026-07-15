@@ -7308,30 +7308,33 @@ app.get('/api/chat/conversations', verifyToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const result = await pool.query(`
-      SELECT DISTINCT ON (other_id)
-        other_id, other_name, other_email, other_picture, other_role,
-        last_message, last_msg_type, last_message_at, unread_count
-      FROM (
-        SELECT
-          CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END AS other_id,
-          CASE WHEN m.sender_id=$1 THEN ru.full_name  ELSE su.full_name  END AS other_name,
-          CASE WHEN m.sender_id=$1 THEN ru.email      ELSE su.email      END AS other_email,
-          CASE WHEN m.sender_id=$1 THEN ru.picture    ELSE su.picture    END AS other_picture,
-          CASE WHEN m.sender_id=$1 THEN ru.role       ELSE su.role       END AS other_role,
-          COALESCE(m.content, m.file_name, '[File]')  AS last_message,
-          m.msg_type                                   AS last_msg_type,
-          m.created_at                                 AS last_message_at,
-          (SELECT COUNT(*) FROM chat_messages um
-           WHERE um.sender_id != $1 AND um.receiver_id=$1 AND um.is_read=false
-             AND um.sender_id = CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END
-          ) AS unread_count
-        FROM chat_messages m
-        JOIN users su ON su.id=m.sender_id
-        JOIN users ru ON ru.id=m.receiver_id
-        WHERE m.sender_id=$1 OR m.receiver_id=$1
-        ORDER BY m.created_at DESC
-      ) sub
-      ORDER BY other_id, last_message_at DESC
+      SELECT * FROM (
+        SELECT DISTINCT ON (other_id)
+          other_id, other_name, other_email, other_picture, other_role,
+          last_message, last_msg_type, last_message_at, unread_count
+        FROM (
+          SELECT
+            CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END AS other_id,
+            CASE WHEN m.sender_id=$1 THEN ru.full_name  ELSE su.full_name  END AS other_name,
+            CASE WHEN m.sender_id=$1 THEN ru.email      ELSE su.email      END AS other_email,
+            CASE WHEN m.sender_id=$1 THEN ru.picture    ELSE su.picture    END AS other_picture,
+            CASE WHEN m.sender_id=$1 THEN ru.role       ELSE su.role       END AS other_role,
+            COALESCE(m.content, m.file_name, '[File]')  AS last_message,
+            m.msg_type                                   AS last_msg_type,
+            m.created_at                                 AS last_message_at,
+            (SELECT COUNT(*) FROM chat_messages um
+             WHERE um.sender_id != $1 AND um.receiver_id=$1 AND um.is_read=false
+               AND um.sender_id = CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END
+            ) AS unread_count
+          FROM chat_messages m
+          JOIN users su ON su.id=m.sender_id
+          JOIN users ru ON ru.id=m.receiver_id
+          WHERE m.sender_id=$1 OR m.receiver_id=$1
+          ORDER BY m.created_at DESC
+        ) sub
+        ORDER BY other_id, last_message_at DESC
+      ) final_sub
+      ORDER BY last_message_at DESC
     `, [userId]);
     return res.json({ conversations: result.rows });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
