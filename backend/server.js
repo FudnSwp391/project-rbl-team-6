@@ -6866,7 +6866,10 @@ app.get('/api/student/link-code', verifyToken, async (req, res) => {
     do { code=generateLinkCode(); tries++; } while (tries<10 && (await pool.query('SELECT id FROM student_link_codes WHERE code=$1',[code])).rows.length>0);
     const r = await pool.query('INSERT INTO student_link_codes (student_id,code) VALUES ($1,$2) RETURNING code,created_at', [studentId,code]);
     return res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+  } catch (e) { 
+    console.error('Error in link-code:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' }); 
+  }
 });
 
 // Student: view parents monitoring them
@@ -7235,6 +7238,21 @@ const chatUpload = multer({
   } catch (e) { console.error('chat_messages table error:', e.message); }
 })();
 
+// GET /api/messages/unread-count — Đếm tổng số tin nhắn chưa đọc
+app.get('/api/messages/unread-count', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await pool.query(
+      `SELECT count(*) AS n FROM chat_messages WHERE receiver_id = $1 AND is_read = false`,
+      [userId]
+    );
+    return res.json({ count: parseInt(result.rows[0].n, 10) || 0 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
 // GET /api/chat/conversations — danh sách hội thoại
 app.get('/api/chat/conversations', verifyToken, async (req, res) => {
   try {
@@ -7509,6 +7527,22 @@ app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
+// PUT /api/chat/:otherId/read — đánh dấu đã đọc một hội thoại cụ thể
+app.put('/api/chat/:otherId/read', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { otherId } = req.params;
+    await pool.query(
+      `UPDATE chat_messages SET is_read=true WHERE sender_id=$1 AND receiver_id=$2 AND is_read=false`,
+      [otherId, userId]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
 // POST /api/chat — gửi tin nhắn text
 app.post('/api/chat', verifyToken, async (req, res) => {
   try {
@@ -7540,15 +7574,8 @@ app.post('/api/chat', verifyToken, async (req, res) => {
       [senderId, receiver_id, content.trim()]
     );
 
-    // Thêm thông báo cho người nhận (Batch 20.1: safeNotifyUser, IN_APP only)
-    await safeNotifyUser(pool, {
-      userId: receiver_id, type: 'new_message', channels: ['IN_APP'],
-      templateKey: 'chat_new_message', eventType: 'chat_new_message',
-      title: `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`,
-      body: content.trim(), icon: 'chat', refId: senderId, refType: 'chat',
-      sourceType: 'chat_message', sourceId: msg.rows[0].id, priority: 'low',
-      idempotencyKey: `chat_message:${msg.rows[0].id}:${receiver_id}`,
-    });
+    // Đã bỏ safeNotifyUser cho tin nhắn ở đây để tách riêng Notification và Messages.
+    // Frontend tự bắt event INSERT trên bảng chat_messages qua Supabase để hiện popup.
 
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -8037,11 +8064,11 @@ app.get('/api/student/my-courses', verifyToken, async (req, res) => {
         c.price,
         c.thumbnail_url,
         c.tutor_id,
-        u.full_name    AS tutor_name,
+        COALESCE(u.full_name, c.instructor_name) AS tutor_name,
         u.picture      AS tutor_avatar,
         COALESCE(
           ROUND(
-            100.0 * COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true)
+            (COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true))::numeric * 100.0
             / NULLIF(COUNT(DISTINCT cl.id), 0)
           )::int, 0
         ) AS progress_percent,
@@ -8443,6 +8470,45 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
   }
 });
 
+// ── PATCH /api/courses/:courseId/lessons/:lessonId/progress ── Cập nhật tiến độ ──
+app.patch("/api/courses/:courseId/lessons/:lessonId/progress", verifyToken, async (req, res) => {
+  try {
+    const { courseId, lessonId } = req.params;
+    const { isCompleted, watchedSeconds } = req.body;
+    const studentId = req.user?.userId || req.user?.id; // Lấy từ req.user do verifyToken cung cấp
+
+    // Lấy enrollment_id
+    const enrollRes = await pool.query(
+      `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+      [courseId, studentId]
+    );
+
+    if (enrollRes.rows.length === 0) {
+      return res.status(403).json({ message: "Bạn chưa đăng ký khóa học này." });
+    }
+
+    const enrollmentId = enrollRes.rows[0].id;
+
+    // Upsert course_progress
+    await pool.query(
+      `INSERT INTO course_progress (enrollment_id, lesson_id, is_completed, watched_seconds, completed_at, updated_at)
+       VALUES ($1, $2, $3, $4, CASE WHEN $3 = true THEN NOW() ELSE NULL END, NOW())
+       ON CONFLICT (enrollment_id, lesson_id) 
+       DO UPDATE SET 
+         is_completed = EXCLUDED.is_completed,
+         watched_seconds = EXCLUDED.watched_seconds,
+         completed_at = CASE WHEN EXCLUDED.is_completed = true AND course_progress.is_completed = false THEN NOW() ELSE course_progress.completed_at END,
+         updated_at = NOW()`,
+      [enrollmentId, lessonId, isCompleted || false, watchedSeconds || 0]
+    );
+
+    return res.json({ success: true, message: "Cập nhật tiến độ thành công." });
+  } catch (err) {
+    console.error("PATCH /progress error:", err);
+    return res.status(500).json({ message: "Lỗi server khi cập nhật tiến độ." });
+  }
+});
+
 
 // Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
 app.get("/api/tutors", async (req, res) => {
@@ -8752,10 +8818,10 @@ app.get("/api/courses/:id", async (req, res) => {
     
     const courseRes = await pool.query(
       `SELECT c.*, 
-              u.id as tutor_id, u.full_name as tutor_name, u.picture as tutor_picture,
+              u.id as tutor_id, COALESCE(u.full_name, c.instructor_name) as tutor_name, u.picture as tutor_picture,
               tp.headline as tutor_headline
        FROM courses c
-       JOIN users u ON c.tutor_id = u.id
+       LEFT JOIN users u ON c.tutor_id = u.id
        LEFT JOIN tutor_profiles tp ON u.id = tp.user_id
        WHERE c.id = $1`,
       [id]
@@ -8796,6 +8862,21 @@ app.get("/api/courses/:id", async (req, res) => {
       }
     }
 
+    // Lấy tiến độ học tập nếu đã mua
+    let progressMap = {};
+    if (enrollmentId) {
+       const progressRes = await pool.query(
+         `SELECT lesson_id, is_completed, watched_seconds FROM course_progress WHERE enrollment_id = $1`,
+         [enrollmentId]
+       );
+       progressRes.rows.forEach(p => {
+         progressMap[p.lesson_id] = {
+           isCompleted: p.is_completed,
+           watchedSeconds: p.watched_seconds
+         };
+       });
+    }
+
     const isCourseTutor = userId === courseData.tutor_id;
     const isAdmin = userRole === 'admin';
 
@@ -8819,9 +8900,11 @@ app.get("/api/courses/:id", async (req, res) => {
         picture: courseData.tutor_picture,
         headline: courseData.tutor_headline
       },
+      tutorName: courseData.tutor_name,
       lessons: lessonsRes.rows.map(lesson => {
         const isPreview = lesson.is_preview;
         const isLocked = !isEnrolled && !isCourseTutor && !isAdmin && !isPreview;
+        const prog = progressMap[lesson.id] || {};
         return {
           id: lesson.id,
           title: lesson.title,
@@ -8833,6 +8916,8 @@ app.get("/api/courses/:id", async (req, res) => {
           isPreview: isPreview,
           isLocked: isLocked,
           video_url: isLocked ? null : lesson.video_url,
+          isCompleted: prog.isCompleted || false,
+          watchedSeconds: prog.watchedSeconds || 0,
           videoUrl: isLocked ? null : lesson.video_url,
           materialUrl: isLocked ? null : lesson.material_url,
           isCompleted: completedLessonIds.has(lesson.id),
@@ -11568,11 +11653,53 @@ async function callGeminiModel(model, prompt) {
     if (!res.ok) {
       return { ok: false, status: res.status, errText: await res.text() };
     }
-    return { ok: true, data: await res.json() };
-  } catch (err) {
-    return { ok: false, status: 0, errText: err.message };
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
   }
 }
+
+const rawGroqKeys = process.env.GROQ_API_KEYS || "";
+const GROQ_API_KEYS = rawGroqKeys.split(',').map(k => k.trim()).filter(Boolean);
+let currentGroqKeyIndex = 0;
+
+async function callGroqModel(prompt, jsonMode = false) {
+  const apiKey = GROQ_API_KEYS[currentGroqKeyIndex];
+  currentGroqKeyIndex = (currentGroqKeyIndex + 1) % GROQ_API_KEYS.length;
+  
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const body = {
+    model: "llama-3.3-70b-versatile",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.7,
+    max_tokens: 2048,
+  };
+  
+  if (jsonMode) {
+    body.response_format = { type: "json_object" };
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(body),
+    });
+    
+    if (!res.ok) {
+      return { ok: false, status: res.status, errText: await res.text() };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
+  }
+}
+
 
 // 2. Tạo URL Nạp Tiền VNPAY
 app.post('/api/payment/create-url', verifyToken, async (req, res) => {
@@ -11719,38 +11846,21 @@ ${JSON.stringify(tutorSummary, null, 2)}
 
 TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
 
-    // Thử lần lượt các model — fallback khi gặp 429 (hết quota) hoặc 503 (quá tải)
-    let data = null;
-    let lastErr = { status: 0, errText: "Không có model khả dụng" };
-    let usedModel = null;
-
-    for (const model of GEMINI_MODELS) {
-      const result = await callGeminiModel(model, systemPrompt);
-      if (result.ok) {
-        data = result.data;
-        usedModel = model;
-        break;
-      }
-      lastErr = result;
-      console.warn(`[Gemini] Model ${model} lỗi ${result.status} — thử model tiếp theo`);
-      // Chỉ fallback khi lỗi tạm thời (quota/quá tải). Lỗi khác (400, 401) thì dừng luôn.
-      if (result.status !== 429 && result.status !== 503 && result.status !== 0) break;
+    const result = await callGroqModel(systemPrompt, true);
+    if (!result.ok) {
+      console.error("[Groq] Lỗi API:", result.status, result.errText);
+      return res.status(502).json({ error: "Lỗi từ AI API", detail: result.errText });
     }
 
-    if (!data) {
-      console.error("[Gemini] Tất cả model đều lỗi:", lastErr.status, lastErr.errText);
-      return res.status(502).json({ error: "Lỗi từ Gemini API", detail: lastErr.errText });
-    }
+    console.log(`[Groq] ✓ Trả lời thành công`);
 
-    console.log(`[Gemini] ✓ Trả lời bằng model: ${usedModel}`);
-
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const rawText = result.data?.choices?.[0]?.message?.content;
     if (!rawText) {
-      console.error("[Gemini] Empty response", data);
-      return res.status(502).json({ error: "Gemini trả phản hồi rỗng" });
+      console.error("[Groq] Empty response", result.data);
+      return res.status(502).json({ error: "AI trả phản hồi rỗng" });
     }
 
-    // Bóc markdown nếu Gemini lỡ trả ```json ... ```
+    // Bóc markdown nếu lỡ trả ```json ... ```
     let cleaned = rawText
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
@@ -11768,18 +11878,18 @@ TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
         try {
           parsed = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
         } catch (e2) {
-          console.error("[Gemini] JSON parse error:", e2.message, "raw:", rawText);
-          return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+          console.error("[Groq] JSON parse error:", e2.message, "raw:", rawText);
+          return res.status(502).json({ error: "AI trả JSON không hợp lệ" });
         }
       } else {
-        console.error("[Gemini] JSON parse error:", e.message, "raw:", rawText);
-        return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+        console.error("[Groq] JSON parse error:", e.message, "raw:", rawText);
+        return res.status(502).json({ error: "AI trả JSON không hợp lệ" });
       }
     }
 
     if (typeof parsed.reply !== "string" || !Array.isArray(parsed.tutorIds)) {
-      console.error("[Gemini] Invalid schema", parsed);
-      return res.status(502).json({ error: "Gemini trả format không hợp lệ" });
+      console.error("[Groq] Invalid schema", parsed);
+      return res.status(502).json({ error: "AI trả format không hợp lệ" });
     }
 
     return res.json(parsed);
@@ -11794,6 +11904,32 @@ TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
 //   /api/ask-ai     — tên cũ, giữ để không vỡ frontend hiện tại
 app.post("/api/ai-suggest", askAiHandler);
 app.post("/api/ask-ai", askAiHandler);
+
+// ── POST /api/course-ai-chat ── AI Chat cho không gian học tập ───────────────
+app.post("/api/course-ai-chat", async (req, res) => {
+  try {
+    const { message, lessonTitle } = req.body;
+    if (!message) return res.status(400).json({ error: "Thiếu tin nhắn." });
+
+    const systemPrompt = `Bạn là EduX AI Tutor, một trợ lý học tập xuất sắc và tận tình.
+Bạn đang trợ giúp học sinh trong bài học: "${lessonTitle || 'Bài học chung'}".
+Nhiệm vụ của bạn là giải đáp các thắc mắc của học sinh về nội dung bài học một cách thân thiện, súc tích và dễ hiểu.
+Tuyệt đối không dùng markdown phức tạp (chỉ dùng chữ thường). Trả lời bằng tiếng Việt.
+TIN NHẮN CỦA HỌC SINH: "${message}"`;
+
+    const result = await callGroqModel(systemPrompt, false);
+    if (!result.ok) {
+      console.error("[Groq] Lỗi AI:", result.status, result.errText);
+      return res.status(502).json({ error: "Lỗi kết nối máy chủ AI" });
+    }
+
+    const rawText = result.data?.choices?.[0]?.message?.content;
+    return res.json({ reply: rawText || "Xin lỗi, tôi không thể đưa ra câu trả lời lúc này." });
+  } catch (error) {
+    console.error("POST /api/course-ai-chat error:", error);
+    return res.status(500).json({ error: "Lỗi hệ thống AI." });
+  }
+});
 
 // ─── Start server ─────────────────────────────────────────────────────────────
 

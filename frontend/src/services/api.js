@@ -616,6 +616,13 @@ export async function updateCourseProgress(courseId, lessonId, payload = {}) {
     body: JSON.stringify(payload),
   })
 }
+
+export async function askCourseAI(message, lessonTitle) {
+  return request('/api/course-ai-chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, lessonTitle }),
+  })
+}
 // ── Tutor Assessments APIs ───────────────────────────────────────────────────
 
 export async function getTutorExams() {
