@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { apiRequest } from '../services/api';
 import { getCourseImageUrl } from '../utils/courseImage';
 import { useAuth } from '../AuthContext';
+import CartButton from '../components/CartButton';
 
 function formatMoney(value) {
   if (!value) return 'Miễn phí';
@@ -323,14 +324,7 @@ export default function CourseMarketplace() {
             </nav>
             <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="relative text-[#00288e] flex items-center" title="Giỏ hàng">
-                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
-                {cartIds.length > 0 && (
-                  <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 px-1 rounded-full bg-[#e11d48] text-white text-[10px] font-bold flex items-center justify-center leading-none">
-                    {cartIds.length > 9 ? '9+' : cartIds.length}
-                  </span>
-                )}
-              </a>
+              <CartButton />
             )}
               {user ? (
                 <button

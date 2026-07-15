@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import BookingModal from '../components/BookingModal'
 import { useAuth } from '../AuthContext'
+import CartButton from '../components/CartButton';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -216,9 +217,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
           </nav>
           <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
-                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
-              </a>
+              <CartButton />
             )}
             {user ? (
               <button onClick={() => {
