@@ -12,6 +12,7 @@ import PracticeMode from './PracticeMode'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
+import MessageIcon from './components/MessageIcon'
 import SchedulePage from './components/SchedulePage'
 import { getStudentBookings, confirmLessonComplete, reportTutor } from './services/api'
 
@@ -112,7 +113,8 @@ export default function StudentDashboard() {
             </div>
 
             <div className="flex items-center gap-sm lg:gap-md">
-              {/* Notification */}
+              {/* Messages & Notifications */}
+              <MessageIcon token={token} />
               <NotificationDropdown token={token} />
 
               <button
@@ -349,22 +351,38 @@ function ParentLinkSection({ token }) {
   const [parents, setParents] = useState([])
   const [loading, setLoading] = useState(true)
 
+  const [errorMsg, setErrorMsg] = useState(null)
+
   useEffect(() => {
     // Lấy mã chia sẻ
     fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/link-code`, {
       headers: { Authorization: `Bearer ${token}` }
     })
-      .then(r => r.json())
-      .then(d => setCode(d.code))
-      .catch(console.error)
+      .then(r => {
+        if (!r.ok) throw new Error('API error')
+        return r.json()
+      })
+      .then(d => {
+        if (d.code) setCode(d.code)
+      })
+      .catch(e => {
+        console.error('Failed to load link code:', e)
+        setErrorMsg('Không thể tải mã. Có thể server chưa cập nhật (Hãy khởi động lại backend).')
+      })
 
     // Lấy danh sách phụ huynh
     fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/parents`, {
       headers: { Authorization: `Bearer ${token}` }
     })
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('API error')
+        return r.json()
+      })
       .then(d => { setParents(d.parents || []); setLoading(false) })
-      .catch(() => setLoading(false))
+      .catch(e => {
+        console.error('Failed to load parents:', e)
+        setLoading(false)
+      })
   }, [token])
 
   if (loading) return <div className="text-center py-xl"><span className="material-symbols-outlined animate-spin text-primary text-[40px]">sync</span></div>
@@ -385,20 +403,28 @@ function ParentLinkSection({ token }) {
           </div>
 
           <div className="bg-surface-container-low rounded-2xl border border-outline-variant/30 p-md flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-widest text-on-surface-variant mb-1">Mã của bạn</p>
-              <p className="font-mono text-3xl font-black text-primary tracking-[0.2em]">{code || '--------'}</p>
-            </div>
-            <button 
-              onClick={() => {
-                navigator.clipboard.writeText(code)
-                alert('Đã sao chép mã!')
-              }}
-              className="w-12 h-12 flex items-center justify-center bg-primary/10 text-primary hover:bg-primary/20 rounded-xl transition-colors"
-              title="Sao chép"
-            >
-              <span className="material-symbols-outlined text-[24px]">content_copy</span>
-            </button>
+            {errorMsg ? (
+              <div className="text-error font-medium">{errorMsg}</div>
+            ) : (
+              <>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-widest text-on-surface-variant mb-1">Mã của bạn</p>
+                  <p className="font-mono text-3xl font-black text-primary tracking-[0.2em]">{code || '--------'}</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    if(!code) return;
+                    navigator.clipboard.writeText(code)
+                    alert('Đã sao chép mã!')
+                  }}
+                  className="w-12 h-12 flex items-center justify-center bg-primary/10 text-primary hover:bg-primary/20 rounded-xl transition-colors disabled:opacity-50"
+                  disabled={!code}
+                  title="Sao chép"
+                >
+                  <span className="material-symbols-outlined text-[24px]">content_copy</span>
+                </button>
+              </>
+            )}
           </div>
           
           <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200/50">
