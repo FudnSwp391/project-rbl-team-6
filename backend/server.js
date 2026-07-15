@@ -8048,6 +8048,85 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
   }
 });
 
+// ── Homework Table Init ──
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_homeworks (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title             VARCHAR(255) NOT NULL,
+        course            VARCHAR(255),
+        deadline          TIMESTAMP,
+        max_score         INTEGER DEFAULT 100,
+        allow_late        BOOLEAN DEFAULT false,
+        status            VARCHAR(50) DEFAULT 'Draft',
+        file_url          TEXT,
+        file_type         VARCHAR(100),
+        tutor_id          UUID REFERENCES users(id),
+        assigned_students JSONB DEFAULT '[]'::jsonb,
+        submission_count  INTEGER DEFAULT 0,
+        created_at        TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log('[DB] tutor_homeworks table ready');
+  } catch (err) {
+    console.error('Error creating tutor_homeworks:', err);
+  }
+})();
+
+// GET /api/tutor/assessments/homework
+app.get('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM tutor_homeworks WHERE tutor_id=$1 ORDER BY created_at DESC`,
+      [req.user.userId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST /api/tutor/assessments/homework
+app.post('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { title, course, deadline, max_score, allow_late, status, file_url, file_type, assigned_students } = req.body;
+    const result = await pool.query(
+      `INSERT INTO tutor_homeworks (title, course, deadline, max_score, allow_late, status, file_url, file_type, tutor_id, assigned_students)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb) RETURNING *`,
+      [title, course, deadline || null, max_score || 100, allow_late || false, status || 'Draft', file_url, file_type, req.user.userId, JSON.stringify(assigned_students || [])]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    console.error('POST homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PATCH /api/tutor/assessments/homework/:id/status
+app.patch('/api/tutor/assessments/homework/:id/status', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { status } = req.body;
+    await pool.query(`UPDATE tutor_homeworks SET status=$1 WHERE id=$2 AND tutor_id=$3`, [status, req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH homework status error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE /api/tutor/assessments/homework/:id
+app.delete('/api/tutor/assessments/homework/:id', verifyToken, requireTutor, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM tutor_homeworks WHERE id=$1 AND tutor_id=$2`, [req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // GET /api/tutor/grading-queue
 app.get('/api/tutor/grading-queue', verifyToken, requireTutor, async (req, res) => {
   try {
