@@ -218,10 +218,36 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
     }
   }
 
-  // ── Lắng nghe trạng thái thay đổi của booking Học Ngay qua Supabase realtime ──
+  // ── Lắng nghe trạng thái thay đổi của booking Học Ngay (Polling + Realtime) ──
   useEffect(() => {
     if (instantBookingStatus !== 'waiting' || !instantBookingId) return;
     
+    // 1. Polling fallback (mỗi 3 giây)
+    const pollStatus = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_BASE}/api/bookings/${instantBookingId}/status`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const newStatus = data.status;
+        
+        if (newStatus === 'Confirmed' || newStatus === 'InProgress') {
+          setInstantBookingStatus('accepted');
+          setTimeout(() => {
+            window.location.hash = `/session/${instantBookingId}`;
+          }, 2000);
+        } else if (newStatus === 'Cancelled' || newStatus === 'Declined' || newStatus === 'Expired' || newStatus === 'Timeout') {
+          setInstantBookingStatus('rejected');
+        }
+      } catch (e) { /* ignore network error */ }
+    };
+    
+    pollStatus();
+    const pollInterval = setInterval(pollStatus, 3000);
+
+    // 2. Supabase Realtime (khi có)
     let channel = null;
     if (supabase) {
       channel = supabase
@@ -236,7 +262,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               setTimeout(() => {
                 window.location.hash = `/session/${payload.new.id}`;
               }, 2000);
-            } else if (newStatus === 'Cancelled' || newStatus === 'Declined' || newStatus === 'Expired') {
+            } else if (newStatus === 'Cancelled' || newStatus === 'Declined' || newStatus === 'Expired' || newStatus === 'Timeout') {
               setInstantBookingStatus('rejected');
             }
           }
@@ -244,11 +270,11 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
         .subscribe();
     }
     
-    // Countdown timer — tự hủy sau 60s
-    const interval = setInterval(() => {
+    // 3. Countdown timer — tự hủy sau 60s
+    const countdownInterval = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
-          clearInterval(interval);
+          clearInterval(countdownInterval);
           setInstantBookingStatus(s => s === 'waiting' ? 'rejected' : s);
           return 0;
         }
@@ -258,7 +284,8 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
 
     return () => {
       if (channel && supabase) supabase.removeChannel(channel);
-      clearInterval(interval);
+      clearInterval(pollInterval);
+      clearInterval(countdownInterval);
     };
   }, [instantBookingStatus, instantBookingId]);
 
