@@ -39,6 +39,47 @@ export default function CourseDetail({ courseId }) {
   const [enrollLoading, setEnrollLoading] = useState(false);
   const [toast, setToast] = useState('');
 
+  // ── Giỏ hàng (localStorage edux_cart — cùng định dạng CartPage/Marketplace) ──
+  const CART_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const readCartIds = () => {
+    try {
+      const arr = JSON.parse(localStorage.getItem('edux_cart') || '[]');
+      return Array.isArray(arr) ? arr.map(it => it.id) : [];
+    } catch { return []; }
+  };
+  const [cartIds, setCartIds] = useState(readCartIds);
+  useEffect(() => {
+    const sync = () => setCartIds(readCartIds());
+    window.addEventListener('cartUpdated', sync);
+    window.addEventListener('storage', sync);
+    return () => { window.removeEventListener('cartUpdated', sync); window.removeEventListener('storage', sync); };
+  }, []);
+
+  const addToCart = (c) => {
+    if (!CART_UUID_RE.test(String(c.id))) {
+      setToast('Khóa học demo — không thể mua.');
+      setTimeout(() => setToast(''), 2200);
+      return;
+    }
+    let cart = [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem('edux_cart') || '[]');
+      if (Array.isArray(parsed)) cart = parsed;
+    } catch {}
+    if (!cart.some(it => it.id === c.id)) {
+      cart.push({
+        id: c.id, title: c.title, price: Number(c.price || 0),
+        thumbnail_url: c.thumbnail_url || null,
+        tutor_name: c.tutor_name || 'Gia sư EduX',
+        subject: c.subject || '', quantity: 1, addedAt: Date.now(),
+      });
+      localStorage.setItem('edux_cart', JSON.stringify(cart));
+      window.dispatchEvent(new Event('cartUpdated'));
+    }
+    setToast('Đã thêm vào giỏ hàng!');
+    setTimeout(() => setToast(''), 2200);
+  };
+
   useEffect(() => {
     const id = courseId || window.location.hash.match(/#\/course\/([^/]+)/)?.[1];
     if (!id) { setError('Không tìm thấy ID khóa học.'); setLoading(false); return; }
@@ -342,7 +383,20 @@ export default function CourseDetail({ courseId }) {
                   )}
                 </button>
               )}
-              <button onClick={() => window.location.hash = '#/courses'} className="w-full py-3 rounded-xl border-2 border-[#00288e] text-[#00288e] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#00288e]/5 transition-colors">
+              {!enrolled && (
+                cartIds.includes(c.id) ? (
+                  <button onClick={() => window.location.hash = '#/cart'} className="w-full py-3 rounded-xl border-2 border-[#16a34a] bg-[#f0fdf4] text-[#16a34a] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#dcfce7] transition-colors mb-3">
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
+                    Trong giỏ — Xem giỏ hàng
+                  </button>
+                ) : (
+                  <button onClick={() => addToCart(c)} className="w-full py-3 rounded-xl border-2 border-[#00288e] text-[#00288e] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#00288e] hover:text-white transition-colors mb-3">
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>add_shopping_cart</span>
+                    Thêm vào giỏ hàng
+                  </button>
+                )
+              )}
+              <button onClick={() => window.location.hash = '#/courses'} className="w-full py-3 rounded-xl border-2 border-[#c4c5d5] text-[#444653] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#f1f2f6] transition-colors">
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
                 Quay lại danh sách
               </button>
