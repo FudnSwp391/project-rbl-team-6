@@ -7936,35 +7936,6 @@ app.get("/api/courses", async (req, res) => {
 });
 
 // ── GET /api/courses/:id ── Chi tiết 1 khóa học (public) ─────────────────────
-app.get("/api/courses/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const courseRes = await pool.query(
-      `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture, u.email AS tutor_email
-       FROM courses c
-       JOIN users u ON c.tutor_id = u.id
-       WHERE c.id = $1`, [id]
-    );
-    if (courseRes.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy khóa học." });
-    const course = courseRes.rows[0];
-
-    // Lấy danh sách bài học
-    let lessons = [];
-    try {
-      const lessonsRes = await pool.query(
-        `SELECT id, title, description, video_url, duration_label, is_preview, position
-         FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`, [id]
-      );
-      lessons = lessonsRes.rows;
-    } catch (_) { /* bảng chưa tồn tại thì bỏ qua */ }
-
-    return res.json({ ...course, lessons });
-  } catch (err) {
-    console.error("GET /api/courses/:id error:", err);
-    return res.status(500).json({ message: "Lỗi máy chủ." });
-  }
-});
-
 // ── POST /api/coupons/validate ── Kiểm tra mã giảm giá ──────────────────────
 app.post("/api/coupons/validate", async (req, res) => {
   try {
@@ -8804,6 +8775,7 @@ app.get("/api/courses/:id", async (req, res) => {
     let isEnrolled = false;
     let userId = null;
     let userRole = null;
+    let enrollmentId = null;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
@@ -8813,10 +8785,11 @@ app.get("/api/courses/:id", async (req, res) => {
         userRole = decoded.role;
         if (userId) {
           const enrollRes = await pool.query(
-            `SELECT 1 FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+            `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
             [id, userId]
           );
           isEnrolled = enrollRes.rows.length > 0;
+          enrollmentId = enrollRes.rows[0]?.id || null;
         }
       } catch (err) {
         // Bỏ qua lỗi token (để xem dưới quyền khách)
@@ -8825,6 +8798,16 @@ app.get("/api/courses/:id", async (req, res) => {
 
     const isCourseTutor = userId === courseData.tutor_id;
     const isAdmin = userRole === 'admin';
+
+    // Tiến độ từng bài học của chính học sinh này (nếu đã đăng ký)
+    let completedLessonIds = new Set();
+    if (enrollmentId) {
+      const progressRes = await pool.query(
+        `SELECT lesson_id FROM course_progress WHERE enrollment_id = $1 AND is_completed = true`,
+        [enrollmentId]
+      );
+      completedLessonIds = new Set(progressRes.rows.map(p => p.lesson_id));
+    }
 
     const response = {
       ...courseData,
@@ -8844,11 +8827,15 @@ app.get("/api/courses/:id", async (req, res) => {
           title: lesson.title,
           description: lesson.description,
           position: lesson.position,
+          duration_label: lesson.duration_label,
           durationLabel: lesson.duration_label,
+          is_preview: isPreview,
           isPreview: isPreview,
           isLocked: isLocked,
+          video_url: isLocked ? null : lesson.video_url,
           videoUrl: isLocked ? null : lesson.video_url,
           materialUrl: isLocked ? null : lesson.material_url,
+          isCompleted: completedLessonIds.has(lesson.id),
           createdAt: lesson.created_at,
           updatedAt: lesson.updated_at
         };
@@ -8856,13 +8843,54 @@ app.get("/api/courses/:id", async (req, res) => {
       learningOutcomes: courseData.learning_outcomes || [],
       requirements: courseData.requirements || [],
       isEnrolled,
-      isCourseTutor
+      isCourseTutor,
+      enrollmentId
     };
 
     return res.json(response);
   } catch (err) {
     console.error("GET /api/courses/:id error:", err);
     return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PATCH /api/courses/:id/lessons/:lessonId/progress — học sinh đánh dấu (bỏ) hoàn thành 1 bài học
+app.patch("/api/courses/:id/lessons/:lessonId/progress", verifyToken, async (req, res) => {
+  try {
+    const { id: courseId, lessonId } = req.params;
+    const { watchedSeconds, isCompleted } = req.body;
+    const studentId = req.user.userId;
+
+    const enrollRes = await pool.query(
+      `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+      [courseId, studentId]
+    );
+    if (!enrollRes.rows.length) {
+      return res.status(403).json({ message: "Bạn chưa đăng ký khóa học này." });
+    }
+    const enrollmentId = enrollRes.rows[0].id;
+
+    const lessonRes = await pool.query(`SELECT id FROM course_lessons WHERE id = $1 AND course_id = $2`, [lessonId, courseId]);
+    if (!lessonRes.rows.length) {
+      return res.status(404).json({ message: "Không tìm thấy bài học." });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO course_progress (enrollment_id, lesson_id, watched_seconds, is_completed, completed_at)
+       VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
+       ON CONFLICT (enrollment_id, lesson_id) DO UPDATE SET
+         watched_seconds = GREATEST(course_progress.watched_seconds, EXCLUDED.watched_seconds),
+         is_completed = EXCLUDED.is_completed,
+         completed_at = EXCLUDED.completed_at,
+         updated_at = NOW()
+       RETURNING *`,
+      [enrollmentId, lessonId, Math.max(0, Number(watchedSeconds) || 0), !!isCompleted]
+    );
+
+    return res.json({ success: true, progress: result.rows[0] });
+  } catch (err) {
+    console.error("PATCH /api/courses/:id/lessons/:lessonId/progress error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -8994,10 +9022,12 @@ app.post("/api/entity-reviews", verifyToken, async (req, res) => {
       const p = await pool.query(`SELECT id FROM tutor_profiles WHERE user_id = $1`, [target_id]);
       if (p.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy gia sư." });
       tutorProfileId = p.rows[0].id;
-      // Điều kiện (TV3): đã HOÀN THÀNH ≥1 buổi học (booking 'Approved' đã qua ngày học)
+      // Điều kiện: đã THỰC SỰ HỌC ≥1 buổi với gia sư này (điểm danh present), không chỉ đặt lịch
+      // được duyệt + qua ngày — booking có thể "Approved" nhưng gia sư no-show/học sinh vắng.
       const bk = await pool.query(
-        `SELECT 1 FROM bookings
-          WHERE student_id = $1 AND tutor_id = $2 AND status = 'Approved' AND lesson_date <= CURRENT_DATE
+        `SELECT 1 FROM bookings b
+           JOIN attendance a ON a.booking_id = b.id
+          WHERE b.student_id = $1 AND b.tutor_id = $2 AND a.status = 'present'
           LIMIT 1`,
         [req.user.userId, target_id]
       );
@@ -10425,7 +10455,7 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
     const result = await pool.query(
       `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date_str, b.time_slot, b.status,
               b.teaching_method, b.meeting_link, b.location, b.location_note,
-              b.session_topic, b.session_duration,
+              b.session_topic, b.session_duration, b.duration_mins,
               b.method_change_requested, b.method_change_status,
               tp.teaching_methods AS tutor_teaching_methods,
               EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute,
@@ -10459,29 +10489,31 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
       const timeParts = (row.time_slot || '').split('-').map(t => t.trim());
       
       let startMatch = timeParts[0] ? timeParts[0].match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/) : null;
+      // time_slot chỉ lưu 1 mốc giờ bắt đầu (vd "10:00 AM"), không phải khoảng "start-end" —
+      // chỉ có timeParts[1] khi dữ liệu cũ dùng đúng định dạng "HH:MM-HH:MM".
       let endMatch = timeParts[1] ? timeParts[1].match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/) : null;
 
-      let sh = 0, sm = 0, eh = 1, em = 0;
+      let sh = 0, sm = 0;
       if (startMatch) {
          sh = parseInt(startMatch[1], 10);
          sm = parseInt(startMatch[2], 10);
          if (startMatch[3] && startMatch[3].toUpperCase() === 'PM' && sh !== 12) sh += 12;
          if (startMatch[3] && startMatch[3].toUpperCase() === 'AM' && sh === 12) sh = 0;
       }
+
+      const startDate = new Date(`${row.lesson_date_str}T${sh.toString().padStart(2, '0')}:${sm.toString().padStart(2, '0')}:00+07:00`);
+
+      let endDate;
       if (endMatch) {
-         eh = parseInt(endMatch[1], 10);
-         em = parseInt(endMatch[2], 10);
+         let eh = parseInt(endMatch[1], 10);
+         let em = parseInt(endMatch[2], 10);
          if (endMatch[3] && endMatch[3].toUpperCase() === 'PM' && eh !== 12) eh += 12;
          if (endMatch[3] && endMatch[3].toUpperCase() === 'AM' && eh === 12) eh = 0;
+         endDate = new Date(`${row.lesson_date_str}T${eh.toString().padStart(2, '0')}:${em.toString().padStart(2, '0')}:00+07:00`);
+      } else {
+         // Không có mốc kết thúc tường minh -> tính từ duration_mins thật của booking.
+         endDate = new Date(startDate.getTime() + (Number(row.duration_mins) || 60) * 60000);
       }
-
-      sh = sh.toString().padStart(2, '0');
-      sm = sm.toString().padStart(2, '0');
-      eh = eh.toString().padStart(2, '0');
-      em = em.toString().padStart(2, '0');
-      
-      const startDate = new Date(`${row.lesson_date_str}T${sh}:${sm}:00+07:00`);
-      const endDate = new Date(`${row.lesson_date_str}T${eh}:${em}:00+07:00`);
 
       let status = row.status ? row.status.toLowerCase() : 'pending';
       if (status === 'accepted' || status === 'approved') {
