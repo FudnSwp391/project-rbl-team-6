@@ -10168,7 +10168,11 @@ async function startServer() {
     console.error("⚠️  DB migration (wishlists) warning:", err.message);
   }
 
+  let courseSchemaEnsured = false;
   async function ensureCourseSchema() {
+    if (courseSchemaEnsured) return;
+    courseSchemaEnsured = true;
+    try {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS courses (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
