@@ -1795,23 +1795,30 @@ function MyScheduleTab() {
   const eventsForDate = (date) => {
     const dayName = getDayName(date)
     const dateKey = toDateKey(date)
-    const availableSlots = (availability[dayName] || []).map((time) => ({
-      id: `available-${dateKey}-${time}`,
-      type: 'available',
-      time,
-      title: 'Available for booking',
-      meta: dayName,
-    }))
+    
     const bookedSlots = approvedBookings
       .filter((booking) => normalizeBookingDate(booking.lesson_date || booking.date) === dateKey)
       .map((booking) => ({
         id: `booking-${booking.id}`,
         type: 'booking',
         time: booking.time_slot || booking.timeSlot || booking.time || 'Scheduled',
-        title: booking.subject || 'Class',
-        meta: booking.childName || booking.studentName || 'Student',
+        title: booking.subject || 'Lớp học',
+        meta: booking.childName || booking.studentName || 'Học sinh',
       }))
-    return [...bookedSlots, ...availableSlots].sort((a, b) => String(a.time).localeCompare(String(b.time)))
+      
+    const bookedTimesMins = bookedSlots.map(b => parseTimeToMinutes(b.time));
+
+    const availableSlots = (availability[dayName] || [])
+      .filter(time => !bookedTimesMins.includes(parseTimeToMinutes(time)))
+      .map((time) => ({
+        id: `available-${dateKey}-${time}`,
+        type: 'available',
+        time,
+        title: 'Trống',
+        meta: dayName,
+      }))
+      
+    return [...bookedSlots, ...availableSlots].sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time))
   }
 
   const goPrev = () => setCursor((current) => view === 'week' ? addDays(current, -7) : addMonths(current, -1))
@@ -1822,31 +1829,31 @@ function MyScheduleTab() {
     <div className="space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">My Schedule</h2>
-          <p className="font-body-md text-body-md text-on-surface-variant">View your availability and approved classes by week or month.</p>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Lịch giảng dạy</h2>
+          <p className="font-body-md text-body-md text-on-surface-variant">Xem thời gian rảnh và lịch dạy đã duyệt theo tuần hoặc tháng.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex p-1 bg-surface-container-low rounded-xl border border-outline-variant/30">
-            <button type="button" onClick={() => setView('week')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'week' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Week</button>
-            <button type="button" onClick={() => setView('month')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'month' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Month</button>
+            <button type="button" onClick={() => setView('week')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'week' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Tuần</button>
+            <button type="button" onClick={() => setView('month')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'month' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Tháng</button>
           </div>
-          <button onClick={goToday} className="h-10 px-4 border border-outline-variant rounded-xl text-on-surface-variant font-label-md hover:bg-surface-container transition-colors">Today</button>
+          <button onClick={goToday} className="h-10 px-4 border border-outline-variant rounded-xl text-on-surface-variant font-label-md hover:bg-surface-container transition-colors">Hôm nay</button>
           <button onClick={goPrev} className="w-10 h-10 border border-outline-variant rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"><span className="material-symbols-outlined text-[18px]">chevron_left</span></button>
           <button onClick={goNext} className="w-10 h-10 border border-outline-variant rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"><span className="material-symbols-outlined text-[18px]">chevron_right</span></button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ScheduleSummaryCard icon="event_available" label="Available Slots" value={totalAvailable} />
-        <ScheduleSummaryCard icon="school" label="Approved Classes" value={totalClasses} />
-        <ScheduleSummaryCard icon="calendar_month" label={view === 'week' ? 'Current Week' : 'Current Month'} value={view === 'week' ? `${formatShortDate(weekDates[0])} - ${formatShortDate(weekDates[6])}` : formatMonthTitle(cursor)} />
+        <ScheduleSummaryCard icon="event_available" label="LỊCH TRỐNG" value={totalAvailable} />
+        <ScheduleSummaryCard icon="school" label="LỚP ĐÃ DUYỆT" value={totalClasses} />
+        <ScheduleSummaryCard icon="calendar_month" label={view === 'week' ? 'TUẦN HIỆN TẠI' : 'THÁNG HIỆN TẠI'} value={view === 'week' ? `${formatShortDate(weekDates[0])} - ${formatShortDate(weekDates[6])}` : formatMonthTitle(cursor)} />
       </div>
 
       {error && <p className="text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
 
       <div className="bg-white/80 backdrop-blur-md border border-outline-variant/20 shadow-sm rounded-2xl overflow-hidden">
         {loading ? (
-          <div className="min-h-[320px] flex items-center justify-center text-on-surface-variant">Loading schedule...</div>
+          <div className="min-h-[320px] flex items-center justify-center text-on-surface-variant">Đang tải lịch trình...</div>
         ) : view === 'week' ? (
           <div className="border-t border-outline-variant/20 relative">
             <TimeGridWeekView weekDates={weekDates} eventsForDate={eventsForDate} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />
@@ -2066,7 +2073,7 @@ function ScheduleMonthCell({ date, events, isCurrentMonth, onEventClick, session
             )}
           </div>
         ))}
-        {events.length > 3 && <p className="text-[10px] text-outline">+{events.length - 3} more</p>}
+        {events.length > 3 && <p className="text-[10px] text-outline">+{events.length - 3} lớp khác</p>}
       </div>
     </div>
   )
