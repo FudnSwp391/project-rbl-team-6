@@ -8241,6 +8241,66 @@ app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
 });
 
 // ══ Thanh toán giỏ hàng bằng VÍ (trừ số dư + đăng ký nhiều khóa) ══════════
+// ═══════════════════════════════════════════════════════════════════════════
+// WALLET LEDGER (Batch 17) — set transaction-local context so the wallets
+// trigger records meaningful reason codes. MUST be called on the same `client`
+// inside an active transaction (set_config is_local=true => auto-cleared on
+// COMMIT/ROLLBACK, never leaks across requests). Safe to call multiple times.
+// ═══════════════════════════════════════════════════════════════════════════
+async function setLedgerContext(client, context) {
+  await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
+// commission_logs is append-only; wallet_ledger remains the low-level audit.
+// ═══════════════════════════════════════════════════════════════════════════
+const PLATFORM_COMMISSION_RATE = 0.10;
+const COMMISSION_POLICY_VERSION = "COMMISSION_POLICY_V1";
+
+function calculateCommissionSplit(grossAmount, rate = PLATFORM_COMMISSION_RATE) {
+  const gross = Math.max(0, Math.round(Number(grossAmount || 0)));
+  const commissionAmount = gross - Math.floor(gross * (1 - rate));
+  const tutorAmount = gross - commissionAmount;
+  return { grossAmount: gross, commissionRate: rate, commissionAmount, tutorAmount };
+}
+
+// Idempotent commission log insert. Returns new row id or null on duplicate.
+// Must be called inside caller's transaction so rollback covers the log too.
+async function createCommissionLog(client, log) {
+  try {
+    const r = await client.query(
+      `INSERT INTO commission_logs
+         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
+          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
+          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING id`,
+      [
+        log.source_type, log.source_id,
+        log.booking_id   || null,
+        log.course_id    || null,
+        log.dispute_id   || null,
+        log.transaction_id || null,
+        log.student_id   || null,
+        log.tutor_id     || null,
+        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
+        log.commission_amount, log.tutor_amount,
+        log.event_type, log.reason_code,
+        log.policy_version || COMMISSION_POLICY_VERSION,
+        log.decision_by || 'system',
+        log.actor_id    || null,
+        log.idempotency_key || null,
+        JSON.stringify(log.metadata || {}),
+      ]
+    );
+    return r.rows.length ? r.rows[0].id : null;
+  } catch (e) {
+    throw e;
+  }
+}
+
 app.post("/api/cart/checkout", verifyToken, async (req, res) => {
   const studentId = req.user.userId;
   const { items, couponCode, source } = req.body || {};
@@ -10647,65 +10707,8 @@ async function createRefundLog(client, log) {
   return r.rows.length ? r.rows[0].id : null;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// WALLET LEDGER (Batch 17) — set transaction-local context so the wallets
-// trigger records meaningful reason codes. MUST be called on the same `client`
-// inside an active transaction (set_config is_local=true => auto-cleared on
-// COMMIT/ROLLBACK, never leaks across requests). Safe to call multiple times.
-// ═══════════════════════════════════════════════════════════════════════════
-async function setLedgerContext(client, context) {
-  await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
-// commission_logs is append-only; wallet_ledger remains the low-level audit.
-// ═══════════════════════════════════════════════════════════════════════════
-const PLATFORM_COMMISSION_RATE = 0.10;
-const COMMISSION_POLICY_VERSION = "COMMISSION_POLICY_V1";
-
-function calculateCommissionSplit(grossAmount, rate = PLATFORM_COMMISSION_RATE) {
-  const gross = Math.max(0, Math.round(Number(grossAmount || 0)));
-  const commissionAmount = gross - Math.floor(gross * (1 - rate));
-  const tutorAmount = gross - commissionAmount;
-  return { grossAmount: gross, commissionRate: rate, commissionAmount, tutorAmount };
-}
-
-// Idempotent commission log insert. Returns new row id or null on duplicate.
-// Must be called inside caller's transaction so rollback covers the log too.
-async function createCommissionLog(client, log) {
-  try {
-    const r = await client.query(
-      `INSERT INTO commission_logs
-         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
-          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
-          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
-       ON CONFLICT (idempotency_key) DO NOTHING
-       RETURNING id`,
-      [
-        log.source_type, log.source_id,
-        log.booking_id   || null,
-        log.course_id    || null,
-        log.dispute_id   || null,
-        log.transaction_id || null,
-        log.student_id   || null,
-        log.tutor_id     || null,
-        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
-        log.commission_amount, log.tutor_amount,
-        log.event_type, log.reason_code,
-        log.policy_version || COMMISSION_POLICY_VERSION,
-        log.decision_by || 'system',
-        log.actor_id    || null,
-        log.idempotency_key || null,
-        JSON.stringify(log.metadata || {}),
-      ]
-    );
-    return r.rows.length ? r.rows[0].id : null;
-  } catch (e) {
-    throw e;
-  }
-}
+// (setLedgerContext + commission helpers đã chuyển lên top-level — phía trên
+// route /api/cart/checkout — để route ngoài startServer() cũng gọi được.)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WITHDRAWAL POLICY V1 (Batch 19) — tutor manual payout. Money is HELD when a
