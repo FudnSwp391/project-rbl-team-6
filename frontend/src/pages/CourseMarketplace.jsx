@@ -205,15 +205,15 @@ export default function CourseMarketplace() {
           </div>
         </div>
         <div className="p-5 flex flex-col flex-1">
-          <h4 className="text-title-lg text-primary text-base mb-2 line-clamp-1">{course.title}</h4>
-          <p className="text-body-md text-on-surface-variant text-xs line-clamp-2 mb-4">
+          <h4 className="text-primary font-bold text-[15px] leading-snug mb-2 line-clamp-2">{course.title}</h4>
+          <p className="text-on-surface-variant text-xs leading-relaxed line-clamp-2 mb-4">
             {course.short_description || course.description || 'Khóa học được thiết kế chuyên nghiệp giúp bạn đạt được mục tiêu học tập.'}
           </p>
           <div className="flex items-center gap-3 mb-4 mt-auto">
             {course.tutor_picture || course.tutorAvatar ? (
-              <img src={course.tutor_picture || course.tutorAvatar} alt={tutorName} className="w-8 h-8 rounded-full border border-outline-variant/30 object-cover" />
+              <img src={course.tutor_picture || course.tutorAvatar} alt={tutorName} className="w-8 h-8 rounded-full border border-outline-variant/30 object-cover shrink-0" />
             ) : (
-              <div className="w-8 h-8 rounded-full avatar-gradient text-primary flex items-center justify-center font-bold border border-outline-variant/30 text-xs">
+              <div className="w-8 h-8 rounded-full avatar-gradient text-primary flex items-center justify-center font-bold border border-outline-variant/30 text-xs shrink-0">
                 {getTutorInitials(tutorName)}
               </div>
             )}
@@ -229,16 +229,20 @@ export default function CourseMarketplace() {
               </div>
             </div>
           </div>
-          <div className="flex items-center justify-between pt-4 border-t border-outline-variant/30 gap-2">
-            <div className="text-primary font-bold text-base whitespace-nowrap">
-              {formatMoney(course.price || course.pricePerSession)}<span className="text-[10px] text-on-surface-variant font-normal">/buổi</span>
+
+          {/* Footer: giá trên — nút dưới, không bao giờ bị chật */}
+          <div className="pt-3 border-t border-outline-variant/30 space-y-2.5 mt-auto">
+            {/* Giá — chiếm cả hàng */}
+            <div className="text-primary font-bold text-[15px]">
+              {formatMoney(course.price || course.pricePerSession)}
+              <span className="text-[10px] text-on-surface-variant font-normal ml-1">/buổi</span>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            {/* Nút hành động — chia đều chiều rộng */}
+            <div className="flex items-center gap-2">
               {inCart ? (
                 <button
                   onClick={(e) => { e.stopPropagation(); window.location.hash = '/cart'; }}
-                  className="h-8 px-2.5 rounded-lg border border-[#16a34a]/40 bg-[#f0fdf4] text-[#16a34a] text-[11px] font-bold flex items-center gap-1 hover:bg-[#dcfce7] transition-all"
-                  title="Đã trong giỏ — bấm để xem giỏ hàng"
+                  className="flex-1 h-9 rounded-lg border border-[#16a34a]/50 bg-[#f0fdf4] text-[#16a34a] text-[11px] font-bold flex items-center justify-center gap-1.5 hover:bg-[#dcfce7] transition-all"
                 >
                   <span className="material-symbols-outlined text-[15px]">check_circle</span>
                   Trong giỏ
@@ -246,14 +250,19 @@ export default function CourseMarketplace() {
               ) : (
                 <button
                   onClick={(e) => addToCart(course, e)}
-                  className="h-8 w-8 rounded-lg border border-primary/40 text-primary flex items-center justify-center hover:bg-primary hover:text-on-primary transition-all"
+                  className="h-9 w-9 shrink-0 rounded-lg border border-primary/40 text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-all"
                   title="Thêm vào giỏ hàng"
                   aria-label="Thêm vào giỏ hàng"
                 >
-                  <span className="material-symbols-outlined text-[17px]">add_shopping_cart</span>
+                  <span className="material-symbols-outlined text-[18px]">add_shopping_cart</span>
                 </button>
               )}
-              <button className="bg-primary text-on-primary px-3 py-1.5 rounded-lg text-[11px] font-bold hover:brightness-110 transition-all whitespace-nowrap">Xem chi tiết</button>
+              <button
+                className="flex-1 h-9 bg-primary text-white rounded-lg text-[11px] font-bold hover:brightness-110 active:scale-95 transition-all"
+                onClick={(e) => { e.stopPropagation(); window.location.hash = `/course/${course.id}`; }}
+              >
+                Xem chi tiết
+              </button>
             </div>
           </div>
         </div>
