@@ -22,7 +22,7 @@ const TutorFeedbackModal = ({ isOpen, onClose, lessonData, onSubmit }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm transition-opacity">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[95vh]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
           <div>
@@ -39,7 +39,7 @@ const TutorFeedbackModal = ({ isOpen, onClose, lessonData, onSubmit }) => {
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-6">
+        <div className="px-6 py-5 space-y-6 flex-1 overflow-y-auto">
           {/* Mức độ tập trung */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
