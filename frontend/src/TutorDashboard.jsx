@@ -3027,25 +3027,25 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         <div className="space-y-5">
           {/* Instant Learning Settings */}
           <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-sm rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-5 gap-3">
               <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
-                <span className="material-symbols-outlined text-amber-500">bolt</span>
+                <span className="material-symbols-outlined text-amber-500 text-[24px]">bolt</span>
                 Cài đặt Học Ngay (Instant Learning)
               </h4>
               {!instantEdit ? (
                 <button onClick={() => { setInstantEdit(true); setInstantForm({ ...instantForm, price: profile?.instant_price || '', duration: profile?.instant_duration || 30 }); }}
-                  className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[15px]">edit</span>Chỉnh sửa
+                  className="h-9 px-4 border border-outline-variant text-on-surface-variant font-label-md text-[13px] rounded-xl hover:bg-surface-container transition-colors flex items-center gap-1.5 flex-shrink-0 bg-white shadow-sm font-bold">
+                  <span className="material-symbols-outlined text-[16px]">edit</span>Chỉnh sửa
                 </button>
               ) : (
-                <div className="flex gap-1">
+                <div className="flex gap-2 flex-shrink-0">
                   <button onClick={() => { setInstantEdit(false); setInstantForm({ ...instantForm, price: profile?.instant_price || '', duration: profile?.instant_duration || 30 }); }}
-                    className="h-8 px-2 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors">
+                    className="h-9 px-4 border border-outline-variant text-on-surface-variant font-label-md text-[13px] rounded-xl hover:bg-surface-container transition-colors font-bold bg-white shadow-sm">
                     Hủy
                   </button>
                   <button onClick={handleInstantSave} disabled={instantSaving}
-                    className="h-8 px-3 bg-primary text-on-primary font-label-sm text-[12px] rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50">
-                    {instantSaving ? '...' : 'Lưu'}
+                    className="h-9 px-5 bg-primary text-on-primary font-label-md text-[13px] rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 font-bold shadow-sm">
+                    {instantSaving ? 'Đang lưu...' : 'Lưu lại'}
                   </button>
                 </div>
               )}
@@ -3054,24 +3054,24 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             {instantEdit ? (
               <div className="space-y-5">
                 {/* Row: Mức phí + Đơn vị thời gian */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[13px] font-semibold text-on-surface">Mức phí Học Ngay</label>
+                    <label className="text-[13px] font-bold text-on-surface">Mức phí Học Ngay</label>
                     <div className="relative">
                       <input
                         type="number"
-                        className="h-10 pl-3 pr-12 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary w-full transition-shadow"
+                        className="h-11 pl-4 pr-12 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary w-full transition-shadow"
                         value={instantForm.price}
                         onChange={(e) => setInstantForm({ ...instantForm, price: e.target.value })}
                         placeholder="VD: 200000"
                       />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-on-surface-variant font-medium select-none">VNĐ</span>
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[13px] text-on-surface-variant font-bold select-none">VNĐ</span>
                     </div>
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[13px] font-semibold text-on-surface">Đơn vị thời gian</label>
+                    <label className="text-[13px] font-bold text-on-surface">Đơn vị thời gian</label>
                     <select
-                      className="h-10 px-3 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-white transition-shadow cursor-pointer"
+                      className="h-11 px-4 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-white transition-shadow cursor-pointer"
                       value={instantForm.duration}
                       onChange={(e) => setInstantForm({ ...instantForm, duration: parseInt(e.target.value) })}
                     >
@@ -3085,57 +3085,57 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                 </div>
 
                 {/* Preview */}
-                <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container/40 p-4">
-                  <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider mb-2">Học sinh sẽ nhìn thấy</p>
-                  <div className="flex items-center justify-center gap-2 py-2">
-                    <span className="material-symbols-outlined text-amber-500">bolt</span>
-                    <span className="text-[18px] font-bold text-amber-600">
-                      {instantForm.price ? Number(instantForm.price).toLocaleString() : '—'} VNĐ
+                <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container/40 p-5 flex flex-col items-center">
+                  <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-2">Học sinh sẽ nhìn thấy</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="material-symbols-outlined text-amber-500 text-[24px]">bolt</span>
+                    <span className="text-[20px] font-black text-amber-600">
+                      {instantForm.price ? Number(instantForm.price).toLocaleString('vi-VN') : '—'} VNĐ
                     </span>
-                    <span className="text-[14px] text-on-surface-variant font-medium">
+                    <span className="text-[15px] text-on-surface-variant font-bold">
                       / {instantForm.duration} phút
                     </span>
                   </div>
                 </div>
 
                 {/* Tips */}
-                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
-                  <p className="text-[12px] font-bold text-blue-700 flex items-center gap-1.5 mb-2">
-                    <span className="material-symbols-outlined text-[15px]">lightbulb</span>
+                <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+                  <p className="text-[13px] font-bold text-blue-700 flex items-center gap-1.5 mb-2">
+                    <span className="material-symbols-outlined text-[18px]">lightbulb</span>
                     Lưu ý
                   </p>
-                  <ul className="space-y-1 text-[12px] text-blue-700/80 leading-relaxed">
+                  <ul className="space-y-1.5 text-[13px] text-blue-800/80 leading-relaxed pl-1">
                     <li>• Học viên chỉ có thể gửi yêu cầu khi bạn <strong>Online</strong>.</li>
                     <li>• Bạn có <strong>60 giây</strong> để phản hồi yêu cầu.</li>
-                    <li>• Khi chấp nhận, trạng thái sẽ tự chuyển sang <strong>Busy</strong>.</li>
-                    <li>• Sau khi kết thúc, hệ thống tự chuyển về <strong>Online</strong> (hoặc Offline nếu bạn đã tắt nhận học).</li>
+                    <li>• Khi chấp nhận, trạng thái sẽ tự chuyển sang <strong>Đang Bận (Busy)</strong>.</li>
+                    <li>• Sau khi kết thúc, hệ thống tự chuyển về <strong>Online</strong>.</li>
                   </ul>
                 </div>
               </div>
             ) : (
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-[13px] items-start mt-2">
-                <div>
-                  <p className="font-semibold text-on-surface-variant mb-1">Giá Học Ngay</p>
-                  <p className="font-medium text-on-surface text-[15px] bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg inline-block border border-amber-200">
-                    {profile?.instant_price ? `${Number(profile.instant_price).toLocaleString()} VNĐ` : <span className="italic text-amber-600/70">Chưa cấu hình</span>}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                <div className="rounded-xl border border-outline-variant/40 bg-white/60 p-4 shadow-sm hover:bg-white transition-colors">
+                  <p className="text-[12px] font-bold text-on-surface-variant mb-2">Giá Học Ngay</p>
+                  <p className="font-bold text-amber-600 text-[16px] bg-amber-50 px-3 py-1.5 rounded-lg inline-block border border-amber-200 shadow-sm">
+                    {profile?.instant_price ? `${Number(profile.instant_price).toLocaleString('vi-VN')} VNĐ` : <span className="italic text-amber-600/70 font-medium text-[14px]">Chưa cấu hình</span>}
                   </p>
                 </div>
-                <div className="flex flex-col items-start gap-2">
-                  <p className="font-semibold text-on-surface-variant mb-1">Trạng thái Nhận Yêu Cầu</p>
-                  <div className="flex items-center gap-3">
+                <div className="rounded-xl border border-outline-variant/40 bg-white/60 p-4 shadow-sm hover:bg-white transition-colors flex flex-col gap-2">
+                  <p className="text-[12px] font-bold text-on-surface-variant">Trạng thái Nhận Yêu Cầu</p>
+                  <div className="flex items-center gap-3 mt-1">
                     <button
                       onClick={() => handleToggleOnlineStatus(profile?.availability_status !== 'Online')}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${profile?.availability_status === 'Online' ? 'bg-green-500' : 'bg-gray-300'}`}
+                      className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 shadow-inner ${profile?.availability_status === 'Online' ? 'bg-green-500' : 'bg-gray-300'}`}
                     >
-                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${profile?.availability_status === 'Online' ? 'translate-x-6' : 'translate-x-1'}`} />
+                      <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${profile?.availability_status === 'Online' ? 'translate-x-6' : 'translate-x-1'}`} />
                     </button>
-                    <span className={`font-semibold text-[14px] flex items-center gap-1 ${profile?.availability_status === 'Online' ? 'text-green-600' : profile?.availability_status === 'Busy' ? 'text-amber-600' : 'text-outline'}`}>
+                    <span className={`font-bold text-[14px] flex items-center gap-1 ${profile?.availability_status === 'Online' ? 'text-green-600' : profile?.availability_status === 'Busy' ? 'text-amber-600' : 'text-outline'}`}>
                       {profile?.availability_status === 'Online' ? 'Đang Online' : profile?.availability_status === 'Busy' ? 'Đang Bận (Dạy)' : 'Offline'}
                     </span>
                   </div>
-                  <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                    Khi bật, học viên có thể gửi yêu cầu học ngay cho bạn bất cứ lúc nào. Hệ thống sẽ duy trì trạng thái này cho tới khi bạn tắt.
+                  <p className="text-[11px] text-on-surface-variant leading-relaxed mt-1">
+                    Học viên có thể gửi yêu cầu học ngay cho bạn bất cứ lúc nào khi trạng thái này được bật.
                   </p>
                 </div>
               </div>
