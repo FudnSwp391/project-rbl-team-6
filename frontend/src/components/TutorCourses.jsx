@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { deleteTutorCourse, getTutorCourses, saveTutorCourse } from '../services/api'
 import { getSignedStorageUrl, uploadCourseThumbnail, uploadCourseVideo } from '../services/upload'
+import CourseEditor from './CourseEditor'
 
 const SUBJECTS = ['Toán học', 'Tiếng Anh', 'Lập trình', 'Ngữ văn', 'Khoa học', 'Nghệ thuật']
 const LEVELS = ['Mất gốc', 'Cơ bản', 'Nâng cao', 'Luyện thi']
@@ -119,6 +120,7 @@ export default function TutorCoursesTab({ user }) {
   const [validation, setValidation] = useState({})
   const [uploadingKey, setUploadingKey] = useState('')
   const [viewMode, setViewMode] = useState('list')
+  const [editingCourse, setEditingCourse] = useState(null)
 
   const loadCourses = async () => {
     setLoading(true)
@@ -235,12 +237,8 @@ export default function TutorCoursesTab({ user }) {
   }
 
   const editCourse = (course) => {
-    setForm(toForm(course))
-    setStepIndex(0)
-    setEditing(true)
-    setValidation({})
-    setError('')
-    setViewMode('form')
+    setEditingCourse(course)
+    setViewMode('edit')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -313,6 +311,20 @@ export default function TutorCoursesTab({ user }) {
   const goNext = () => {
     if (!validateStep(stepIndex)) return
     setStepIndex((current) => Math.min(current + 1, steps.length - 1))
+  }
+
+  if (viewMode === 'edit' && editingCourse) {
+    return (
+      <CourseEditor
+        course={editingCourse}
+        user={user}
+        onBack={() => {
+          setEditingCourse(null)
+          setViewMode('list')
+        }}
+        onSaved={loadCourses}
+      />
+    )
   }
 
   if (viewMode === 'list') {

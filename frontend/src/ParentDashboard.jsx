@@ -9,6 +9,7 @@ import { useAuth } from './AuthContext'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
+import MessageIcon from './components/MessageIcon'
 import ParentTimeline from './components/MicroFeedback/ParentTimeline'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
@@ -69,6 +70,15 @@ function TypeBadge({ type }) {
   )
 }
 
+
+function formatPrice(price) {
+  if (!price) return '0đ';
+  const val = Number(price);
+  if (isNaN(val)) return price;
+  const finalPrice = val < 1000 ? val * 1000 : val;
+  // Intl returns '199.000 ₫', we remove '₫' and add 'đ/h'
+  return new Intl.NumberFormat('vi-VN').format(finalPrice) + 'đ/h';
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  MAIN COMPONENT
@@ -186,6 +196,7 @@ export default function ParentDashboard() {
           </div>
 
           <WalletWidget token={token} />
+          <MessageIcon token={token} />
           <NotificationDropdown token={token} />
         </header>
 
@@ -288,6 +299,37 @@ function OverviewSection({ token }) {
         <StatCard icon="school" label="Gia sư" value={stats.total_tutors ?? 0} color="orange" />
       </div>
 
+      {/* Upcoming Classes */}
+      {data?.upcoming_classes?.length > 0 && (
+        <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden mb-lg">
+          <div className="p-lg border-b border-outline-variant/10 flex items-center gap-sm">
+            <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>calendar_month</span>
+            <h3 className="font-headline-sm text-headline-sm text-on-surface">Lịch học sắp tới</h3>
+          </div>
+          <div className="divide-y divide-outline-variant/10">
+            {data.upcoming_classes.map(c => (
+              <div key={c.id} className="p-md flex items-center gap-md hover:bg-surface-container-low transition-colors">
+                <div className="w-12 h-12 rounded-xl bg-primary/10 text-primary flex flex-col items-center justify-center shrink-0">
+                  <span className="text-xs font-bold">{new Date(c.scheduled_at).getDate()}</span>
+                  <span className="text-[10px] uppercase">Th {new Date(c.scheduled_at).getMonth() + 1}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-label-md text-label-md text-on-surface truncate">
+                    {c.subject} • {fmtTime(c.scheduled_at)}
+                  </p>
+                  <p className="font-label-sm text-label-sm text-on-surface-variant truncate">
+                    Con: {c.student_name} • Gia sư: {c.tutor_name}
+                  </p>
+                </div>
+                <span className="text-xs font-medium bg-green-100 text-green-700 px-2 py-0.5 rounded-full whitespace-nowrap">
+                  Sắp diễn ra
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-lg">
         {/* Recent quiz activity */}
         <div className="lg:col-span-2 bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
@@ -322,7 +364,9 @@ function OverviewSection({ token }) {
         <div className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden">
           <div className="p-lg border-b border-outline-variant/10 flex items-center gap-sm">
             <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>school</span>
-            <h3 className="font-headline-sm text-headline-sm text-on-surface">Gia sư</h3>
+            <h3 className="font-headline-sm text-headline-sm text-on-surface">
+              {data?.available_tutors?.[0]?.tutor_type === 'suggested' ? 'Gia sư gợi ý' : 'Gia sư của con'}
+            </h3>
           </div>
           {data?.available_tutors?.length > 0 ? (
             <div className="p-md flex flex-col gap-sm">
@@ -330,21 +374,26 @@ function OverviewSection({ token }) {
                 <div key={t.id} className="flex items-center gap-sm p-sm rounded-xl hover:bg-surface-container-low transition-colors">
                   <Avatar src={t.picture} name={t.full_name} size={10} />
                   <div className="flex-1 min-w-0">
-                    <p className="font-label-md text-label-md text-on-surface truncate">{t.full_name}</p>
+                    <p className="font-label-md text-label-md text-on-surface flex items-center gap-1 truncate">
+                      {t.full_name}
+                      {t.tutor_type === 'suggested' && (
+                        <span className="text-[10px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-bold uppercase shrink-0">Gợi ý</span>
+                      )}
+                    </p>
                     <p className="font-label-sm text-label-sm text-on-surface-variant truncate">
                       {t.headline || (t.subjects ? `Dạy: ${t.subjects}` : 'Gia sư')}
                     </p>
                   </div>
                   {t.hourly_rate > 0 && (
                     <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full whitespace-nowrap">
-                      {t.hourly_rate.toLocaleString('vi-VN')}đ/h
+                      {formatPrice(t.hourly_rate)}
                     </span>
                   )}
                 </div>
               ))}
             </div>
           ) : (
-            <EmptyState icon="school" text="Chưa có gia sư nào được duyệt" />
+            <EmptyState icon="school" text="Chưa có gia sư nào" />
           )}
         </div>
       </div>
@@ -1381,7 +1430,7 @@ function TutorsSection({ token, onOpenMessages }) {
                   )}
                   {t.hourly_rate > 0 ? (
                     <span className="font-label-md text-label-md text-primary font-semibold ml-auto">
-                      {t.hourly_rate.toLocaleString('vi-VN')}đ/giờ
+                      {formatPrice(t.hourly_rate)}
                     </span>
                   ) : (
                     <span className="font-label-sm text-label-sm text-on-surface-variant ml-auto">Liên hệ để biết giá</span>

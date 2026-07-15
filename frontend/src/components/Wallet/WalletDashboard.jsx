@@ -1,28 +1,44 @@
 import React, { useState, useEffect } from 'react';
-import { getWalletOverview, getWalletTransactions } from '../../services/api';
+import { getWalletOverview, getWalletTransactions, getWithdrawRequests, confirmWithdrawRequest } from '../../services/api';
 
 export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
   const [wallet, setWallet] = useState(null);
   const [stats, setStats] = useState({ totalDeposited: 0, totalWithdrawn: 0, pendingWithdraw: 0 });
   const [transactions, setTransactions] = useState([]);
+  const [withdrawRequests, setWithdrawRequests] = useState([]);
   const [loading, setLoading] = useState(true);
-  
-  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [confirmingId, setConfirmingId] = useState(null);
 
   const fetchWalletData = async () => {
     setLoading(true);
     try {
-      const [overviewRes, txRes] = await Promise.all([
+      const [overviewRes, txRes, withdrawRes] = await Promise.all([
         getWalletOverview(),
-        getWalletTransactions()
+        getWalletTransactions(),
+        getWithdrawRequests()
       ]);
       setWallet(overviewRes.wallet);
       setStats(overviewRes.stats);
       setTransactions(txRes.transactions || []);
+      setWithdrawRequests(withdrawRes.requests || []);
     } catch (err) {
       console.error("Error fetching wallet data", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleConfirmWithdraw = async (id) => {
+    if (!window.confirm("Bạn xác nhận đã nhận được tiền vào tài khoản?")) return;
+    setConfirmingId(id);
+    try {
+      await confirmWithdrawRequest(id);
+      alert("Xác nhận thành công!");
+      fetchWalletData();
+    } catch (err) {
+      alert("Lỗi: " + (err.message || "Không thể xác nhận"));
+    } finally {
+      setConfirmingId(null);
     }
   };
 
@@ -88,6 +104,18 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
         <p className="text-on-surface-variant">Quản lý thu nhập, lịch sử giao dịch và rút tiền một cách thuận tiện.</p>
       </div>
 
+      {/* Payout policy banner */}
+      <div className="mb-6 flex items-start gap-3 bg-green-50 border border-green-200 rounded-2xl px-5 py-4">
+        <span className="material-symbols-outlined text-green-600 text-[22px] mt-0.5" style={{fontVariationSettings:"'FILL' 1"}}>bolt</span>
+        <div>
+          <p className="text-sm font-bold text-green-800">Giải ngân tức thì sau mỗi buổi dạy</p>
+          <p className="text-xs text-green-700 mt-0.5">
+            Sau khi bạn xác nhận hoàn thành buổi học (mark "Đã dạy"), học phí sẽ được chuyển vào ví của bạn <span className="font-bold">ngay lập tức</span> — không cần chờ 24h.
+            Nền tảng giữ lại 10% hoa hồng, bạn nhận 90%.
+          </p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-12 gap-6">
         {/* Balance Highlight Card */}
         <div className="col-span-12 lg:col-span-8 bg-gradient-to-br from-primary to-primary-container p-8 rounded-[2rem] text-on-primary shadow-xl flex flex-col md:flex-row items-center justify-between relative overflow-hidden group">
@@ -131,7 +159,7 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
         </div>
 
         {/* Stat Cards Row */}
-        <div className="col-span-12 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="col-span-12 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-outline-variant shadow-sm flex items-center space-x-4">
             <div className="p-3 bg-red-50 rounded-xl">
               <span className="material-symbols-outlined text-red-600">arrow_upward</span>
@@ -146,8 +174,17 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
               <span className="material-symbols-outlined text-orange-600">hourglass_empty</span>
             </div>
             <div>
-              <p className="text-sm font-medium text-on-surface-variant">Tiền đang chờ rút</p>
+              <p className="text-sm font-medium text-on-surface-variant">Đang chờ duyệt rút</p>
               <p className="text-xl font-bold text-on-surface">{stats.pendingWithdraw.toLocaleString()}đ</p>
+            </div>
+          </div>
+          <div className="bg-white p-6 rounded-2xl border border-outline-variant shadow-sm flex items-center space-x-4">
+            <div className="p-3 bg-blue-50 rounded-xl">
+              <span className="material-symbols-outlined text-blue-600">lock_clock</span>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-on-surface-variant">Tiền đang tạm giữ</p>
+              <p className="text-xl font-bold text-on-surface">{Number(wallet?.held_balance || 0).toLocaleString()}đ</p>
             </div>
           </div>
         </div>
@@ -211,8 +248,69 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
           </div>
         </div>
 
+        {/* Withdraw Requests */}
+        {withdrawRequests.length > 0 && (
+          <div className="col-span-12 bg-white border border-outline-variant rounded-[2rem] overflow-hidden shadow-sm">
+            <div className="p-8 border-b border-outline-variant flex justify-between items-center bg-surface-container-lowest">
+              <h3 className="font-headline-lg text-headline-lg text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">account_balance_wallet</span>
+                Yêu cầu rút tiền
+              </h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-surface-container-low text-on-surface-variant font-label-caps text-label-caps">
+                    <th className="px-8 py-4">Ngày yêu cầu</th>
+                    <th className="px-8 py-4">Số tiền</th>
+                    <th className="px-8 py-4">Phương thức</th>
+                    <th className="px-8 py-4">Trạng thái</th>
+                    <th className="px-8 py-4">Hành động</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant">
+                  {withdrawRequests.map(req => {
+                    const { date, time } = formatDate(req.created_at);
+                    return (
+                      <tr key={req.id} className="hover:bg-surface-container transition-colors group">
+                        <td className="px-8 py-5">
+                          <div className="text-sm font-semibold">{date}</div>
+                          <div className="text-xs text-on-surface-variant">{time}</div>
+                        </td>
+                        <td className="px-8 py-5">
+                          <span className="font-bold text-on-surface">{Number(req.amount).toLocaleString('vi-VN')}đ</span>
+                        </td>
+                        <td className="px-8 py-5">
+                          <span className="text-sm">{req.method}</span>
+                          {req.admin_note && <div className="text-xs text-on-surface-variant mt-1">Ghi chú: {req.admin_note}</div>}
+                        </td>
+                        <td className="px-8 py-5">
+                          {req.status === 'APPROVED' ? (
+                            <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">Chờ xác nhận nhận tiền</span>
+                          ) : getStatusBadge(req.status)}
+                        </td>
+                        <td className="px-8 py-5">
+                          {req.status === 'APPROVED' && (
+                            <button 
+                              onClick={() => handleConfirmWithdraw(req.id)}
+                              disabled={confirmingId === req.id}
+                              className="px-4 py-2 bg-primary text-white text-xs font-bold rounded-lg shadow-sm hover:bg-primary/90 transition-colors disabled:opacity-50"
+                            >
+                              {confirmingId === req.id ? 'Đang xử lý...' : 'Xác nhận đã nhận tiền'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* Transaction History Table */}
-        <div className="col-span-12 bg-white border border-outline-variant rounded-[2rem] overflow-hidden shadow-sm">
+        <div className="col-span-12 bg-white border border-outline-variant rounded-[2rem] overflow-hidden shadow-sm mt-6">
           <div className="p-8 border-b border-outline-variant flex justify-between items-center bg-surface-container-lowest">
             <h3 className="font-headline-lg text-headline-lg text-on-surface">Lịch sử giao dịch</h3>
             <button className="text-primary text-sm font-bold flex items-center hover:underline">

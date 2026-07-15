@@ -422,10 +422,30 @@ function CreateExamModal({ onClose, onSuccess }) {
     duration_minutes: 60,
     total_score: 100,
     status: 'Draft',
-    questions: []
+    questions: [],
+    assigned_students: []
   });
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [myStudents, setMyStudents] = useState([]);
+  
+  useEffect(() => {
+    const fetchStudents = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/tutor/students`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setMyStudents(Array.isArray(data) ? data : []);
+        }
+      } catch (err) {
+        console.error("Fetch students error", err);
+      }
+    };
+    fetchStudents();
+  }, []);
 
   const handleAddMCQ = () => {
     setFormData(prev => ({
@@ -474,7 +494,27 @@ function CreateExamModal({ onClose, onSuccess }) {
     }
     setLoading(true);
     try {
-      await createTutorExam({ ...formData, status });
+      const payload = {
+        title: formData.title,
+        subject: formData.course || 'General',
+        grade: 12,
+        duration_minutes: formData.duration_minutes,
+        description: formData.course,
+        assigned_students: formData.assigned_students,
+        status: status,
+        questions: formData.questions.map(q => ({
+          question_text: q.question_text,
+          question_type: q.question_type === 'MCQ' ? 'multiple_choice' : 'essay',
+          option_a: q.options && q.options[0] ? q.options[0].text : '',
+          option_b: q.options && q.options[1] ? q.options[1].text : '',
+          option_c: q.options && q.options[2] ? q.options[2].text : '',
+          option_d: q.options && q.options[3] ? q.options[3].text : '',
+          correct_answer: q.correct_answer || 'A',
+          explanation: q.grading_note || '',
+          suggested_answer: q.grading_note || ''
+        }))
+      };
+      await createTutorExam(payload);
       onSuccess();
     } catch (err) {
       setFormError("Error saving exam: " + err.message);
@@ -538,6 +578,37 @@ function CreateExamModal({ onClose, onSuccess }) {
                 className="w-full rounded-lg border-outline-variant focus:ring-primary focus:border-primary outline-none py-2 px-3" 
               />
             </div>
+          </div>
+          
+          <div className="space-y-sm">
+            <label className="text-label-md font-bold">Assign to Students (Optional)</label>
+            <div className="p-3 border border-outline-variant rounded-lg bg-white max-h-40 overflow-y-auto space-y-2">
+              {myStudents.length === 0 ? (
+                <p className="text-sm text-secondary italic">No students available.</p>
+              ) : (
+                myStudents.map(student => {
+                  const isChecked = formData.assigned_students.includes(student.studentId);
+                  return (
+                    <label key={student.studentId} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-surface p-1 rounded transition-colors">
+                      <input 
+                        type="checkbox"
+                        className="rounded text-primary focus:ring-primary w-4 h-4"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFormData(prev => ({...prev, assigned_students: [...prev.assigned_students, student.studentId]}));
+                          } else {
+                            setFormData(prev => ({...prev, assigned_students: prev.assigned_students.filter(id => id !== student.studentId)}));
+                          }
+                        }}
+                      />
+                      <span>{student.studentName}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <p className="text-xs text-secondary mt-1">If no student is selected, this exam will be visible to all of your students.</p>
           </div>
 
           <div className="space-y-md mt-xl">
@@ -754,8 +825,9 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
               />
             </div>
           </div>
-          
-          <div className="flex items-center gap-2 mt-4">
+
+
+          <div className="flex items-center justify-between mt-xl mb-sm">
             <input 
               type="checkbox" 
               id="allowLate" 

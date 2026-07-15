@@ -20,6 +20,7 @@ async function request(url, options = {}) {
 
   const response = await fetch(`${API_BASE_URL}${url}`, {
     ...options,
+    cache: options.cache || 'no-store',
     headers
   });
 
@@ -469,15 +470,16 @@ export async function deleteTutorCredential(id) {
  * Cáºp nháºt lá»‹ch dáº¡y (replace toĂ n bá»™).
  * Fallback: lÆ°u vĂ o localStorage.
  */
-export async function updateTutorAvailability(availability) {
+export async function updateTutorAvailability(availability, monthly_availability, slot_duration_mins = 60) {
   try {
     return await request('/api/tutor/availability', {
       method: 'PUT',
-      body: JSON.stringify({ availability }),
+      body: JSON.stringify({ availability, monthly_availability, slot_duration_mins }),
     });
   } catch (error) {
     console.warn(`[API] updateTutorAvailability failed: ${error.message}. Saving locally.`);
     localStorage.setItem('tutor_availability_local', JSON.stringify(availability));
+    localStorage.setItem('tutor_slot_duration_local', String(slot_duration_mins));
     return { message: 'Saved locally.', slots: Object.values(availability).flat().length };
   }
 }
@@ -615,6 +617,13 @@ export async function updateCourseProgress(courseId, lessonId, payload = {}) {
     body: JSON.stringify(payload),
   })
 }
+
+export async function askCourseAI(message, lessonTitle) {
+  return request('/api/course-ai-chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, lessonTitle }),
+  })
+}
 // ── Tutor Assessments APIs ───────────────────────────────────────────────────
 
 export async function getTutorExams() {
@@ -733,6 +742,8 @@ export const getWalletOverview = async () => request('/api/wallet');
 export const getWalletTransactions = async () => request('/api/wallet/transactions');
 export const depositRequest = async (data) => request('/api/wallet/deposit-request', { method: 'POST', body: JSON.stringify(data) });
 export const withdrawRequest = async (data) => request('/api/wallet/withdraw-request', { method: 'POST', body: JSON.stringify(data) });
+export const getWithdrawRequests = async () => request('/api/wallet/withdraw-requests');
+export const confirmWithdrawRequest = async (id) => request(`/api/wallet/withdraw-requests/${id}/confirm`, { method: 'PATCH' });
 export const getAdminDepositRequests = async () => request('/api/admin/wallet/deposit-requests');
 export const getAdminWithdrawRequests = async () => request('/api/admin/wallet/withdraw-requests');
 export const approveDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });

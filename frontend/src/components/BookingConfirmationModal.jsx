@@ -45,6 +45,35 @@ export default function BookingConfirmationModal({
     }
   };
 
+  const translateDay = (day) => {
+    const map = {
+      'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
+      'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ nhật'
+    };
+    return map[day] || day;
+  };
+
+  const summarizeSessions = (sessions) => {
+    if (sessions.length <= 4) return null;
+    const grouped = {};
+    sessions.forEach(s => {
+      let day = '';
+      try {
+        const d = new Date(s.date);
+        day = d.toLocaleDateString('en-US', { weekday: 'long' });
+      } catch {
+        day = 'Unknown';
+      }
+      const key = `${day}-${s.timeSlot}`;
+      if (!grouped[key]) grouped[key] = { day, time: s.timeSlot, count: 0 };
+      grouped[key].count++;
+    });
+    const daysOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    return Object.values(grouped).sort((a, b) => daysOrder.indexOf(a.day) - daysOrder.indexOf(b.day));
+  };
+  
+  const sessionSummary = summarizeSessions(sessionItems);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -54,7 +83,7 @@ export default function BookingConfirmationModal({
       />
       
       {/* Modal Container */}
-      <div className="bg-white dark:bg-[#2e3132] border border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.3)] rounded-[2rem] max-w-lg w-full overflow-hidden relative z-10 transform transition-all duration-300 animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-white dark:bg-[#2e3132] border border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.3)] rounded-[2rem] max-w-lg w-full max-h-[90vh] overflow-y-auto relative z-10 transform transition-all duration-300 animate-in fade-in zoom-in-95 duration-200">
         
         {/* Close Button (only when not submitting) */}
         {!isSubmitting && (
@@ -114,13 +143,22 @@ export default function BookingConfirmationModal({
                   </span>
                 </div>
                 {hasMultipleSessions && (
-                  <div className="col-span-2 space-y-1">
-                    {sessionItems.map((session) => (
-                      <div key={`${session.date}-${session.timeSlot}`} className="flex justify-between rounded-lg bg-surface-container-low px-3 py-2">
-                        <span className="text-on-surface-variant">{formatDate(session.date)}</span>
-                        <span className="text-on-surface font-semibold">{session.timeSlot}</span>
-                      </div>
-                    ))}
+                  <div className="col-span-2 space-y-1 max-h-[160px] overflow-y-auto pr-1">
+                    {sessionSummary ? (
+                      sessionSummary.map((grp, i) => (
+                        <div key={i} className="flex justify-between rounded-lg bg-surface-container-low px-3 py-2 border border-outline-variant/10">
+                          <span className="text-on-surface-variant font-medium">Mỗi {translateDay(grp.day)} hàng tuần</span>
+                          <span className="text-on-surface font-bold text-primary">{grp.time}</span>
+                        </div>
+                      ))
+                    ) : (
+                      sessionItems.map((session) => (
+                        <div key={`${session.date}-${session.timeSlot}`} className="flex justify-between rounded-lg bg-surface-container-low px-3 py-2">
+                          <span className="text-on-surface-variant">{formatDate(session.date)}</span>
+                          <span className="text-on-surface font-semibold">{session.timeSlot}</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 )}
                 {childName && (
@@ -224,13 +262,25 @@ export default function BookingConfirmationModal({
                     </div>
 
                     {hasMultipleSessions && (
-                      <div className="space-y-1.5">
-                        {sessionItems.map((session) => (
-                          <div key={`${session.date}-${session.timeSlot}`} className="flex justify-between rounded-lg bg-white/70 px-3 py-2 border border-outline-variant/10">
-                            <span className="text-on-surface-variant">{formatDate(session.date)}</span>
-                            <span className="text-on-surface font-semibold">{session.timeSlot}</span>
-                          </div>
-                        ))}
+                      <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
+                        {sessionSummary ? (
+                          sessionSummary.map((grp, i) => (
+                            <div key={i} className="flex justify-between rounded-lg bg-white/70 px-3 py-2 border border-outline-variant/20 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                              <span className="text-on-surface-variant font-medium flex items-center gap-1.5">
+                                <span className="material-symbols-outlined text-[14px]">event_repeat</span>
+                                Mỗi {translateDay(grp.day)} hàng tuần
+                              </span>
+                              <span className="text-on-surface font-bold text-primary">{grp.time}</span>
+                            </div>
+                          ))
+                        ) : (
+                          sessionItems.map((session) => (
+                            <div key={`${session.date}-${session.timeSlot}`} className="flex justify-between rounded-lg bg-white/70 px-3 py-2 border border-outline-variant/10">
+                              <span className="text-on-surface-variant">{formatDate(session.date)}</span>
+                              <span className="text-on-surface font-semibold">{session.timeSlot}</span>
+                            </div>
+                          ))
+                        )}
                       </div>
                     )}
 

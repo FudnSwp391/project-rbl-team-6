@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { requestMethodChange } from '../services/api';
+import ReportSessionModal from './ReportSessionModal';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -22,6 +23,7 @@ const SchedulePage = () => {
   const [timeFrame, setTimeFrame] = useState('This Week');
   const [detailSession, setDetailSession] = useState(null);
   const [sessionInfoMap, setSessionInfoMap] = useState({});
+  const [reportSession, setReportSession] = useState(null);
 
   const fetchSchedule = async () => {
     if (!token) return;
@@ -162,6 +164,37 @@ const SchedulePage = () => {
     if (status === 'completed') return { bgColor: 'bg-secondary-container/10', borderColor: 'border-secondary/20', labelBg: 'bg-secondary', labelColor: 'text-on-secondary' };
     if (status === 'cancelled' || status === 'declined') return { bgColor: 'bg-error-container/10', borderColor: 'border-error/20', labelBg: 'bg-error', labelColor: 'text-on-error' };
     return { bgColor: 'bg-surface', borderColor: 'border-outline-variant', labelBg: 'bg-surface-variant', labelColor: 'text-on-surface' };
+  };
+
+  // Trạng thái "báo cáo vi phạm" cho 1 session: null (chưa/không cần hiện gì),
+  // 'open' (đã có dispute đang mở -> hiện badge), 'reportable' (hiện nút, còn trong hạn 48h).
+  // Dùng đúng session.end_time (đã tính sẵn từ backend, cùng logic với check 48h phía server)
+  // và session.status === 'completed' (đã được backend chuẩn hoá) — không tự parse time_slot lại.
+  const getReportStatus = (session) => {
+    if (session.status !== 'completed') return null;
+    if (session.has_open_dispute) return 'open';
+    const hoursSinceEnd = (Date.now() - new Date(session.end_time).getTime()) / 3600000;
+    return hoursSinceEnd <= 48 ? 'reportable' : null;
+  };
+
+  // Rút đơn khiếu nại (chỉ rút, không sửa nội dung) — refetch schedule để badge/nút tự cập nhật
+  const handleWithdrawDispute = async (disputeId) => {
+    if (!disputeId) return;
+    if (!window.confirm('Bạn có chắc muốn rút khiếu nại này không? Hành động này không thể hoàn tác.')) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/bookings/disputes/${disputeId}/withdraw`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchSchedule();
+      } else {
+        alert(data.message || 'Có lỗi xảy ra.');
+      }
+    } catch {
+      alert('Lỗi kết nối.');
+    }
   };
 
   // Format a full day title like "Tuesday, June 17"
@@ -384,6 +417,7 @@ const SchedulePage = () => {
                             const startObj = new Date(session.start_time);
                             const endObj = new Date(session.end_time);
                             const style = getSessionStyle(session.status);
+                            const reportStatus = getReportStatus(session);
 
                             return (
                               <div key={session.id} onClick={() => setDetailSession(session)} className={`w-full ${style.bgColor} border ${style.borderColor} rounded-lg p-2.5 hover:shadow-md transition-shadow cursor-pointer shadow-sm`}>
@@ -397,7 +431,7 @@ const SchedulePage = () => {
                                 </div>
                                 <h4 className="text-label-md font-bold text-on-surface leading-tight mb-1 line-clamp-2" title={session.title}>{session.title}</h4>
                                 <p className="text-[10px] text-on-surface-variant flex items-center gap-1 mb-2">
-                                  <span className="material-symbols-outlined text-[12px]">schedule</span> 
+                                  <span className="material-symbols-outlined text-[12px]">schedule</span>
                                   {startObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {endObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </p>
                                 <div className="flex items-center gap-1.5 mt-auto pt-1 border-t border-surface-variant/50">
@@ -406,6 +440,31 @@ const SchedulePage = () => {
                                   </div>
                                   <span className="text-[10px] text-on-surface-variant font-medium truncate">{session.tutor_name}</span>
                                 </div>
+                                {reportStatus === 'reportable' && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setReportSession(session); }}
+                                    className="mt-1.5 w-full flex items-center justify-center gap-1 text-[9px] font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded px-1.5 py-1 transition-colors"
+                                  >
+                                    <span className="material-symbols-outlined text-[11px]">report</span>
+                                    Khiếu nại buổi học
+                                  </button>
+                                )}
+                                {reportStatus === 'open' && (
+                                  <div className="mt-1.5 w-full flex items-center justify-center gap-1.5 text-[9px] font-bold text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-1">
+                                    <span className="flex items-center gap-1">
+                                      <span className="material-symbols-outlined text-[11px]">hourglass_top</span>
+                                      Đang chờ xử lý
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); handleWithdrawDispute(session.open_dispute_id); }}
+                                      className="underline decoration-dotted hover:text-orange-900"
+                                    >
+                                      Rút khiếu nại
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -542,6 +601,15 @@ const SchedulePage = () => {
           info={sessionInfoMap[detailSession.id] || null}
           onRequested={fetchSchedule}
           onClose={() => setDetailSession(null)}
+        />
+      )}
+
+      {/* ── Report Session Modal ── */}
+      {reportSession && (
+        <ReportSessionModal
+          booking={reportSession}
+          onClose={() => setReportSession(null)}
+          onSuccess={() => { setReportSession(null); fetchSchedule(); }}
         />
       )}
 

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import { apiRequest } from '../services/api';
 import CourseGoldShowcase from '../components/CourseGoldShowcase';
+import ComplaintModal from '../components/ComplaintModal';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -38,6 +39,9 @@ export default function CourseDetail({ courseId }) {
   const [enrolled, setEnrolled] = useState(false);
   const [enrollLoading, setEnrollLoading] = useState(false);
   const [toast, setToast] = useState('');
+  const [toastType, setToastType] = useState('info'); // 'info' | 'success'
+  const [complaintOpen, setComplaintOpen] = useState(false);
+  const [activeComplaintId, setActiveComplaintId] = useState(null);
 
   // ── Giỏ hàng (localStorage edux_cart — cùng định dạng CartPage/Marketplace) ──
   const CART_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -82,6 +86,7 @@ export default function CourseDetail({ courseId }) {
 
   useEffect(() => {
     const id = courseId || window.location.hash.match(/#\/course\/([^/]+)/)?.[1];
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!id) { setError('Không tìm thấy ID khóa học.'); setLoading(false); return; }
 
     apiRequest(`/api/courses/${id}`)
@@ -90,8 +95,21 @@ export default function CourseDetail({ courseId }) {
 
     if (user && token) {
       apiRequest(`/api/courses/${id}/enrollment-status`)
-        .then(d => { if (d.enrolled) setEnrolled(true); })
+        .then(d => {
+          if (d.enrolled) setEnrolled(true);
+          else if (d.refunded) {
+            setToast('Khóa học này đã được hoàn tiền và không còn thuộc quyền sở hữu của bạn.');
+            setTimeout(() => setToast(''), 5000);
+          }
+        })
         .catch(console.error);
+
+      fetch(`${API_BASE}/api/complaints/active?course_id=${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.active) setActiveComplaintId(d.active.id); })
+        .catch(() => {});
     }
   }, [courseId, user, token]);
 
@@ -117,10 +135,10 @@ export default function CourseDetail({ courseId }) {
 
     setEnrollLoading(true);
     try {
-      const data = await apiRequest(`/api/courses/${course.id}/enroll`, {
+      await apiRequest(`/api/courses/${course.id}/enroll`, {
         method: 'POST'
       });
-      
+
       setEnrolled(true);
       setToast('Đăng ký khóa học thành công!');
       setTimeout(() => setToast(''), 3000);
@@ -151,7 +169,13 @@ export default function CourseDetail({ courseId }) {
       <div className="text-center space-y-4">
         <span className="material-symbols-outlined text-[64px] text-[#9aa3b8]">error_outline</span>
         <p className="text-[#5d5f5f] text-lg">{error}</p>
-        <button onClick={() => window.location.hash = '#/courses'} className="px-6 py-3 bg-[#00288e] text-white rounded-xl font-semibold hover:bg-[#001d6e] transition-colors">
+        <button onClick={() => {
+          if (user && (user.id === c?.tutor_id || user.userId === c?.tutor_id)) {
+            window.location.hash = '#/tutor?tab=Khóa Học';
+          } else {
+            window.location.hash = '#/courses';
+          }
+        }} className="px-6 py-3 bg-[#00288e] text-white rounded-xl font-semibold hover:bg-[#001d6e] transition-colors">
           ← Quay lại danh sách
         </button>
       </div>
@@ -235,13 +259,37 @@ export default function CourseDetail({ courseId }) {
 
             {/* Tabs */}
             <div className="bg-white border border-[#e5e7eb] rounded-2xl shadow-sm overflow-hidden">
-              <div className="border-b border-[#e5e7eb] flex">
-                {[['overview', 'Tổng quan'], ['lessons', `Bài học (${lessons.length})`], ['info', 'Thông tin thêm']].map(([key, label]) => (
-                  <button key={key} onClick={() => setActiveTab(key)}
-                    className={`px-6 py-4 text-sm font-semibold transition-colors ${activeTab === key ? 'text-[#00288e] border-b-2 border-[#00288e]' : 'text-[#757684] hover:text-[#00288e]'}`}>
-                    {label}
+              <div className="border-b border-[#e5e7eb] flex items-center">
+                <div className="flex flex-1">
+                  {[['overview', 'Tổng quan'], ['lessons', `Bài học (${lessons.length})`], ['info', 'Thông tin thêm']].map(([key, label]) => (
+                    <button key={key} onClick={() => setActiveTab(key)}
+                      className={`px-6 py-4 text-sm font-semibold transition-colors ${activeTab === key ? 'text-[#00288e] border-b-2 border-[#00288e]' : 'text-[#757684] hover:text-[#00288e]'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {user && enrolled && (
+                  <button
+                    onClick={() => setComplaintOpen(true)}
+                    className={`mx-4 flex items-center gap-1.5 px-4 py-2 rounded-xl border text-xs font-semibold transition-colors shrink-0 ${
+                      activeComplaintId
+                        ? 'border-amber-400/60 text-amber-700 bg-amber-50 hover:bg-amber-100'
+                        : 'border-[#dc2626]/30 text-[#dc2626] hover:bg-red-50'
+                    }`}
+                  >
+                    {activeComplaintId ? (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                        Đang xử lý
+                      </>
+                    ) : (
+                      <>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16, fontVariationSettings: "'FILL' 1" }}>report_problem</span>
+                        Khiếu nại
+                      </>
+                    )}
                   </button>
-                ))}
+                )}
               </div>
 
               <div className="p-6">
@@ -366,7 +414,12 @@ export default function CourseDetail({ courseId }) {
               </div>
 
               {/* Action buttons */}
-              {enrolled ? (
+              {user && (user.id === c.tutor_id || user.userId === c.tutor_id) ? (
+                <button onClick={() => window.location.hash = `#/tutor?tab=Khóa Học&editCourseId=${c.id}`} className="w-full py-3.5 rounded-xl bg-[#6366f1] text-white font-bold text-base flex items-center justify-center gap-2 hover:bg-[#4f46e5] transition-colors mb-3">
+                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>edit</span>
+                  Chỉnh sửa khóa học
+                </button>
+              ) : enrolled ? (
                 <button onClick={() => window.location.hash = '#/my-courses'} className="w-full py-3.5 rounded-xl bg-[#16a34a] text-white font-bold text-base flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors mb-3">
                   <span className="material-symbols-outlined" style={{ fontSize: 20 }}>check_circle</span>
                   Đã đăng ký (Đến lớp học)
@@ -396,7 +449,13 @@ export default function CourseDetail({ courseId }) {
                   </button>
                 )
               )}
-              <button onClick={() => window.location.hash = '#/courses'} className="w-full py-3 rounded-xl border-2 border-[#c4c5d5] text-[#444653] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#f1f2f6] transition-colors">
+              <button onClick={() => {
+                if (user && (user.id === c.tutor_id || user.userId === c.tutor_id)) {
+                  window.location.hash = '#/tutor?tab=Khóa Học';
+                } else {
+                  window.location.hash = '#/courses';
+                }
+              }} className="w-full py-3 rounded-xl border-2 border-[#c4c5d5] text-[#444653] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#f1f2f6] transition-colors">
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
                 Quay lại danh sách
               </button>
@@ -407,10 +466,26 @@ export default function CourseDetail({ courseId }) {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[70] bg-[#1e40af] text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-2 text-sm font-semibold">
-          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>info</span>{toast}
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] text-white px-6 py-3.5 rounded-2xl shadow-2xl flex items-center gap-2.5 text-sm font-semibold pointer-events-none ${toastType === 'success' ? 'bg-[#15803d]' : 'bg-[#1e40af]'}`}>
+          <span className="material-symbols-outlined shrink-0" style={{ fontSize: 20, fontVariationSettings: "'FILL' 1" }}>{toastType === 'success' ? 'check_circle' : 'info'}</span>
+          {toast}
         </div>
       )}
+
+      <ComplaintModal
+        isOpen={complaintOpen}
+        onClose={() => setComplaintOpen(false)}
+        onSuccess={(data) => {
+          setComplaintOpen(false);
+          setActiveComplaintId(data.id);
+          setToastType('success');
+          setToast(`Khiếu nại CPL-${data.ticket_number} đã được gửi thành công!`);
+          setTimeout(() => { setToast(''); setToastType('info'); }, 6000);
+        }}
+        courseId={c?.id}
+        courseTitle={c?.title}
+        token={token}
+      />
     </div>
   );
 }
