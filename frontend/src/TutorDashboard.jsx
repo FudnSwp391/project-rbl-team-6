@@ -27,8 +27,9 @@ import WalletDashboard from './components/Wallet/WalletDashboard'
 import WalletDeposit from './components/Wallet/WalletDeposit'
 import WalletWithdraw from './components/Wallet/WalletWithdraw'
 import { supabase } from './services/supabase'
+import { API_BASE_URL } from './config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API_BASE = API_BASE_URL
 
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Tổng Quan' },
@@ -1576,7 +1577,7 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
     try {
       setCheckingIn(true);
       const token = localStorage.getItem('token');
-      const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+      const apiBase = API_BASE_URL;
       const res = await fetch(`${apiBase}/api/tutor/bookings/${lesson.bookingId}/checkin`, {
         method: 'POST',
         headers: {

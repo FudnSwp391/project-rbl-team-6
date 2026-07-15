@@ -18,8 +18,9 @@
 import { useState, useRef, useCallback } from 'react'
 import { useAuth } from './AuthContext'
 import { uploadAvatarFile, uploadProofFile } from './services/upload'
+import { API_BASE_URL } from './config';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API = API_BASE_URL
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
 const MAX_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB

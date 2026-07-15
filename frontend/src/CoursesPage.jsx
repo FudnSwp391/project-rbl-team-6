@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import CartButton from './components/CartButton';
+import { API_BASE_URL } from './config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const API_BASE = API_BASE_URL;
 
 // ── Style ảnh bìa theo danh mục môn học (gradient + icon) ──────────────────────
 const CAT_STYLE = {

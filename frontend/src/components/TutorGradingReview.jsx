@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
+import { API_BASE_URL } from '../config';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API = API_BASE_URL
 
 export default function TutorGradingReview({ token, attemptInfo, onBack }) {
   const [data, setData] = useState(null)

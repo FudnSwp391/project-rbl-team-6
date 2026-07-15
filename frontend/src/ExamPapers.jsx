@@ -5,8 +5,9 @@
  * Rendered INSIDE the StudentDashboard layout (no sidebar/header needed).
  */
 import { useState, useEffect, useMemo } from 'react'
+import { API_BASE_URL } from './config';
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const apiBaseUrl = API_BASE_URL
 
 // ─── Subject configuration ────────────────────────────────────────────────────
 const SUBJECT_CONFIG = {

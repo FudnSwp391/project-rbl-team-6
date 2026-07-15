@@ -34,6 +34,7 @@ import CartPage from './pages/CartPage'
 import CompleteStudentProfile from './pages/CompleteStudentProfile'
 import MyAiCases from './pages/MyAiCases'
 import { useAuth } from './AuthContext'
+import { API_BASE_URL } from './config';
 
 const subjects = [
   { name: 'Toán Học', icon: 'calculate' },
@@ -228,7 +229,7 @@ const feedbackData = [
   }
 ];
 // ─── Home Page ────────────────────────────────────────────────────────────────
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API_BASE = API_BASE_URL
 
 function formatTimeAgo(dateStr) {
   if (!dateStr) return ''

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../AuthContext';
 import { VIETNAM_PROVINCES } from '../constants/vietnamProvinces';
+import { API_BASE_URL } from '../config';
 
 export default function CompleteStudentProfile({ onGoHome }) {
     const { loginAfterRegister } = useAuth();
-    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+    const apiBaseUrl = API_BASE_URL;
     
     const [pendingReg, setPendingReg] = useState(null);
     const [formData, setFormData] = useState({

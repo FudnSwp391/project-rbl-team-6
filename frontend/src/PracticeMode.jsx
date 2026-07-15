@@ -6,8 +6,9 @@
  */
 import { useState, useEffect } from 'react'
 import AIChatBox from './AIChatBox'
+import { API_BASE_URL } from './config';
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const apiBaseUrl = API_BASE_URL
 
 // Vietnam GDPT 2018 Curriculum by grade
 const CURRICULUM = {

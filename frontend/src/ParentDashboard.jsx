@@ -11,8 +11,9 @@ import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
 import MessageIcon from './components/MessageIcon'
 import ParentTimeline from './components/MicroFeedback/ParentTimeline'
+import { API_BASE_URL } from './config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API_BASE = API_BASE_URL
 
 const NAV = [
   { key: 'overview',  icon: 'dashboard',       label: 'Tổng quan' },

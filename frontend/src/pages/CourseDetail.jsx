@@ -4,8 +4,9 @@ import { apiRequest } from '../services/api';
 import CourseGoldShowcase from '../components/CourseGoldShowcase';
 import ComplaintModal from '../components/ComplaintModal';
 import CartButton from '../components/CartButton';
+import { API_BASE_URL } from '../config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const API_BASE = API_BASE_URL;
 
 const CAT_STYLE = {
   'Kỹ Thuật Phần Mềm': { gradient: 'linear-gradient(135deg,#0ea5e9,#1e3a8a)', icon: 'code' },
