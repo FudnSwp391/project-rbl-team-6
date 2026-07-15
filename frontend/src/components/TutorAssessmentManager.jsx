@@ -764,17 +764,17 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={onClose}></div>
-      <div className="relative w-full max-w-lg bg-surface rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-        <div className="px-xl py-lg border-b border-outline-variant flex justify-between items-center bg-white">
-          <h3 className="text-headline-md font-headline-md text-primary">Upload Homework</h3>
+      <div className="relative w-full max-w-lg bg-surface rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-white shrink-0">
+          <h3 className="text-xl font-bold text-primary">Upload Homework</h3>
           <button className="text-secondary hover:text-error transition-colors" onClick={onClose}>
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>
 
-        <div className="p-xl space-y-md">
+        <div className="p-6 space-y-5 overflow-y-auto">
           <div className="space-y-sm">
             <label className="text-label-md font-bold">Assignment Name</label>
             <input 
@@ -827,32 +827,32 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
           </div>
 
 
-          <div className="flex items-center justify-between mt-xl mb-sm">
+          <div className="flex items-center justify-start gap-3 mt-4 mb-2">
             <input 
               type="checkbox" 
               id="allowLate" 
               checked={formData.allow_late}
               onChange={e => setFormData({...formData, allow_late: e.target.checked})}
-              className="rounded border-outline-variant text-primary focus:ring-primary"
+              className="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary cursor-pointer"
             />
-            <label htmlFor="allowLate" className="text-sm font-medium">Allow late submissions</label>
+            <label htmlFor="allowLate" className="text-sm font-medium cursor-pointer">Allow late submissions</label>
           </div>
         </div>
 
-        <div className="px-xl py-lg border-t border-outline-variant bg-white flex flex-col items-end gap-md">
+        <div className="px-6 py-4 border-t border-outline-variant bg-white flex flex-col items-end gap-3 shrink-0 rounded-b-2xl">
           {formError && (
             <div className="text-error text-sm font-medium w-full text-right mb-2">
               {formError}
             </div>
           )}
-          <div className="flex justify-end gap-md w-full">
-            <button onClick={onClose} className="px-xl py-sm text-secondary font-label-md hover:bg-surface-container rounded-lg transition-colors" disabled={loading}>
+          <div className="flex flex-wrap justify-end gap-3 w-full">
+            <button onClick={onClose} className="px-6 py-2 text-secondary font-semibold hover:bg-surface-container rounded-lg transition-colors" disabled={loading}>
               Discard
             </button>
-            <button onClick={() => handleSave('Draft')} className="px-xl py-sm border border-primary text-primary font-label-md rounded-lg hover:bg-primary/5 transition-colors" disabled={loading}>
+            <button onClick={() => handleSave('Draft')} className="px-6 py-2 border border-primary text-primary font-semibold rounded-lg hover:bg-primary/5 transition-colors" disabled={loading}>
               Save Draft
             </button>
-            <button onClick={() => handleSave('Open')} className="px-xl py-sm bg-primary text-on-primary font-label-md rounded-lg shadow-lg hover:bg-on-tertiary-fixed transition-colors" disabled={loading}>
+            <button onClick={() => handleSave('Open')} className="px-6 py-2 bg-primary text-white font-semibold rounded-lg shadow-md hover:bg-blue-800 transition-colors" disabled={loading}>
               {loading ? 'Uploading...' : 'Upload & Assign'}
             </button>
           </div>
