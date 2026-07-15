@@ -1774,7 +1774,7 @@ function MyScheduleTab() {
         ) : (
           <div>
             <div className="grid grid-cols-7 border-b border-outline-variant/20 bg-surface-container-lowest">
-              {DAY_ORDER.map((day) => <div key={day} className="px-3 py-2 text-[11px] font-bold uppercase text-outline">{day.slice(0, 3)}</div>)}
+              {DAY_ORDER.map((day) => <div key={day} className="px-3 py-2 text-[11px] font-bold uppercase text-outline text-center">{DAY_NAMES_VI[day]}</div>)}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-7">
               {monthGrid.map((date) => <ScheduleMonthCell key={toDateKey(date)} date={date} events={eventsForDate(date)} isCurrentMonth={date.getMonth() === cursor.getMonth()} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />)}
@@ -2407,6 +2407,15 @@ function SessionInfoModal({ event, booking, onClose, onSaved }) {
 }
 
 const DAY_ORDER = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+const DAY_NAMES_VI = {
+  Monday: 'Thứ 2',
+  Tuesday: 'Thứ 3',
+  Wednesday: 'Thứ 4',
+  Thursday: 'Thứ 5',
+  Friday: 'Thứ 6',
+  Saturday: 'Thứ 7',
+  Sunday: 'Chủ Nhật'
+}
 const TIME_SLOTS = [
   '07:00 AM','08:00 AM','09:00 AM','10:00 AM','10:30 AM','11:00 AM',
   '12:00 PM','01:00 PM','01:30 PM','02:00 PM','03:00 PM','03:30 PM',
@@ -3205,7 +3214,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                   <p className="text-[11px] text-on-surface-variant mb-3">Học sinh chọn từng ngày trên lịch để đặt buổi học.</p>
                   {DAY_ORDER.map(day => (
                     <div key={day} className="mb-2">
-                      <p className="font-label-sm text-[12px] font-bold text-on-surface mb-1.5">{day}</p>
+                      <p className="font-label-sm text-[13px] font-bold text-on-surface mb-1.5">{DAY_NAMES_VI[day]}</p>
                       <div className="flex flex-wrap gap-1.5">
                         {TIME_SLOTS.map(slot => {
                           const active  = (availData[day] || []).includes(slot)
@@ -3235,7 +3244,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                   <p className="text-[11px] text-on-surface-variant mb-3">Học sinh đăng ký theo gói tháng sẽ học cố định vào các khung giờ này hàng tuần.</p>
                   {DAY_ORDER.map(day => (
                     <div key={day} className="mb-2">
-                      <p className="font-label-sm text-[12px] font-bold text-on-surface mb-1.5">{day}</p>
+                      <p className="font-label-sm text-[13px] font-bold text-on-surface mb-1.5">{DAY_NAMES_VI[day]}</p>
                       <div className="flex flex-wrap gap-1.5">
                         {TIME_SLOTS.map(slot => {
                           const active  = (monthlyAvailData[day] || []).includes(slot)
@@ -3281,7 +3290,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                       const slots = (profile?.availability || {})[day] || []
                       return (
                         <div key={day} className={`mb-2 rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
-                          <p className={`font-label-md text-[12px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{day}</p>
+                          <p className={`font-label-md text-[13px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{DAY_NAMES_VI[day]}</p>
                           {slots.length > 0 ? (
                             <div className="flex flex-wrap gap-1">
                               {slots.map(s => (
@@ -3301,7 +3310,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                       const slots = (profile?.monthly_availability || {})[day] || []
                       return (
                         <div key={day} className={`mb-2 rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
-                          <p className={`font-label-md text-[12px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{day}</p>
+                          <p className={`font-label-md text-[13px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{DAY_NAMES_VI[day]}</p>
                           {slots.length > 0 ? (
                             <div className="flex flex-wrap gap-1">
                               {slots.map(s => (
