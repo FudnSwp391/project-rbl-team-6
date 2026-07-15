@@ -638,6 +638,7 @@ async function runPendingAiCases({ triggeredBy = 'cron', adminId = null } = {}) 
          FROM disputes d
          LEFT JOIN bookings b ON b.id = d.booking_id
         WHERE d.status = 'OPEN'
+          AND d.withdrawn_at IS NULL
           AND d.created_at <= NOW() - make_interval(hours => $1::int)
           AND NOT EXISTS (SELECT 1 FROM ai_case_resolutions r WHERE r.dispute_id = d.id)
         ORDER BY d.created_at ASC
@@ -896,7 +897,7 @@ async function collectTransactionCopilotContext(transactionId) {
 
 async function collectPageCopilotContext(pageKey, pageContext) {
   const ctx = { entity_type: 'PAGE', entity_id: null, page_key: pageKey || null, identity: {}, metrics: {}, notes: [] };
-  ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN'`);
+  ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN' AND withdrawn_at IS NULL`);
   ctx.metrics.pending_tutors   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='pending'`);
   ctx.metrics.appealed_ai_cases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`);
   ctx.metrics.failed_tx_24h    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE status='FAILED' AND created_at > NOW() - INTERVAL '24 hours'`);
@@ -1596,7 +1597,7 @@ async function analyzeWithdrawalRisk(tutorId, period) {
   const wr = await copilotSafeRows(`SELECT COUNT(*)::int n, COALESCE(SUM(amount),0)::numeric total FROM withdrawal_requests WHERE tutor_id=$1 AND requested_at > $2`, [tutorId, period.start]);
   const wcount = wr.length ? Number(wr[0].n) : 0, wtotal = wr.length ? Number(wr[0].total) : 0;
   if (!wcount) return null;
-  const activeDisputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE tutor_id=$1 AND status='OPEN'`, [tutorId]);
+  const activeDisputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE tutor_id=$1 AND status='OPEN' AND withdrawn_at IS NULL`, [tutorId]);
   const releases = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND escrow_released_at > $2`, [tutorId, period.start]);
   const extPay = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
   const distinctStudents = await copilotSafeCount(`SELECT COUNT(DISTINCT student_id)::int n FROM bookings WHERE tutor_id=$1 AND created_at > $2`, [tutorId, period.start]);
@@ -1929,7 +1930,7 @@ const ANALYTICS_TEMPLATES = [
     requiredTables: ['withdrawal_requests', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'pending_amount',
     columns: ['tutor_id', 'tutor_name', 'pending_amount', 'active_disputes', 'fraud_reports', 'external_payment_reports'],
     sql: `SELECT w.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(w.amount),0)::numeric AS pending_amount,
-                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=w.tutor_id AND d.status='OPEN') AS active_disputes,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=w.tutor_id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS active_disputes,
                  (SELECT COUNT(*)::int FROM fraud_intel_reports f WHERE f.tutor_id=w.tutor_id AND f.created_at > NOW()-make_interval(days=>$1::int)) AS fraud_reports,
                  (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=w.tutor_id AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT') AS external_payment_reports
             FROM withdrawal_requests w LEFT JOIN users u ON u.id=w.tutor_id
@@ -2223,6 +2224,13 @@ const NOTIFICATION_TEMPLATES = {
     subject: '[EduX] Khiếu nại đã được xử lý', title: 'Khiếu nại không được chấp nhận',
     body: 'Admin xem xét và phán quyết gia sư không vi phạm.',
     icon: 'gavel', priority: 'normal',
+  }),
+  dispute_withdrawn: d => ({
+    subject: '[EduX] Khiếu nại đã được rút', title: d.forAdmin ? 'Học sinh đã rút khiếu nại' : 'Khiếu nại đã được rút',
+    body: d.forAdmin
+      ? `${d.reporterName || 'Học sinh'} đã rút khiếu nại, không cần xử lý nữa.`
+      : 'Học sinh đã rút khiếu nại đối với bạn. Không cần phản hồi thêm.',
+    icon: 'undo', priority: 'normal',
   }),
   booking_approved: d => ({
     subject: '[EduX] Lịch học đã được xác nhận', title: 'Lịch học đã được xác nhận — Tiền tạm giữ',
@@ -4033,7 +4041,7 @@ app.get("/api/admin/analytics/dashboard/stats", verifyToken, requireAdmin, async
       `),
 
       // 6. Open disputes requiring admin attention
-      pool.query("SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'"),
+      pool.query("SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN' AND withdrawn_at IS NULL"),
     ]);
 
     // COUNT fields: pg returns bigint as string → parseInt is safe.
@@ -6074,7 +6082,7 @@ app.get("/api/admin/transactions/refunds", verifyToken, requireAdmin, async (req
               d.created_at,
               d.resolved_at,
               d.target_type,
-              d.evidence_url,
+              d.evidence_urls,
               COALESCE(u.full_name, '')               AS user_name,
               COALESCE(u.email,     '')               AS user_email,
               COALESCE(c.title,     '')               AS course_title,
@@ -6137,7 +6145,7 @@ app.get("/api/admin/financial/overview", verifyToken, requireAdmin, async (req, 
       `),
       pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'SUCCESS'`),
       pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'FAILED'`),
-      pool.query(`SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'`),
+      pool.query(`SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN' AND withdrawn_at IS NULL`),
       // Internal deposits (no external gateway) ≈ tutor earnings released
       pool.query(`
         SELECT COALESCE(SUM(amount), 0) AS total
@@ -8070,7 +8078,7 @@ app.get('/api/student/my-courses', verifyToken, async (req, res) => {
         COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true)::int AS completed_lessons,
         EXISTS (
           SELECT 1 FROM disputes d
-          WHERE d.course_id = c.id AND d.raised_by = $1 AND d.status = 'OPEN'
+          WHERE d.course_id = c.id AND d.raised_by = $1 AND d.status = 'OPEN' AND d.withdrawn_at IS NULL
         ) AS has_open_dispute
       FROM course_enrollments ce
       JOIN courses c ON c.id = ce.course_id
@@ -10386,7 +10394,7 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
               u_tutor.picture AS tutor_picture,
               u_student.picture AS student_picture, u_student.full_name AS "studentName",
               a.status AS attendance_status,
-              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS has_open_dispute
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute
        FROM bookings b
        LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
        LEFT JOIN users u_student ON u_student.id = b.student_id
@@ -10419,7 +10427,9 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
               b.teaching_method, b.meeting_link, b.location, b.location_note,
               b.session_topic, b.session_duration,
               b.method_change_requested, b.method_change_status,
-              tp.teaching_methods AS tutor_teaching_methods
+              tp.teaching_methods AS tutor_teaching_methods,
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute,
+              (SELECT d.id FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL LIMIT 1) AS open_dispute_id
        FROM bookings b
        LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
        WHERE b.student_id = $1`,
@@ -10515,7 +10525,9 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
         method_change_status: row.method_change_status || null,
         tutor_supports_online: methodSupport.online,
         tutor_supports_offline: methodSupport.offline,
-        subject: row.subject || 'Khác'
+        subject: row.subject || 'Khác',
+        has_open_dispute: row.has_open_dispute,
+        open_dispute_id: row.open_dispute_id || null
       });
     });
 
@@ -10577,7 +10589,7 @@ app.get("/api/student/bookings", verifyToken, async (req, res) => {
               u_tutor.picture AS tutor_picture,
               tp.reputation_score, tp.subjects AS tutor_subjects,
               a.status AS attendance_status,
-              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS has_open_dispute
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute
        FROM bookings b
        LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
        LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
@@ -10599,8 +10611,8 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT d.id, d.reason, d.status, d.admin_note, d.created_at, d.resolved_at,
-             d.booking_id, d.target_type, d.course_id, d.tutor_id AS d_tutor_id, d.severity, d.penalty_type, d.raised_by_parent, d.evidence_url,
-             d.tutor_response, d.tutor_response_at,
+             d.booking_id, d.target_type, d.course_id, d.tutor_id AS d_tutor_id, d.severity, d.penalty_type, d.raised_by_parent, d.evidence_urls,
+             d.tutor_response, d.tutor_response_at, d.student_requested_resolution, d.withdrawn_at,
              b.subject, to_char(b.lesson_date,'YYYY-MM-DD') AS lesson_date,
              b.lesson_fee, b.tutor_name,
              c.title AS course_title,
@@ -10614,7 +10626,7 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
       LEFT JOIN users u_tutor ON u_tutor.id = COALESCE(b.tutor_id, c.tutor_id, d.tutor_id)
       LEFT JOIN users u_student ON u_student.id = COALESCE(b.student_id, d.raised_by)
       ORDER BY
-        CASE d.status WHEN 'OPEN' THEN 0 ELSE 1 END,
+        CASE WHEN d.status = 'OPEN' AND d.withdrawn_at IS NULL THEN 0 ELSE 1 END,
         d.created_at DESC
       LIMIT 100
     `);
@@ -12071,7 +12083,7 @@ app.get("/api/tutor/earnings", verifyToken, requireTutor, async (req, res) => {
          a.status AS "attendanceStatus",
          a.note AS "attendanceNote",
          a.marked_at AS "markedAt",
-         EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS "hasOpenDispute"
+         EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS "hasOpenDispute"
        FROM bookings b
        LEFT JOIN users s ON s.id = b.student_id
        LEFT JOIN attendance a ON a.booking_id = b.id
@@ -12676,8 +12688,9 @@ app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
 app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const { reason, severity = 'medium', evidenceUrl = null } = req.body;
+    const { reason, severity = 'medium', evidenceUrls, requestedResolution } = req.body;
     if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do báo cáo.' });
+    if (!Array.isArray(evidenceUrls) || evidenceUrls.length === 0) return res.status(400).json({ message: 'Vui lòng đính kèm bằng chứng hình ảnh trước khi gửi báo cáo.' });
 
     let bookingQuery;
     let queryParams;
@@ -12713,16 +12726,16 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     if (!booking.escrow_tx_id) return res.status(400).json({ message: 'Lịch học này không có giao dịch escrow để khiếu nại.' });
 
     const existingDispute = await client.query(
-      "SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN'", [booking.id]
+      "SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN' AND withdrawn_at IS NULL", [booking.id]
     );
     if (existingDispute.rows.length) return res.status(409).json({ message: 'Bạn đã gửi khiếu nại cho buổi học này rồi.' });
 
     await client.query('BEGIN');
 
     const dispute = await client.query(`
-      INSERT INTO disputes (transaction_id, raised_by, reason, status, booking_id, target_type, tutor_id, severity, raised_by_parent, evidence_url)
-      VALUES ($1, $2, $3, 'OPEN', $4, 'booking', $5, $6, $7, $8) RETURNING id
-    `, [booking.escrow_tx_id, req.user.userId, reason.trim(), booking.id, booking.tutor_id, severity, isParent, evidenceUrl]);
+      INSERT INTO disputes (transaction_id, raised_by, reason, status, booking_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls, student_requested_resolution)
+      VALUES ($1, $2, $3, 'OPEN', $4, 'booking', $5, $6, $7, $8, $9) RETURNING id
+    `, [booking.escrow_tx_id, req.user.userId, reason.trim(), booking.id, booking.tutor_id, severity, isParent, evidenceUrls, requestedResolution?.trim() || null]);
 
     // Pause auto-release
     await client.query(`UPDATE bookings SET auto_release_at=NULL WHERE id=$1`, [booking.id]);
@@ -12775,6 +12788,9 @@ app.patch('/api/bookings/disputes/:disputeId/tutor-response', verifyToken, async
     if (dispute.tutor_id !== req.user.userId) {
       return res.status(403).json({ message: 'Bạn không có quyền phản hồi khiếu nại này.' });
     }
+    if (dispute.withdrawn_at) {
+      return res.status(409).json({ message: 'Khiếu nại này đã được học sinh rút, không thể xử lý/phản hồi.' });
+    }
     if (dispute.status !== 'OPEN') {
       return res.status(409).json({ message: 'Khiếu nại đã được xử lý, không thể phản hồi.' });
     }
@@ -12808,12 +12824,84 @@ app.patch('/api/bookings/disputes/:disputeId/tutor-response', verifyToken, async
   }
 });
 
+// PATCH /api/bookings/disputes/:disputeId/withdraw — học sinh tự rút đơn khiếu nại (không sửa nội dung)
+app.patch('/api/bookings/disputes/:disputeId/withdraw', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const dRes = await client.query('SELECT * FROM disputes WHERE id=$1', [req.params.disputeId]);
+    if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const dispute = dRes.rows[0];
+
+    if (dispute.raised_by !== req.user.userId) {
+      return res.status(403).json({ message: 'Bạn không có quyền rút khiếu nại này.' });
+    }
+    if (dispute.status !== 'OPEN' || dispute.withdrawn_at) {
+      return res.status(409).json({ message: 'Khiếu nại đã được xử lý hoặc đã rút trước đó.' });
+    }
+
+    await client.query('BEGIN');
+    const updated = await client.query(
+      `UPDATE disputes SET withdrawn_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.disputeId]
+    );
+
+    // Booking dispute: khôi phục luồng tự động giải ngân bình thường (auto_release_at
+    // chỉ từng bị đặt về NOW() khi thiếu ví lúc điểm danh — không có mốc "lessonEnd + Nh"
+    // nào khác trong hệ thống — nên đặt lại NOW() để cron auto-release xử lý ở lượt kế tiếp).
+    if (dispute.booking_id) {
+      await client.query(
+        `UPDATE bookings SET auto_release_at=NOW() WHERE id=$1 AND escrow_released_at IS NULL`,
+        [dispute.booking_id]
+      );
+    }
+
+    const admins = await client.query("SELECT id FROM users WHERE role='admin'");
+    const reporterRes = await client.query('SELECT full_name FROM users WHERE id=$1', [dispute.raised_by]);
+    const reporterName = reporterRes.rows[0]?.full_name || 'Học sinh';
+    for (const admin of admins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_withdrawn', eventType: 'dispute_withdrawn',
+        data: { forAdmin: true, reporterName },
+        refId: req.params.disputeId, refType: 'dispute',
+        sourceType: 'dispute', sourceId: req.params.disputeId,
+        idempotencyKey: `dispute:${req.params.disputeId}:withdrawn:${admin.id}`,
+      });
+    }
+    if (dispute.tutor_id) {
+      await safeNotifyUser(client, {
+        userId: dispute.tutor_id, channels: ['IN_APP'],
+        templateKey: 'dispute_withdrawn', eventType: 'dispute_withdrawn',
+        data: { forAdmin: false },
+        refId: req.params.disputeId, refType: 'dispute',
+        sourceType: 'dispute', sourceId: req.params.disputeId,
+        idempotencyKey: `dispute:${req.params.disputeId}:withdrawn:${dispute.tutor_id}`,
+      });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, dispute: updated.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('PATCH withdraw dispute error:', e);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/courses/:id/report — Học sinh / Phụ huynh báo cáo khóa học
 app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const { reason, severity = 'medium', evidenceUrl = null } = req.body;
+    const { reason, severity = 'medium', requestedResolution } = req.body;
     if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do báo cáo.' });
+    // Tương thích ngược tạm thời: route này chưa có caller frontend nào tính tới thời điểm audit Bước 8a.0,
+    // nhưng vẫn chấp nhận cả evidenceUrl (string, dạng cũ) lẫn evidenceUrls (mảng, dạng mới) để không phá caller ngoài nếu có.
+    const evidenceUrls = Array.isArray(req.body.evidenceUrls)
+      ? req.body.evidenceUrls
+      : (req.body.evidenceUrl ? [req.body.evidenceUrl] : null);
+    const studentRequestedResolution = requestedResolution?.trim() || null;
 
     let enrollmentQuery;
     let queryParams;
@@ -12846,7 +12934,7 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
     if (enrollment.status === 'refunded') return res.status(400).json({ message: 'Khóa học này đã được hoàn tiền.' });
 
     const existingDispute = await client.query(
-      "SELECT id FROM disputes WHERE course_id=$1 AND raised_by=$2 AND status='OPEN'", [enrollment.course_id, req.user.userId]
+      "SELECT id FROM disputes WHERE course_id=$1 AND raised_by=$2 AND status='OPEN' AND withdrawn_at IS NULL", [enrollment.course_id, req.user.userId]
     );
     if (existingDispute.rows.length) return res.status(409).json({ message: 'Bạn đã gửi khiếu nại cho khóa học này rồi.' });
 
@@ -12919,10 +13007,11 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
         `, [sw.rows[0].id, refundAmount, enrollment.course_id, `Hoàn tiền khóa học ${Math.round(decision.refundRate * 100)}% — ${decision.reasonCode}`]);
 
         await client.query(`
-          INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url, admin_note, resolved_at)
-          VALUES (NULL, $1, $2, 'RESOLVED_REFUND', $3, 'course', $4, $5, $6, $7, $8, NOW())
-        `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
-            `Tự động hoàn ${Math.round(decision.refundRate * 100)}% theo ${REFUND_POLICY_VERSION} (tiến độ ${Math.round(progressPercent)}%, ${Math.round(hoursSincePurchase)}h).`]);
+          INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls, admin_note, resolved_at, student_requested_resolution)
+          VALUES (NULL, $1, $2, 'RESOLVED_REFUND', $3, 'course', $4, $5, $6, $7, $8, NOW(), $9)
+        `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrls,
+            `Tự động hoàn ${Math.round(decision.refundRate * 100)}% theo ${REFUND_POLICY_VERSION} (tiến độ ${Math.round(progressPercent)}%, ${Math.round(hoursSincePurchase)}h).`,
+            studentRequestedResolution]);
 
         await safeNotifyUser(client, {
           userId: enrollment.student_id, channels: ['IN_APP', 'EMAIL'],
@@ -12944,10 +13033,11 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
 
     // ── ADMIN_REVIEW (>80% progress, >48h, or auto-settle unsafe) → OPEN dispute
     const dispute = await client.query(`
-      INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url, admin_note)
-      VALUES (NULL, $1, $2, 'OPEN', $3, 'course', $4, $5, $6, $7, $8) RETURNING id
-    `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
-        `Chuyển admin xét duyệt theo ${REFUND_POLICY_VERSION}: ${decision.reasonCode}.`]);
+      INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls, admin_note, student_requested_resolution)
+      VALUES (NULL, $1, $2, 'OPEN', $3, 'course', $4, $5, $6, $7, $8, $9) RETURNING id
+    `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrls,
+        `Chuyển admin xét duyệt theo ${REFUND_POLICY_VERSION}: ${decision.reasonCode}.`,
+        studentRequestedResolution]);
 
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
@@ -13689,6 +13779,9 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
     if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
     const dispute = dRes.rows[0];
 
+    if (dispute.withdrawn_at) {
+      return res.status(409).json({ message: 'Khiếu nại này đã được học sinh rút, không thể xử lý/phản hồi.' });
+    }
     // Idempotency: only an OPEN dispute can be resolved (Batch 16)
     if (dispute.status !== 'OPEN') {
       return res.status(409).json({ message: 'Khiếu nại đã được xử lý.' });
@@ -13910,7 +14003,7 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
     const booking = bookingRes.rows[0];
     const lessonFee = Number(booking.lesson_fee || 0);
 
-    const openDispute = await client.query("SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN'", [booking.id]);
+    const openDispute = await client.query("SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN' AND withdrawn_at IS NULL", [booking.id]);
     if (openDispute.rows.length) return res.status(400).json({ message: 'Đang có khiếu nại mở, không thể xác nhận.' });
 
     const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
@@ -14767,7 +14860,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
           AND b.auto_release_at IS NOT NULL
           AND b.auto_release_at <= NOW()
           AND NOT EXISTS (
-            SELECT 1 FROM disputes d WHERE d.booking_id = b.id AND d.status = 'OPEN'
+            SELECT 1 FROM disputes d WHERE d.booking_id = b.id AND d.status = 'OPEN' AND d.withdrawn_at IS NULL
           )
       `);
 
