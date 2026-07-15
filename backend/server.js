@@ -6858,7 +6858,10 @@ app.get('/api/student/link-code', verifyToken, async (req, res) => {
     do { code=generateLinkCode(); tries++; } while (tries<10 && (await pool.query('SELECT id FROM student_link_codes WHERE code=$1',[code])).rows.length>0);
     const r = await pool.query('INSERT INTO student_link_codes (student_id,code) VALUES ($1,$2) RETURNING code,created_at', [studentId,code]);
     return res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+  } catch (e) { 
+    console.error('Error in link-code:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' }); 
+  }
 });
 
 // Student: view parents monitoring them
@@ -7227,6 +7230,21 @@ const chatUpload = multer({
   } catch (e) { console.error('chat_messages table error:', e.message); }
 })();
 
+// GET /api/messages/unread-count — Đếm tổng số tin nhắn chưa đọc
+app.get('/api/messages/unread-count', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await pool.query(
+      `SELECT count(*) AS n FROM chat_messages WHERE receiver_id = $1 AND is_read = false`,
+      [userId]
+    );
+    return res.json({ count: parseInt(result.rows[0].n, 10) || 0 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
 // GET /api/chat/conversations — danh sách hội thoại
 app.get('/api/chat/conversations', verifyToken, async (req, res) => {
   try {
@@ -7501,6 +7519,22 @@ app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
+// PUT /api/chat/:otherId/read — đánh dấu đã đọc một hội thoại cụ thể
+app.put('/api/chat/:otherId/read', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { otherId } = req.params;
+    await pool.query(
+      `UPDATE chat_messages SET is_read=true WHERE sender_id=$1 AND receiver_id=$2 AND is_read=false`,
+      [otherId, userId]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
 // POST /api/chat — gửi tin nhắn text
 app.post('/api/chat', verifyToken, async (req, res) => {
   try {
@@ -7532,15 +7566,8 @@ app.post('/api/chat', verifyToken, async (req, res) => {
       [senderId, receiver_id, content.trim()]
     );
 
-    // Thêm thông báo cho người nhận (Batch 20.1: safeNotifyUser, IN_APP only)
-    await safeNotifyUser(pool, {
-      userId: receiver_id, type: 'new_message', channels: ['IN_APP'],
-      templateKey: 'chat_new_message', eventType: 'chat_new_message',
-      title: `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`,
-      body: content.trim(), icon: 'chat', refId: senderId, refType: 'chat',
-      sourceType: 'chat_message', sourceId: msg.rows[0].id, priority: 'low',
-      idempotencyKey: `chat_message:${msg.rows[0].id}:${receiver_id}`,
-    });
+    // Đã bỏ safeNotifyUser cho tin nhắn ở đây để tách riêng Notification và Messages.
+    // Frontend tự bắt event INSERT trên bảng chat_messages qua Supabase để hiện popup.
 
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }

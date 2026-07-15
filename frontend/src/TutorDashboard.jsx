@@ -22,6 +22,7 @@ import TutorGradingDashboard from './components/TutorGradingDashboard'
 import WalletWidget from './components/WalletWidget'
 import TutorWithdrawalPanel from './components/TutorWithdrawalPanel'
 import NotificationDropdown from './components/NotificationDropdown'
+import MessageIcon from './components/MessageIcon'
 import WalletDashboard from './components/Wallet/WalletDashboard'
 import WalletDeposit from './components/Wallet/WalletDeposit'
 import WalletWithdraw from './components/Wallet/WalletWithdraw'
@@ -334,6 +335,7 @@ export default function TutorDashboard() {
             {/* Right actions */}
             <div className="flex items-center gap-md">
               {/* Notification bell */}
+              <MessageIcon token={token} />
               <NotificationDropdown token={token} />
 
               <WalletWidget token={token} />
