@@ -10969,8 +10969,8 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
       
       // Tạo booking
       const bookingRes = await pool.query(
-        `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, time_slot, note, status, child_name, student_name, booking_type, lesson_fee, duration_mins, payer_wallet_id, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,'Pending',$7,$8,'Instant',$9,$10,$11,NOW()) RETURNING id`,
+        `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, child_name, student_name, booking_type, lesson_fee, duration_mins, payer_wallet_id, created_at)
+         VALUES ($1,$2,$3,$4,CURRENT_DATE,COALESCE($5, to_char(CURRENT_TIMESTAMP, 'HH24:MI')),$6,'Pending',$7,$8,'Instant',$9,$10,$11,NOW()) RETURNING id`,
         [req.user.userId, tutor_id, tutor_name || null, subject || 'Môn học', time_slot || null, note || null, child_name || null, student_name, price, duration_mins || 30, walletId]
       );
       
