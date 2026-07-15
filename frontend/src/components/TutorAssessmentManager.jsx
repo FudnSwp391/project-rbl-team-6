@@ -12,6 +12,7 @@ import {
   getTutorCourses,
 } from '../services/api';
 import { uploadHomeworkFile } from '../services/upload';
+import { API_BASE_URL } from '../config';
 
 export default function TutorAssessmentManager({ token, user }) {
   const [activeTab, setActiveTab] = useState('exams');
@@ -439,7 +440,7 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
     const fetchStudents = async () => {
       try {
         const token = localStorage.getItem('token');
-        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/tutor/students`, {
+        const res = await fetch(`${API_BASE_URL}/api/tutor/students`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (res.ok) {
@@ -754,7 +755,7 @@ function UploadHomeworkModal({ onClose, onSuccess, courses }) {
     const fetchStudents = async () => {
       try {
         const token = localStorage.getItem('token');
-        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/tutor/students`, {
+        const res = await fetch(`${API_BASE_URL}/api/tutor/students`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (res.ok) {

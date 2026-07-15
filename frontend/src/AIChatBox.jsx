@@ -5,8 +5,9 @@
  * preferences. Renders inside PracticeMode's "Chat with AI" tab.
  */
 import { useState, useRef, useEffect } from 'react'
+import { API_BASE_URL } from './config';
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const apiBaseUrl = API_BASE_URL
 
 const INITIAL_GREETING = {
   role: 'model',

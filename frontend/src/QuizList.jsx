@@ -8,6 +8,7 @@ import {
 } from './services/api';
 import { uploadHomeworkFile } from './services/upload';
 import { useAuth } from './AuthContext';
+import { API_BASE_URL } from './config';
 
 const SUBJECT_ICONS = {
   Mathematics: 'calculate',
@@ -71,7 +72,7 @@ function QuizCardSkeleton() {
 
 export default function QuizList({ token }) {
   const { user } = useAuth();
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+  const apiBaseUrl = API_BASE_URL
   
   const [error, setError] = useState('')
 

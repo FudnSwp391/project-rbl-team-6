@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { API_BASE_URL } from './config';
 
 // ─── Timer component ──────────────────────────────────────────────────────────
 function CountdownTimer({ seconds, totalSeconds, onExpire, onTick }) {
@@ -134,7 +135,7 @@ function ConfirmModal({ unanswered, onConfirm, onCancel }) {
 
 // ─── Main QuizTaking component ────────────────────────────────────────────────
 export default function QuizTaking({ quizId, token, isPractice = false, practiceSessionId = null, isExamPaper = false, examPaperId = null, isTutorExam = false, tutorExamId = null }) {
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+  const apiBaseUrl = API_BASE_URL
 
   const [quiz, setQuiz] = useState(null)
   const [questions, setQuestions] = useState([])

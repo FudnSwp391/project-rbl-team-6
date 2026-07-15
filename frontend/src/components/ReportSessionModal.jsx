@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../AuthContext';
 import { uploadEvidenceFile } from '../services/upload';
+import { API_BASE_URL } from '../config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const API_BASE = API_BASE_URL;
 const MAX_FILES = 5;
 
 export default function ReportSessionModal({ booking, onSuccess, onClose }) {

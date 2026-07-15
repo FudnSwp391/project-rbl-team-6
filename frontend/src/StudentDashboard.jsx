@@ -17,6 +17,7 @@ import SchedulePage from './components/SchedulePage'
 import { getStudentBookings, confirmLessonComplete, reportTutor } from './services/api'
 
 import StudentSidebar from './components/StudentSidebar'
+import { API_BASE_URL } from './config';
 
 export default function StudentDashboard() {
   const { user, token, logout } = useAuth()
@@ -60,7 +61,7 @@ export default function StudentDashboard() {
 
   useEffect(() => {
     if (!token) return
-    const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+    const API = API_BASE_URL
     const authHeader = { Authorization: `Bearer ${token}` }
     Promise.all([
       fetch(`${API}/api/student/my-courses`, { headers: authHeader }).then(r => r.json()).catch(() => null),
@@ -606,7 +607,7 @@ function ParentLinkSection({ token }) {
 
   useEffect(() => {
     // Lấy mã chia sẻ
-    fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/link-code`, {
+    fetch(`${API_BASE_URL}/api/student/link-code`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => {
@@ -622,7 +623,7 @@ function ParentLinkSection({ token }) {
       })
 
     // Lấy danh sách phụ huynh
-    fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/parents`, {
+    fetch(`${API_BASE_URL}/api/student/parents`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => {

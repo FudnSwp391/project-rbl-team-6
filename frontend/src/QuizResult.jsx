@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { API_BASE_URL } from './config';
 
 function CircularProgress({ percentage, size = 120, strokeWidth = 10 }) {
   const radius = (size - strokeWidth) / 2
@@ -69,7 +70,7 @@ function AnswerIndicator({ letter, text, status }) {
 }
 
 export default function QuizResult({ attemptId, token, isPractice = false, sessionId = null, isExamPaper = false, isTutorExam = false, tutorExamId = null }) {
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+  const apiBaseUrl = API_BASE_URL
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')

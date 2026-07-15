@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import TutorGradingReview from './TutorGradingReview'
 import SessionEvaluationModal from './SessionEvaluationModal'
+import { API_BASE_URL } from '../config';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API = API_BASE_URL
 
 // ── Toast mini-component ──────────────────────────────────────────────────────
 function Toast({ message, type, onClose }) {

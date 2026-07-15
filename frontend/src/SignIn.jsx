@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from './AuthContext'
 import { GoogleLogin } from '@react-oauth/google'
+import { API_BASE_URL } from './config';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
@@ -35,7 +36,7 @@ export default function SignIn({ onSwitchToSignUp, onGoHome }) {
   const [suspiciousAlert, setSuspiciousAlert] = useState(null)
   
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+  const apiBaseUrl = API_BASE_URL
 
   const handleChange = (event) => {
     const { name, value } = event.target

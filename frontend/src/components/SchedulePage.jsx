@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { requestMethodChange } from '../services/api';
 import ReportSessionModal from './ReportSessionModal';
+import { API_BASE_URL } from '../config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_BASE = API_BASE_URL;
 
 const SchedulePage = () => {
   const { user, token } = useAuth();
