@@ -216,7 +216,7 @@ export default function WalletWidget({ token }) {
                                             </div>
                                             <div className="text-right shrink-0">
                                                 <p className={`font-bold text-sm ${isIn ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {isIn ? '+' : '-'}{fmtMoney(tx.amount)}
+                                                    {isIn ? '+' : '-'}{fmtMoney(Math.abs(tx.amount))}
                                                 </p>
                                                 <p className="text-xs text-gray-400">{tx.status}</p>
                                             </div>
