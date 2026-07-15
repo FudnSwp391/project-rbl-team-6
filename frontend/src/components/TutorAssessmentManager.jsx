@@ -9,6 +9,7 @@ import {
   createTutorHomework,
   updateTutorHomeworkStatus,
   deleteTutorHomework,
+  getTutorCourses,
 } from '../services/api';
 import { uploadHomeworkFile } from '../services/upload';
 
@@ -23,6 +24,7 @@ export default function TutorAssessmentManager({ token, user }) {
   // Data states
   const [exams, setExams] = useState([]);
   const [homeworks, setHomeworks] = useState([]);
+  const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -37,12 +39,14 @@ export default function TutorAssessmentManager({ token, user }) {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [examsData, homeworkData] = await Promise.all([
+      const [examsData, homeworkData, coursesData] = await Promise.all([
         getTutorExams(),
-        getTutorHomework()
+        getTutorHomework(),
+        getTutorCourses().catch(() => [])
       ]);
       setExams(examsData || []);
       setHomeworks(homeworkData || []);
+      setCourses(coursesData || []);
     } catch (err) {
       setError(err.message || 'Failed to fetch assessments');
     } finally {
@@ -143,9 +147,9 @@ export default function TutorAssessmentManager({ token, user }) {
         <div>
           <div className="flex items-center gap-sm mb-1">
             <span className="material-symbols-outlined text-primary text-[28px] md:text-[32px]">assignment</span>
-            <h2 className="text-2xl md:text-3xl font-bold text-on-surface">My Assessments</h2>
+            <h2 className="text-2xl md:text-3xl font-bold text-on-surface">Quản lý Bài tập & Đề thi</h2>
           </div>
-          <p className="text-sm md:text-base text-secondary">Manage your exam papers and homework uploads for active courses.</p>
+          <p className="text-sm md:text-base text-secondary">Quản lý đề thi trắc nghiệm và bài tập tự luận cho học viên.</p>
         </div>
 
         <div className="relative group w-full md:w-auto" ref={dropdownRef}>
@@ -154,7 +158,7 @@ export default function TutorAssessmentManager({ token, user }) {
             className="w-full md:w-auto bg-primary text-on-primary px-6 py-2.5 rounded-lg flex items-center justify-center gap-2 font-semibold hover:bg-on-tertiary-fixed transition-all shadow-md active:scale-95"
           >
             <span className="material-symbols-outlined text-[20px]">add_circle</span>
-            Create New
+            Tạo mới
             <span className="material-symbols-outlined text-[20px]">keyboard_arrow_down</span>
           </button>
           
@@ -165,13 +169,13 @@ export default function TutorAssessmentManager({ token, user }) {
                 onClick={() => { setIsExamModalOpen(true); setIsDropdownOpen(false); }}
                 className="w-full text-left px-md py-sm hover:bg-surface-container-low flex items-center gap-md font-label-md transition-colors"
               >
-                <span className="material-symbols-outlined text-primary">edit_document</span> New Exam Paper
+                <span className="material-symbols-outlined text-primary">edit_document</span> Tạo Đề thi mới
               </button>
               <button 
                 onClick={() => { setIsHomeworkModalOpen(true); setIsDropdownOpen(false); }}
                 className="w-full text-left px-md py-sm hover:bg-surface-container-low flex items-center gap-md font-label-md border-t border-outline-variant transition-colors"
               >
-                <span className="material-symbols-outlined text-primary">cloud_upload</span> Upload Homework
+                <span className="material-symbols-outlined text-primary">cloud_upload</span> Giao Bài tập về nhà
               </button>
             </div>
           )}
@@ -187,7 +191,7 @@ export default function TutorAssessmentManager({ token, user }) {
             </span>
           </div>
           <div>
-            <p className="text-label-md text-secondary">Total Assessments</p>
+            <p className="text-label-md text-secondary">Tổng số bài</p>
             <h3 className="text-headline-lg font-headline-lg text-on-surface">{totalAssessments}</h3>
           </div>
         </div>
@@ -199,7 +203,7 @@ export default function TutorAssessmentManager({ token, user }) {
             </span>
           </div>
           <div>
-            <p className="text-label-md text-secondary">Published / Open</p>
+            <p className="text-label-md text-secondary">Đã giao / Mở</p>
             <h3 className="text-headline-lg font-headline-lg text-on-surface">{publishedCount}</h3>
           </div>
         </div>
@@ -211,7 +215,7 @@ export default function TutorAssessmentManager({ token, user }) {
             </span>
           </div>
           <div>
-            <p className="text-label-md text-secondary">Drafts</p>
+            <p className="text-label-md text-secondary">Bản nháp</p>
             <h3 className="text-headline-lg font-headline-lg text-on-surface">{pendingCount}</h3>
           </div>
         </div>
@@ -225,13 +229,13 @@ export default function TutorAssessmentManager({ token, user }) {
             className={`px-4 md:px-8 py-4 font-semibold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'exams' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
             onClick={() => setActiveTab('exams')}
           >
-            Exam Papers
+            Đề thi trắc nghiệm / tự luận
           </button>
           <button 
             className={`px-4 md:px-8 py-4 font-semibold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'homework' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
             onClick={() => setActiveTab('homework')}
           >
-            Homework Uploads
+            Bài tập về nhà
           </button>
         </div>
 
@@ -398,6 +402,7 @@ export default function TutorAssessmentManager({ token, user }) {
         <CreateExamModal 
           onClose={() => setIsExamModalOpen(false)} 
           onSuccess={() => { setIsExamModalOpen(false); fetchData(); }} 
+          courses={courses}
         />
       )}
       
@@ -405,6 +410,7 @@ export default function TutorAssessmentManager({ token, user }) {
         <UploadHomeworkModal 
           onClose={() => setIsHomeworkModalOpen(false)} 
           onSuccess={() => { setIsHomeworkModalOpen(false); fetchData(); }} 
+          courses={courses}
         />
       )}
     </div>
@@ -415,7 +421,7 @@ export default function TutorAssessmentManager({ token, user }) {
 // Sub Components (Modals)
 // ----------------------------------------------------------------------
 
-function CreateExamModal({ onClose, onSuccess }) {
+function CreateExamModal({ onClose, onSuccess, courses }) {
   const [formData, setFormData] = useState({
     title: '',
     course: '',
@@ -528,10 +534,10 @@ function CreateExamModal({ onClose, onSuccess }) {
       <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={onClose}></div>
       <div className="relative w-full max-w-4xl bg-surface rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         
-        <div className="px-xl py-lg border-b border-outline-variant flex justify-between items-center bg-white">
+        <div className="px-xl py-lg border-b border-outline-variant flex justify-between items-center bg-white shrink-0">
           <div>
-            <h3 className="text-headline-md font-headline-md text-primary">Create New Exam Paper</h3>
-            <p className="text-body-md text-secondary">Follow the steps to build your assessment.</p>
+            <h3 className="text-headline-md font-headline-md text-primary">Tạo Đề thi mới</h3>
+            <p className="text-body-md text-secondary">Thiết lập cấu hình và câu hỏi cho đề thi trắc nghiệm / tự luận.</p>
           </div>
           <button className="text-secondary hover:text-error transition-colors" onClick={onClose}>
             <span className="material-symbols-outlined">close</span>
@@ -541,27 +547,30 @@ function CreateExamModal({ onClose, onSuccess }) {
         <div className="p-xl overflow-y-auto space-y-lg bg-surface flex-1">
           <div className="grid grid-cols-2 gap-lg">
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Assessment Title</label>
+              <label className="text-label-md font-bold">Tên bài kiểm tra</label>
               <input 
                 type="text" 
                 value={formData.title}
                 onChange={e => setFormData({...formData, title: e.target.value})}
                 className="w-full rounded-lg border-outline-variant focus:ring-primary focus:border-primary outline-none py-2 px-3" 
-                placeholder="e.g. Chemistry Lab Quiz" 
+                placeholder="VD: Kiểm tra Toán 15 phút" 
               />
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Course / Class</label>
-              <input 
-                type="text" 
+              <label className="text-label-md font-bold">Khóa học / Lớp</label>
+              <select 
                 value={formData.course}
                 onChange={e => setFormData({...formData, course: e.target.value})}
-                className="w-full rounded-lg border-outline-variant focus:ring-primary focus:border-primary outline-none py-2 px-3" 
-                placeholder="e.g. Organic Chemistry" 
-              />
+                className="w-full rounded-lg border-outline-variant focus:ring-primary focus:border-primary outline-none py-2 px-3 bg-white" 
+              >
+                <option value="">-- Chọn Khóa học --</option>
+                {courses.map(c => (
+                  <option key={c.id} value={c.id}>{c.title}</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Duration (Minutes)</label>
+              <label className="text-label-md font-bold">Thời gian làm bài (Phút)</label>
               <input 
                 type="number" 
                 value={formData.duration_minutes}
@@ -570,7 +579,7 @@ function CreateExamModal({ onClose, onSuccess }) {
               />
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Total Passing Score</label>
+              <label className="text-label-md font-bold">Điểm đỗ (Passing Score)</label>
               <input 
                 type="number" 
                 value={formData.total_score}
@@ -581,10 +590,10 @@ function CreateExamModal({ onClose, onSuccess }) {
           </div>
           
           <div className="space-y-sm">
-            <label className="text-label-md font-bold">Assign to Students (Optional)</label>
+            <label className="text-label-md font-bold">Giao bài cho học sinh (Tùy chọn)</label>
             <div className="p-3 border border-outline-variant rounded-lg bg-white max-h-40 overflow-y-auto space-y-2">
               {myStudents.length === 0 ? (
-                <p className="text-sm text-secondary italic">No students available.</p>
+                <p className="text-sm text-secondary italic">Bạn chưa có học sinh nào.</p>
               ) : (
                 myStudents.map(student => {
                   const isChecked = formData.assigned_students.includes(student.studentId);
@@ -608,18 +617,18 @@ function CreateExamModal({ onClose, onSuccess }) {
                 })
               )}
             </div>
-            <p className="text-xs text-secondary mt-1">If no student is selected, this exam will be visible to all of your students.</p>
+            <p className="text-xs text-secondary mt-1">Nếu không chọn học sinh nào, bài thi này sẽ hiển thị cho tất cả học viên của bạn.</p>
           </div>
 
           <div className="space-y-md mt-xl">
             <div className="flex items-center justify-between">
-              <label className="text-label-md font-bold text-lg">Question Builder</label>
+              <label className="text-label-md font-bold text-lg">Soạn câu hỏi</label>
               <div className="flex gap-sm">
                 <button type="button" onClick={handleAddMCQ} className="px-sm py-1 border border-primary text-primary rounded-lg text-sm hover:bg-primary/5">
-                  + Add MCQ
+                  + Trắc nghiệm (MCQ)
                 </button>
                 <button type="button" onClick={handleAddEssay} className="px-sm py-1 border border-primary text-primary rounded-lg text-sm hover:bg-primary/5">
-                  + Add Essay
+                  + Tự luận
                 </button>
               </div>
             </div>
@@ -725,7 +734,7 @@ function CreateExamModal({ onClose, onSuccess }) {
   );
 }
 
-function UploadHomeworkModal({ onClose, onSuccess }) {
+function UploadHomeworkModal({ onClose, onSuccess, courses }) {
   const [formData, setFormData] = useState({
     title: '',
     course: '',
@@ -733,11 +742,31 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
     max_score: 100,
     instructions: '',
     allow_late: false,
-    status: 'Open'
+    status: 'Open',
+    assigned_students: []
   });
   const [file, setFile] = useState(null);
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [myStudents, setMyStudents] = useState([]);
+
+  useEffect(() => {
+    const fetchStudents = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/tutor/students`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setMyStudents(Array.isArray(data) ? data : []);
+        }
+      } catch (err) {
+        console.error("Fetch students error", err);
+      }
+    };
+    fetchStudents();
+  }, []);
 
   const handleSave = async (status) => {
     setFormError('');
@@ -768,7 +797,7 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
       <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={onClose}></div>
       <div className="relative w-full max-w-lg bg-surface rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
         <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-white shrink-0">
-          <h3 className="text-xl font-bold text-primary">Upload Homework</h3>
+          <h3 className="text-xl font-bold text-primary">Giao Bài tập về nhà</h3>
           <button className="text-secondary hover:text-error transition-colors" onClick={onClose}>
             <span className="material-symbols-outlined">close</span>
           </button>
@@ -776,37 +805,71 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
 
         <div className="p-6 space-y-5 overflow-y-auto">
           <div className="space-y-sm">
-            <label className="text-label-md font-bold">Assignment Name</label>
+            <label className="text-label-md font-bold">Tên bài tập</label>
             <input 
               type="text"
               value={formData.title}
               onChange={e => setFormData({...formData, title: e.target.value})} 
               className="w-full rounded-lg border-outline-variant py-2 px-3 focus:ring-primary focus:border-primary outline-none" 
-              placeholder="e.g. Lab Report 04" 
+              placeholder="VD: Bài tập tự luyện số 1" 
             />
           </div>
           
           <div className="space-y-sm">
-            <label className="text-label-md font-bold">Course / Class</label>
-            <input 
-              type="text"
+            <label className="text-label-md font-bold">Khóa học / Lớp</label>
+            <select 
               value={formData.course}
               onChange={e => setFormData({...formData, course: e.target.value})} 
-              className="w-full rounded-lg border-outline-variant py-2 px-3 focus:ring-primary focus:border-primary outline-none" 
-              placeholder="e.g. Advanced Physics" 
-            />
+              className="w-full rounded-lg border-outline-variant py-2 px-3 focus:ring-primary focus:border-primary outline-none bg-white" 
+            >
+              <option value="">-- Chọn Khóa học --</option>
+              {courses.map(c => (
+                <option key={c.id} value={c.id}>{c.title}</option>
+              ))}
+            </select>
           </div>
 
-          <label className="border-2 border-dashed border-outline-variant rounded-xl py-xl bg-surface-container-low flex flex-col items-center gap-sm group cursor-pointer hover:bg-white hover:border-primary transition-all">
+          <div className="space-y-sm">
+            <label className="text-label-md font-bold">Giao bài cho học sinh (Tùy chọn)</label>
+            <div className="p-3 border border-outline-variant rounded-lg bg-white max-h-32 overflow-y-auto space-y-2">
+              {myStudents.length === 0 ? (
+                <p className="text-sm text-secondary italic">Bạn chưa có học sinh nào.</p>
+              ) : (
+                myStudents.map(student => {
+                  const isChecked = formData.assigned_students.includes(student.studentId);
+                  return (
+                    <label key={student.studentId} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-surface p-1 rounded transition-colors">
+                      <input 
+                        type="checkbox"
+                        className="rounded text-primary focus:ring-primary w-4 h-4"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFormData(prev => ({...prev, assigned_students: [...prev.assigned_students, student.studentId]}));
+                          } else {
+                            setFormData(prev => ({...prev, assigned_students: prev.assigned_students.filter(id => id !== student.studentId)}));
+                          }
+                        }}
+                      />
+                      <span>{student.studentName}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <p className="text-xs text-secondary mt-1">Nếu không chọn học sinh nào, bài tập sẽ hiển thị cho tất cả học viên của bạn.</p>
+          </div>
+
+          <label className="border-2 border-dashed border-outline-variant rounded-xl py-xl bg-surface-container-low flex flex-col items-center gap-sm group cursor-pointer hover:bg-white hover:border-primary transition-all mt-4">
             <span className="material-symbols-outlined text-secondary group-hover:text-primary text-[40px]">upload_file</span>
-            <p className="font-label-md text-on-surface">{file ? file.name : 'Click to browse from computer'}</p>
-            <p className="text-label-sm text-secondary">Max 50MB (PDF, DOCX, etc.)</p>
+            <p className="font-label-md text-on-surface text-center px-4">{file ? file.name : 'Nhấp để chọn file từ máy tính'}</p>
+            <p className="text-label-sm text-secondary">Tối đa 50MB (PDF, DOCX, ZIP...)</p>
             <input type="file" className="hidden" onChange={e => setFile(e.target.files[0])} />
           </label>
 
-          <div className="grid grid-cols-2 gap-md">
+          <div className="grid grid-cols-2 gap-md mt-4">
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Deadline Date</label>
+              <label className="text-label-md font-bold">Hạn nộp (Deadline)</label>
               <input 
                 type="date"
                 value={formData.deadline}
@@ -815,13 +878,13 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
               />
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Point Scale</label>
+              <label className="text-label-md font-bold">Thang điểm (Max Score)</label>
               <input 
                 type="number" 
                 value={formData.max_score}
                 onChange={e => setFormData({...formData, max_score: parseInt(e.target.value) || 0})}
                 className="w-full rounded-lg border-outline-variant py-2 px-3 focus:ring-primary outline-none" 
-                placeholder="100" 
+                placeholder="10" 
               />
             </div>
           </div>
@@ -835,7 +898,7 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
               onChange={e => setFormData({...formData, allow_late: e.target.checked})}
               className="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary cursor-pointer"
             />
-            <label htmlFor="allowLate" className="text-sm font-medium cursor-pointer">Allow late submissions</label>
+            <label htmlFor="allowLate" className="text-sm font-medium cursor-pointer">Cho phép nộp muộn (Allow late submissions)</label>
           </div>
         </div>
 
@@ -845,15 +908,16 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
               {formError}
             </div>
           )}
-          <div className="flex flex-wrap justify-end gap-3 w-full">
-            <button onClick={onClose} className="px-6 py-2 text-secondary font-semibold hover:bg-surface-container rounded-lg transition-colors" disabled={loading}>
-              Discard
+          <div className="flex gap-3 w-full justify-end">
+            <button className="px-5 py-2 rounded-lg font-bold text-secondary hover:bg-surface-variant transition-colors" onClick={onClose} disabled={loading}>
+              Hủy
             </button>
-            <button onClick={() => handleSave('Draft')} className="px-6 py-2 border border-primary text-primary font-semibold rounded-lg hover:bg-primary/5 transition-colors" disabled={loading}>
-              Save Draft
+            <button className="px-5 py-2 rounded-lg font-bold text-primary border border-primary hover:bg-primary-fixed transition-colors flex items-center gap-2" onClick={() => handleSave('Draft')} disabled={loading}>
+              <span className="material-symbols-outlined text-[18px]">save</span> Lưa Nháp
             </button>
-            <button onClick={() => handleSave('Open')} className="px-6 py-2 bg-primary text-white font-semibold rounded-lg shadow-md hover:bg-blue-800 transition-colors" disabled={loading}>
-              {loading ? 'Uploading...' : 'Upload & Assign'}
+            <button className="px-5 py-2 rounded-lg font-bold bg-primary text-on-primary shadow-sm hover:bg-on-tertiary-fixed transition-colors flex items-center gap-2" onClick={() => handleSave('Open')} disabled={loading}>
+              {loading ? <span className="material-symbols-outlined animate-spin text-[18px]">sync</span> : <span className="material-symbols-outlined text-[18px]">cloud_upload</span>} 
+              {loading ? 'Đang xử lý...' : 'Giao bài ngay'}
             </button>
           </div>
         </div>
