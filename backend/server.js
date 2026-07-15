@@ -11703,6 +11703,17 @@ async function getTutorWalletForUpdate(client, tutorId) {
   return r.rows.length ? r.rows[0] : null;
 }
 
+// GET /api/bookings/:id/status — API siêu nhẹ để polling status của booking
+app.get('/api/bookings/:id/status', verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT status FROM bookings WHERE id = $1', [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json({ status: result.rows[0].status });
+  } catch (err) {
+    res.status(500).json({ message: 'Error' });
+  }
+});
+
 // PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
 // Logic escrow:
 //   Approved  → hold_money_for_lesson (trừ balance, cộng held_balance)
