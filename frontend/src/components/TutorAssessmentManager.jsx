@@ -139,23 +139,23 @@ export default function TutorAssessmentManager({ token, user }) {
   return (
     <div className="pt-8 pb-xl px-margin-main bg-background min-h-screen">
       {/* Header Section */}
-      <div className="flex items-end justify-between mb-xl">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-xl">
         <div>
-          <div className="flex items-center gap-sm mb-xs">
-            <span className="material-symbols-outlined text-primary text-[32px]">assignment</span>
-            <h2 className="text-headline-lg font-headline-lg text-on-surface">My Assessments</h2>
+          <div className="flex items-center gap-sm mb-1">
+            <span className="material-symbols-outlined text-primary text-[28px] md:text-[32px]">assignment</span>
+            <h2 className="text-2xl md:text-3xl font-bold text-on-surface">My Assessments</h2>
           </div>
-          <p className="text-body-lg text-secondary">Manage your exam papers and homework uploads for active courses.</p>
+          <p className="text-sm md:text-base text-secondary">Manage your exam papers and homework uploads for active courses.</p>
         </div>
 
-        <div className="relative group" ref={dropdownRef}>
+        <div className="relative group w-full md:w-auto" ref={dropdownRef}>
           <button 
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className="bg-primary text-on-primary px-xl py-sm rounded-lg flex items-center gap-xs font-label-md hover:bg-on-tertiary-fixed transition-colors shadow-lg shadow-primary/20"
+            className="w-full md:w-auto bg-primary text-on-primary px-6 py-2.5 rounded-lg flex items-center justify-center gap-2 font-semibold hover:bg-on-tertiary-fixed transition-all shadow-md active:scale-95"
           >
-            <span className="material-symbols-outlined">add_circle</span>
+            <span className="material-symbols-outlined text-[20px]">add_circle</span>
             Create New
-            <span className="material-symbols-outlined">keyboard_arrow_down</span>
+            <span className="material-symbols-outlined text-[20px]">keyboard_arrow_down</span>
           </button>
           
           {/* Dropdown */}
@@ -179,7 +179,7 @@ export default function TutorAssessmentManager({ token, user }) {
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-lg mb-xl">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-10">
         <div className="bg-surface-container-lowest p-lg rounded-xl shadow-sm border border-transparent hover:border-primary/20 transition-all flex flex-col gap-sm">
           <div className="flex justify-between items-start">
             <span className="p-xs bg-primary-fixed rounded-lg">
@@ -220,15 +220,15 @@ export default function TutorAssessmentManager({ token, user }) {
       {/* Main Navigation & Filter Area */}
       <div className="bg-surface-container-lowest rounded-xl shadow-sm border border-outline-variant overflow-hidden">
         {/* Tabs */}
-        <div className="flex px-lg border-b border-outline-variant bg-white">
+        <div className="flex px-2 md:px-6 border-b border-outline-variant bg-white overflow-x-auto hide-scrollbar">
           <button 
-            className={`px-xl py-md font-label-md transition-all border-b-2 ${activeTab === 'exams' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
+            className={`px-4 md:px-8 py-4 font-semibold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'exams' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
             onClick={() => setActiveTab('exams')}
           >
             Exam Papers
           </button>
           <button 
-            className={`px-xl py-md font-label-md transition-all border-b-2 ${activeTab === 'homework' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
+            className={`px-4 md:px-8 py-4 font-semibold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'homework' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
             onClick={() => setActiveTab('homework')}
           >
             Homework Uploads
@@ -236,22 +236,22 @@ export default function TutorAssessmentManager({ token, user }) {
         </div>
 
         {/* Toolbar */}
-        <div className="p-lg flex flex-wrap items-center justify-between gap-md bg-surface-container-low/50">
-          <div className="flex-1 relative min-w-[200px]">
-            <span className="material-symbols-outlined absolute left-md top-1/2 -translate-y-1/2 text-secondary text-[18px]">search</span>
+        <div className="p-4 md:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#fcfcfc] border-b border-outline-variant">
+          <div className="flex-1 relative w-full md:max-w-md">
+            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-secondary text-[20px]">search</span>
             <input 
               type="text" 
               placeholder="Search assessments..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-white border border-outline-variant rounded-lg py-xs pl-xl pr-md text-body-md focus:ring-1 focus:ring-primary focus:border-primary outline-none"
+              className="w-full bg-white border border-outline-variant rounded-lg py-2.5 pl-11 pr-4 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all shadow-sm"
             />
           </div>
-          <div className="flex flex-wrap items-center gap-md">
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
             <select 
               value={filterCourse}
               onChange={(e) => setFilterCourse(e.target.value)}
-              className="bg-white border border-outline-variant rounded-lg py-xs px-md text-label-md focus:ring-1 focus:ring-primary focus:border-primary outline-none min-w-[140px]"
+              className="flex-1 md:flex-none bg-white border border-outline-variant rounded-lg py-2.5 px-3 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shadow-sm cursor-pointer"
             >
               <option value="All">All Courses</option>
               {Array.from(new Set([...exams.map(e => e.course), ...homeworks.map(h => h.course)])).filter(Boolean).map(c => (
@@ -261,15 +261,15 @@ export default function TutorAssessmentManager({ token, user }) {
             <select 
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="bg-white border border-outline-variant rounded-lg py-xs px-md text-label-md focus:ring-1 focus:ring-primary focus:border-primary outline-none min-w-[120px]"
+              className="flex-1 md:flex-none bg-white border border-outline-variant rounded-lg py-2.5 px-3 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shadow-sm cursor-pointer"
             >
               <option value="All">Status</option>
               <option value="Published">Published / Open</option>
               <option value="Draft">Draft</option>
               <option value="Closed">Closed</option>
             </select>
-            <button className="bg-white border border-outline-variant p-xs rounded-lg hover:bg-surface-container transition-colors flex items-center justify-center">
-              <span className="material-symbols-outlined">filter_list</span>
+            <button className="bg-white border border-outline-variant p-2 rounded-lg hover:bg-gray-50 hover:text-primary transition-colors flex items-center justify-center shadow-sm text-secondary" title="Filters">
+              <span className="material-symbols-outlined text-[20px]">filter_list</span>
             </button>
           </div>
         </div>
@@ -289,23 +289,23 @@ export default function TutorAssessmentManager({ token, user }) {
             ) : (
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-surface-container-low text-label-sm uppercase tracking-wider text-secondary">
-                    <th className="px-lg py-md">Assessment Title</th>
-                    <th className="px-lg py-md">Course</th>
-                    <th className="px-lg py-md">Config</th>
-                    <th className="px-lg py-md">Deadline</th>
-                    <th className="px-lg py-md">Status</th>
-                    <th className="px-lg py-md text-right">Actions</th>
+                  <tr className="bg-[#f8f9fb] text-xs uppercase tracking-wider text-[#5d5f5f] font-bold border-b border-outline-variant">
+                    <th className="px-6 py-4">Assessment Title</th>
+                    <th className="px-6 py-4">Course</th>
+                    <th className="px-6 py-4">Config</th>
+                    <th className="px-6 py-4">Deadline</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant">
                   {filteredExams.map(exam => (
                     <tr key={exam.id} className="hover:bg-surface-container-low/30 transition-colors group">
-                      <td className="px-lg py-md">
-                        <div className="font-label-md text-on-surface">{exam.title}</div>
-                        <div className="text-label-sm text-secondary">{exam.question_count || 0} Questions</div>
+                      <td className="px-6 py-4">
+                        <div className="font-semibold text-sm text-[#00288e]">{exam.title}</div>
+                        <div className="text-xs text-[#757684] mt-0.5">{exam.question_count || 0} Questions</div>
                       </td>
-                      <td className="px-lg py-md text-body-md text-secondary">{exam.course || '--'}</td>
+                      <td className="px-6 py-4 text-sm text-on-surface font-medium">{exam.course || '--'}</td>
                       <td className="px-lg py-md">
                         <div className="flex items-center gap-xs text-label-sm text-secondary">
                           <span className="material-symbols-outlined text-[16px]">schedule</span> {exam.duration_minutes} mins
