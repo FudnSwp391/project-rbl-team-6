@@ -2441,22 +2441,22 @@ function isSlotBlocked(slot, selectedSlots, durationMins) {
 function StatusBadge({ status }) {
   if (status === 'approved') return (
     <span className="inline-flex items-center gap-1 bg-[#f0fdf4] text-[#16a34a] text-[11px] font-bold px-2 py-0.5 rounded-full border border-[#bbf7d0]">
-      <span className="material-symbols-outlined icon-fill text-[13px]">check_circle</span>Approved
+      <span className="material-symbols-outlined icon-fill text-[13px]">check_circle</span>Đã duyệt
     </span>
   )
   if (status === 'rejected') return (
     <span className="inline-flex items-center gap-1 bg-red-50 text-red-600 text-[11px] font-bold px-2 py-0.5 rounded-full border border-red-200">
-      <span className="material-symbols-outlined text-[13px]">cancel</span>Rejected
+      <span className="material-symbols-outlined text-[13px]">cancel</span>Từ chối
     </span>
   )
   if (status === 'draft') return (
     <span className="inline-flex items-center gap-1 bg-surface-container text-on-surface-variant text-[11px] font-bold px-2 py-0.5 rounded-full border border-outline-variant">
-      <span className="material-symbols-outlined text-[13px]">edit_note</span>Draft
+      <span className="material-symbols-outlined text-[13px]">edit_note</span>Bản nháp
     </span>
   )
   return (
     <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 text-[11px] font-bold px-2 py-0.5 rounded-full border border-amber-200">
-      <span className="material-symbols-outlined text-[13px]">pending</span>Pending review
+      <span className="material-symbols-outlined text-[13px]">pending</span>Chờ duyệt
     </span>
   )
 }
@@ -2757,12 +2757,12 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const isPending = profileStatus === 'pending'
   const isRejected = profileStatus === 'rejected'
   const statusConfig = isVerified
-    ? { icon: 'verified_user', title: 'Account Verified', box: 'bg-[#f0fdf4] border-[#bbf7d0]', iconColor: 'text-[#16a34a]', titleColor: 'text-[#16a34a]', textColor: 'text-[#166534]', text: 'Ho so da duoc admin duyet. Hoc sinh va phu huynh se thay tick xanh tren ten gia su.' }
+    ? { icon: 'verified_user', title: 'Tài Khoản Đã Xác Thực', box: 'bg-[#f0fdf4] border-[#bbf7d0]', iconColor: 'text-[#16a34a]', titleColor: 'text-[#16a34a]', textColor: 'text-[#166534]', text: 'Hồ sơ đã được admin duyệt. Học sinh và phụ huynh sẽ thấy tick xanh xác thực trên tên gia sư.' }
     : isRejected
-      ? { icon: 'cancel', title: 'Profile Rejected', box: 'bg-red-50 border-red-200', iconColor: 'text-red-600', titleColor: 'text-red-700', textColor: 'text-red-700', text: profile?.reject_reason ? `Ly do: ${profile.reject_reason}` : 'Ho so bi tu choi. Hay chinh sua thong tin va luu lai.' }
+      ? { icon: 'cancel', title: 'Hồ Sơ Bị Từ Chối', box: 'bg-red-50 border-red-200', iconColor: 'text-red-600', titleColor: 'text-red-700', textColor: 'text-red-700', text: profile?.reject_reason ? `Lý do: ${profile.reject_reason}` : 'Hồ sơ bị từ chối. Vui lòng chỉnh sửa thông tin và lưu lại.' }
       : isPending
-        ? { icon: 'pending', title: 'Verification Pending', box: 'bg-amber-50 border-amber-200', iconColor: 'text-amber-500', titleColor: 'text-amber-700', textColor: 'text-amber-700', text: 'Ho so dang cho admin duyet.' }
-        : { icon: 'edit_note', title: 'Draft Profile', box: 'bg-surface-container-low border-outline-variant/40', iconColor: 'text-on-surface-variant', titleColor: 'text-on-surface', textColor: 'text-on-surface-variant', text: 'Day la ban nhap. Hay dien du thong tin va luu lai.' }
+        ? { icon: 'pending', title: 'Đang Chờ Duyệt', box: 'bg-amber-50 border-amber-200', iconColor: 'text-amber-500', titleColor: 'text-amber-700', textColor: 'text-amber-700', text: 'Hồ sơ đang chờ admin duyệt.' }
+        : { icon: 'edit_note', title: 'Bản Nháp', box: 'bg-surface-container-low border-outline-variant/40', iconColor: 'text-on-surface-variant', titleColor: 'text-on-surface', textColor: 'text-on-surface-variant', text: 'Đây là bản nháp. Hãy điền đầy đủ thông tin và lưu lại để gửi yêu cầu xét duyệt.' }
 
   return (
     <div className="space-y-6 pb-10">
@@ -2790,12 +2790,12 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             </div>
           )}
           {isVerified && (
-            <span className="material-symbols-outlined icon-fill absolute -bottom-2 -right-2 text-[22px] bg-white rounded-full p-0.5 shadow" style={{ color: '#16a34a' }} title="Verified by EduX">verified</span>
+            <span className="material-symbols-outlined icon-fill absolute -bottom-2 -right-2 text-[22px] bg-white rounded-full p-0.5 shadow" style={{ color: '#16a34a' }} title="Đã xác thực bởi EduX">verified</span>
           )}
           <button
             onClick={() => setAvatarEdit(true)}
             className="absolute inset-0 rounded-2xl bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-            title="Change avatar"
+            title="Thay đổi ảnh đại diện"
           >
             <span className="material-symbols-outlined text-white text-[24px]">photo_camera</span>
           </button>
@@ -2806,11 +2806,11 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             <h3 className="font-headline-md text-headline-md text-on-surface font-bold">{displayName}</h3>
             {isNewTutor && (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-amber-700">
-                New
+                Mới
               </span>
             )}
             {isVerified
-              ? <span className="inline-flex items-center gap-1 bg-[#f0fdf4] text-[#16a34a] text-[11px] font-bold px-2.5 py-1 rounded-full border border-[#bbf7d0]"><span className="material-symbols-outlined icon-fill text-[13px]">verified</span>Verified by EduX</span>
+              ? <span className="inline-flex items-center gap-1 bg-[#f0fdf4] text-[#16a34a] text-[11px] font-bold px-2.5 py-1 rounded-full border border-[#bbf7d0]"><span className="material-symbols-outlined icon-fill text-[13px]">verified</span>Đã xác thực bởi EduX</span>
               : <StatusBadge status={profileStatus} />
             }
           </div>
@@ -2878,14 +2878,14 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
               <div>
                 <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary">badge</span>
-                  Tutor CV
+                  Thông Tin Chuyên Môn (CV)
                 </h4>
-                <p className="text-[12px] text-on-surface-variant mt-1">Gia su tu dien CV va upload video demo.</p>
+                <p className="text-[12px] text-on-surface-variant mt-1">Cập nhật thông tin lý lịch và tải lên video giới thiệu.</p>
               </div>
               {!cvEdit && (
                 <button onClick={() => setCvEdit(true)}
-                  className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[15px]">edit</span>Edit CV
+                  className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1 bg-white">
+                  <span className="material-symbols-outlined text-[15px]">edit</span>Chỉnh sửa CV
                 </button>
               )}
             </div>
@@ -3340,8 +3340,8 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
       {credModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl space-y-4">
-            <h3 className="font-headline-md text-headline-md text-on-surface capitalize">
-              Add {credModal}
+            <h3 className="font-headline-md text-headline-md text-on-surface font-bold">
+              Thêm Thông Tin
             </h3>
 
             {credError && (
@@ -3352,23 +3352,23 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
 
             <div className="space-y-3">
               <div>
-                <label className="block text-[12px] font-semibold text-on-surface mb-1">
-                  Title <span className="text-red-500">*</span>
+                <label className="block text-[13px] font-bold text-on-surface mb-1.5">
+                  Tiêu đề <span className="text-red-500">*</span>
                 </label>
                 <input
-                  className="w-full h-10 px-3 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary"
-                  placeholder={credModal === 'education' ? 'e.g. Ph.D. in Mathematics - Stanford University (2020)' : credModal === 'certificate' ? 'e.g. AWS Certified Solutions Architect' : 'e.g. Senior Math Teacher at ABC School (2019-2023)'}
+                  className="w-full h-11 px-4 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow"
+                  placeholder={credModal === 'education' ? 'VD: Cử nhân Toán học - Đại học Sư phạm (2020)' : credModal === 'certificate' ? 'VD: Chứng chỉ IELTS 8.0' : 'VD: Giáo viên dạy Toán tại trường ABC (2019-2023)'}
                   value={credForm.title}
                   onChange={e => setCredForm(f => ({ ...f, title: e.target.value }))}
                 />
               </div>
 
               <div>
-                <label className="block text-[12px] font-semibold text-on-surface mb-1">Description (optional)</label>
+                <label className="block text-[13px] font-bold text-on-surface mb-1.5">Mô tả thêm (Tùy chọn)</label>
                 <textarea
-                  rows={2}
-                  className="w-full px-3 py-2 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary resize-none"
-                  placeholder="Additional details..."
+                  rows={3}
+                  className="w-full px-4 py-3 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow resize-y"
+                  placeholder="Thêm thông tin chi tiết..."
                   value={credForm.description}
                   onChange={e => setCredForm(f => ({ ...f, description: e.target.value }))}
                 />
@@ -3376,8 +3376,8 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
 
               {credModal !== 'experience' && (
                 <div>
-                  <label className="block text-[12px] font-semibold text-on-surface mb-1">
-                    Anh / File minh chung <span className="text-red-500">*</span>
+                  <label className="block text-[13px] font-bold text-on-surface mb-1.5">
+                    Ảnh / File minh chứng <span className="text-red-500">*</span>
                   </label>
                   <ProofUploader
                     value={credForm.proof_url}
@@ -3385,22 +3385,22 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                     folder={credModal === 'education' ? 'education' : 'certificates'}
                     disabled={credSaving}
                   />
-                  <p className="mt-1 text-[11px] text-on-surface-variant flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[13px]">info</span>
-                    Admin se xem anh nay de xac minh thong tin cua ban.
+                  <p className="mt-2 text-[12px] text-on-surface-variant flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[15px] text-primary">info</span>
+                    Admin sẽ xem ảnh này để xác minh thông tin của bạn.
                   </p>
                 </div>
               )}
             </div>
 
-            <div className="flex gap-2 pt-1">
+            <div className="flex gap-2 pt-2">
               <button onClick={() => { setCredModal(null); setCredError('') }}
-                className="flex-1 h-10 border border-outline-variant text-on-surface-variant font-label-md rounded-xl hover:bg-surface-container transition-colors">
-                Cancel
+                className="flex-1 h-11 border border-outline-variant text-on-surface-variant font-label-md text-[14px] font-bold rounded-xl hover:bg-surface-container transition-colors">
+                Hủy
               </button>
               <button onClick={handleAddCredential} disabled={credSaving}
-                className="flex-1 h-10 bg-primary text-on-primary font-label-md rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
-                {credSaving ? 'Saving...' : <><span className="material-symbols-outlined text-[16px]">add_circle</span>Save to Profile</>}
+                className="flex-1 h-11 bg-primary text-on-primary font-label-md text-[14px] font-bold rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5">
+                {credSaving ? 'Đang lưu...' : <><span className="material-symbols-outlined text-[18px]">add_circle</span>Lưu lại</>}
               </button>
             </div>
           </div>
@@ -3474,13 +3474,13 @@ function CredentialSection({ title, icon, items, type, onAdd, onDelete, noProof 
           {title}
         </h4>
         <button onClick={onAdd}
-          className="h-8 px-3 bg-primary text-on-primary font-label-sm text-[12px] rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-1 shadow-sm">
-          <span className="material-symbols-outlined text-[15px]">add</span>Add
+          className="h-8 px-3 bg-primary text-on-primary font-label-sm text-[12px] rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-1 shadow-sm font-bold">
+          <span className="material-symbols-outlined text-[15px]">add</span>Thêm mới
         </button>
       </div>
 
       {items.length === 0 ? (
-        <p className="text-[13px] text-outline italic text-center py-4">No {type} added yet.</p>
+        <p className="text-[13px] text-outline italic text-center py-4">Chưa có thông tin nào được thêm.</p>
       ) : (
         <div className="space-y-3">
           {items.map(item => (
@@ -3500,8 +3500,8 @@ function CredentialSection({ title, icon, items, type, onAdd, onDelete, noProof 
                 )}
                 {item.proof_url && !noProof && (
                   <a href={item.proof_url} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline mt-1">
-                    <span className="material-symbols-outlined text-[13px]">attachment</span>View proof
+                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline mt-1 font-bold">
+                    <span className="material-symbols-outlined text-[13px]">attachment</span>Xem minh chứng
                   </a>
                 )}
               </div>
