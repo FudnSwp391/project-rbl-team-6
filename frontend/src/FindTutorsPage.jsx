@@ -248,6 +248,9 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   };
 
   const displayTutors = (isMock ? MOCK_TUTORS : tutors).filter(t => {
+    // 0. Exclude current user if they are a tutor
+    if (user && (t.user_id === user.id || t.id === user.id)) return false;
+
     // 1. Max price
     const matchPrice = !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice;
     

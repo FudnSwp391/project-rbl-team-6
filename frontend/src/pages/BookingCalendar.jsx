@@ -74,6 +74,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
 
   const [tutor, setTutor]               = useState(null);
   const [availability, setAvailability] = useState({});
+  const [monthlyAvailability, setMonthlyAvailability] = useState({});
   const [bookedSlots, setBookedSlots]   = useState({});
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState(null);
@@ -97,6 +98,15 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   const [submitError, setSubmitError]               = useState(null);
   const [bookingSuccessData, setBookingSuccessData] = useState(null);
 
+  // --- Monthly Booking States ---
+  const [bookingMode, setBookingMode]               = useState('custom'); // 'custom' | 'monthly'
+  const [monthlyDuration, setMonthlyDuration]       = useState(1); // 1 to 6 months
+  const [monthlyStartDate, setMonthlyStartDate]     = useState(toDateKey(today));
+  const [monthlySelectedSlots, setMonthlySelectedSlots] = useState({}); // e.g. { 'Monday': ['07:00 PM'] }
+  const [monthlyGeneratedSessions, setMonthlyGeneratedSessions] = useState([]);
+  const [monthlySkippedCount, setMonthlySkippedCount] = useState(0);
+  const [futureBookedSlots, setFutureBookedSlots]   = useState({}); // To hold multi-month bookings
+
   const CHILDREN = [{ id: 1, name: 'Alex Davis' }, { id: 2, name: 'Mia Davis' }];
 
   useEffect(() => {
@@ -119,11 +129,13 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
         }
         tutorData = normalizeBookingTutor(tutorData, tutorId);
         let availData = tutorData.availability || {};
+        let monthlyAvailData = tutorData.monthly_availability || {};
         let bookedData = {};
         try {
           const apiAvailability = await getTutorAvailability(getAvailabilityLookupId(tutorData, tutorId), getVisibleRange(today.getFullYear(), today.getMonth()));
           if (apiAvailability?.availability) {
             availData = apiAvailability.availability;
+            monthlyAvailData = apiAvailability.monthly_availability || {};
             bookedData = apiAvailability.bookedSlots || {};
           } else {
             availData = apiAvailability;
@@ -135,6 +147,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
         if (active) {
           setTutor(tutorData);
           setAvailability(availData);
+          setMonthlyAvailability(monthlyAvailData);
           setBookedSlots(bookedData);
           if (tutorData.subjects?.length > 0) setSubject(tutorData.subjects[0]);
           if (user?.role === 'parent') setSelectedChild(CHILDREN[0].name);
@@ -162,6 +175,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
         if (!active) return;
         if (data?.availability) {
           setAvailability(data.availability);
+          setMonthlyAvailability(data.monthly_availability || {});
           setBookedSlots(data.bookedSlots || {});
         }
       } catch (err) {
@@ -171,6 +185,81 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     refreshBookedSlots();
     return () => { active = false; };
   }, [tutor, tutorId, currentYear, currentMonth]);
+
+  useEffect(() => {
+    let active = true;
+    async function fetchFutureBookedSlots() {
+      if (bookingMode !== 'monthly' || !tutor) return;
+      try {
+        const start = new Date(monthlyStartDate);
+        if (isNaN(start.getTime())) return;
+        const end = new Date(start.getFullYear(), start.getMonth() + monthlyDuration, start.getDate());
+        const from = toDateKey(start);
+        const to = toDateKey(end);
+        
+        const data = await getTutorAvailability(getAvailabilityLookupId(tutor, tutorId), { from, to });
+        if (!active) return;
+        if (data?.bookedSlots) {
+          setFutureBookedSlots(data.bookedSlots);
+        }
+      } catch (err) {
+        console.warn('[BookingCalendar] Failed to fetch future booked slots.', err);
+      }
+    }
+    fetchFutureBookedSlots();
+    return () => { active = false; };
+  }, [bookingMode, monthlyDuration, monthlyStartDate, tutor, tutorId]);
+
+  useEffect(() => {
+    if (bookingMode !== 'monthly') return;
+    const start = new Date(monthlyStartDate);
+    if (isNaN(start.getTime())) {
+      setMonthlyGeneratedSessions([]);
+      return;
+    }
+    const end = new Date(start.getFullYear(), start.getMonth() + monthlyDuration, start.getDate());
+    const generated = [];
+    let skipped = 0;
+
+    let cursor = new Date(start);
+    while (cursor < end) {
+      const dayName = DAYS_MAP[cursor.getDay()];
+      const dateKey = toDateKey(cursor);
+      const selectedSlotsForDay = monthlySelectedSlots[dayName] || [];
+      
+      const bookedForDay = futureBookedSlots[dateKey] || [];
+      for (const slot of selectedSlotsForDay) {
+        if (bookedForDay.some(b => b.timeSlot === slot)) {
+          skipped++;
+        } else {
+          generated.push({ date: dateKey, timeSlot: slot });
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    
+    setMonthlyGeneratedSessions(generated);
+    setMonthlySkippedCount(skipped);
+  }, [bookingMode, monthlyDuration, monthlyStartDate, monthlySelectedSlots, futureBookedSlots]);
+
+  const isMonthlySlotBooked = (dayName, slot) => {
+    const start = new Date(monthlyStartDate);
+    if (isNaN(start.getTime())) return false;
+    const end = new Date(start.getFullYear(), start.getMonth() + monthlyDuration, start.getDate());
+    
+    let cursor = new Date(start);
+    while (cursor < end) {
+      if (DAYS_MAP[cursor.getDay()] === dayName) {
+        const dateKey = toDateKey(cursor);
+        const bookedForDay = futureBookedSlots[dateKey] || [];
+        if (bookedForDay.some(b => b.timeSlot === slot)) {
+          return true; // Found a conflict
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return false;
+  };
 
   /* Calendar helpers */
   const getDaysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
@@ -217,6 +306,11 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     if (s.ok && !s.fullyBooked) {
       const nextDate = new Date(currentYear, currentMonth, day);
       const dateKey = toDateKey(nextDate);
+      if (bookingMode === 'monthly') {
+        setMonthlyStartDate(dateKey);
+        setSelectedDate(nextDate);
+        return;
+      }
       setSelectedDate(nextDate);
       setSelectedTimeSlot((selectedBookings[dateKey] || [])[0] || '');
     }
@@ -233,17 +327,24 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     return (bookedSlots[dateKey] || []).find(item => item.timeSlot === slot) || null;
   };
 
-  const getSelectedBookingItems = () =>
-    Object.entries(selectedBookings)
+  const getSelectedBookingItems = () => {
+    if (bookingMode === 'monthly') return monthlyGeneratedSessions;
+    return Object.entries(selectedBookings)
       .flatMap(([date, slots]) => slots.map(timeSlot => ({ date, timeSlot })))
       .sort((a, b) => a.date.localeCompare(b.date) || a.timeSlot.localeCompare(b.timeSlot));
+  };
 
   const isSlotPicked = (slot) => {
     if (!selectedDate) return false;
-    return (selectedBookings[toDateKey(selectedDate)] || []).includes(slot);
+    const dateKey = toDateKey(selectedDate);
+    if (bookingMode === 'monthly') {
+      return monthlyGeneratedSessions.some(s => s.date === dateKey && s.timeSlot === slot);
+    }
+    return (selectedBookings[dateKey] || []).includes(slot);
   };
 
   const toggleSelectedSlot = (slot) => {
+    if (bookingMode === 'monthly') return; // Cannot toggle individually in monthly mode
     if (!selectedDate || getSlotBooking(slot)) return;
     const dateKey = toDateKey(selectedDate);
     setSelectedBookings(prev => {
@@ -283,6 +384,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       return;
     }
     const sessions = getSelectedBookingItems().filter(session => {
+      if (bookingMode === 'monthly') return true; // Already filtered
       const bookedForDay = bookedSlots[session.date] || [];
       return !bookedForDay.some(booked => booked.timeSlot === session.timeSlot);
     });
@@ -560,6 +662,126 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                 <span className="material-symbols-outlined" style={S.cardIcon}>edit_note</span>
                 Booking Information
               </h3>
+
+              {/* Booking Mode Toggle */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16, background: 'var(--surface-container)', padding: 4, borderRadius: 12 }}>
+                <button
+                  type="button"
+                  onClick={() => setBookingMode('custom')}
+                  style={{
+                    flex: 1, padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+                    background: bookingMode === 'custom' ? 'var(--primary)' : 'transparent',
+                    color: bookingMode === 'custom' ? 'white' : 'var(--on-surface)',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Từng buổi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBookingMode('monthly')}
+                  style={{
+                    flex: 1, padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+                    background: bookingMode === 'monthly' ? 'var(--primary)' : 'transparent',
+                    color: bookingMode === 'monthly' ? 'white' : 'var(--on-surface)',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Theo tháng
+                </button>
+              </div>
+
+              {bookingMode === 'monthly' && (
+                <div style={{ marginBottom: 16, padding: 16, background: 'var(--primary-container)', borderRadius: 12, border: '1px solid var(--primary-light)' }}>
+                  <div style={{ ...S.formGroup, marginBottom: 12 }}>
+                    <label style={S.label}>Thời gian đăng ký</label>
+                    <div style={{ position: 'relative' }}>
+                      <select value={monthlyDuration} onChange={e => setMonthlyDuration(Number(e.target.value))} style={S.select}>
+                        <option value={1}>1 tháng</option>
+                        <option value={2}>2 tháng</option>
+                        <option value={3}>3 tháng</option>
+                        <option value={6}>6 tháng</option>
+                      </select>
+                      <span className="material-symbols-outlined" style={S.selectArrow}>expand_more</span>
+                    </div>
+                  </div>
+                  
+                  <div style={{ ...S.formGroup, marginBottom: 12 }}>
+                    <label style={S.label}>Ngày bắt đầu</label>
+                    <input 
+                      type="date" 
+                      value={monthlyStartDate}
+                      min={toDateKey(today)}
+                      onChange={e => setMonthlyStartDate(e.target.value)}
+                      style={{ ...S.input, paddingRight: 12 }}
+                    />
+                  </div>
+
+                  <div style={{ ...S.formGroup, marginBottom: 0 }}>
+                    <label style={S.label}>Lịch học cố định hàng tuần</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 200, overflowY: 'auto', paddingRight: 4 }}>
+                      {Object.keys(monthlyAvailability).length === 0 ? (
+                        <div style={{ padding: 12, background: 'var(--surface-container-low)', borderRadius: 8, fontSize: 13, color: 'var(--on-surface-variant)', textAlign: 'center' }}>
+                          Gia sư này chưa mở lịch dạy cố định theo tháng. Vui lòng chọn chế độ "Từng buổi" hoặc liên hệ gia sư.
+                        </div>
+                      ) : (
+                        DAYS_MAP.map(dayName => {
+                          const slots = monthlyAvailability[dayName] || [];
+                          if (!slots.length) return null;
+                          const dayLabel = dayName === 'Sunday' ? 'Chủ nhật' : `Thứ ${DAYS_MAP.indexOf(dayName) + 1}`;
+                          return (
+                            <div key={dayName} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--on-surface-variant)' }}>{dayLabel}</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {slots.map(slot => {
+                                  const isBooked = isMonthlySlotBooked(dayName, slot);
+                                  const selected = (monthlySelectedSlots[dayName] || []).includes(slot) && !isBooked;
+                                  return (
+                                    <button
+                                      key={slot}
+                                      type="button"
+                                      disabled={isBooked}
+                                      onClick={() => {
+                                        if (isBooked) return;
+                                        setMonthlySelectedSlots(prev => {
+                                          const daySlots = prev[dayName] || [];
+                                          return {
+                                            ...prev,
+                                            [dayName]: selected ? daySlots.filter(s => s !== slot) : [...daySlots, slot].sort()
+                                          };
+                                        });
+                                      }}
+                                      style={{
+                                        padding: '4px 10px', borderRadius: 16, border: '1px solid', fontSize: 12, fontWeight: 500, 
+                                        cursor: isBooked ? 'not-allowed' : 'pointer',
+                                        background: isBooked ? '#f9fafb' : (selected ? 'var(--primary)' : 'white'),
+                                        color: isBooked ? '#9ca3af' : (selected ? 'white' : 'var(--on-surface)'),
+                                        borderColor: isBooked ? '#d1d5db' : (selected ? 'var(--primary)' : 'var(--outline-variant)'),
+                                        opacity: isBooked ? 0.5 : 1,
+                                        transition: 'all 0.2s'
+                                      }}
+                                      title={isBooked ? 'Đã có lịch trùng (không thể đăng ký trọn gói)' : ''}
+                                    >
+                                      {slot}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                  
+                  {monthlySkippedCount > 0 && (
+                    <div style={{ marginTop: 12, padding: 8, background: '#fee2e2', color: '#b91c1c', borderRadius: 8, fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>info</span>
+                      Đã bỏ qua {monthlySkippedCount} buổi bị trùng lịch gia sư.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Summary box */}
               <div style={S.summaryBox}>

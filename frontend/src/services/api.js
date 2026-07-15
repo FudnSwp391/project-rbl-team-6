@@ -20,6 +20,7 @@ async function request(url, options = {}) {
 
   const response = await fetch(`${API_BASE_URL}${url}`, {
     ...options,
+    cache: options.cache || 'no-store',
     headers
   });
 
@@ -469,11 +470,11 @@ export async function deleteTutorCredential(id) {
  * Cáºp nháºt lá»‹ch dáº¡y (replace toĂ n bá»™).
  * Fallback: lÆ°u vĂ o localStorage.
  */
-export async function updateTutorAvailability(availability, slot_duration_mins = 60) {
+export async function updateTutorAvailability(availability, monthly_availability, slot_duration_mins = 60) {
   try {
     return await request('/api/tutor/availability', {
       method: 'PUT',
-      body: JSON.stringify({ availability, slot_duration_mins }),
+      body: JSON.stringify({ availability, monthly_availability, slot_duration_mins }),
     });
   } catch (error) {
     console.warn(`[API] updateTutorAvailability failed: ${error.message}. Saving locally.`);

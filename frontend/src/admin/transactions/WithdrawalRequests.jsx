@@ -30,7 +30,7 @@ export default function WithdrawalRequests({ token }) {
     setLoading(true); setError(null)
     const qs = new URLSearchParams({ page: String(page), limit: String(limit) })
     if (filterStatus) qs.set('status', filterStatus)
-    fetch(`${API}/api/admin/withdrawal-requests?${qs.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API}/api/admin/wallet/withdraw-requests?${qs.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(d => setData(d))
       .catch(e => setError(`Không thể tải yêu cầu rút tiền (${e})`))
@@ -44,19 +44,19 @@ export default function WithdrawalRequests({ token }) {
     if (action === 'reject') {
       const reason = window.prompt(promptText || 'Lý do từ chối:')
       if (reason === null) return
-      body = { rejectReason: reason }
+      body = { note: reason } // changed rejectReason to note for compatibility
     } else if (!window.confirm(promptText)) {
       return
     }
     setBusyId(id)
     try {
-      const r = await fetch(`${API}/api/admin/withdrawal-requests/${id}/${action}`, {
+      const r = await fetch(`${API}/api/admin/wallet/withdraw-requests/${id}/${action}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
       const j = await r.json().catch(() => ({}))
-      if (!r.ok) { alert(j.message || `Thao tác thất bại (${r.status})`); return }
+      if (!r.ok) { alert(j.error || j.message || `Thao tác thất bại (${r.status})`); return }
       load()
     } catch (e) {
       alert('Lỗi kết nối máy chủ')

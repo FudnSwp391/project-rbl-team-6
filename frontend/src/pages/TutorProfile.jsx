@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import BookingModal from '../components/BookingModal'
 import { useAuth } from '../AuthContext'
+import { supabase } from '../services/supabase'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -84,6 +85,13 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState('')
 
+  // ── Instant Booking State ──
+  const [showInstantModal, setShowInstantModal] = useState(false)
+  const [instantBookingStatus, setInstantBookingStatus] = useState('idle') // 'idle' | 'creating' | 'waiting' | 'accepted' | 'rejected'
+  const [instantBookingId, setInstantBookingId] = useState(null)
+  const [instantError, setInstantError] = useState('')
+  const [timeLeft, setTimeLeft] = useState(60)
+
   useEffect(() => {
     window.scrollTo(0, 0)
     setLoading(true)
@@ -133,6 +141,84 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
     }
     setChatLoading(false)
   }
+
+  // ── Gửi yêu cầu Học Ngay ──
+  const handleRequestInstantBooking = async () => {
+    if (!user) { onGoSignIn(); return }
+    setInstantError('')
+    setInstantBookingStatus('creating')
+    try {
+      const tutorActualId = tutor.user_id || tutor.id || tutorId;
+      const subjectFirst = Array.isArray(tutor.subjects)
+        ? tutor.subjects[0]
+        : (tutor.subjects ? tutor.subjects.split(',')[0].trim() : 'Môn học')
+      const res = await fetch(`${API_BASE}/api/bookings/instant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          tutor_id: tutorActualId,
+          tutor_name: tutor.full_name || tutor.display_name || '',
+          subject: subjectFirst,
+          duration_mins: tutor.instant_duration_mins || 30,
+          note: 'Học Ngay từ profile'
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Lỗi hệ thống khi tạo yêu cầu Học Ngay');
+      const bookingId = data.booking?.id || data.booking_id;
+      if (!bookingId) throw new Error('Không nhận được mã booking từ server.');
+      setInstantBookingId(bookingId);
+      setInstantBookingStatus('waiting');
+      setTimeLeft(60);
+    } catch (e) {
+      setInstantError(e.message);
+      setInstantBookingStatus('idle');
+    }
+  }
+
+  // ── Lắng nghe trạng thái thay đổi của booking Học Ngay qua Supabase realtime ──
+  useEffect(() => {
+    if (instantBookingStatus !== 'waiting' || !instantBookingId) return;
+    
+    let channel = null;
+    if (supabase) {
+      channel = supabase
+        .channel(`student-instant-${instantBookingId}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'bookings', filter: `id=eq.${instantBookingId}` },
+          (payload) => {
+            const newStatus = payload.new?.status;
+            if (newStatus === 'Confirmed' || newStatus === 'InProgress') {
+              setInstantBookingStatus('accepted');
+              setTimeout(() => {
+                window.location.hash = `/session/${payload.new.id}`;
+              }, 2000);
+            } else if (newStatus === 'Cancelled' || newStatus === 'Declined' || newStatus === 'Expired') {
+              setInstantBookingStatus('rejected');
+            }
+          }
+        )
+        .subscribe();
+    }
+    
+    // Countdown timer — tự hủy sau 60s
+    const interval = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setInstantBookingStatus(s => s === 'waiting' ? 'rejected' : s);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      if (channel && supabase) supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
+  }, [instantBookingStatus, instantBookingId]);
 
   // ── Gửi tin nhắn từ widget ──
   const sendChatMsg = async (e) => {
@@ -494,35 +580,50 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                 </div>
 
                 {/* Action buttons */}
-                <div className="space-y-3">
-                  <button
-                    onClick={() => {
-                      sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
-                      window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
-                    }}
-                    className="w-full bg-[#00288e] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#1e40af] transition-colors shadow-md flex items-center justify-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">calendar_month</span>
-                    Đặt Lịch Học Thử
-                  </button>
-                  <button
-                    onClick={() => {
-                      sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
-                      window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
-                    }}
-                    className="w-full bg-[#10B981] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#059669] transition-colors shadow-md flex items-center justify-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">calendar_month</span>
-                    Đặt Lịch Học
-                  </button>
-                  <button
-                    onClick={openChatWidget}
-                    className="w-full bg-white border border-[#c4c5d5] text-[#00288e] py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#eef3ff] hover:border-[#00288e] transition-colors flex items-center justify-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">chat</span>
-                    Nhắn Tin Với Gia Sư
-                  </button>
-                </div>
+                {user && (tutor.user_id === user.id || tutor.id === user.id) ? (
+                  <div className="w-full bg-[#f8f9fb] border border-[#e1e2e4] text-[#757684] py-3 px-4 rounded-xl text-center font-medium text-sm">
+                    Đây là hồ sơ gia sư của bạn
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => {
+                        sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
+                        window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
+                      }}
+                      className="w-full bg-[#00288e] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#1e40af] transition-colors shadow-md flex items-center justify-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">calendar_month</span>
+                      Đặt Lịch Học Thử
+                    </button>
+                    {tutor.availability_status === 'Online' && (
+                      <button
+                        onClick={() => setShowInstantModal(true)}
+                        className="w-full bg-gradient-to-r from-amber-500 to-orange-500 text-white py-3 px-4 rounded-xl font-bold text-sm hover:from-amber-600 hover:to-orange-600 transition-colors shadow-lg shadow-amber-500/30 flex items-center justify-center gap-2 animate-pulse"
+                      >
+                        <span className="material-symbols-outlined text-[20px]">bolt</span>
+                        Học Ngay - {tutor.instant_price ? `${Number(tutor.instant_price).toLocaleString()}đ` : priceDisplay}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
+                        window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
+                      }}
+                      className="w-full bg-[#10B981] text-white py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#059669] transition-colors shadow-md flex items-center justify-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">calendar_month</span>
+                      Đặt Lịch Học
+                    </button>
+                    <button
+                      onClick={openChatWidget}
+                      className="w-full bg-white border border-[#c4c5d5] text-[#00288e] py-3 px-4 rounded-xl font-semibold text-sm hover:bg-[#eef3ff] hover:border-[#00288e] transition-colors flex items-center justify-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">chat</span>
+                      Nhắn Tin Với Gia Sư
+                    </button>
+                  </div>
+                )}
 
                 {/* Trust notice */}
                 <div className="mt-5 pt-4 border-t border-[#e1e2e4] text-xs text-[#757684] text-center leading-relaxed">
@@ -535,27 +636,173 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
         </div>
 
         {/* ── Mobile booking bar (fixed bottom) ── */}
-        <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e1e2e4] px-4 py-3 flex items-center gap-3 z-40 shadow-lg">
-          <div className="flex-1">
-            <span className="text-xl font-bold text-[#00288e]">{priceDisplay}</span>
-            <span className="text-xs text-[#444653]">/giờ</span>
+        {!(user && (tutor.user_id === user.id || tutor.id === user.id)) && (
+          <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e1e2e4] px-4 py-3 flex items-center gap-3 z-40 shadow-lg">
+            <div className="flex-1">
+              <span className="text-xl font-bold text-[#00288e]">{priceDisplay}</span>
+              <span className="text-xs text-[#444653]">/giờ</span>
+            </div>
+            <button
+              onClick={openChatWidget}
+              className="px-4 py-2.5 border border-[#00288e] text-[#00288e] rounded-xl text-sm font-semibold hover:bg-[#eef3ff] transition-colors"
+            >
+              Nhắn Tin
+            </button>
+            {tutor.availability_status === 'Online' && (
+              <button
+                onClick={() => setShowInstantModal(true)}
+                className="p-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl hover:from-amber-600 hover:to-orange-600 shadow-md flex items-center justify-center animate-pulse"
+                title="Học Ngay"
+              >
+                <span className="material-symbols-outlined text-[20px]">bolt</span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
+                window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
+              }}
+              className="px-5 py-2.5 bg-[#00288e] text-white rounded-xl text-sm font-semibold hover:bg-[#1e40af] transition-colors whitespace-nowrap"
+            >
+              Đặt Lịch
+            </button>
           </div>
-          <button
-            onClick={openChatWidget}
-            className="px-4 py-2.5 border border-[#00288e] text-[#00288e] rounded-xl text-sm font-semibold hover:bg-[#eef3ff] transition-colors"
-          >
-            Nhắn Tin
-          </button>
-          <button
-            onClick={() => {
-              sessionStorage.setItem('edux_last_booking_tutor', JSON.stringify(tutor));
-              window.location.hash = `/booking/${tutor.user_id || tutor.id || tutorId}`;
-            }}
-            className="px-5 py-2.5 bg-[#00288e] text-white rounded-xl text-sm font-semibold hover:bg-[#1e40af] transition-colors"
-          >
-            Đặt Lịch
-          </button>
-        </div>
+        )}
+
+        {/* ── Instant Booking Modal ── */}
+        {showInstantModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl relative overflow-hidden">
+              {/* Header gradient */}
+              <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-6 pt-6 pb-10 text-white text-center relative">
+                <button
+                  onClick={() => { if (instantBookingStatus !== 'creating' && instantBookingStatus !== 'waiting') { setShowInstantModal(false); setInstantBookingStatus('idle'); setInstantError(''); } }}
+                  className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                  disabled={instantBookingStatus === 'creating' || instantBookingStatus === 'waiting'}
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+                <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <span className="material-symbols-outlined text-[32px]">bolt</span>
+                </div>
+                <h3 className="text-[18px] font-bold">Học Ngay Cùng Gia Sư!</h3>
+                <p className="text-[13px] mt-1 text-white/80">
+                  {tutor.full_name || tutor.display_name || 'Gia sư'}
+                </p>
+              </div>
+
+              {/* Body — pulled up with negative margin */}
+              <div className="px-6 pb-6 -mt-5">
+                {/* Info card */}
+                <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 mb-5">
+                  <div className="flex justify-between items-center py-2 border-b border-gray-50 text-[14px]">
+                    <span className="text-gray-500 flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-gray-400">school</span>
+                      Môn học
+                    </span>
+                    <span className="font-semibold text-gray-800">
+                      {Array.isArray(tutor.subjects) ? tutor.subjects[0] : (tutor.subjects ? tutor.subjects.split(',')[0].trim() : 'Môn học')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-gray-50 text-[14px]">
+                    <span className="text-gray-500 flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-gray-400">schedule</span>
+                      Thời lượng
+                    </span>
+                    <span className="font-semibold text-gray-800">{tutor.instant_duration_mins || 30} phút</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 text-[14px]">
+                    <span className="text-gray-500 flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-gray-400">payments</span>
+                      Học phí
+                    </span>
+                    <span className="font-bold text-amber-600 text-[16px]">
+                      {tutor.instant_price
+                        ? `${Number(tutor.instant_price).toLocaleString('vi-VN')} VNĐ`
+                        : priceDisplay}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Note */}
+                {instantBookingStatus === 'idle' && (
+                  <p className="text-[12px] text-gray-500 text-center mb-4">
+                    Tiền học phí sẽ được tạm giữ. Nếu gia sư không phản hồi trong 60 giây,
+                    tiền sẽ hoàn trả ngay về ví của bạn.
+                  </p>
+                )}
+
+                {/* Error */}
+                {instantError && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-4 flex items-start gap-2">
+                    <span className="material-symbols-outlined text-red-500 text-[18px] mt-0.5">error</span>
+                    <p className="text-red-600 text-[13px] leading-snug">{instantError}</p>
+                  </div>
+                )}
+
+                {/* States */}
+                {instantBookingStatus === 'idle' && (
+                  <button
+                    onClick={handleRequestInstantBooking}
+                    className="w-full h-12 bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold rounded-xl shadow-lg shadow-amber-500/30 hover:from-amber-600 hover:to-orange-600 transition-all flex items-center justify-center gap-2 text-[15px]"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">bolt</span>
+                    Xác nhận &amp; Gửi yêu cầu
+                  </button>
+                )}
+
+                {(instantBookingStatus === 'creating' || instantBookingStatus === 'waiting') && (
+                  <div className="flex flex-col items-center py-4 gap-3">
+                    {/* Circular countdown */}
+                    <div className="relative w-20 h-20">
+                      <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+                        <circle cx="40" cy="40" r="34" fill="none" stroke="#FDE68A" strokeWidth="6"/>
+                        <circle cx="40" cy="40" r="34" fill="none" stroke="#F59E0B" strokeWidth="6"
+                          strokeDasharray={`${2 * Math.PI * 34}`}
+                          strokeDashoffset={`${2 * Math.PI * 34 * (1 - timeLeft / 60)}`}
+                          strokeLinecap="round"
+                          style={{ transition: 'stroke-dashoffset 1s linear' }}
+                        />
+                      </svg>
+                      <span className="absolute inset-0 flex items-center justify-center font-bold text-[22px] text-amber-600">{timeLeft}</span>
+                    </div>
+                    <p className="text-[14px] font-semibold text-gray-800">Đang chờ gia sư phản hồi...</p>
+                    <p className="text-[12px] text-gray-400">Yêu cầu tự động hủy khi hết giờ đếm ngược</p>
+                  </div>
+                )}
+
+                {instantBookingStatus === 'accepted' && (
+                  <div className="flex flex-col items-center py-4 gap-3">
+                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+                      <span className="material-symbols-outlined text-[40px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                    </div>
+                    <p className="text-[15px] font-bold text-green-700">Gia sư đã chấp nhận!</p>
+                    <p className="text-[12px] text-gray-400 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+                      Đang chuyển vào phòng học...
+                    </p>
+                  </div>
+                )}
+
+                {instantBookingStatus === 'rejected' && (
+                  <div className="flex flex-col items-center py-4 gap-3">
+                    <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
+                      <span className="material-symbols-outlined text-[40px] text-red-400" style={{ fontVariationSettings: "'FILL' 1" }}>cancel</span>
+                    </div>
+                    <p className="text-[14px] font-bold text-red-600">Yêu cầu không được chấp nhận</p>
+                    <p className="text-[12px] text-gray-500 text-center">Gia sư bận hoặc không phản hồi kịp thời.<br/>Tiền học phí đã được hoàn trả về ví của bạn.</p>
+                    <button
+                      onClick={() => { setInstantBookingStatus('idle'); setInstantError(''); setTimeLeft(60); }}
+                      className="mt-2 px-5 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-[13px] font-semibold hover:bg-amber-100 transition-colors"
+                    >
+                      Thử lại
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
 
