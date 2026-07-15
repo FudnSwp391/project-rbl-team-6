@@ -27,22 +27,22 @@ import WalletDeposit from './components/Wallet/WalletDeposit'
 import WalletWithdraw from './components/Wallet/WalletWithdraw'
 
 const NAV_ITEMS = [
-  { icon: 'dashboard', label: 'Overview' },
-  { icon: 'calendar_today', label: 'My Schedule' },
-  { icon: 'group', label: 'Students' },
-  { icon: 'video_library', label: 'Courses' },
-  { icon: 'description', label: 'Assessments' },
-  { icon: 'fact_check', label: 'Review & Grade' },
-  { icon: 'payments', label: 'Earnings' },
-  { icon: 'account_balance_wallet', label: 'Wallet' },
-  { icon: 'chat', label: 'Messages' },
-  { icon: 'account_circle', label: 'My Profile' },
+  { icon: 'dashboard', label: 'Tổng Quan' },
+  { icon: 'calendar_today', label: 'Lịch Trình' },
+  { icon: 'group', label: 'Học Viên' },
+  { icon: 'video_library', label: 'Khóa Học' },
+  { icon: 'description', label: 'Bài Kiểm Tra' },
+  { icon: 'fact_check', label: 'Chấm Điểm' },
+  { icon: 'payments', label: 'Thu Nhập' },
+  { icon: 'account_balance_wallet', label: 'Ví Tiền' },
+  { icon: 'chat', label: 'Tin Nhắn' },
+  { icon: 'account_circle', label: 'Hồ Sơ' },
 ]
 
 export default function TutorDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState('Overview')
+  const [activeTab, setActiveTab] = useState('Tổng Quan')
   const [requests, setRequests] = useState([])
   const [scheduleToday, setScheduleToday] = useState([])
   const [overviewStats, setOverviewStats] = useState({
@@ -239,7 +239,7 @@ export default function TutorDashboard() {
         <div className="flex flex-col gap-2 px-sm flex-1 mt-4">
           {NAV_ITEMS.map((item) => {
             const isActive = item.label === activeTab
-            const isMessages = item.label === 'Messages'
+            const isMessages = item.label === 'Tin Nhắn'
             return (
               <a
                 key={item.label}
@@ -350,7 +350,7 @@ export default function TutorDashboard() {
           </div>
         </header>
 
-        {/* Ă¢â€â‚¬Ă¢â€â‚¬ Scrollable main Ă¢â€â‚¬Ă¢â€â‚¬ */}
+        {/* Ă¢â€ â‚¬Ă¢â€ â‚¬ Scrollable main Ă¢â€ â‚¬Ă¢â€ â‚¬ */}
         <main className="flex-1 overflow-y-auto p-gutter lg:p-lg space-y-lg relative">
 
           {/* Decorative background glow */}
@@ -385,19 +385,19 @@ export default function TutorDashboard() {
             </div>
           ) : null}
 
-          {(profileStatus === 'approved' || activeTab === 'My Profile') && activeTab === 'Overview' && (
+          {(profileStatus === 'approved' || activeTab === 'Hồ Sơ') && activeTab === 'Tổng Quan' && (
             <>
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ Welcome Ă¢â€â‚¬Ă¢â€â‚¬ */}
+          {/* Ă¢â€ â‚¬Ă¢â€ â‚¬ Welcome Ă¢â€ â‚¬Ă¢â€ â‚¬ */}
           <div className="space-y-1">
-            <h2 className="font-headline-lg text-headline-lg text-on-surface">
-              Good Morning, {displayName}
+            <h2 className="font-headline-sm text-[24px] font-bold text-on-surface">
+              Chào buổi sáng, {displayName}
             </h2>
-            <p className="font-body-lg text-body-lg text-on-surface-variant">
-              Here is your daily overview.
+            <p className="font-body-md text-on-surface-variant">
+              Đây là tổng quan hàng ngày của bạn.
             </p>
           </div>
 
-          {/* Ă¢â€â‚¬Ă¢â€â‚¬ Stats Grid Ă¢â€â‚¬Ă¢â€â‚¬ */}
+          {/* Ă¢â€ â‚¬Ă¢â€ â‚¬ Stats Grid Ă¢â€ â‚¬Ă¢â€ â‚¬ */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-md">
             {/* Earnings */}
             <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-[0_10px_15px_-3px_rgba(0,0,0,0.08)] rounded-[1rem] p-md flex flex-col justify-between">
@@ -412,7 +412,7 @@ export default function TutorDashboard() {
               </div>
               <div>
                 <p className="font-label-md text-label-md text-on-surface-variant mb-1">
-                  Total Earnings (This Month)
+                  Tổng Thu Nhập (Tháng Này)
                 </p>
                 <p className="text-[36px] leading-[44px] font-bold text-on-surface">{formatMoney(overviewStats.thisMonthEarned)}</p>
               </div>
@@ -427,7 +427,7 @@ export default function TutorDashboard() {
               </div>
               <div>
                 <p className="font-label-md text-label-md text-on-surface-variant mb-1">
-                  Completed Lessons
+                  Lớp Học Đã Dạy
                 </p>
                 <p className="text-[36px] leading-[44px] font-bold text-on-surface">{overviewStats.completedLessons}</p>
               </div>
@@ -442,7 +442,7 @@ export default function TutorDashboard() {
               </div>
               <div>
                 <p className="font-label-md text-label-md text-on-surface-variant mb-1">
-                  Active Students
+                  Học Viên Đang Học
                 </p>
                 <p className="text-[36px] leading-[44px] font-bold text-on-surface">{overviewStats.activeStudents}</p>
               </div>
@@ -523,39 +523,39 @@ export default function TutorDashboard() {
             </>
           )}
 
-          {activeTab === 'My Profile' && (
+          {activeTab === 'Hồ Sơ' && (
             <TutorProfileTab user={user} displayName={displayName} initials={initials} />
           )}
 
-          {profileStatus === 'approved' && activeTab === 'My Schedule' && (
+          {profileStatus === 'approved' && activeTab === 'Lịch Trình' && (
             <MyScheduleTab />
           )}
 
-          {profileStatus === 'approved' && activeTab === 'Students' && (
+          {profileStatus === 'approved' && activeTab === 'Học Viên' && (
             <TutorStudentsTab />
           )}
 
-          {profileStatus === 'approved' && activeTab === 'Courses' && (
+          {profileStatus === 'approved' && activeTab === 'Khóa Học' && (
             <TutorCoursesTab user={user} />
           )}
 
-          {profileStatus === 'approved' && activeTab === 'Assessments' && (
+          {profileStatus === 'approved' && activeTab === 'Bài Kiểm Tra' && (
             <TutorAssessmentManager token={token} />
           )}
 
-          {profileStatus === 'approved' && activeTab === 'Review & Grade' && (
+          {profileStatus === 'approved' && activeTab === 'Chấm Điểm' && (
             <TutorGradingDashboard token={token} />
           )}
 
-          {profileStatus === 'approved' && activeTab === 'Earnings' && (
+          {profileStatus === 'approved' && activeTab === 'Thu Nhập' && (
             <TutorEarningsTab />
           )}
 
-          {profileStatus === 'approved' && activeTab === 'Messages' && (
+          {profileStatus === 'approved' && activeTab === 'Tin Nhắn' && (
             <MessagesSection token={token} user={user} />
           )}
 
-          {activeTab === 'Wallet' && (
+          {activeTab === 'Ví Tiền' && (
             <WalletDashboard 
               onDepositClick={() => setActiveTab('WalletDeposit')} 
               onWithdrawClick={() => setActiveTab('WalletWithdraw')}
@@ -1414,6 +1414,16 @@ function SessionInfoModal({ event, booking, onClose, onSaved }) {
 
   const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
 
+  // Hình thức do học sinh chọn khi đặt lịch → khóa, gia sư không tự đổi được
+  // (chỉ đổi qua luồng học sinh gửi yêu cầu). Booking cũ không có → cho chọn.
+  const lockedMethod = (() => {
+    const m = String(
+      (changeStatus === 'accepted' && booking?.method_change_requested) ||
+      booking?.teaching_method || ''
+    ).toLowerCase()
+    return m === 'online' || m === 'offline' ? m : null
+  })()
+
   const handleSave = async () => {
     setError('')
     if (!booking?.id) {
@@ -1557,7 +1567,36 @@ function SessionInfoModal({ event, booking, onClose, onSaved }) {
               <p className="text-[12px] font-bold text-on-surface uppercase tracking-wider">Hình thức học</p>
             </div>
             <div className="p-4 space-y-4">
-              {/* Toggle Online / Offline */}
+              {/* Hình thức đã được học sinh chọn khi đặt lịch → hiển thị cố định */}
+              {lockedMethod ? (
+                <div className={`flex items-center gap-3 p-4 rounded-xl border-2 ${
+                  lockedMethod === 'online' ? 'border-primary bg-primary/5' : 'border-[#16a34a] bg-[#f0fdf4]'
+                }`}>
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                    lockedMethod === 'online' ? 'bg-primary text-on-primary' : 'bg-[#16a34a] text-white'
+                  }`}>
+                    <span className="material-symbols-outlined text-[22px]">
+                      {lockedMethod === 'online' ? 'videocam' : 'location_on'}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className={`font-bold text-[13px] ${lockedMethod === 'online' ? 'text-primary' : 'text-[#16a34a]'}`}>
+                        {lockedMethod === 'online' ? 'Online' : 'Offline'}
+                      </p>
+                      <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-white border ${
+                        lockedMethod === 'online' ? 'border-primary/30 text-primary' : 'border-[#16a34a]/30 text-[#16a34a]'
+                      }`}>
+                        <span className="material-symbols-outlined text-[11px]">lock</span>
+                        Học sinh đã chọn
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-on-surface-variant mt-0.5">
+                      {lockedMethod === 'online' ? 'Zoom · Meet · Teams' : 'Học trực tiếp'} — hình thức do học sinh chọn khi đặt lịch, chỉ thay đổi khi học sinh gửi yêu cầu đổi.
+                    </p>
+                  </div>
+                </div>
+              ) : (
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { value: 'online',  icon: 'videocam',    label: 'Online',  sub: 'Zoom · Meet · Teams' },
@@ -1601,6 +1640,7 @@ function SessionInfoModal({ event, booking, onClose, onSaved }) {
                   )
                 })}
               </div>
+              )}
 
               {/* Online fields */}
               {form.mode === 'online' && (

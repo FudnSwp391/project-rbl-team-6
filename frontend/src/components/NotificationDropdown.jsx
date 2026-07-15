@@ -90,11 +90,17 @@ export default function NotificationDropdown({ token }) {
     if (token) {
       fetchNotifs(false); // Initial fetch without toast
       
+      // Khởi tạo auto-polling mỗi 3s thay vì phụ thuộc hoàn toàn vào Supabase
+      const interval = setInterval(() => {
+        fetchNotifs(true);
+      }, 3000);
+
       const payload = parseJwt(token);
       const userId = payload?.userId;
+      let channel = null;
       
       if (userId && supabase) {
-        const channel = supabase
+        channel = supabase
           .channel(`notifications:${userId}`)
           .on('postgres_changes', {
             event: 'INSERT',
@@ -105,11 +111,14 @@ export default function NotificationDropdown({ token }) {
             fetchNotifs(true);
           })
           .subscribe();
-
-        return () => {
-          supabase.removeChannel(channel);
-        };
       }
+      
+      return () => {
+        clearInterval(interval);
+        if (channel && supabase) {
+          supabase.removeChannel(channel);
+        }
+      };
     }
   }, [token]);
 

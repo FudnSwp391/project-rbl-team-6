@@ -2,76 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import StudentSidebar from '../components/StudentSidebar';
 import { apiRequest } from '../services/api';
-import { uploadEvidenceFile } from '../services/upload';
 
 export default function MyCourses() {
   const { user, logout } = useAuth();
   const [filter, setFilter] = useState('all');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  
+
   const [courses, setCourses] = useState([]);
   const [stats, setStats] = useState({ totalCourses: 0, completedCourses: 0, weeklyHours: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [suggestedCourses, setSuggestedCourses] = useState([]);
 
-  // Report Modal State
-  const [reportModalOpen, setReportModalOpen] = useState(false);
-  const [selectedCourseToReport, setSelectedCourseToReport] = useState(null);
-  const [reportReason, setReportReason] = useState('');
-  const [reportSeverity, setReportSeverity] = useState('medium');
-  const [reportEvidence, setReportEvidence] = useState(null);
-  const [reportSubmitting, setReportSubmitting] = useState(false);
-  const [reportError, setReportError] = useState(null);
-
-  const handleOpenReport = (e, course) => {
-    e.stopPropagation();
-    setSelectedCourseToReport(course);
-    setReportReason('');
-    setReportSeverity('medium');
-    setReportEvidence(null);
-    setReportError(null);
-    setReportModalOpen(true);
-  };
-
-  const submitReport = async () => {
-    if (!reportReason.trim()) {
-      setReportError('Vui lòng nhập lý do khiếu nại.');
-      return;
-    }
-    setReportSubmitting(true);
-    setReportError(null);
-    try {
-      let evidenceUrl = null;
-      if (reportEvidence) {
-        evidenceUrl = await uploadEvidenceFile(reportEvidence, user?.id || 'anonymous');
-      }
-      const res = await apiRequest(`/api/courses/${selectedCourseToReport.course_id}/report`, {
-        method: 'POST',
-        body: JSON.stringify({
-          reason: reportReason,
-          severity: reportSeverity,
-          evidenceUrl
-        })
-      });
-      if (res.success || res.message) {
-        alert(res.message || 'Gửi khiếu nại thành công!');
-        setReportModalOpen(false);
-      } else {
-        setReportError(res.message || 'Lỗi gửi khiếu nại');
-      }
-    } catch (e) {
-      setReportError(e.message || 'Đã xảy ra lỗi.');
-    } finally {
-      setReportSubmitting(false);
-    }
-  };
-
   useEffect(() => {
     const fetchMyCourses = async () => {
       try {
         const resData = await apiRequest('/api/student/my-courses');
-        
+
         if (resData.success) {
           setCourses(resData.data.courses);
           setStats(resData.data.stats);
@@ -87,6 +34,19 @@ export default function MyCourses() {
     };
 
     fetchMyCourses();
+
+    // Re-fetch when the user comes back to this tab, so a refund/course change
+    // approved elsewhere (e.g. admin resolving a complaint) shows up without a manual reload.
+    const handleVisible = () => { if (document.visibilityState === 'visible') fetchMyCourses(); };
+    window.addEventListener('focus', fetchMyCourses);
+    document.addEventListener('visibilitychange', handleVisible);
+    // Safety-net poll in case a focus/visibility event is missed (e.g. resolved in another device).
+    const pollId = setInterval(() => { if (document.visibilityState === 'visible') fetchMyCourses(); }, 30000);
+    return () => {
+      window.removeEventListener('focus', fetchMyCourses);
+      document.removeEventListener('visibilitychange', handleVisible);
+      clearInterval(pollId);
+    };
   }, []);
 
   // Fetch suggested courses from DB
@@ -232,10 +192,6 @@ export default function MyCourses() {
                             Tiếp tục học
                           </button>
                         )}
-                        <button className="w-full mt-sm py-sm text-red-500 font-label-md rounded-lg hover:bg-red-50 transition-colors flex items-center justify-center gap-xs" onClick={(e) => handleOpenReport(e, course)}>
-                          <span className="material-symbols-outlined text-[18px]">report</span>
-                          Khiếu nại / Hoàn tiền
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -314,69 +270,6 @@ export default function MyCourses() {
           </div>
         </div>
       </main>
-
-      {/* Report Modal */}
-      {reportModalOpen && selectedCourseToReport && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-md">
-          <div className="bg-surface rounded-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-lg border-b border-outline-variant flex justify-between items-center bg-surface-container-lowest">
-              <h3 className="text-headline-sm font-bold text-on-surface">Khiếu nại khóa học</h3>
-              <button className="text-on-surface-variant hover:text-error transition-colors" onClick={() => setReportModalOpen(false)}>
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-            <div className="p-lg overflow-y-auto">
-              <p className="text-body-md text-on-surface-variant mb-md">
-                Bạn đang khiếu nại khóa học <strong className="text-primary">{selectedCourseToReport.title}</strong>.
-              </p>
-              <div className="text-label-md text-on-surface-variant bg-surface-container rounded-lg p-sm mb-md border border-outline-variant">
-                <p className="font-bold mb-xs">Chính sách hoàn tiền khóa học (trong 48 giờ đầu, theo tiến độ học):</p>
-                <ul className="list-disc pl-md space-y-0.5">
-                  <li>Tiến độ ≤ 20%: hoàn 100%</li>
-                  <li>21–40%: hoàn 70%</li>
-                  <li>41–60%: hoàn 40%</li>
-                  <li>61–80%: hoàn 20%</li>
-                  <li>Trên 80% hoặc sau 48 giờ: chuyển admin xem xét</li>
-                </ul>
-              </div>
-              {reportError && <div className="p-sm bg-red-100 text-red-600 rounded mb-md text-label-md">{reportError}</div>}
-              
-              <label className="block text-label-md font-bold text-on-surface mb-xs mt-md">Mức độ nghiêm trọng</label>
-              <select className="w-full p-sm border border-outline-variant rounded mb-md focus:border-primary focus:ring-1 focus:ring-primary outline-none" value={reportSeverity} onChange={e => setReportSeverity(e.target.value)}>
-                <option value="low">Thấp (Góp ý, nội dung chưa tốt)</option>
-                <option value="medium">Trung bình (Giảng viên không hỗ trợ, chất lượng kém)</option>
-                <option value="high">Cao (Lừa đảo, nội dung sai lệch nghiêm trọng)</option>
-              </select>
-
-              <label className="block text-label-md font-bold text-on-surface mb-xs">Lý do khiếu nại</label>
-              <textarea 
-                className="w-full p-sm border border-outline-variant rounded mb-md min-h-[100px] focus:border-primary focus:ring-1 focus:ring-primary outline-none"
-                placeholder="Vui lòng mô tả chi tiết vấn đề bạn gặp phải..."
-                value={reportReason}
-                onChange={e => setReportReason(e.target.value)}
-              ></textarea>
-
-              <label className="block text-label-md font-bold text-on-surface mb-xs">Bằng chứng (Hình ảnh/Video nếu có)</label>
-              <input 
-                type="file" 
-                accept="image/*,video/*"
-                className="w-full text-body-sm text-on-surface-variant file:mr-sm file:py-xs file:px-md file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-container file:text-primary hover:file:bg-primary/20"
-                onChange={e => setReportEvidence(e.target.files[0])}
-              />
-            </div>
-            <div className="p-lg border-t border-outline-variant bg-surface-container-lowest flex justify-end gap-md">
-              <button className="px-lg py-sm text-on-surface-variant font-label-md rounded hover:bg-surface-variant transition-colors" onClick={() => setReportModalOpen(false)}>Hủy</button>
-              <button 
-                className="px-lg py-sm bg-error text-white font-label-md rounded hover:bg-red-600 transition-colors flex items-center gap-sm disabled:opacity-50"
-                onClick={submitReport}
-                disabled={reportSubmitting}
-              >
-                {reportSubmitting ? <span className="material-symbols-outlined animate-spin">refresh</span> : 'Gửi khiếu nại'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
