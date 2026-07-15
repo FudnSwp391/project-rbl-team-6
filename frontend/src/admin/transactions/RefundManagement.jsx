@@ -32,7 +32,7 @@ function mapRow(r) {
     adminNote:   r.admin_note   || '',
     requestDate: r.created_at,
     resolvedAt:  r.resolved_at,
-    evidenceUrl: r.evidence_url || null,
+    evidenceUrls: Array.isArray(r.evidence_urls) ? r.evidence_urls : [],
     source:      'dispute',
   }
 }
@@ -133,10 +133,15 @@ export default function RefundManagement({ token }) {
             </td>
             <td className="py-3.5 px-5"><StatusBadge status={r.status} /></td>
             <td className="py-3.5 px-5">
-              {r.evidenceUrl
-                ? <a href={r.evidenceUrl} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">attach_file</span> Xem
-                  </a>
+              {r.evidenceUrls.length > 0
+                ? <div className="flex flex-wrap items-center gap-1 max-w-[140px]">
+                    <span className="material-symbols-outlined text-[14px] text-blue-600">attach_file</span>
+                    {r.evidenceUrls.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+                        Xem{r.evidenceUrls.length > 1 ? ` #${i + 1}` : ''}
+                      </a>
+                    ))}
+                  </div>
                 : <span className="text-gray-300">—</span>
               }
             </td>

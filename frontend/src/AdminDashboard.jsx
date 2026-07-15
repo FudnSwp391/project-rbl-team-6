@@ -2948,17 +2948,21 @@ function ComplaintsView({ token }) {
 
   const fmtMoney = (n) => Number(n || 0).toLocaleString('vi-VN') + 'đ'
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('vi-VN') : '—'
-  const statusLabel = { 'OPEN': 'Đang mở', 'RESOLVED_REFUND': 'Hoàn tiền', 'RESOLVED_RELEASE': 'Giải ngân' }
+  const statusLabel = { 'OPEN': 'Đang mở', 'RESOLVED_REFUND': 'Hoàn tiền', 'RESOLVED_RELEASE': 'Giải ngân', 'WITHDRAWN': 'Đã rút' }
   const statusColor = {
     'OPEN': 'bg-red-50 text-red-700 border border-red-200',
     'RESOLVED_REFUND': 'bg-green-50 text-green-700 border border-green-200',
-    'RESOLVED_RELEASE': 'bg-blue-50 text-blue-700 border border-blue-200'
+    'RESOLVED_RELEASE': 'bg-blue-50 text-blue-700 border border-blue-200',
+    'WITHDRAWN': 'bg-gray-100 text-gray-600 border border-gray-300'
   }
+  // status='OPEN' vẫn giữ nguyên khi rút (không đổi ENUM) — "đang mở thật sự" phải kiểm tra thêm !withdrawn_at.
+  const isReallyOpen = (d) => d.status === 'OPEN' && !d.withdrawn_at
+  const effectiveStatus = (d) => d.withdrawn_at ? 'WITHDRAWN' : d.status
   const filtered = statusFilter === 'all' ? disputes
-    : statusFilter === 'open' ? disputes.filter(d => d.status === 'OPEN')
-    : disputes.filter(d => d.status !== 'OPEN')
-  const openCount = disputes.filter(d => d.status === 'OPEN').length
-  const resolvedCount = disputes.filter(d => d.status !== 'OPEN').length
+    : statusFilter === 'open' ? disputes.filter(isReallyOpen)
+    : disputes.filter(d => !isReallyOpen(d))
+  const openCount = disputes.filter(isReallyOpen).length
+  const resolvedCount = disputes.filter(d => !isReallyOpen(d)).length
 
   return (
     <div className="p-10 max-w-[1280px] mx-auto">
@@ -3017,7 +3021,7 @@ function ComplaintsView({ token }) {
             </thead>
             <tbody className="divide-y divide-outline-variant">
               {filtered.map(d => (
-                <tr key={d.id} className={`hover:bg-gray-50 transition-colors ${d.status==='OPEN'?'bg-red-50/30':''}`}>
+                <tr key={d.id} className={`hover:bg-gray-50 transition-colors ${isReallyOpen(d)?'bg-red-50/30':''}`}>
                   <td className="py-3 px-4 text-sm font-medium text-on-surface">{d.reporter_name} {d.raised_by_parent ? '(Phụ huynh)' : ''}</td>
                   <td className="py-3 px-4 text-sm text-on-surface">{d.tutor_full_name || d.tutor_name || d.d_tutor_id}</td>
                   <td className="py-3 px-4 text-sm">
@@ -3034,7 +3038,7 @@ function ComplaintsView({ token }) {
                   </td>
                   <td className="py-3 px-4 text-sm text-on-surface-variant">{fmtDate(d.created_at)}</td>
                   <td className="py-3 px-4">
-                    <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${statusColor[d.status]||'bg-gray-100 text-gray-600'}`}>{statusLabel[d.status]||d.status}</span>
+                    <span className={`px-2 py-0.5 rounded-lg text-xs font-semibold ${statusColor[effectiveStatus(d)]||'bg-gray-100 text-gray-600'}`}>{statusLabel[effectiveStatus(d)]||d.status}</span>
                   </td>
                   <td className="py-3 px-4 text-right">
                     <div className="flex items-center gap-2 justify-end">
@@ -3044,12 +3048,12 @@ function ComplaintsView({ token }) {
                         className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-blue-200 text-blue-600 hover:bg-blue-50 flex items-center gap-1">
                         <span className="material-symbols-outlined text-[14px]">smart_toy</span>AI
                       </button>
-                      {d.status === 'OPEN' ? (
+                      {isReallyOpen(d) ? (
                         <button onClick={() => { setResolveModal(d); setAdminNote(''); setRefundRate(1) }}
                           className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 flex items-center gap-1">
                           <span className="material-symbols-outlined text-[14px]">gavel</span>Phán quyết
                         </button>
-                      ) : <span className="text-xs text-on-surface-variant italic">Đã xử lý</span>}
+                      ) : <span className="text-xs text-on-surface-variant italic">{d.withdrawn_at ? 'Đã rút' : 'Đã xử lý'}</span>}
                     </div>
                   </td>
                 </tr>
@@ -3061,8 +3065,8 @@ function ComplaintsView({ token }) {
 
       {resolveModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden">
-            <div className="flex items-center justify-between p-5 border-b">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b shrink-0">
               <h3 className="text-lg font-bold flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary">gavel</span>Phán quyết khiếu nại
               </h3>
@@ -3070,7 +3074,7 @@ function ComplaintsView({ token }) {
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-4 overflow-y-auto">
               <div className="bg-gray-50 rounded-xl p-4 text-sm space-y-2">
                 <div className="flex justify-between"><span className="text-on-surface-variant">Người báo cáo:</span><span className="font-medium">{resolveModal.reporter_name} {resolveModal.raised_by_parent ? '(Phụ huynh)' : ''}</span></div>
                 <div className="flex justify-between"><span className="text-on-surface-variant">Gia sư bị khiếu nại:</span><span className="font-medium">{resolveModal.tutor_full_name || resolveModal.tutor_name || 'N/A'}</span></div>
@@ -3081,12 +3085,29 @@ function ComplaintsView({ token }) {
                   <span className="text-on-surface-variant">Lý do:</span>
                   <p className="text-on-surface mt-1 italic">"{resolveModal.reason}"</p>
                 </div>
-                {resolveModal.evidence_url && (
+                {resolveModal.withdrawn_at && (
                   <div className="pt-2 border-t border-gray-200">
-                    <span className="text-on-surface-variant">Bằng chứng:</span>
-                    <a href={resolveModal.evidence_url} target="_blank" rel="noopener noreferrer" className="block mt-1 text-primary hover:underline">Xem đính kèm</a>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-orange-700 bg-orange-100">
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>undo</span>
+                      Học sinh đã rút khiếu nại này
+                    </span>
+                    <p className="text-xs text-on-surface-variant mt-1">Rút lúc: {fmtDate(resolveModal.withdrawn_at)}</p>
                   </div>
                 )}
+                <div className="pt-2 border-t border-gray-200">
+                  <span className="text-on-surface-variant">Bằng chứng:</span>
+                  {Array.isArray(resolveModal.evidence_urls) && resolveModal.evidence_urls.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {resolveModal.evidence_urls.map((url, i) => (
+                        <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                          Xem đính kèm #{i + 1}
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-on-surface-variant italic mt-1">Không có bằng chứng đính kèm</p>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -3123,8 +3144,31 @@ function ComplaintsView({ token }) {
                   Phần không hoàn được chia cho gia sư (90%) và nền tảng (10%). Theo {`REFUND_POLICY_V2_1`}.
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-3 pt-2">
-                <button onClick={() => handleResolve('REFUND_TO_STUDENT')} disabled={resolving}
+              <div className="bg-gray-50 rounded-xl p-4 text-sm">
+                <span className="text-on-surface-variant">Mong muốn của học sinh:</span>
+                {resolveModal.student_requested_resolution ? (
+                  <p className="text-on-surface mt-1 italic">"{resolveModal.student_requested_resolution}"</p>
+                ) : (
+                  <p className="text-on-surface-variant italic mt-1">Học sinh không nêu yêu cầu cụ thể</p>
+                )}
+              </div>
+              <div className="bg-gray-50 rounded-xl p-4 text-sm">
+                <span className="text-on-surface-variant">Giải trình của gia sư:</span>
+                {resolveModal.tutor_response ? (
+                  <>
+                    <p className="text-on-surface mt-1 italic">"{resolveModal.tutor_response}"</p>
+                    {resolveModal.tutor_response_at && (
+                      <p className="text-xs text-on-surface-variant mt-1">Phản hồi lúc: {fmtDate(resolveModal.tutor_response_at)}</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-on-surface-variant italic mt-1">Gia sư chưa phản hồi</p>
+                )}
+              </div>
+            </div>
+            <div className="p-5 pt-4 border-t shrink-0 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => handleResolve('REFUND_TO_STUDENT')} disabled={resolving || !!resolveModal.withdrawn_at}
                   className="p-4 rounded-xl bg-red-50 border-2 border-red-300 hover:border-red-500 hover:bg-red-100 transition-all disabled:opacity-50 text-left relative overflow-hidden group">
                   <span className="material-symbols-outlined text-red-600 text-[22px] block mb-2">undo</span>
                   <p className="font-bold text-red-800 text-sm">Chấp nhận khiếu nại (Hoàn tiền)</p>
@@ -3132,7 +3176,7 @@ function ComplaintsView({ token }) {
                   <p className="text-xs font-bold text-red-700 mt-2">→ {fmtMoney(Math.round(Number(resolveModal.lesson_fee || 0) * refundRate))} ({Math.round(refundRate * 100)}%)</p>
                   <div className="absolute inset-0 bg-red-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 </button>
-                <button onClick={() => handleResolve('RELEASE_TO_TUTOR')} disabled={resolving}
+                <button onClick={() => handleResolve('RELEASE_TO_TUTOR')} disabled={resolving || !!resolveModal.withdrawn_at}
                   className="p-4 rounded-xl bg-blue-50 border-2 border-blue-300 hover:border-blue-500 hover:bg-blue-100 transition-all disabled:opacity-50 text-left relative overflow-hidden group">
                   <span className="material-symbols-outlined text-blue-600 text-[22px] block mb-2">payments</span>
                   <p className="font-bold text-blue-800 text-sm">Bác bỏ khiếu nại (Giải ngân)</p>
