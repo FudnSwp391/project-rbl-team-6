@@ -10937,44 +10937,68 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
     } catch (fnErr) {
       // Nếu function chưa tồn tại (chưa chạy migration), fallback thủ công
       console.warn('process_instant_booking function not found, falling back:', fnErr.message);
-      
-      // Kiểm tra ví học sinh
-      const walletRes = await pool.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [req.user.userId]);
-      if (!walletRes.rows.length) return res.status(400).json({ message: 'Không tìm thấy ví học sinh.' });
-      const { id: walletId, balance } = walletRes.rows[0];
-      if (Number(balance) < Number(price)) return res.status(400).json({ message: 'Số dư không đủ. Vui lòng nạp thêm tiền.' });
-      
-      // Kiểm tra pending
-      const pendingStudentRes = await pool.query(
-        `SELECT COUNT(*) FROM bookings WHERE student_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
-        [req.user.userId]
-      );
-      if (parseInt(pendingStudentRes.rows[0].count) > 0) {
-        return res.status(400).json({ message: 'Bạn đã có một yêu cầu Học ngay đang chờ xử lý.' });
+
+      const fbClient = await pool.connect();
+      try {
+        await fbClient.query('BEGIN');
+
+        // Kiểm tra ví học sinh (lock để tránh race condition)
+        const walletRes = await fbClient.query(
+          'SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE',
+          [req.user.userId]
+        );
+        if (!walletRes.rows.length) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Không tìm thấy ví học sinh.' });
+        }
+        const { id: walletId, balance } = walletRes.rows[0];
+        if (Number(balance) < Number(price)) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Số dư không đủ. Vui lòng nạp thêm tiền.' });
+        }
+
+        // Kiểm tra pending
+        const pendingStudentRes = await fbClient.query(
+          `SELECT COUNT(*) FROM bookings WHERE student_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
+          [req.user.userId]
+        );
+        if (parseInt(pendingStudentRes.rows[0].count) > 0) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Bạn đã có một yêu cầu Học ngay đang chờ xử lý.' });
+        }
+
+        const pendingTutorRes = await fbClient.query(
+          `SELECT COUNT(*) FROM bookings WHERE tutor_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
+          [tutor_id]
+        );
+        if (parseInt(pendingTutorRes.rows[0].count) > 0) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Gia sư vừa nhận một buổi học khác.' });
+        }
+
+        // Trừ ví (trong cùng transaction)
+        await fbClient.query(
+          `UPDATE wallets SET balance = balance - $1, frozen_balance = COALESCE(frozen_balance, 0) + $1 WHERE id = $2`,
+          [price, walletId]
+        );
+
+        // Tạo booking — nếu INSERT lỗi, transaction sẽ ROLLBACK hoàn tiền tự động
+        const resolved_time_slot = time_slot || null;
+        const bookingRes = await fbClient.query(
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, child_name, student_name, booking_type, lesson_fee, duration_mins, payer_wallet_id, created_at)
+           VALUES ($1,$2,$3,$4,CURRENT_DATE,COALESCE($5, to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI')),$6,'Pending',$7,$8,'Instant',$9,$10,$11,NOW()) RETURNING id`,
+          [req.user.userId, tutor_id, tutor_name || null, subject || 'Môn học', resolved_time_slot, note || null, child_name || null, student_name, price, duration_mins || 30, walletId]
+        );
+
+        await fbClient.query('COMMIT');
+        response = { success: true, booking_id: bookingRes.rows[0].id };
+      } catch (fbErr) {
+        await fbClient.query('ROLLBACK');
+        // Transaction đã rollback → tiền học sinh được hoàn tự động
+        throw new Error(fbErr.message || 'Lỗi khi tạo yêu cầu Học Ngay. Tiền của bạn chưa bị trừ.');
+      } finally {
+        fbClient.release();
       }
-      
-      const pendingTutorRes = await pool.query(
-        `SELECT COUNT(*) FROM bookings WHERE tutor_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
-        [tutor_id]
-      );
-      if (parseInt(pendingTutorRes.rows[0].count) > 0) {
-        return res.status(400).json({ message: 'Gia sư vừa nhận một buổi học khác.' });
-      }
-      
-      // Trừ ví
-      await pool.query(
-        `UPDATE wallets SET balance = balance - $1, frozen_balance = COALESCE(frozen_balance, 0) + $1 WHERE id = $2`,
-        [price, walletId]
-      );
-      
-      // Tạo booking
-      const bookingRes = await pool.query(
-        `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, child_name, student_name, booking_type, lesson_fee, duration_mins, payer_wallet_id, created_at)
-         VALUES ($1,$2,$3,$4,CURRENT_DATE,COALESCE($5, to_char(CURRENT_TIMESTAMP, 'HH24:MI')),$6,'Pending',$7,$8,'Instant',$9,$10,$11,NOW()) RETURNING id`,
-        [req.user.userId, tutor_id, tutor_name || null, subject || 'Môn học', time_slot || null, note || null, child_name || null, student_name, price, duration_mins || 30, walletId]
-      );
-      
-      response = { success: true, booking_id: bookingRes.rows[0].id };
     }
     
     if (!response.success) {
@@ -11408,15 +11432,32 @@ app.post('/api/tutor/bookings/:id/instant-reject', verifyToken, requireTutor, as
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    
-    const bRes = await client.query('SELECT student_id, lesson_fee, status, payer_wallet_id FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE', [req.params.id, req.user.userId]);
+
+    const bRes = await client.query(
+      'SELECT student_id, lesson_fee, status, payer_wallet_id FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE',
+      [req.params.id, req.user.userId]
+    );
     if (!bRes.rows.length) throw new Error('Booking not found');
     if (bRes.rows[0].status !== 'Pending') throw new Error('Booking is not Pending');
 
-    const { lesson_fee, payer_wallet_id } = bRes.rows[0];
+    const { student_id, lesson_fee } = bRes.rows[0];
+    let { payer_wallet_id } = bRes.rows[0];
+
+    // Fallback: nếu payer_wallet_id NULL, tìm ví qua student_id
+    if (!payer_wallet_id) {
+      const wRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [student_id]);
+      if (!wRes.rows.length) throw new Error('Không tìm thấy ví để hoàn tiền.');
+      payer_wallet_id = wRes.rows[0].id;
+      // Cập nhật lại booking để đồng bộ
+      await client.query('UPDATE bookings SET payer_wallet_id = $1 WHERE id = $2', [payer_wallet_id, req.params.id]);
+    }
+
     await client.query("UPDATE bookings SET status = 'Declined', updated_at = NOW() WHERE id = $1", [req.params.id]);
-    await client.query("UPDATE wallets SET balance = balance + $1, frozen_balance = frozen_balance - $1 WHERE id = $2", [lesson_fee, payer_wallet_id]);
-    
+    await client.query(
+      'UPDATE wallets SET balance = balance + $1, frozen_balance = GREATEST(frozen_balance - $1, 0) WHERE id = $2',
+      [lesson_fee, payer_wallet_id]
+    );
+
     await client.query('COMMIT');
     res.json({ success: true });
   } catch (err) {
@@ -16060,30 +16101,52 @@ setInterval(async () => {
 // Background job to timeout instant bookings
 setInterval(async () => {
   try {
-    const query = `
+    const result = await pool.query(`
       SELECT id, student_id, tutor_id, lesson_fee, payer_wallet_id
       FROM bookings
       WHERE booking_type = 'Instant' AND status = 'Pending'
         AND created_at < NOW() - INTERVAL '60 seconds'
-    `;
-    const result = await pool.query(query);
-    
+    `);
+
     for (const b of result.rows) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        
+
         // Re-check status with lock
-        const bRes = await client.query('SELECT status, lesson_fee, payer_wallet_id FROM bookings WHERE id = $1 FOR UPDATE', [b.id]);
-        if (bRes.rows.length && bRes.rows[0].status === 'Pending') {
-          const { lesson_fee, payer_wallet_id } = bRes.rows[0];
-          
-          await client.query("UPDATE bookings SET status = 'Timeout', updated_at = NOW() WHERE id = $1", [b.id]);
-          await client.query("UPDATE wallets SET balance = balance + $1, frozen_balance = frozen_balance - $1 WHERE id = $2", [lesson_fee, payer_wallet_id]);
-          console.log(`Timed out instant booking ${b.id}`);
+        const bRes = await client.query(
+          'SELECT status, lesson_fee, payer_wallet_id, student_id FROM bookings WHERE id = $1 FOR UPDATE',
+          [b.id]
+        );
+        if (!bRes.rows.length || bRes.rows[0].status !== 'Pending') {
+          await client.query('COMMIT');
+          continue;
         }
-        
+
+        const { lesson_fee, student_id } = bRes.rows[0];
+        let { payer_wallet_id } = bRes.rows[0];
+
+        // Fallback: nếu payer_wallet_id NULL, tìm ví qua student_id
+        if (!payer_wallet_id) {
+          const wRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [student_id]);
+          if (wRes.rows.length) {
+            payer_wallet_id = wRes.rows[0].id;
+            await client.query('UPDATE bookings SET payer_wallet_id = $1 WHERE id = $2', [payer_wallet_id, b.id]);
+          }
+        }
+
+        await client.query("UPDATE bookings SET status = 'Timeout', updated_at = NOW() WHERE id = $1", [b.id]);
+
+        // Chỉ hoàn tiền nếu có ví hợp lệ
+        if (payer_wallet_id) {
+          await client.query(
+            'UPDATE wallets SET balance = balance + $1, frozen_balance = GREATEST(frozen_balance - $1, 0) WHERE id = $2',
+            [lesson_fee, payer_wallet_id]
+          );
+        }
+
         await client.query('COMMIT');
+        console.log(`Timed out instant booking ${b.id}, refunded ${lesson_fee} to wallet ${payer_wallet_id}`);
       } catch (err) {
         await client.query('ROLLBACK');
         console.error('Instant booking timeout transaction error:', err);
@@ -16092,7 +16155,7 @@ setInterval(async () => {
       }
     }
   } catch (err) {
-    console.error("Cron check instant timeout error:", err);
+    console.error('Cron check instant timeout error:', err);
   }
 }, 5 * 1000); // Check every 5 seconds
 
