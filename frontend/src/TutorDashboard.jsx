@@ -410,7 +410,7 @@ export default function TutorDashboard() {
       Ă¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢Â */}
       <nav
         className={`
-          fixed left-0 top-0 h-full z-40 flex flex-col py-lg w-64
+          fixed left-0 top-0 h-full z-40 flex flex-col py-4 w-64
           bg-surface-container-low border-r border-surface-variant/50
           transition-transform duration-300
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
@@ -418,8 +418,8 @@ export default function TutorDashboard() {
         `}
       >
         {/* Logo */}
-        <div className="px-md mb-lg">
-          <a href="#/" className="flex items-center gap-sm hover:opacity-80 transition-opacity">
+        <div className="px-6 mb-4 flex-shrink-0">
+          <a href="#/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
             <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary">
               <span className="material-symbols-outlined text-[18px]">school</span>
             </div>
@@ -433,7 +433,7 @@ export default function TutorDashboard() {
         </div>
 
         {/* Nav items */}
-        <div className="flex flex-col gap-2 px-sm flex-1 mt-4">
+        <div className="flex flex-col gap-1 px-4 flex-1 mt-2 overflow-y-auto custom-scrollbar pb-2">
           {NAV_ITEMS.map((item) => {
             const isActive = item.label === activeTab
             const isMessages = item.label === 'Tin Nhắn'
@@ -447,21 +447,21 @@ export default function TutorDashboard() {
                   setSidebarOpen(false)
                 }}
                 className={`
-                  flex items-center gap-sm px-md py-sm rounded-lg
+                  flex items-center gap-3 px-4 py-2.5 rounded-lg
                   transition-all duration-200 active:scale-95
                   ${isActive
                     ? 'text-primary font-bold bg-secondary-container'
-                    : 'text-on-surface-variant hover:bg-surface-container-high'
+                    : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
                   }
                 `}
               >
                 <span
-                  className="material-symbols-outlined"
+                  className="material-symbols-outlined text-[20px]"
                   style={isActive ? { fontVariationSettings: "'FILL' 1" } : {}}
                 >
                   {item.icon}
                 </span>
-                <span className="font-label-md text-label-md flex-1">{item.label}</span>
+                <span className="font-label-md text-[14px] flex-1">{item.label}</span>
                 {isMessages && unreadCount > 0 && (
                   <span className="min-w-[18px] h-[18px] rounded-full bg-error text-on-error text-[10px] font-bold flex items-center justify-center px-1">
                     {unreadCount > 9 ? '9+' : unreadCount}
@@ -473,24 +473,24 @@ export default function TutorDashboard() {
         </div>
 
         {/* Bottom */}
-        <div className="px-md mt-auto pt-lg border-t border-surface-variant/50 flex flex-col gap-2">
+        <div className="px-6 pt-4 border-t border-surface-variant/50 flex flex-col gap-1 flex-shrink-0 mt-auto">
           <a
             href="#" onClick={(e) => e.preventDefault()}
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
+            className="text-on-surface-variant flex items-center gap-3 px-4 py-2 hover:bg-surface-container-high rounded-lg transition-all duration-200 hover:text-on-surface"
           >
-            <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Cài đặt</span>
+            <span className="material-symbols-outlined text-[20px]">settings</span>
+            <span className="font-label-md text-[14px]">Cài đặt</span>
           </a>
           <a
             href="#"
             onClick={(e) => { e.preventDefault(); logout() }}
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
+            className="text-on-surface-variant flex items-center gap-3 px-4 py-2 hover:bg-surface-container-high hover:text-error rounded-lg transition-all duration-200"
           >
-            <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Đăng xuất</span>
+            <span className="material-symbols-outlined text-[20px]">logout</span>
+            <span className="font-label-md text-[14px]">Đăng xuất</span>
           </a>
-          <button className="mt-2 w-full h-12 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
-            <span className="material-symbols-outlined">support_agent</span>
+          <button className="mt-2 w-full h-10 bg-primary text-on-primary font-label-md text-[14px] font-semibold rounded-lg hover:bg-primary/90 transition-colors flex items-center justify-center gap-2 shadow-sm">
+            <span className="material-symbols-outlined text-[18px]">support_agent</span>
             Nhận hỗ trợ
           </button>
         </div>
