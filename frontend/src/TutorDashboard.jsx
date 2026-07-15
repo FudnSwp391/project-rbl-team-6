@@ -28,6 +28,8 @@ import WalletDeposit from './components/Wallet/WalletDeposit'
 import WalletWithdraw from './components/Wallet/WalletWithdraw'
 import { supabase } from './services/supabase'
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Tổng Quan' },
   { icon: 'calendar_today', label: 'Lịch Trình' },
@@ -73,6 +75,7 @@ export default function TutorDashboard() {
   
   // Instant Learning Modal State
   const [instantRequest, setInstantRequest] = useState(null);
+  const [instantCountdown, setInstantCountdown] = useState(60);
   
   const conflictingIds = useMemo(() => {
     const conflicts = new Set();
@@ -166,22 +169,32 @@ export default function TutorDashboard() {
     };
   }, [user]);
 
+  // Đếm ngược 60 giây khi có yêu cầu Học Ngay
+  useEffect(() => {
+    if (!instantRequest) { setInstantCountdown(60); return; }
+    setInstantCountdown(60);
+    const interval = setInterval(() => {
+      setInstantCountdown(prev => {
+        if (prev <= 1) { clearInterval(interval); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [instantRequest?.id]);
+
   const handleInstantAction = async (bookingId, action) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/tutor/bookings/${bookingId}/instant-${action}`, {
+      const res = await fetch(`${API_BASE}/api/tutor/bookings/${bookingId}/instant-${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Lỗi hệ thống');
-      
+
       setInstantRequest(null);
-      
+
       if (action === 'accept') {
-        alert('Đã chấp nhận yêu cầu Học Ngay. Đang chuyển hướng tới phòng học...');
         window.location.hash = `/session/${bookingId}`;
-      } else {
-        alert('Đã từ chối yêu cầu. Tiền đã được hoàn lại cho học viên.');
       }
     } catch (e) {
       alert(e.message);
@@ -788,22 +801,27 @@ export default function TutorDashboard() {
                     <span className="material-symbols-outlined text-[32px] text-amber-600">bolt</span>
                   </div>
                   <h3 className="font-headline-sm text-headline-sm text-on-surface mb-2">Yêu cầu Học Ngay!</h3>
-                  <p className="text-[14px] text-on-surface-variant mb-4">
+                  <p className="text-[14px] text-on-surface-variant mb-1">
                     Học viên <span className="font-bold text-primary">{instantRequest.student_name || 'Học viên'}</span> muốn học ngay môn <span className="font-bold">{instantRequest.subject}</span>.
                   </p>
-                  <div className="bg-amber-50 text-amber-700 px-4 py-3 rounded-xl w-full mb-6 text-[13px] border border-amber-200">
-                    <p className="font-semibold mb-1 flex items-center justify-center gap-1">
+                  {instantRequest.lesson_fee > 0 && (
+                    <p className="text-[13px] text-green-600 font-semibold mb-3">
+                      Học phí: {Number(instantRequest.lesson_fee).toLocaleString('vi-VN')}đ
+                    </p>
+                  )}
+                  <div className={`px-4 py-3 rounded-xl w-full mb-6 text-[13px] border ${instantCountdown <= 10 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                    <p className="font-semibold flex items-center justify-center gap-1">
                       <span className="material-symbols-outlined text-[16px]">timer</span>
-                      Hệ thống sẽ tự hủy sau 60 giây.
+                      Tự hủy sau <span className="font-bold text-[16px] ml-1">{instantCountdown}s</span>
                     </p>
                   </div>
                   <div className="flex gap-3 w-full">
-                    <button 
+                    <button
                       onClick={() => handleInstantAction(instantRequest.id, 'reject')}
                       className="flex-1 h-11 border-2 border-red-200 text-red-600 font-label-lg rounded-xl hover:bg-red-50 transition-colors">
                       Từ chối
                     </button>
-                    <button 
+                    <button
                       onClick={() => handleInstantAction(instantRequest.id, 'accept')}
                       className="flex-1 h-11 bg-primary text-on-primary font-label-lg rounded-xl shadow-md hover:bg-primary/90 hover:shadow-lg transition-all flex items-center justify-center gap-1">
                       <span className="material-symbols-outlined text-[18px]">check</span> Chấp nhận
@@ -2521,7 +2539,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     try {
       setInstantSaving(true)
       const token = localStorage.getItem('token')
-      const res = await fetch('http://localhost:5000/api/tutor/instant-settings', {
+      const res = await fetch(`${API_BASE}/api/tutor/instant-settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -2547,7 +2565,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     try {
       const token = localStorage.getItem('token')
       const newStatus = isOnline ? 'Online' : 'Offline'
-      const res = await fetch('http://localhost:5000/api/tutor/instant-settings', {
+      const res = await fetch(`${API_BASE}/api/tutor/instant-settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({

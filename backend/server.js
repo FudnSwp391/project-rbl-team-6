@@ -11407,15 +11407,31 @@ app.post('/api/tutor/bookings/:id/instant-accept', verifyToken, requireTutor, as
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    
-    const bRes = await client.query('SELECT status, booking_type FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE', [req.params.id, req.user.userId]);
+
+    const bRes = await client.query(
+      'SELECT status, booking_type, student_id, subject, lesson_fee FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE',
+      [req.params.id, req.user.userId]
+    );
     if (!bRes.rows.length) throw new Error('Booking not found');
     if (bRes.rows[0].status !== 'Pending') throw new Error('Yêu cầu không còn ở trạng thái chờ.');
     if (bRes.rows[0].booking_type !== 'Instant') throw new Error('Not an instant booking');
 
+    const { student_id, subject } = bRes.rows[0];
+
     await client.query("UPDATE bookings SET status = 'InProgress', updated_at = NOW() WHERE id = $1", [req.params.id]);
     await client.query("UPDATE tutor_profiles SET availability_status = 'Busy', updated_at = NOW() WHERE user_id = $1", [req.user.userId]);
-    
+
+    // Thông báo cho học sinh biết gia sư đã chấp nhận
+    await safeNotifyUser(client, {
+      userId: student_id, type: 'instant_accepted', channels: ['IN_APP'],
+      templateKey: 'instant_accepted', eventType: 'instant_accepted',
+      title: 'Gia sư đã chấp nhận!',
+      body: `Gia sư đã chấp nhận yêu cầu Học Ngay môn ${subject || ''}. Hãy vào phòng học ngay!`,
+      icon: 'bolt', refId: req.params.id, refType: 'booking',
+      sourceType: 'booking', sourceId: req.params.id, priority: 'high',
+      idempotencyKey: `instant_accept:${req.params.id}:${student_id}`,
+    });
+
     await client.query('COMMIT');
     res.json({ success: true });
   } catch (err) {
