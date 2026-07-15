@@ -3,6 +3,7 @@ import { useAuth } from '../AuthContext';
 import { apiRequest } from '../services/api';
 import CourseGoldShowcase from '../components/CourseGoldShowcase';
 import ComplaintModal from '../components/ComplaintModal';
+import CartButton from '../components/CartButton';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -42,6 +43,47 @@ export default function CourseDetail({ courseId }) {
   const [toastType, setToastType] = useState('info'); // 'info' | 'success'
   const [complaintOpen, setComplaintOpen] = useState(false);
   const [activeComplaintId, setActiveComplaintId] = useState(null);
+
+  // ── Giỏ hàng (localStorage edux_cart — cùng định dạng CartPage/Marketplace) ──
+  const CART_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const readCartIds = () => {
+    try {
+      const arr = JSON.parse(localStorage.getItem('edux_cart') || '[]');
+      return Array.isArray(arr) ? arr.map(it => it.id) : [];
+    } catch { return []; }
+  };
+  const [cartIds, setCartIds] = useState(readCartIds);
+  useEffect(() => {
+    const sync = () => setCartIds(readCartIds());
+    window.addEventListener('cartUpdated', sync);
+    window.addEventListener('storage', sync);
+    return () => { window.removeEventListener('cartUpdated', sync); window.removeEventListener('storage', sync); };
+  }, []);
+
+  const addToCart = (c) => {
+    if (!CART_UUID_RE.test(String(c.id))) {
+      setToast('Khóa học demo — không thể mua.');
+      setTimeout(() => setToast(''), 2200);
+      return;
+    }
+    let cart = [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem('edux_cart') || '[]');
+      if (Array.isArray(parsed)) cart = parsed;
+    } catch {}
+    if (!cart.some(it => it.id === c.id)) {
+      cart.push({
+        id: c.id, title: c.title, price: Number(c.price || 0),
+        thumbnail_url: c.thumbnail_url || null,
+        tutor_name: c.tutor_name || 'Gia sư EduX',
+        subject: c.subject || '', quantity: 1, addedAt: Date.now(),
+      });
+      localStorage.setItem('edux_cart', JSON.stringify(cart));
+      window.dispatchEvent(new Event('cartUpdated'));
+    }
+    setToast('Đã thêm vào giỏ hàng!');
+    setTimeout(() => setToast(''), 2200);
+  };
 
   useEffect(() => {
     const id = courseId || window.location.hash.match(/#\/course\/([^/]+)/)?.[1];
@@ -151,21 +193,52 @@ export default function CourseDetail({ courseId }) {
 
   return (
     <div className="min-h-screen bg-[#f8f9fb] text-[#191c1e] font-sans">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-[#f8f9fb]/90 backdrop-blur-md border-b border-[#e5e7eb] shadow-sm">
-        <div className="max-w-[1280px] mx-auto px-6 h-[72px] flex items-center gap-6">
-          <a href="#/" className="flex items-center gap-2 text-2xl font-extrabold text-[#00288e] shrink-0">
-            <span className="material-symbols-outlined text-[#00288e]" style={{ fontVariationSettings: "'FILL' 1" }}>school</span>EduX
+      {/* Header — đồng bộ với navbar chuẩn toàn site */}
+      <header className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
+        <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">
+          {/* Logo */}
+          <a href="#/" className="flex items-center gap-2 text-2xl font-bold text-[#00288e] hover:opacity-80 transition-opacity z-10">
+            <span className="material-symbols-outlined text-[28px]" style={{ fontVariationSettings: "'FILL' 1" }}>school</span>
+            EduX
           </a>
-          <nav className="hidden md:flex items-center gap-7 ml-auto text-sm font-semibold">
-            <a href="#/" className="text-[#5d5f5f] hover:text-[#00288e] transition-colors">Trang chủ</a>
-            <a href="#/courses" className="text-[#00288e]">Khóa học</a>
-            <a href="#/find-tutors" className="text-[#5d5f5f] hover:text-[#00288e] transition-colors">Tìm gia sư</a>
+
+          {/* Nav links */}
+          <nav className="hidden md:flex items-center gap-8">
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
+            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
+            <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/courses">Khóa Học</a>
           </nav>
+
+          {/* Right: cart + auth */}
+          <div className="flex items-center gap-4 z-10">
+            {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
+              <CartButton />
+            )}
+            {user ? (
+              <button
+                onClick={() => {
+                  if (user.role === 'admin') window.location.hash = '/admin';
+                  else if (user.role === 'tutor') window.location.hash = '/tutor';
+                  else window.location.hash = '/dashboard';
+                }}
+                className="hidden sm:block text-sm font-semibold text-[#00288e] hover:opacity-80"
+              >
+                Bảng Điều Khiển
+              </button>
+            ) : (
+              <>
+                <button onClick={() => window.location.hash = '#/signin'} className="hidden lg:flex items-center px-4 py-2 text-[#444653] hover:text-[#00288e] font-semibold text-sm">Đăng Nhập</button>
+                <button onClick={() => window.location.hash = '#/signup'} className="bg-gradient-to-r from-[#00288e] via-[#2747c4] to-[#3a6fe0] text-white px-6 py-2.5 rounded-lg font-semibold text-sm hover:-translate-y-0.5 hover:shadow-[0_14px_30px_-8px_rgba(55,85,195,0.55)] transition-all active:scale-95 shadow-sm">
+                  Tham Gia Miễn Phí
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
-      <main className="max-w-[1280px] mx-auto px-6 py-8">
+      <main className="pt-20 max-w-[1280px] mx-auto px-6 py-8">
         {/* Breadcrumb */}
         <nav className="flex items-center gap-2 text-sm text-[#757684] mb-6">
           <a href="#/courses" className="hover:text-[#00288e] transition-colors">Khóa học</a>
@@ -395,13 +468,26 @@ export default function CourseDetail({ courseId }) {
                   )}
                 </button>
               )}
+              {!enrolled && (
+                cartIds.includes(c.id) ? (
+                  <button onClick={() => window.location.hash = '#/cart'} className="w-full py-3 rounded-xl border-2 border-[#16a34a] bg-[#f0fdf4] text-[#16a34a] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#dcfce7] transition-colors mb-3">
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
+                    Trong giỏ — Xem giỏ hàng
+                  </button>
+                ) : (
+                  <button onClick={() => addToCart(c)} className="w-full py-3 rounded-xl border-2 border-[#00288e] text-[#00288e] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#00288e] hover:text-white transition-colors mb-3">
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>add_shopping_cart</span>
+                    Thêm vào giỏ hàng
+                  </button>
+                )
+              )}
               <button onClick={() => {
                 if (user && (user.id === c.tutor_id || user.userId === c.tutor_id)) {
                   window.location.hash = '#/tutor?tab=Khóa Học';
                 } else {
                   window.location.hash = '#/courses';
                 }
-              }} className="w-full py-3 rounded-xl border-2 border-[#00288e] text-[#00288e] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#00288e]/5 transition-colors">
+              }} className="w-full py-3 rounded-xl border-2 border-[#c4c5d5] text-[#444653] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#f1f2f6] transition-colors">
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
                 Quay lại danh sách
               </button>

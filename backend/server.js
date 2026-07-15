@@ -2233,9 +2233,13 @@ const NOTIFICATION_TEMPLATES = {
     icon: 'undo', priority: 'normal',
   }),
   booking_approved: d => ({
-    subject: '[EduX] Lịch học đã được xác nhận', title: 'Lịch học đã được xác nhận — Tiền tạm giữ',
-    body: `Gia sư đã duyệt lịch học. ${fmtVnd(d.amount)} đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`,
+    subject: '[EduX] Lịch học đã được xác nhận',
+    title: Number(d.amount) > 0 ? 'Lịch học đã được xác nhận — Tiền tạm giữ' : 'Lịch học đã được xác nhận',
+    body: Number(d.amount) > 0
+      ? `Gia sư đã duyệt lịch học. ${fmtVnd(d.amount)} đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`
+      : 'Gia sư đã duyệt lịch học của bạn. Hẹn gặp bạn trong buổi học!',
     icon: 'lock', priority: 'normal',
+    ctaLabel: 'Xem lịch học', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
   }),
   booking_declined: d => ({
     subject: '[EduX] Lịch học bị từ chối', title: 'Hoàn tiền lịch học bị từ chối',
@@ -2325,10 +2329,99 @@ const NOTIFICATION_TEMPLATES = {
     body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
     icon: 'block', priority: 'critical',
   }),
+  booking_new_request: d => ({
+    subject: '[EduX] Lịch học mới đang chờ bạn duyệt', title: 'Lịch học mới chờ duyệt',
+    body: `Học sinh ${d.studentName || ''} vừa đặt lịch ${d.subject ? `môn ${d.subject} ` : ''}lúc ${d.timeSlot || ''} ngày ${d.date || ''}${d.method ? ` (hình thức ${d.method === 'online' ? 'Online' : 'Offline'})` : ''}. Vui lòng duyệt trong 24 giờ — quá hạn hệ thống sẽ tự hủy và hoàn tiền cho học sinh.`,
+    icon: 'event', priority: 'high',
+    ctaLabel: 'Duyệt lịch ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  lesson_reminder: d => ({
+    subject: d.hoursLeft <= 1 ? '[EduX] Buoi hoc bat dau trong 1 gio' : '[EduX] Nhac lich: buoi hoc trong 24h toi',
+    title: d.forTutor
+      ? (d.hoursLeft <= 1 ? 'Sắp đến giờ dạy (còn ~1 tiếng)' : 'Nhắc lịch: buổi dạy trong 24h tới')
+      : (d.hoursLeft <= 1 ? 'Sắp đến giờ học (còn ~1 tiếng)' : 'Nhắc lịch: buổi học trong 24h tới'),
+    body: d.message || '',
+    icon: 'alarm', priority: d.hoursLeft <= 1 ? 'high' : 'normal',
+    ctaLabel: d.meetLink ? 'Vào phòng học' : null, ctaUrl: d.meetLink || null,
+  }),
+  session_info_updated: d => ({
+    subject: '[EduX] Gia su da cap nhat thong tin buoi hoc', title: 'Thông tin buổi học đã được cập nhật',
+    body: `Gia sư ${d.tutorName || ''} vừa cập nhật thông tin buổi học ${d.subject ? `môn ${d.subject} ` : ''}ngày ${d.date || ''}.${d.mode === 'online' ? (d.meetLink ? `\nHình thức: Online — link phòng học đã đính kèm bên dưới.` : '\nHình thức: Online.') : d.mode === 'offline' ? `\nHình thức: Offline${d.location ? ` — địa điểm: ${d.location}` : ''}.` : ''}${d.topic ? `\nChủ đề: ${d.topic}` : ''}`,
+    icon: 'edit_calendar', priority: 'normal',
+    ctaLabel: d.meetLink ? 'Vào phòng học' : 'Xem lịch học', ctaUrl: d.meetLink || `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  method_change_requested: d => ({
+    subject: '[EduX] Hoc sinh xin doi hinh thuc hoc', title: 'Học sinh xin đổi hình thức học',
+    body: `${d.studentName || 'Học sinh'} xin đổi buổi học ngày ${d.date || ''} sang ${d.requested === 'online' ? 'Online' : 'Offline'}.${d.reason ? `\nLý do: ${d.reason}` : ''}\nVui lòng vào Lịch trình để đồng ý hoặc từ chối.`,
+    icon: 'swap_horiz', priority: 'high',
+    ctaLabel: 'Xem yêu cầu', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  method_change_resolved: d => ({
+    subject: d.accepted ? '[EduX] Yeu cau doi hinh thuc duoc chap nhan' : '[EduX] Yeu cau doi hinh thuc bi tu choi',
+    title: d.accepted ? 'Gia sư đồng ý đổi hình thức học' : 'Gia sư từ chối đổi hình thức học',
+    body: d.accepted
+      ? `Buổi học ngày ${d.date || ''} sẽ chuyển sang ${d.requested === 'online' ? 'Online — gia sư sẽ gắn link phòng học trước giờ' : 'Offline'}.`
+      : `Buổi học ngày ${d.date || ''} giữ nguyên hình thức cũ. Bạn có thể nhắn tin trao đổi thêm với gia sư.`,
+    icon: d.accepted ? 'check_circle' : 'cancel', priority: 'normal',
+  }),
+  welcome_user: d => ({
+    subject: '[EduX] Chao mung ban den voi EduX', title: `Chào mừng ${d.name || 'bạn'} đến với EduX!`,
+    body: `Tài khoản của bạn đã sẵn sàng. Với EduX bạn có thể:\n• Tìm gia sư theo môn học, hình thức Online/Offline\n• Đặt lịch học thử miễn phí trước khi quyết định\n• Thanh toán an toàn — tiền chỉ chuyển cho gia sư sau khi buổi học hoàn thành\n\nChúc bạn học tốt!`,
+    icon: 'celebration', priority: 'normal',
+    ctaLabel: 'Tìm gia sư ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/find-tutors`,
+  }),
+  wallet_topup_success: d => ({
+    subject: '[EduX] Nap tien thanh cong', title: 'Nạp tiền thành công',
+    body: `Bạn đã nạp ${fmtVnd(d.amount)} vào ví EduX qua ${d.provider || 'VNPAY'}.${d.txnRef ? `\nMã giao dịch: ${d.txnRef}` : ''}\nSố tiền đã sẵn sàng để đặt lịch học hoặc mua khóa học.`,
+    icon: 'account_balance_wallet', priority: 'high',
+    ctaLabel: 'Xem ví của tôi', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  admin_new_tutor_profile: d => ({
+    subject: '[EduX][Admin] Ho so gia su moi cho duyet', title: 'Hồ sơ gia sư mới chờ duyệt',
+    body: `${d.tutorName || 'Một gia sư'} vừa nộp hồ sơ${d.subjects ? ` (môn: ${d.subjects})` : ''}. Vui lòng vào trang quản trị để xét duyệt.`,
+    icon: 'assignment_ind', priority: 'high',
+    ctaLabel: 'Xét duyệt ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/admin`,
+  }),
+  admin_new_withdrawal: d => ({
+    subject: '[EduX][Admin] Yeu cau rut tien moi', title: 'Yêu cầu rút tiền mới',
+    body: `Gia sư ${d.tutorName || ''} yêu cầu rút ${fmtVnd(d.amount)}. Vui lòng xử lý trong trang quản trị.`,
+    icon: 'account_balance', priority: 'high',
+    ctaLabel: 'Xử lý ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/admin`,
+  }),
 };
 
 // Renders a template into {subject,title,body,htmlBody,icon,priority}. Unknown
 // keys fall back to a generic safe template rather than throwing.
+// Khung HTML chung cho mọi email outbox: header gradient EduX, nút CTA tùy
+// chọn, footer có link hủy đăng ký. Mọi giá trị text ĐÃ được escape trước khi
+// gọi (title/body qua sanitize + escapeHtml, url do server sinh).
+function buildEmailHtml({ title, body, ctaLabel, ctaUrl, unsubUrl }) {
+  const htmlTitle = escapeHtml(title || 'Thông báo');
+  const htmlBodyText = escapeHtml(body || '');
+  const ctaBlock = (ctaLabel && ctaUrl) ? `
+<table cellpadding="0" cellspacing="0" style="margin:24px 0 4px;"><tr><td align="center" style="border-radius:10px;background:linear-gradient(120deg,#00288e,#2747c4);">
+<a href="${escapeHtml(ctaUrl)}" style="display:inline-block;padding:13px 32px;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;">${escapeHtml(ctaLabel)}</a>
+</td></tr></table>` : '';
+  const unsubBlock = unsubUrl
+    ? `<p style="margin:8px 0 0;color:#9a9bab;font-size:11px;">Không muốn nhận email thông báo? <a href="${escapeHtml(unsubUrl)}" style="color:#757684;">Hủy đăng ký</a></p>`
+    : '';
+  return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:32px 16px;"><tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+<tr><td style="background:linear-gradient(135deg,#00288e 0%,#1e40af 100%);padding:28px 32px;">
+<h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.5px;">EduX</h1>
+<p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:13px;">Nền tảng kết nối gia sư chuyên nghiệp</p></td></tr>
+<tr><td style="padding:32px;">
+<h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${htmlTitle}</h2>
+<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${htmlBodyText}</p>
+${ctaBlock}</td></tr>
+<tr><td style="background:#f8f9fb;padding:16px 32px;border-top:1px solid #e1e2e4;">
+<p style="margin:0;color:#757684;font-size:12px;">© EduX — mọi thắc mắc liên hệ <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
+${unsubBlock}</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
 function renderNotificationTemplate(templateKey, data = {}) {
   const fn = NOTIFICATION_TEMPLATES[templateKey];
   const base = fn ? fn(data) : {
@@ -2338,18 +2431,19 @@ function renderNotificationTemplate(templateKey, data = {}) {
   const title = sanitizeNotificationText(base.title, 200) || 'Thông báo';
   const body  = sanitizeNotificationText(base.body, 1000) || '';
   const subject = sanitizeNotificationText(base.subject, 200) || `[EduX] ${title}`;
-  const htmlTitle = escapeHtml(title);
-  const htmlBodyText = escapeHtml(body);
-  const htmlBody = `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/></head>
-<body style="margin:0;padding:0;background:#f8f9fb;font-family:Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:32px 16px;"><tr><td align="center">
-<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);">
-<tr><td style="background:#00288e;padding:24px 32px;"><h1 style="margin:0;color:#fff;font-size:20px;">EduX</h1></td></tr>
-<tr><td style="padding:32px;"><h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${htmlTitle}</h2>
-<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${htmlBodyText}</p></td></tr>
-<tr><td style="background:#f8f9fb;padding:16px 32px;border-top:1px solid #e1e2e4;"><p style="margin:0;color:#757684;font-size:12px;">EduX — support@edux.com</p></td></tr>
-</table></td></tr></table></body></html>`;
-  return { subject, title, body, htmlBody, icon: base.icon || 'notifications', priority: base.priority || 'normal' };
+  const ctaLabel = base.ctaLabel || data.ctaLabel || null;
+  const ctaUrl   = base.ctaUrl   || data.ctaUrl   || null;
+  const htmlBody = buildEmailHtml({ title, body, ctaLabel, ctaUrl });
+  return {
+    subject, title, body, htmlBody,
+    icon: base.icon || 'notifications', priority: base.priority || 'normal',
+    ctaLabel, ctaUrl,
+  };
+}
+
+// Token hủy đăng ký email — nhúng vào footer mọi email outbox
+function makeUnsubToken(userId) {
+  return jwt.sign({ userId, purpose: 'email_unsub' }, jwtSecret, { expiresIn: '180d' });
 }
 
 // Insert an in-app notification row. Idempotent via idempotency_key (ON
@@ -2380,6 +2474,15 @@ async function createInAppNotification(clientOrPool, payload) {
 // idempotency_key. Returns the outbox row id, or null if duplicate.
 async function queueEmailNotification(clientOrPool, payload) {
   const rendered = renderNotificationTemplate(payload.templateKey, payload.data || {});
+  // Gắn link hủy đăng ký cá nhân hóa vào footer khi biết userId
+  if (payload.userId) {
+    const backendOrigin = process.env.BACKEND_ORIGIN || `http://localhost:${process.env.PORT || 5000}`;
+    const unsubUrl = `${backendOrigin}/api/email/unsubscribe?token=${encodeURIComponent(makeUnsubToken(payload.userId))}`;
+    rendered.htmlBody = buildEmailHtml({
+      title: rendered.title, body: rendered.body,
+      ctaLabel: rendered.ctaLabel, ctaUrl: rendered.ctaUrl, unsubUrl,
+    });
+  }
   const r = await clientOrPool.query(
     `INSERT INTO notification_outbox
        (user_id, email, channel, event_type, template_key, subject, title, body, html_body,
@@ -2416,11 +2519,13 @@ async function notifyUser(clientOrPool, payload) {
 
   if (channels.includes('EMAIL') && (payload.email || payload.userId)) {
     let email = payload.email;
-    if (!email && payload.userId) {
-      const u = await clientOrPool.query('SELECT email FROM users WHERE id=$1', [payload.userId]);
-      email = u.rows[0]?.email || null;
+    let optOut = false;
+    if (payload.userId) {
+      const u = await clientOrPool.query('SELECT email, email_opt_out FROM users WHERE id=$1', [payload.userId]);
+      if (!email) email = u.rows[0]?.email || null;
+      optOut = !!u.rows[0]?.email_opt_out;
     }
-    if (email) {
+    if (email && !optOut) {
       const idemKey = payload.idempotencyKey ? `email:${payload.idempotencyKey}` : null;
       result.outboxId = await queueEmailNotification(clientOrPool, {
         ...payload, email, notificationId: result.notificationId, idempotencyKey: idemKey,
@@ -2543,11 +2648,16 @@ async function processNotificationOutbox(limit = 20) {
         continue;
       }
       try {
+        // EMAIL_DEMO_REDIRECT: hộp thư chung cho demo — mọi email đổ về 1 địa
+        // chỉ, tiêu đề ghi kèm người nhận gốc. Bỏ biến env này để gửi thật.
+        const demoRedirect = (process.env.EMAIL_DEMO_REDIRECT || '').trim();
         const info = await emailTransporter.sendMail({
           from: process.env.SMTP_FROM || process.env.SMTP_USER,
-          to: row.email,
+          to: demoRedirect || row.email,
           replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
-          subject: row.subject || row.title || 'EduX',
+          subject: demoRedirect
+            ? `${row.subject || row.title || 'EduX'} [gửi cho: ${row.email}]`
+            : (row.subject || row.title || 'EduX'),
           text: row.body,
           html: row.html_body || undefined,
           headers: { 'X-Mailer': 'EduX Notification System' },
@@ -2819,6 +2929,15 @@ app.post("/api/auth/verify-register-otp", async (req, res) => {
     // Xóa record OTP
     await pool.query("DELETE FROM registration_otps WHERE email = $1", [userData.email]);
 
+    // Email chào mừng (qua outbox — không chặn response đăng ký)
+    await safeNotifyUser(pool, {
+      userId: newUser.id, type: 'welcome',
+      channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'welcome_user', eventType: 'welcome_user',
+      idempotencyKey: `welcome:${newUser.id}`,
+      data: { name: newUser.full_name },
+    });
+
     return res.status(201).json({
       token,
       user: {
@@ -2832,6 +2951,24 @@ app.post("/api/auth/verify-register-otp", async (req, res) => {
   } catch (error) {
     console.error("Verify OTP error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ─── GET /api/email/unsubscribe?token= ── hủy đăng ký email từ footer ────────
+app.get("/api/email/unsubscribe", async (req, res) => {
+  const page = (msg, ok) => `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/><title>EduX</title></head>
+<body style="margin:0;font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fb;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+<div style="background:#fff;border-radius:16px;padding:40px;max-width:420px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+<h1 style="margin:0 0 8px;color:#00288e;font-size:22px;">EduX</h1>
+<p style="margin:0;color:${ok ? '#15803d' : '#b91c1c'};font-size:15px;line-height:1.6;">${msg}</p>
+</div></body></html>`;
+  try {
+    const decoded = jwt.verify(String(req.query.token || ''), jwtSecret);
+    if (decoded.purpose !== 'email_unsub' || !decoded.userId) throw new Error('bad purpose');
+    await pool.query('UPDATE users SET email_opt_out = TRUE WHERE id = $1', [decoded.userId]);
+    return res.send(page('Đã hủy đăng ký email thông báo. Bạn vẫn nhận được thông báo trên web và các email bảo mật (OTP).', true));
+  } catch {
+    return res.status(400).send(page('Liên kết hủy đăng ký không hợp lệ hoặc đã hết hạn.', false));
   }
 });
 
@@ -3236,6 +3373,29 @@ app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
   }
 });
 
+// Báo mọi admin có hồ sơ gia sư mới / nộp lại chờ duyệt (chuông + email,
+// idempotent theo hồ sơ + ngày + admin để không spam khi bấm lưu nhiều lần)
+async function notifyAdminsTutorProfilePending(profile, tutorName) {
+  try {
+    const admins = await pool.query(
+      `SELECT id FROM users WHERE role = 'admin' AND COALESCE(is_banned, FALSE) = FALSE`
+    );
+    const day = new Date().toISOString().slice(0, 10);
+    for (const admin of admins.rows) {
+      await safeNotifyUser(pool, {
+        userId: admin.id, type: 'admin_alert',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'admin_new_tutor_profile', eventType: 'admin_new_tutor_profile',
+        refId: profile.id, refType: 'tutor_profile',
+        idempotencyKey: `admin_new_tutor:${profile.id}:${day}:${admin.id}`,
+        data: { tutorName: tutorName || '', subjects: profile.subjects || '' },
+      });
+    }
+  } catch (err) {
+    console.error('[notifyAdminsTutorProfilePending] non-fatal:', err.message);
+  }
+}
+
 // PUT /api/tutor/instant-settings
 app.put('/api/tutor/instant-settings', verifyToken, requireTutor, async (req, res) => {
   try {
@@ -3301,6 +3461,7 @@ app.patch("/api/tutor/profile/submit", verifyToken, async (req, res) => {
       [req.user.userId]
     );
     if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy hồ sơ gia sư." });
+    await notifyAdminsTutorProfilePending(result.rows[0], req.user.name);
     return res.json(result.rows[0]);
   } catch (error) {
     console.error("Submit tutor profile error:", error);
@@ -3465,6 +3626,12 @@ app.post(
           }
         }
       }
+
+      // Báo admin có hồ sơ chờ duyệt (mọi lần lưu đều đưa status về pending)
+      await notifyAdminsTutorProfilePending(
+        result.rows[0],
+        display_name || `${first_name || ''} ${last_name || ''}`.trim() || req.user.name
+      );
 
       return res.status(200).json(result.rows[0]);
     } catch (error) {
@@ -7881,6 +8048,98 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
   }
 });
 
+// ── Homework Table Init ──
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_homeworks (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title             VARCHAR(255) NOT NULL,
+        course            VARCHAR(255),
+        deadline          TIMESTAMP,
+        max_score         INTEGER DEFAULT 100,
+        allow_late        BOOLEAN DEFAULT false,
+        status            VARCHAR(50) DEFAULT 'Draft',
+        file_url          TEXT,
+        file_type         VARCHAR(100),
+        tutor_id          UUID REFERENCES users(id),
+        assigned_students JSONB DEFAULT '[]'::jsonb,
+        submission_count  INTEGER DEFAULT 0,
+        created_at        TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_homework_submissions (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        homework_id   UUID REFERENCES tutor_homeworks(id) ON DELETE CASCADE,
+        student_id    UUID REFERENCES users(id),
+        file_url      TEXT NOT NULL,
+        status        VARCHAR(50) DEFAULT 'Submitted',
+        score         INTEGER,
+        feedback      TEXT,
+        submitted_at  TIMESTAMP DEFAULT NOW(),
+        UNIQUE(homework_id, student_id)
+      )
+    `);
+    console.log('[DB] tutor_homeworks and tutor_homework_submissions tables ready');
+  } catch (err) {
+    console.error('Error creating tutor_homeworks:', err);
+  }
+})();
+
+// GET /api/tutor/assessments/homework
+app.get('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM tutor_homeworks WHERE tutor_id=$1 ORDER BY created_at DESC`,
+      [req.user.userId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST /api/tutor/assessments/homework
+app.post('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { title, course, deadline, max_score, allow_late, status, file_url, file_type, assigned_students } = req.body;
+    const result = await pool.query(
+      `INSERT INTO tutor_homeworks (title, course, deadline, max_score, allow_late, status, file_url, file_type, tutor_id, assigned_students)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb) RETURNING *`,
+      [title, course, deadline || null, max_score || 100, allow_late || false, status || 'Draft', file_url, file_type, req.user.userId, JSON.stringify(assigned_students || [])]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    console.error('POST homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PATCH /api/tutor/assessments/homework/:id/status
+app.patch('/api/tutor/assessments/homework/:id/status', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { status } = req.body;
+    await pool.query(`UPDATE tutor_homeworks SET status=$1 WHERE id=$2 AND tutor_id=$3`, [status, req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH homework status error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE /api/tutor/assessments/homework/:id
+app.delete('/api/tutor/assessments/homework/:id', verifyToken, requireTutor, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM tutor_homeworks WHERE id=$1 AND tutor_id=$2`, [req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // GET /api/tutor/grading-queue
 app.get('/api/tutor/grading-queue', verifyToken, requireTutor, async (req, res) => {
   try {
@@ -8256,6 +8515,66 @@ app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
 });
 
 // ══ Thanh toán giỏ hàng bằng VÍ (trừ số dư + đăng ký nhiều khóa) ══════════
+// ═══════════════════════════════════════════════════════════════════════════
+// WALLET LEDGER (Batch 17) — set transaction-local context so the wallets
+// trigger records meaningful reason codes. MUST be called on the same `client`
+// inside an active transaction (set_config is_local=true => auto-cleared on
+// COMMIT/ROLLBACK, never leaks across requests). Safe to call multiple times.
+// ═══════════════════════════════════════════════════════════════════════════
+async function setLedgerContext(client, context) {
+  await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
+// commission_logs is append-only; wallet_ledger remains the low-level audit.
+// ═══════════════════════════════════════════════════════════════════════════
+const PLATFORM_COMMISSION_RATE = 0.10;
+const COMMISSION_POLICY_VERSION = "COMMISSION_POLICY_V1";
+
+function calculateCommissionSplit(grossAmount, rate = PLATFORM_COMMISSION_RATE) {
+  const gross = Math.max(0, Math.round(Number(grossAmount || 0)));
+  const commissionAmount = gross - Math.floor(gross * (1 - rate));
+  const tutorAmount = gross - commissionAmount;
+  return { grossAmount: gross, commissionRate: rate, commissionAmount, tutorAmount };
+}
+
+// Idempotent commission log insert. Returns new row id or null on duplicate.
+// Must be called inside caller's transaction so rollback covers the log too.
+async function createCommissionLog(client, log) {
+  try {
+    const r = await client.query(
+      `INSERT INTO commission_logs
+         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
+          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
+          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING id`,
+      [
+        log.source_type, log.source_id,
+        log.booking_id   || null,
+        log.course_id    || null,
+        log.dispute_id   || null,
+        log.transaction_id || null,
+        log.student_id   || null,
+        log.tutor_id     || null,
+        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
+        log.commission_amount, log.tutor_amount,
+        log.event_type, log.reason_code,
+        log.policy_version || COMMISSION_POLICY_VERSION,
+        log.decision_by || 'system',
+        log.actor_id    || null,
+        log.idempotency_key || null,
+        JSON.stringify(log.metadata || {}),
+      ]
+    );
+    return r.rows.length ? r.rows[0].id : null;
+  } catch (e) {
+    throw e;
+  }
+}
+
 app.post("/api/cart/checkout", verifyToken, async (req, res) => {
   const studentId = req.user.userId;
   const { items, couponCode, source } = req.body || {};
@@ -8342,7 +8661,7 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
         });
         // Notify student (Batch 20)
         await safeNotifyUser(client, {
-          userId: studentId, channels: ['IN_APP'],
+          userId: studentId, channels: ['IN_APP', 'EMAIL'],
           templateKey: 'course_purchased', eventType: 'course_purchased',
           data: { courseName: c.title }, refId: c.id, refType: 'course',
           sourceType: 'course', sourceId: c.id,
@@ -8521,7 +8840,7 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
 
     // Gửi thông báo (Batch 20.1: safeNotifyUser, same client, rollback-safe)
     await safeNotifyUser(client, {
-      userId: course.tutor_id, type: 'course_enrollment', channels: ['IN_APP'],
+      userId: course.tutor_id, type: 'course_enrollment', channels: ['IN_APP', 'EMAIL'],
       templateKey: 'course_enrollment_ping', eventType: 'course_enrollment_ping',
       title: 'Học sinh mới đăng ký khóa học',
       body: `${studentName} vừa mua khóa học "${course.title}"`,
@@ -9955,7 +10274,10 @@ async function startServer() {
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE
     `);
-    console.log("✅ DB migration: users.is_banned ready");
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email_opt_out BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    console.log("✅ DB migration: users.is_banned + email_opt_out ready");
   } catch (err) {
     console.error("❌  DB migration warning:", err.message);
   }
@@ -11254,11 +11576,31 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Không thể tạo lịch hẹn." });
     }
 
-    return res.status(201).json({ 
-      message: "Đặt lịch thành công.", 
+    // Báo gia sư có lịch mới chờ duyệt — in-app + email (ngoài transaction,
+    // lỗi thông báo không được phép ảnh hưởng tới booking đã tạo)
+    if (tutorId) {
+      const first = createdBookings[0];
+      await safeNotifyUser(pool, {
+        userId: tutorId, type: 'booking_request',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'booking_new_request', eventType: 'booking_new_request',
+        refId: first.id, refType: 'booking',
+        idempotencyKey: `booking_new_request:${first.id}`,
+        data: {
+          studentName: req.user.name || 'Học sinh',
+          subject: subject || '',
+          timeSlot: first.time_slot,
+          date: lessonDateStr(first.lesson_date),
+          method: teachingMethod,
+        },
+      });
+    }
+
+    return res.status(201).json({
+      message: "Đặt lịch thành công.",
       bookings: createdBookings,
       // Trả về bản ghi đầu tiên để tương thích ngược với API cũ
-      ...createdBookings[0] 
+      ...createdBookings[0]
     });
   } catch (error) {
     console.error("[bookings] POST error:", error.code, error.message, error.detail || "");
@@ -11326,18 +11668,21 @@ app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
 
     if (b.notifyStudent !== false && booking.student_id) {
       const dateStr = lessonDateStr(booking.lesson_date);
-      const methodChanged = booking.teaching_method && newMethod && newMethod !== booking.teaching_method;
-      const detail = newMethod === 'offline'
-        ? (result.rows[0].location ? `Địa điểm: ${result.rows[0].location}.` : '')
-        : (finalLink ? `Link phòng học: ${finalLink}` : '');
-      await pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-         VALUES ($1, 'session_info', $2, $3, 'event_note', $4, 'booking')`,
-        [booking.student_id,
-         methodChanged ? 'Gia sư đổi hình thức buổi học' : 'Thông tin buổi học đã được cập nhật',
-         `Buổi học ${booking.subject || ''} ngày ${dateStr} (${booking.time_slot}) — hình thức: ${newMethod === 'offline' ? 'Offline (trực tiếp)' : 'Online'}. ${detail}`.trim(),
-         booking.id]
-      );
+      await safeNotifyUser(pool, {
+        userId: booking.student_id, type: 'session_info',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'session_info_updated', eventType: 'session_info_updated',
+        refId: booking.id, refType: 'booking',
+        data: {
+          tutorName: booking.tutor_name || '',
+          subject: booking.subject || '',
+          date: `${dateStr} (${booking.time_slot})`,
+          mode: newMethod,
+          meetLink: newMethod === 'online' ? (finalLink || null) : null,
+          location: newMethod === 'offline' ? (result.rows[0].location || null) : null,
+          topic: result.rows[0].session_topic || null,
+        },
+      });
     }
 
     return res.json(result.rows[0]);
@@ -11391,13 +11736,18 @@ app.post("/api/bookings/:id/request-method-change", verifyToken, async (req, res
 
     if (booking.tutor_id) {
       const dateStr = lessonDateStr(booking.lesson_date);
-      await pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-         VALUES ($1, 'method_change', 'Yêu cầu đổi hình thức học', $2, 'swap_horiz', $3, 'booking')`,
-        [booking.tutor_id,
-         `Học sinh xin đổi buổi học ${booking.subject || ''} ngày ${dateStr} (${booking.time_slot}) sang ${method === 'online' ? 'Online' : 'Offline'}.${reason ? ` Lý do: ${String(reason).trim()}` : ''} Vào Lịch trình → nhấn buổi học để phản hồi.`,
-         booking.id]
-      );
+      await safeNotifyUser(pool, {
+        userId: booking.tutor_id, type: 'method_change',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'method_change_requested', eventType: 'method_change_requested',
+        refId: booking.id, refType: 'booking',
+        data: {
+          studentName: req.user.name || 'Học sinh',
+          date: `${dateStr} (${booking.time_slot})`,
+          requested: method,
+          reason: String(reason || '').trim() || null,
+        },
+      });
     }
     return res.json({
       message: "Đã gửi yêu cầu đổi hình thức. Gia sư sẽ phản hồi sớm.",
@@ -11442,20 +11792,18 @@ app.patch("/api/bookings/:id/method-change", verifyToken, async (req, res) => {
     }
 
     if (booking.student_id) {
-      const label = newMethod === 'online' ? 'Online' : 'Offline';
-      const extra = decision === 'accepted' && newMethod === 'online' && !booking.meeting_link
-        ? ' Gia sư sẽ gửi link phòng học trước giờ học.' : '';
-      await pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-         VALUES ($1, 'method_change', $2, $3, $4, $5, 'booking')`,
-        [booking.student_id,
-         decision === 'accepted' ? `Đã đồng ý đổi sang ${label}` : 'Yêu cầu đổi hình thức bị từ chối',
-         decision === 'accepted'
-           ? `Gia sư đã đồng ý đổi buổi học ${booking.subject || ''} (${booking.time_slot}) sang ${label}.${extra}`
-           : `Gia sư từ chối đổi hình thức buổi học ${booking.subject || ''} (${booking.time_slot}). Buổi học giữ nguyên hình thức cũ.`,
-         decision === 'accepted' ? 'check_circle' : 'cancel',
-         booking.id]
-      );
+      const dateStr = lessonDateStr(booking.lesson_date);
+      await safeNotifyUser(pool, {
+        userId: booking.student_id, type: 'method_change',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'method_change_resolved', eventType: 'method_change_resolved',
+        refId: booking.id, refType: 'booking',
+        data: {
+          accepted: decision === 'accepted',
+          requested: newMethod,
+          date: `${dateStr} (${booking.time_slot})`,
+        },
+      });
     }
     return res.json(result.rows[0]);
   } catch (error) {
@@ -11635,65 +11983,8 @@ async function createRefundLog(client, log) {
   return r.rows.length ? r.rows[0].id : null;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// WALLET LEDGER (Batch 17) — set transaction-local context so the wallets
-// trigger records meaningful reason codes. MUST be called on the same `client`
-// inside an active transaction (set_config is_local=true => auto-cleared on
-// COMMIT/ROLLBACK, never leaks across requests). Safe to call multiple times.
-// ═══════════════════════════════════════════════════════════════════════════
-async function setLedgerContext(client, context) {
-  await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
-// commission_logs is append-only; wallet_ledger remains the low-level audit.
-// ═══════════════════════════════════════════════════════════════════════════
-const PLATFORM_COMMISSION_RATE = 0.10;
-const COMMISSION_POLICY_VERSION = "COMMISSION_POLICY_V1";
-
-function calculateCommissionSplit(grossAmount, rate = PLATFORM_COMMISSION_RATE) {
-  const gross = Math.max(0, Math.round(Number(grossAmount || 0)));
-  const commissionAmount = gross - Math.floor(gross * (1 - rate));
-  const tutorAmount = gross - commissionAmount;
-  return { grossAmount: gross, commissionRate: rate, commissionAmount, tutorAmount };
-}
-
-// Idempotent commission log insert. Returns new row id or null on duplicate.
-// Must be called inside caller's transaction so rollback covers the log too.
-async function createCommissionLog(client, log) {
-  try {
-    const r = await client.query(
-      `INSERT INTO commission_logs
-         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
-          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
-          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
-       ON CONFLICT (idempotency_key) DO NOTHING
-       RETURNING id`,
-      [
-        log.source_type, log.source_id,
-        log.booking_id   || null,
-        log.course_id    || null,
-        log.dispute_id   || null,
-        log.transaction_id || null,
-        log.student_id   || null,
-        log.tutor_id     || null,
-        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
-        log.commission_amount, log.tutor_amount,
-        log.event_type, log.reason_code,
-        log.policy_version || COMMISSION_POLICY_VERSION,
-        log.decision_by || 'system',
-        log.actor_id    || null,
-        log.idempotency_key || null,
-        JSON.stringify(log.metadata || {}),
-      ]
-    );
-    return r.rows.length ? r.rows[0].id : null;
-  } catch (e) {
-    throw e;
-  }
-}
+// (setLedgerContext + commission helpers đã chuyển lên top-level — phía trên
+// route /api/cart/checkout — để route ngoài startServer() cũng gọi được.)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WITHDRAWAL POLICY V1 (Batch 19) — tutor manual payout. Money is HELD when a
@@ -11802,9 +12093,9 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             WHERE id=$5
           `, [status, txId, booking.payer_wallet_id_val, lessonFee, booking.id]);
 
-          // Notify học sinh: tiền đã bị hold (Batch 20)
+          // Notify học sinh: tiền đã bị hold (Batch 20) — kèm email xác nhận
           await safeNotifyUser(client, {
-            userId: booking.student_id, channels: ['IN_APP'],
+            userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
             templateKey: 'booking_approved', eventType: 'booking_approved',
             data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
             sourceType: 'booking', sourceId: booking.id,
@@ -11818,13 +12109,14 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
         // Không có ví hoặc fee = 0: approve bình thường
         await client.query(`UPDATE bookings SET status=$1 WHERE id=$2`, [status, booking.id]);
 
-        // Notify học sinh: gia sư đã duyệt
-        await client.query(`
-          INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-          VALUES ($1,'booking_approved','Lịch học đã được xác nhận',$2,'check_circle',$3,'booking')
-        `, [booking.student_id,
-            `Gia sư đã duyệt lịch học của bạn. Số tiền ${lessonFee.toLocaleString('vi-VN')}đ đã được bảo đảm an toàn.`,
-            booking.id]);
+        // Notify học sinh: gia sư đã duyệt — kèm email xác nhận
+        await safeNotifyUser(client, {
+          userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'booking_approved', eventType: 'booking_approved',
+          data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
+          sourceType: 'booking', sourceId: booking.id,
+          idempotencyKey: `booking:${booking.id}:approved:${booking.student_id}`,
+        });
       }
     }
 
@@ -11923,7 +12215,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             : `Không hoàn tiền theo chính sách (${decision.reasonCode}).`;
 
         await safeNotifyUser(client, {
-          userId: booking.student_id, channels: ['IN_APP'],
+          userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
           templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
           data: { message: refundMsg }, refId: booking.id, refType: 'booking',
           sourceType: 'booking', sourceId: booking.id,
@@ -11936,7 +12228,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             ? `Học sinh đã hủy buổi học. Bạn nhận phí hủy ${Math.floor(nonRefunded * 0.9).toLocaleString('vi-VN')}đ.`
             : `Học sinh đã hủy buổi học và được hoàn tiền theo chính sách.`;
           await safeNotifyUser(client, {
-            userId: booking.tutor_id, channels: ['IN_APP'],
+            userId: booking.tutor_id, channels: ['IN_APP', 'EMAIL'],
             templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
             title: 'Học sinh đã hủy lịch học', data: { message: tutorMsg },
             refId: booking.id, refType: 'booking',
@@ -12828,6 +13120,20 @@ app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) =
       idempotencyKey: `withdrawal:${request.id}:created:${req.user.userId}`,
     });
 
+    // Báo admin có yêu cầu rút tiền mới cần xử lý (chuông + email)
+    const wdAdmins = await client.query(
+      `SELECT id FROM users WHERE role = 'admin' AND COALESCE(is_banned, FALSE) = FALSE`
+    );
+    for (const admin of wdAdmins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, type: 'admin_alert', channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'admin_new_withdrawal', eventType: 'admin_new_withdrawal',
+        refId: request.id, refType: 'withdrawal',
+        idempotencyKey: `admin_new_withdrawal:${request.id}:${admin.id}`,
+        data: { tutorName: req.user.name || '', amount },
+      });
+    }
+
     await client.query('COMMIT');
     return res.status(201).json({ success: true, request });
   } catch (err) {
@@ -13177,6 +13483,23 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
            return res.status(200).json({ RspCode: '02', Message: 'Order already confirmed' });
       }
 
+      // Email biên nhận nạp tiền (idempotent theo orderId — IPN có thể gọi lại)
+      try {
+        const owner = await pool.query('SELECT user_id FROM wallets WHERE id = $1', [walletId]);
+        if (owner.rows[0]?.user_id) {
+          await safeNotifyUser(pool, {
+            userId: owner.rows[0].user_id, type: 'wallet_topup',
+            channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'wallet_topup_success', eventType: 'wallet_topup_success',
+            refId: null, refType: 'wallet',
+            idempotencyKey: `wallet_topup:${orderId}`,
+            data: { amount, provider: 'VNPAY', txnRef: orderId },
+          });
+        }
+      } catch (notifyErr) {
+        console.error('[vnpay-ipn] notify error (non-fatal):', notifyErr.message);
+      }
+
       res.status(200).json({ RspCode: '00', Message: 'Confirm Success' });
   } catch (err) {
       console.error('IPN Error:', err);
@@ -13313,7 +13636,7 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
       await safeNotifyUser(client, {
-        userId: admin.id, channels: ['IN_APP'],
+        userId: admin.id, channels: ['IN_APP', 'EMAIL'],
         templateKey: 'dispute_opened', eventType: 'dispute_opened',
         data: { forAdmin: true, reporterName, reason: `báo cáo vi phạm buổi học ID: ${booking.id}. Lý do: ${reason}` },
         refId: dispute.rows[0].id, refType: 'dispute',
@@ -13612,7 +13935,7 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
       await safeNotifyUser(client, {
-        userId: admin.id, channels: ['IN_APP'],
+        userId: admin.id, channels: ['IN_APP', 'EMAIL'],
         templateKey: 'dispute_opened', eventType: 'dispute_opened',
         data: { forAdmin: true, reporterName, reason: `khiếu nại khóa học ID: ${enrollment.course_id}. Lý do: ${reason}` },
         refId: dispute.rows[0].id, refType: 'dispute',
@@ -15525,11 +15848,16 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
             : '';
         const missingLinkWarn = b.teaching_method === 'online' && !b.meeting_link;
 
-        const send = (userId, title, body) => pool.query(
-          `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-           VALUES ($1, 'lesson_reminder', $2, $3, 'alarm', $4, 'booking')`,
-          [userId, title, body, b.id]
-        );
+        // In-app + email qua notifyUser; idempotency theo booking+mốc giờ+người
+        // nhận (claim UPDATE bên dưới vẫn là hàng rào chính chống gửi trùng)
+        const send = (userId, hoursLeft, forTutor, message, meetLink) => safeNotifyUser(pool, {
+          userId, type: 'lesson_reminder',
+          channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'lesson_reminder', eventType: 'lesson_reminder',
+          refId: b.id, refType: 'booking',
+          idempotencyKey: `lesson_reminder:${b.id}:${hoursLeft}h:${userId}`,
+          data: { hoursLeft, forTutor, message, meetLink: meetLink || null },
+        });
 
         // Claim TRƯỚC khi gửi (UPDATE có điều kiện) — chống gửi trùng khi có
         // 2 process cùng chạy (nodemon restart race / bind trùng cổng trên Windows)
@@ -15540,10 +15868,12 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
             [b.id]
           );
           if (!claim.rowCount) continue;
-          if (b.student_id) await send(b.student_id, 'Sắp đến giờ học (còn ~1 tiếng)',
-            `Buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'} lúc ${b.time_slot} ngày ${dateStr}. ${methodTxt}`.trim());
-          if (b.tutor_id) await send(b.tutor_id, 'Sắp đến giờ dạy (còn ~1 tiếng)',
-            `Buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''} lúc ${b.time_slot} ngày ${dateStr}.${missingLinkWarn ? ' ⚠️ Chưa gắn link phòng học — hãy vào Lịch trình gắn ngay!' : ''}`);
+          if (b.student_id) await send(b.student_id, 1, false,
+            `Buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'} lúc ${b.time_slot} ngày ${dateStr}. ${methodTxt}`.trim(),
+            b.teaching_method === 'online' ? b.meeting_link : null);
+          if (b.tutor_id) await send(b.tutor_id, 1, true,
+            `Buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''} lúc ${b.time_slot} ngày ${dateStr}.${missingLinkWarn ? ' ⚠️ Chưa gắn link phòng học — hãy vào Lịch trình gắn ngay!' : ''}`,
+            b.teaching_method === 'online' ? b.meeting_link : null);
           console.log(`🔔 Reminder 1h sent for booking ${b.id}`);
         } else if (!b.reminded_24h_at && msLeft <= 24 * 60 * 60 * 1000) {
           const claim = await pool.query(
@@ -15552,10 +15882,12 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
             [b.id]
           );
           if (!claim.rowCount) continue;
-          if (b.student_id) await send(b.student_id, 'Nhắc lịch: buổi học trong 24h tới',
-            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'}. ${methodTxt}`.trim());
-          if (b.tutor_id) await send(b.tutor_id, 'Nhắc lịch: buổi dạy trong 24h tới',
-            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''}.${missingLinkWarn ? ' Nhớ gắn link phòng học trong Lịch trình → bấm vào buổi học.' : ''}`);
+          if (b.student_id) await send(b.student_id, 24, false,
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'}. ${methodTxt}`.trim(),
+            b.teaching_method === 'online' ? b.meeting_link : null);
+          if (b.tutor_id) await send(b.tutor_id, 24, true,
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''}.${missingLinkWarn ? ' Nhớ gắn link phòng học trong Lịch trình → bấm vào buổi học.' : ''}`,
+            b.teaching_method === 'online' ? b.meeting_link : null);
           console.log(`🔔 Reminder 24h sent for booking ${b.id}`);
         }
       }

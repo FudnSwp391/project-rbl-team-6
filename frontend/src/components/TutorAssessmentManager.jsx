@@ -9,6 +9,7 @@ import {
   createTutorHomework,
   updateTutorHomeworkStatus,
   deleteTutorHomework,
+  getTutorCourses,
 } from '../services/api';
 import { uploadHomeworkFile } from '../services/upload';
 
@@ -23,6 +24,7 @@ export default function TutorAssessmentManager({ token, user }) {
   // Data states
   const [exams, setExams] = useState([]);
   const [homeworks, setHomeworks] = useState([]);
+  const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -37,12 +39,14 @@ export default function TutorAssessmentManager({ token, user }) {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [examsData, homeworkData] = await Promise.all([
+      const [examsData, homeworkData, coursesData] = await Promise.all([
         getTutorExams(),
-        getTutorHomework()
+        getTutorHomework(),
+        getTutorCourses().catch(() => [])
       ]);
       setExams(examsData || []);
       setHomeworks(homeworkData || []);
+      setCourses(coursesData || []);
     } catch (err) {
       setError(err.message || 'Failed to fetch assessments');
     } finally {
@@ -72,7 +76,7 @@ export default function TutorAssessmentManager({ token, user }) {
       await updateTutorExamStatus(id, newStatus);
       fetchData();
     } catch (err) {
-      alert('Failed to update status');
+      alert('Cập nhật trạng thái thất bại');
     }
   };
 
@@ -81,17 +85,17 @@ export default function TutorAssessmentManager({ token, user }) {
       await duplicateTutorExam(id);
       fetchData();
     } catch (err) {
-      alert('Failed to duplicate exam');
+      alert('Nhân bản đề thi thất bại');
     }
   };
 
   const handleDeleteExam = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this exam?')) return;
+    if (!window.confirm('Bạn có chắc chắn muốn xóa bài kiểm tra này không?')) return;
     try {
       await deleteTutorExam(id);
       fetchData();
     } catch (err) {
-      alert('Failed to delete exam');
+      alert('Xóa đề thi thất bại');
     }
   };
 
@@ -102,17 +106,17 @@ export default function TutorAssessmentManager({ token, user }) {
       await updateTutorHomeworkStatus(id, newStatus);
       fetchData();
     } catch (err) {
-      alert('Failed to update status');
+      alert('Cập nhật trạng thái thất bại');
     }
   };
 
   const handleDeleteHomework = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this homework?')) return;
+    if (!window.confirm('Bạn có chắc chắn muốn xóa bài tập này không?')) return;
     try {
       await deleteTutorHomework(id);
       fetchData();
     } catch (err) {
-      alert('Failed to delete homework');
+      alert('Xóa bài tập thất bại');
     }
   };
 
@@ -139,23 +143,23 @@ export default function TutorAssessmentManager({ token, user }) {
   return (
     <div className="pt-8 pb-xl px-margin-main bg-background min-h-screen">
       {/* Header Section */}
-      <div className="flex items-end justify-between mb-xl">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-xl">
         <div>
-          <div className="flex items-center gap-sm mb-xs">
-            <span className="material-symbols-outlined text-primary text-[32px]">assignment</span>
-            <h2 className="text-headline-lg font-headline-lg text-on-surface">My Assessments</h2>
+          <div className="flex items-center gap-sm mb-1">
+            <span className="material-symbols-outlined text-primary text-[28px] md:text-[32px]">assignment</span>
+            <h2 className="text-2xl md:text-3xl font-bold text-on-surface">Quản lý Bài tập & Đề thi</h2>
           </div>
-          <p className="text-body-lg text-secondary">Manage your exam papers and homework uploads for active courses.</p>
+          <p className="text-sm md:text-base text-secondary">Quản lý đề thi trắc nghiệm và bài tập tự luận cho học viên.</p>
         </div>
 
-        <div className="relative group" ref={dropdownRef}>
+        <div className="relative group w-full md:w-auto" ref={dropdownRef}>
           <button 
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className="bg-primary text-on-primary px-xl py-sm rounded-lg flex items-center gap-xs font-label-md hover:bg-on-tertiary-fixed transition-colors shadow-lg shadow-primary/20"
+            className="w-full md:w-auto bg-primary text-on-primary px-6 py-2.5 rounded-lg flex items-center justify-center gap-2 font-semibold hover:bg-on-tertiary-fixed transition-all shadow-md active:scale-95"
           >
-            <span className="material-symbols-outlined">add_circle</span>
-            Create New
-            <span className="material-symbols-outlined">keyboard_arrow_down</span>
+            <span className="material-symbols-outlined text-[20px]">add_circle</span>
+            Tạo mới
+            <span className="material-symbols-outlined text-[20px]">keyboard_arrow_down</span>
           </button>
           
           {/* Dropdown */}
@@ -165,13 +169,13 @@ export default function TutorAssessmentManager({ token, user }) {
                 onClick={() => { setIsExamModalOpen(true); setIsDropdownOpen(false); }}
                 className="w-full text-left px-md py-sm hover:bg-surface-container-low flex items-center gap-md font-label-md transition-colors"
               >
-                <span className="material-symbols-outlined text-primary">edit_document</span> New Exam Paper
+                <span className="material-symbols-outlined text-primary">edit_document</span> Tạo Đề thi mới
               </button>
               <button 
                 onClick={() => { setIsHomeworkModalOpen(true); setIsDropdownOpen(false); }}
                 className="w-full text-left px-md py-sm hover:bg-surface-container-low flex items-center gap-md font-label-md border-t border-outline-variant transition-colors"
               >
-                <span className="material-symbols-outlined text-primary">cloud_upload</span> Upload Homework
+                <span className="material-symbols-outlined text-primary">cloud_upload</span> Giao Bài tập về nhà
               </button>
             </div>
           )}
@@ -179,7 +183,7 @@ export default function TutorAssessmentManager({ token, user }) {
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-lg mb-xl">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-10">
         <div className="bg-surface-container-lowest p-lg rounded-xl shadow-sm border border-transparent hover:border-primary/20 transition-all flex flex-col gap-sm">
           <div className="flex justify-between items-start">
             <span className="p-xs bg-primary-fixed rounded-lg">
@@ -187,7 +191,7 @@ export default function TutorAssessmentManager({ token, user }) {
             </span>
           </div>
           <div>
-            <p className="text-label-md text-secondary">Total Assessments</p>
+            <p className="text-label-md text-secondary">Tổng số bài</p>
             <h3 className="text-headline-lg font-headline-lg text-on-surface">{totalAssessments}</h3>
           </div>
         </div>
@@ -199,7 +203,7 @@ export default function TutorAssessmentManager({ token, user }) {
             </span>
           </div>
           <div>
-            <p className="text-label-md text-secondary">Published / Open</p>
+            <p className="text-label-md text-secondary">Đã giao / Mở</p>
             <h3 className="text-headline-lg font-headline-lg text-on-surface">{publishedCount}</h3>
           </div>
         </div>
@@ -211,7 +215,7 @@ export default function TutorAssessmentManager({ token, user }) {
             </span>
           </div>
           <div>
-            <p className="text-label-md text-secondary">Drafts</p>
+            <p className="text-label-md text-secondary">Bản nháp</p>
             <h3 className="text-headline-lg font-headline-lg text-on-surface">{pendingCount}</h3>
           </div>
         </div>
@@ -220,40 +224,40 @@ export default function TutorAssessmentManager({ token, user }) {
       {/* Main Navigation & Filter Area */}
       <div className="bg-surface-container-lowest rounded-xl shadow-sm border border-outline-variant overflow-hidden">
         {/* Tabs */}
-        <div className="flex px-lg border-b border-outline-variant bg-white">
+        <div className="flex px-2 md:px-6 border-b border-outline-variant bg-white overflow-x-auto hide-scrollbar">
           <button 
-            className={`px-xl py-md font-label-md transition-all border-b-2 ${activeTab === 'exams' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
+            className={`px-4 md:px-8 py-4 font-semibold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'exams' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
             onClick={() => setActiveTab('exams')}
           >
-            Exam Papers
+            Đề thi trắc nghiệm / tự luận
           </button>
           <button 
-            className={`px-xl py-md font-label-md transition-all border-b-2 ${activeTab === 'homework' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
+            className={`px-4 md:px-8 py-4 font-semibold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'homework' ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
             onClick={() => setActiveTab('homework')}
           >
-            Homework Uploads
+            Bài tập về nhà
           </button>
         </div>
 
         {/* Toolbar */}
-        <div className="p-lg flex flex-wrap items-center justify-between gap-md bg-surface-container-low/50">
-          <div className="flex-1 relative min-w-[200px]">
-            <span className="material-symbols-outlined absolute left-md top-1/2 -translate-y-1/2 text-secondary text-[18px]">search</span>
+        <div className="p-4 md:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#fcfcfc] border-b border-outline-variant">
+          <div className="flex-1 relative w-full md:max-w-md">
+            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-secondary text-[20px]">search</span>
             <input 
               type="text" 
-              placeholder="Search assessments..." 
+              placeholder="Tìm kiếm bài tập/đề thi..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-white border border-outline-variant rounded-lg py-xs pl-xl pr-md text-body-md focus:ring-1 focus:ring-primary focus:border-primary outline-none"
+              className="w-full bg-white border border-outline-variant rounded-lg py-2.5 pl-11 pr-4 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all shadow-sm"
             />
           </div>
-          <div className="flex flex-wrap items-center gap-md">
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
             <select 
               value={filterCourse}
               onChange={(e) => setFilterCourse(e.target.value)}
-              className="bg-white border border-outline-variant rounded-lg py-xs px-md text-label-md focus:ring-1 focus:ring-primary focus:border-primary outline-none min-w-[140px]"
+              className="flex-1 md:flex-none bg-white border border-outline-variant rounded-lg py-2.5 px-3 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shadow-sm cursor-pointer"
             >
-              <option value="All">All Courses</option>
+              <option value="All">Tất cả Khóa học</option>
               {Array.from(new Set([...exams.map(e => e.course), ...homeworks.map(h => h.course)])).filter(Boolean).map(c => (
                 <option key={c} value={c}>{c}</option>
               ))}
@@ -261,22 +265,22 @@ export default function TutorAssessmentManager({ token, user }) {
             <select 
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="bg-white border border-outline-variant rounded-lg py-xs px-md text-label-md focus:ring-1 focus:ring-primary focus:border-primary outline-none min-w-[120px]"
+              className="flex-1 md:flex-none bg-white border border-outline-variant rounded-lg py-2.5 px-3 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shadow-sm cursor-pointer"
             >
-              <option value="All">Status</option>
-              <option value="Published">Published / Open</option>
-              <option value="Draft">Draft</option>
-              <option value="Closed">Closed</option>
+              <option value="All">Trạng thái</option>
+              <option value="Published">Đã giao / Mở</option>
+              <option value="Draft">Bản nháp</option>
+              <option value="Closed">Đã đóng</option>
             </select>
-            <button className="bg-white border border-outline-variant p-xs rounded-lg hover:bg-surface-container transition-colors flex items-center justify-center">
-              <span className="material-symbols-outlined">filter_list</span>
+            <button className="bg-white border border-outline-variant p-2 rounded-lg hover:bg-gray-50 hover:text-primary transition-colors flex items-center justify-center shadow-sm text-secondary" title="Bộ lọc">
+              <span className="material-symbols-outlined text-[20px]">filter_list</span>
             </button>
           </div>
         </div>
 
         {/* Content Area */}
         {loading ? (
-          <div className="p-xl text-center text-secondary">Loading...</div>
+          <div className="p-xl text-center text-secondary">Đang tải...</div>
         ) : error ? (
           <div className="p-xl text-center text-error">{error}</div>
         ) : activeTab === 'exams' ? (
@@ -284,31 +288,31 @@ export default function TutorAssessmentManager({ token, user }) {
             {filteredExams.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-xl text-secondary">
                 <span className="material-symbols-outlined text-[48px] mb-sm">note_stack</span>
-                <p>No exam papers found.</p>
+                <p>Không tìm thấy đề thi nào.</p>
               </div>
             ) : (
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-surface-container-low text-label-sm uppercase tracking-wider text-secondary">
-                    <th className="px-lg py-md">Assessment Title</th>
-                    <th className="px-lg py-md">Course</th>
-                    <th className="px-lg py-md">Config</th>
-                    <th className="px-lg py-md">Deadline</th>
-                    <th className="px-lg py-md">Status</th>
-                    <th className="px-lg py-md text-right">Actions</th>
+                  <tr className="bg-[#f8f9fb] text-xs uppercase tracking-wider text-[#5d5f5f] font-bold border-b border-outline-variant">
+                    <th className="px-6 py-4">Tên Bài</th>
+                    <th className="px-6 py-4">Khóa học</th>
+                    <th className="px-6 py-4">Cấu hình</th>
+                    <th className="px-6 py-4">Hạn nộp</th>
+                    <th className="px-6 py-4">Trạng thái</th>
+                    <th className="px-6 py-4 text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant">
                   {filteredExams.map(exam => (
                     <tr key={exam.id} className="hover:bg-surface-container-low/30 transition-colors group">
-                      <td className="px-lg py-md">
-                        <div className="font-label-md text-on-surface">{exam.title}</div>
-                        <div className="text-label-sm text-secondary">{exam.question_count || 0} Questions</div>
+                      <td className="px-6 py-4">
+                        <div className="font-semibold text-sm text-[#00288e]">{exam.title}</div>
+                        <div className="text-xs text-[#757684] mt-0.5">{exam.question_count || 0} Câu hỏi</div>
                       </td>
-                      <td className="px-lg py-md text-body-md text-secondary">{exam.course || '--'}</td>
+                      <td className="px-6 py-4 text-sm text-on-surface font-medium">{exam.course || '--'}</td>
                       <td className="px-lg py-md">
                         <div className="flex items-center gap-xs text-label-sm text-secondary">
-                          <span className="material-symbols-outlined text-[16px]">schedule</span> {exam.duration_minutes} mins
+                          <span className="material-symbols-outlined text-[16px]">schedule</span> {exam.duration_minutes} phút
                         </div>
                       </td>
                       <td className="px-lg py-md text-body-md text-secondary">
@@ -316,22 +320,22 @@ export default function TutorAssessmentManager({ token, user }) {
                       </td>
                       <td className="px-lg py-md">
                         {exam.status === 'Published' ? (
-                           <span className="px-sm py-1 rounded-full bg-green-100 text-green-700 text-label-sm font-bold">Published</span>
+                           <span className="px-sm py-1 rounded-full bg-green-100 text-green-700 text-label-sm font-bold">Đã giao</span>
                         ) : exam.status === 'Draft' ? (
-                          <span className="px-sm py-1 rounded-full bg-surface-variant text-secondary text-label-sm font-bold">Draft</span>
+                          <span className="px-sm py-1 rounded-full bg-surface-variant text-secondary text-label-sm font-bold">Bản nháp</span>
                         ) : (
-                          <span className="px-sm py-1 rounded-full bg-red-100 text-red-700 text-label-sm font-bold">Closed</span>
+                          <span className="px-sm py-1 rounded-full bg-red-100 text-red-700 text-label-sm font-bold">Đã đóng</span>
                         )}
                       </td>
                       <td className="px-lg py-md text-right">
                         <div className="flex items-center justify-end gap-sm opacity-0 group-hover:opacity-100 transition-opacity">
-                           <button onClick={() => handlePublishExam(exam.id, exam.status)} title="Toggle Publish" className="text-secondary hover:text-primary">
+                           <button onClick={() => handlePublishExam(exam.id, exam.status)} title="Đổi trạng thái" className="text-secondary hover:text-primary">
                              <span className="material-symbols-outlined">{exam.status === 'Published' ? 'visibility_off' : 'visibility'}</span>
                            </button>
-                           <button onClick={() => handleDuplicateExam(exam.id)} title="Duplicate" className="text-secondary hover:text-primary">
+                           <button onClick={() => handleDuplicateExam(exam.id)} title="Nhân bản" className="text-secondary hover:text-primary">
                              <span className="material-symbols-outlined">content_copy</span>
                            </button>
-                           <button onClick={() => handleDeleteExam(exam.id)} title="Delete" className="text-secondary hover:text-error">
+                           <button onClick={() => handleDeleteExam(exam.id)} title="Xóa" className="text-secondary hover:text-error">
                              <span className="material-symbols-outlined">delete</span>
                            </button>
                         </div>
@@ -347,7 +351,7 @@ export default function TutorAssessmentManager({ token, user }) {
             {filteredHomeworks.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-xl text-secondary">
                 <span className="material-symbols-outlined text-[48px] mb-sm">cloud_upload</span>
-                <p>No homework uploads found.</p>
+                <p>Không tìm thấy bài tập nào.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-base p-lg">
@@ -359,27 +363,27 @@ export default function TutorAssessmentManager({ token, user }) {
                       </div>
                       <div>
                         <h4 className="font-label-md text-on-surface">{hw.title}</h4>
-                        <p className="text-label-sm text-secondary">{hw.course || '--'} • Max {hw.max_score} pts</p>
+                        <p className="text-label-sm text-secondary">{hw.course || '--'} • Tối đa {hw.max_score} đ</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-xl text-right">
                       <div className="hidden md:block">
-                        <p className="text-label-sm text-secondary">Deadline</p>
+                        <p className="text-label-sm text-secondary">Hạn nộp</p>
                         <p className="text-label-md font-bold text-on-surface">{hw.deadline ? new Date(hw.deadline).toLocaleDateString() : '--'}</p>
                       </div>
                       <div className="min-w-[100px] hidden sm:block text-left">
-                        <p className="text-label-sm text-secondary">Submissions</p>
+                        <p className="text-label-sm text-secondary">Lượt nộp</p>
                         <p className="text-label-sm font-bold mt-1 text-on-surface">{hw.submission_count || 0}</p>
                       </div>
                       <div className="flex items-center gap-sm">
                         <span className={`px-sm py-1 rounded-full text-label-sm font-bold ${hw.status === 'Open' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                          {hw.status}
+                          {hw.status === 'Open' ? 'Đang mở' : 'Đã đóng'}
                         </span>
                         <div className="flex items-center gap-xs ml-2">
-                           <button onClick={() => handlePublishHomework(hw.id, hw.status)} title="Toggle Status" className="p-xs text-secondary hover:text-primary rounded-full hover:bg-surface-container">
+                           <button onClick={() => handlePublishHomework(hw.id, hw.status)} title="Đổi trạng thái" className="p-xs text-secondary hover:text-primary rounded-full hover:bg-surface-container">
                              <span className="material-symbols-outlined">{hw.status === 'Open' ? 'lock' : 'lock_open'}</span>
                            </button>
-                           <button onClick={() => handleDeleteHomework(hw.id)} title="Delete" className="p-xs text-secondary hover:text-error rounded-full hover:bg-surface-container">
+                           <button onClick={() => handleDeleteHomework(hw.id)} title="Xóa" className="p-xs text-secondary hover:text-error rounded-full hover:bg-surface-container">
                              <span className="material-symbols-outlined">delete</span>
                            </button>
                         </div>
@@ -398,6 +402,7 @@ export default function TutorAssessmentManager({ token, user }) {
         <CreateExamModal 
           onClose={() => setIsExamModalOpen(false)} 
           onSuccess={() => { setIsExamModalOpen(false); fetchData(); }} 
+          courses={courses}
         />
       )}
       
@@ -405,6 +410,7 @@ export default function TutorAssessmentManager({ token, user }) {
         <UploadHomeworkModal 
           onClose={() => setIsHomeworkModalOpen(false)} 
           onSuccess={() => { setIsHomeworkModalOpen(false); fetchData(); }} 
+          courses={courses}
         />
       )}
     </div>
@@ -415,7 +421,7 @@ export default function TutorAssessmentManager({ token, user }) {
 // Sub Components (Modals)
 // ----------------------------------------------------------------------
 
-function CreateExamModal({ onClose, onSuccess }) {
+function CreateExamModal({ onClose, onSuccess, courses }) {
   const [formData, setFormData] = useState({
     title: '',
     course: '',
@@ -528,10 +534,10 @@ function CreateExamModal({ onClose, onSuccess }) {
       <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={onClose}></div>
       <div className="relative w-full max-w-4xl bg-surface rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         
-        <div className="px-xl py-lg border-b border-outline-variant flex justify-between items-center bg-white">
+        <div className="px-xl py-lg border-b border-outline-variant flex justify-between items-center bg-white shrink-0">
           <div>
-            <h3 className="text-headline-md font-headline-md text-primary">Create New Exam Paper</h3>
-            <p className="text-body-md text-secondary">Follow the steps to build your assessment.</p>
+            <h3 className="text-headline-md font-headline-md text-primary">Tạo Đề thi mới</h3>
+            <p className="text-body-md text-secondary">Thiết lập cấu hình và câu hỏi cho đề thi trắc nghiệm / tự luận.</p>
           </div>
           <button className="text-secondary hover:text-error transition-colors" onClick={onClose}>
             <span className="material-symbols-outlined">close</span>
@@ -541,27 +547,30 @@ function CreateExamModal({ onClose, onSuccess }) {
         <div className="p-xl overflow-y-auto space-y-lg bg-surface flex-1">
           <div className="grid grid-cols-2 gap-lg">
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Assessment Title</label>
+              <label className="text-label-md font-bold">Tên bài kiểm tra</label>
               <input 
                 type="text" 
                 value={formData.title}
                 onChange={e => setFormData({...formData, title: e.target.value})}
                 className="w-full rounded-lg border-outline-variant focus:ring-primary focus:border-primary outline-none py-2 px-3" 
-                placeholder="e.g. Chemistry Lab Quiz" 
+                placeholder="VD: Kiểm tra Toán 15 phút" 
               />
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Course / Class</label>
-              <input 
-                type="text" 
+              <label className="text-label-md font-bold">Khóa học / Lớp</label>
+              <select 
                 value={formData.course}
                 onChange={e => setFormData({...formData, course: e.target.value})}
-                className="w-full rounded-lg border-outline-variant focus:ring-primary focus:border-primary outline-none py-2 px-3" 
-                placeholder="e.g. Organic Chemistry" 
-              />
+                className="w-full rounded-lg border-outline-variant focus:ring-primary focus:border-primary outline-none py-2 px-3 bg-white" 
+              >
+                <option value="">-- Chọn Khóa học --</option>
+                {courses.map(c => (
+                  <option key={c.id} value={c.id}>{c.title}</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Duration (Minutes)</label>
+              <label className="text-label-md font-bold">Thời gian làm bài (Phút)</label>
               <input 
                 type="number" 
                 value={formData.duration_minutes}
@@ -570,7 +579,7 @@ function CreateExamModal({ onClose, onSuccess }) {
               />
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Total Passing Score</label>
+              <label className="text-label-md font-bold">Điểm đạt (tối thiểu)</label>
               <input 
                 type="number" 
                 value={formData.total_score}
@@ -581,10 +590,10 @@ function CreateExamModal({ onClose, onSuccess }) {
           </div>
           
           <div className="space-y-sm">
-            <label className="text-label-md font-bold">Assign to Students (Optional)</label>
+            <label className="text-label-md font-bold">Giao bài cho học sinh (Tùy chọn)</label>
             <div className="p-3 border border-outline-variant rounded-lg bg-white max-h-40 overflow-y-auto space-y-2">
               {myStudents.length === 0 ? (
-                <p className="text-sm text-secondary italic">No students available.</p>
+                <p className="text-sm text-secondary italic">Bạn chưa có học sinh nào.</p>
               ) : (
                 myStudents.map(student => {
                   const isChecked = formData.assigned_students.includes(student.studentId);
@@ -608,18 +617,18 @@ function CreateExamModal({ onClose, onSuccess }) {
                 })
               )}
             </div>
-            <p className="text-xs text-secondary mt-1">If no student is selected, this exam will be visible to all of your students.</p>
+            <p className="text-xs text-secondary mt-1">Nếu không chọn học sinh nào, bài thi này sẽ hiển thị cho tất cả học viên của bạn.</p>
           </div>
 
           <div className="space-y-md mt-xl">
             <div className="flex items-center justify-between">
-              <label className="text-label-md font-bold text-lg">Question Builder</label>
+              <label className="text-label-md font-bold text-lg">Soạn câu hỏi</label>
               <div className="flex gap-sm">
                 <button type="button" onClick={handleAddMCQ} className="px-sm py-1 border border-primary text-primary rounded-lg text-sm hover:bg-primary/5">
-                  + Add MCQ
+                  + Trắc nghiệm (MCQ)
                 </button>
                 <button type="button" onClick={handleAddEssay} className="px-sm py-1 border border-primary text-primary rounded-lg text-sm hover:bg-primary/5">
-                  + Add Essay
+                  + Tự luận
                 </button>
               </div>
             </div>
@@ -725,7 +734,7 @@ function CreateExamModal({ onClose, onSuccess }) {
   );
 }
 
-function UploadHomeworkModal({ onClose, onSuccess }) {
+function UploadHomeworkModal({ onClose, onSuccess, courses }) {
   const [formData, setFormData] = useState({
     title: '',
     course: '',
@@ -733,11 +742,31 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
     max_score: 100,
     instructions: '',
     allow_late: false,
-    status: 'Open'
+    status: 'Open',
+    assigned_students: []
   });
   const [file, setFile] = useState(null);
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [myStudents, setMyStudents] = useState([]);
+
+  useEffect(() => {
+    const fetchStudents = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/tutor/students`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setMyStudents(Array.isArray(data) ? data : []);
+        }
+      } catch (err) {
+        console.error("Fetch students error", err);
+      }
+    };
+    fetchStudents();
+  }, []);
 
   const handleSave = async (status) => {
     setFormError('');
@@ -764,49 +793,83 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={onClose}></div>
-      <div className="relative w-full max-w-lg bg-surface rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-        <div className="px-xl py-lg border-b border-outline-variant flex justify-between items-center bg-white">
-          <h3 className="text-headline-md font-headline-md text-primary">Upload Homework</h3>
+      <div className="relative w-full max-w-lg bg-surface rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-white shrink-0">
+          <h3 className="text-xl font-bold text-primary">Giao Bài tập về nhà</h3>
           <button className="text-secondary hover:text-error transition-colors" onClick={onClose}>
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>
 
-        <div className="p-xl space-y-md">
+        <div className="p-6 space-y-5 overflow-y-auto">
           <div className="space-y-sm">
-            <label className="text-label-md font-bold">Assignment Name</label>
+            <label className="text-label-md font-bold">Tên bài tập</label>
             <input 
               type="text"
               value={formData.title}
               onChange={e => setFormData({...formData, title: e.target.value})} 
               className="w-full rounded-lg border-outline-variant py-2 px-3 focus:ring-primary focus:border-primary outline-none" 
-              placeholder="e.g. Lab Report 04" 
+              placeholder="VD: Bài tập tự luyện số 1" 
             />
           </div>
           
           <div className="space-y-sm">
-            <label className="text-label-md font-bold">Course / Class</label>
-            <input 
-              type="text"
+            <label className="text-label-md font-bold">Khóa học / Lớp</label>
+            <select 
               value={formData.course}
               onChange={e => setFormData({...formData, course: e.target.value})} 
-              className="w-full rounded-lg border-outline-variant py-2 px-3 focus:ring-primary focus:border-primary outline-none" 
-              placeholder="e.g. Advanced Physics" 
-            />
+              className="w-full rounded-lg border-outline-variant py-2 px-3 focus:ring-primary focus:border-primary outline-none bg-white" 
+            >
+              <option value="">-- Chọn Khóa học --</option>
+              {courses.map(c => (
+                <option key={c.id} value={c.id}>{c.title}</option>
+              ))}
+            </select>
           </div>
 
-          <label className="border-2 border-dashed border-outline-variant rounded-xl py-xl bg-surface-container-low flex flex-col items-center gap-sm group cursor-pointer hover:bg-white hover:border-primary transition-all">
+          <div className="space-y-sm">
+            <label className="text-label-md font-bold">Giao bài cho học sinh (Tùy chọn)</label>
+            <div className="p-3 border border-outline-variant rounded-lg bg-white max-h-32 overflow-y-auto space-y-2">
+              {myStudents.length === 0 ? (
+                <p className="text-sm text-secondary italic">Bạn chưa có học sinh nào.</p>
+              ) : (
+                myStudents.map(student => {
+                  const isChecked = formData.assigned_students.includes(student.studentId);
+                  return (
+                    <label key={student.studentId} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-surface p-1 rounded transition-colors">
+                      <input 
+                        type="checkbox"
+                        className="rounded text-primary focus:ring-primary w-4 h-4"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFormData(prev => ({...prev, assigned_students: [...prev.assigned_students, student.studentId]}));
+                          } else {
+                            setFormData(prev => ({...prev, assigned_students: prev.assigned_students.filter(id => id !== student.studentId)}));
+                          }
+                        }}
+                      />
+                      <span>{student.studentName}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <p className="text-xs text-secondary mt-1">Nếu không chọn học sinh nào, bài tập sẽ hiển thị cho tất cả học viên của bạn.</p>
+          </div>
+
+          <label className="border-2 border-dashed border-outline-variant rounded-xl py-xl bg-surface-container-low flex flex-col items-center gap-sm group cursor-pointer hover:bg-white hover:border-primary transition-all mt-4">
             <span className="material-symbols-outlined text-secondary group-hover:text-primary text-[40px]">upload_file</span>
-            <p className="font-label-md text-on-surface">{file ? file.name : 'Click to browse from computer'}</p>
-            <p className="text-label-sm text-secondary">Max 50MB (PDF, DOCX, etc.)</p>
+            <p className="font-label-md text-on-surface text-center px-4">{file ? file.name : 'Nhấp để chọn file từ máy tính'}</p>
+            <p className="text-label-sm text-secondary">Tối đa 50MB (PDF, DOCX, ZIP...)</p>
             <input type="file" className="hidden" onChange={e => setFile(e.target.files[0])} />
           </label>
 
-          <div className="grid grid-cols-2 gap-md">
+          <div className="grid grid-cols-2 gap-md mt-4">
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Deadline Date</label>
+              <label className="text-label-md font-bold">Hạn nộp bài</label>
               <input 
                 type="date"
                 value={formData.deadline}
@@ -815,45 +878,46 @@ function UploadHomeworkModal({ onClose, onSuccess }) {
               />
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Point Scale</label>
+              <label className="text-label-md font-bold">Thang điểm tối đa</label>
               <input 
                 type="number" 
                 value={formData.max_score}
                 onChange={e => setFormData({...formData, max_score: parseInt(e.target.value) || 0})}
                 className="w-full rounded-lg border-outline-variant py-2 px-3 focus:ring-primary outline-none" 
-                placeholder="100" 
+                placeholder="10" 
               />
             </div>
           </div>
 
 
-          <div className="flex items-center justify-between mt-xl mb-sm">
+          <div className="flex items-center justify-start gap-3 mt-4 mb-2">
             <input 
               type="checkbox" 
               id="allowLate" 
               checked={formData.allow_late}
               onChange={e => setFormData({...formData, allow_late: e.target.checked})}
-              className="rounded border-outline-variant text-primary focus:ring-primary"
+              className="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary cursor-pointer"
             />
-            <label htmlFor="allowLate" className="text-sm font-medium">Allow late submissions</label>
+            <label htmlFor="allowLate" className="text-sm font-medium cursor-pointer">Cho phép nộp muộn (Allow late submissions)</label>
           </div>
         </div>
 
-        <div className="px-xl py-lg border-t border-outline-variant bg-white flex flex-col items-end gap-md">
+        <div className="px-6 py-4 border-t border-outline-variant bg-white flex flex-col items-end gap-3 shrink-0 rounded-b-2xl">
           {formError && (
             <div className="text-error text-sm font-medium w-full text-right mb-2">
               {formError}
             </div>
           )}
-          <div className="flex justify-end gap-md w-full">
-            <button onClick={onClose} className="px-xl py-sm text-secondary font-label-md hover:bg-surface-container rounded-lg transition-colors" disabled={loading}>
-              Discard
+          <div className="flex gap-3 w-full justify-end">
+            <button className="px-5 py-2 rounded-lg font-bold text-secondary hover:bg-surface-variant transition-colors" onClick={onClose} disabled={loading}>
+              Hủy
             </button>
-            <button onClick={() => handleSave('Draft')} className="px-xl py-sm border border-primary text-primary font-label-md rounded-lg hover:bg-primary/5 transition-colors" disabled={loading}>
-              Save Draft
+            <button className="px-5 py-2 rounded-lg font-bold text-primary border border-primary hover:bg-primary-fixed transition-colors flex items-center gap-2" onClick={() => handleSave('Draft')} disabled={loading}>
+              <span className="material-symbols-outlined text-[18px]">save</span> Lưa Nháp
             </button>
-            <button onClick={() => handleSave('Open')} className="px-xl py-sm bg-primary text-on-primary font-label-md rounded-lg shadow-lg hover:bg-on-tertiary-fixed transition-colors" disabled={loading}>
-              {loading ? 'Uploading...' : 'Upload & Assign'}
+            <button className="px-5 py-2 rounded-lg font-bold bg-primary text-on-primary shadow-sm hover:bg-on-tertiary-fixed transition-colors flex items-center gap-2" onClick={() => handleSave('Open')} disabled={loading}>
+              {loading ? <span className="material-symbols-outlined animate-spin text-[18px]">sync</span> : <span className="material-symbols-outlined text-[18px]">cloud_upload</span>} 
+              {loading ? 'Đang xử lý...' : 'Giao bài ngay'}
             </button>
           </div>
         </div>
