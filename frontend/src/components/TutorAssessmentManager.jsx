@@ -76,7 +76,7 @@ export default function TutorAssessmentManager({ token, user }) {
       await updateTutorExamStatus(id, newStatus);
       fetchData();
     } catch (err) {
-      alert('Failed to update status');
+      alert('Cập nhật trạng thái thất bại');
     }
   };
 
@@ -85,17 +85,17 @@ export default function TutorAssessmentManager({ token, user }) {
       await duplicateTutorExam(id);
       fetchData();
     } catch (err) {
-      alert('Failed to duplicate exam');
+      alert('Nhân bản đề thi thất bại');
     }
   };
 
   const handleDeleteExam = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this exam?')) return;
+    if (!window.confirm('Bạn có chắc chắn muốn xóa bài kiểm tra này không?')) return;
     try {
       await deleteTutorExam(id);
       fetchData();
     } catch (err) {
-      alert('Failed to delete exam');
+      alert('Xóa đề thi thất bại');
     }
   };
 
@@ -106,17 +106,17 @@ export default function TutorAssessmentManager({ token, user }) {
       await updateTutorHomeworkStatus(id, newStatus);
       fetchData();
     } catch (err) {
-      alert('Failed to update status');
+      alert('Cập nhật trạng thái thất bại');
     }
   };
 
   const handleDeleteHomework = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this homework?')) return;
+    if (!window.confirm('Bạn có chắc chắn muốn xóa bài tập này không?')) return;
     try {
       await deleteTutorHomework(id);
       fetchData();
     } catch (err) {
-      alert('Failed to delete homework');
+      alert('Xóa bài tập thất bại');
     }
   };
 
@@ -245,7 +245,7 @@ export default function TutorAssessmentManager({ token, user }) {
             <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-secondary text-[20px]">search</span>
             <input 
               type="text" 
-              placeholder="Search assessments..." 
+              placeholder="Tìm kiếm bài tập/đề thi..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-white border border-outline-variant rounded-lg py-2.5 pl-11 pr-4 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all shadow-sm"
@@ -257,7 +257,7 @@ export default function TutorAssessmentManager({ token, user }) {
               onChange={(e) => setFilterCourse(e.target.value)}
               className="flex-1 md:flex-none bg-white border border-outline-variant rounded-lg py-2.5 px-3 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shadow-sm cursor-pointer"
             >
-              <option value="All">All Courses</option>
+              <option value="All">Tất cả Khóa học</option>
               {Array.from(new Set([...exams.map(e => e.course), ...homeworks.map(h => h.course)])).filter(Boolean).map(c => (
                 <option key={c} value={c}>{c}</option>
               ))}
@@ -267,12 +267,12 @@ export default function TutorAssessmentManager({ token, user }) {
               onChange={(e) => setFilterStatus(e.target.value)}
               className="flex-1 md:flex-none bg-white border border-outline-variant rounded-lg py-2.5 px-3 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shadow-sm cursor-pointer"
             >
-              <option value="All">Status</option>
-              <option value="Published">Published / Open</option>
-              <option value="Draft">Draft</option>
-              <option value="Closed">Closed</option>
+              <option value="All">Trạng thái</option>
+              <option value="Published">Đã giao / Mở</option>
+              <option value="Draft">Bản nháp</option>
+              <option value="Closed">Đã đóng</option>
             </select>
-            <button className="bg-white border border-outline-variant p-2 rounded-lg hover:bg-gray-50 hover:text-primary transition-colors flex items-center justify-center shadow-sm text-secondary" title="Filters">
+            <button className="bg-white border border-outline-variant p-2 rounded-lg hover:bg-gray-50 hover:text-primary transition-colors flex items-center justify-center shadow-sm text-secondary" title="Bộ lọc">
               <span className="material-symbols-outlined text-[20px]">filter_list</span>
             </button>
           </div>
@@ -280,7 +280,7 @@ export default function TutorAssessmentManager({ token, user }) {
 
         {/* Content Area */}
         {loading ? (
-          <div className="p-xl text-center text-secondary">Loading...</div>
+          <div className="p-xl text-center text-secondary">Đang tải...</div>
         ) : error ? (
           <div className="p-xl text-center text-error">{error}</div>
         ) : activeTab === 'exams' ? (
@@ -288,18 +288,18 @@ export default function TutorAssessmentManager({ token, user }) {
             {filteredExams.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-xl text-secondary">
                 <span className="material-symbols-outlined text-[48px] mb-sm">note_stack</span>
-                <p>No exam papers found.</p>
+                <p>Không tìm thấy đề thi nào.</p>
               </div>
             ) : (
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-[#f8f9fb] text-xs uppercase tracking-wider text-[#5d5f5f] font-bold border-b border-outline-variant">
-                    <th className="px-6 py-4">Assessment Title</th>
-                    <th className="px-6 py-4">Course</th>
-                    <th className="px-6 py-4">Config</th>
-                    <th className="px-6 py-4">Deadline</th>
-                    <th className="px-6 py-4">Status</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
+                    <th className="px-6 py-4">Tên Bài</th>
+                    <th className="px-6 py-4">Khóa học</th>
+                    <th className="px-6 py-4">Cấu hình</th>
+                    <th className="px-6 py-4">Hạn nộp</th>
+                    <th className="px-6 py-4">Trạng thái</th>
+                    <th className="px-6 py-4 text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant">
@@ -307,12 +307,12 @@ export default function TutorAssessmentManager({ token, user }) {
                     <tr key={exam.id} className="hover:bg-surface-container-low/30 transition-colors group">
                       <td className="px-6 py-4">
                         <div className="font-semibold text-sm text-[#00288e]">{exam.title}</div>
-                        <div className="text-xs text-[#757684] mt-0.5">{exam.question_count || 0} Questions</div>
+                        <div className="text-xs text-[#757684] mt-0.5">{exam.question_count || 0} Câu hỏi</div>
                       </td>
                       <td className="px-6 py-4 text-sm text-on-surface font-medium">{exam.course || '--'}</td>
                       <td className="px-lg py-md">
                         <div className="flex items-center gap-xs text-label-sm text-secondary">
-                          <span className="material-symbols-outlined text-[16px]">schedule</span> {exam.duration_minutes} mins
+                          <span className="material-symbols-outlined text-[16px]">schedule</span> {exam.duration_minutes} phút
                         </div>
                       </td>
                       <td className="px-lg py-md text-body-md text-secondary">
@@ -320,22 +320,22 @@ export default function TutorAssessmentManager({ token, user }) {
                       </td>
                       <td className="px-lg py-md">
                         {exam.status === 'Published' ? (
-                           <span className="px-sm py-1 rounded-full bg-green-100 text-green-700 text-label-sm font-bold">Published</span>
+                           <span className="px-sm py-1 rounded-full bg-green-100 text-green-700 text-label-sm font-bold">Đã giao</span>
                         ) : exam.status === 'Draft' ? (
-                          <span className="px-sm py-1 rounded-full bg-surface-variant text-secondary text-label-sm font-bold">Draft</span>
+                          <span className="px-sm py-1 rounded-full bg-surface-variant text-secondary text-label-sm font-bold">Bản nháp</span>
                         ) : (
-                          <span className="px-sm py-1 rounded-full bg-red-100 text-red-700 text-label-sm font-bold">Closed</span>
+                          <span className="px-sm py-1 rounded-full bg-red-100 text-red-700 text-label-sm font-bold">Đã đóng</span>
                         )}
                       </td>
                       <td className="px-lg py-md text-right">
                         <div className="flex items-center justify-end gap-sm opacity-0 group-hover:opacity-100 transition-opacity">
-                           <button onClick={() => handlePublishExam(exam.id, exam.status)} title="Toggle Publish" className="text-secondary hover:text-primary">
+                           <button onClick={() => handlePublishExam(exam.id, exam.status)} title="Đổi trạng thái" className="text-secondary hover:text-primary">
                              <span className="material-symbols-outlined">{exam.status === 'Published' ? 'visibility_off' : 'visibility'}</span>
                            </button>
-                           <button onClick={() => handleDuplicateExam(exam.id)} title="Duplicate" className="text-secondary hover:text-primary">
+                           <button onClick={() => handleDuplicateExam(exam.id)} title="Nhân bản" className="text-secondary hover:text-primary">
                              <span className="material-symbols-outlined">content_copy</span>
                            </button>
-                           <button onClick={() => handleDeleteExam(exam.id)} title="Delete" className="text-secondary hover:text-error">
+                           <button onClick={() => handleDeleteExam(exam.id)} title="Xóa" className="text-secondary hover:text-error">
                              <span className="material-symbols-outlined">delete</span>
                            </button>
                         </div>
@@ -351,7 +351,7 @@ export default function TutorAssessmentManager({ token, user }) {
             {filteredHomeworks.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-xl text-secondary">
                 <span className="material-symbols-outlined text-[48px] mb-sm">cloud_upload</span>
-                <p>No homework uploads found.</p>
+                <p>Không tìm thấy bài tập nào.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-base p-lg">
@@ -363,27 +363,27 @@ export default function TutorAssessmentManager({ token, user }) {
                       </div>
                       <div>
                         <h4 className="font-label-md text-on-surface">{hw.title}</h4>
-                        <p className="text-label-sm text-secondary">{hw.course || '--'} • Max {hw.max_score} pts</p>
+                        <p className="text-label-sm text-secondary">{hw.course || '--'} • Tối đa {hw.max_score} đ</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-xl text-right">
                       <div className="hidden md:block">
-                        <p className="text-label-sm text-secondary">Deadline</p>
+                        <p className="text-label-sm text-secondary">Hạn nộp</p>
                         <p className="text-label-md font-bold text-on-surface">{hw.deadline ? new Date(hw.deadline).toLocaleDateString() : '--'}</p>
                       </div>
                       <div className="min-w-[100px] hidden sm:block text-left">
-                        <p className="text-label-sm text-secondary">Submissions</p>
+                        <p className="text-label-sm text-secondary">Lượt nộp</p>
                         <p className="text-label-sm font-bold mt-1 text-on-surface">{hw.submission_count || 0}</p>
                       </div>
                       <div className="flex items-center gap-sm">
                         <span className={`px-sm py-1 rounded-full text-label-sm font-bold ${hw.status === 'Open' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                          {hw.status}
+                          {hw.status === 'Open' ? 'Đang mở' : 'Đã đóng'}
                         </span>
                         <div className="flex items-center gap-xs ml-2">
-                           <button onClick={() => handlePublishHomework(hw.id, hw.status)} title="Toggle Status" className="p-xs text-secondary hover:text-primary rounded-full hover:bg-surface-container">
+                           <button onClick={() => handlePublishHomework(hw.id, hw.status)} title="Đổi trạng thái" className="p-xs text-secondary hover:text-primary rounded-full hover:bg-surface-container">
                              <span className="material-symbols-outlined">{hw.status === 'Open' ? 'lock' : 'lock_open'}</span>
                            </button>
-                           <button onClick={() => handleDeleteHomework(hw.id)} title="Delete" className="p-xs text-secondary hover:text-error rounded-full hover:bg-surface-container">
+                           <button onClick={() => handleDeleteHomework(hw.id)} title="Xóa" className="p-xs text-secondary hover:text-error rounded-full hover:bg-surface-container">
                              <span className="material-symbols-outlined">delete</span>
                            </button>
                         </div>
