@@ -10334,6 +10334,10 @@ async function startServer() {
   } catch (error) {
     console.warn("[Courses] Could not create unique progress index. Existing duplicate progress rows may need cleanup.", error.message);
   }
+  } catch(e) {
+    courseSchemaEnsured = false;
+    throw e;
+  }
 }
 
 
