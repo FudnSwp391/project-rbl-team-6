@@ -7954,35 +7954,7 @@ app.get("/api/courses", async (req, res) => {
   }
 });
 
-// ── GET /api/courses/:id ── Chi tiết 1 khóa học (public) ─────────────────────
-app.get("/api/courses/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const courseRes = await pool.query(
-      `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture, u.email AS tutor_email
-       FROM courses c
-       JOIN users u ON c.tutor_id = u.id
-       WHERE c.id = $1`, [id]
-    );
-    if (courseRes.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy khóa học." });
-    const course = courseRes.rows[0];
-
-    // Lấy danh sách bài học
-    let lessons = [];
-    try {
-      const lessonsRes = await pool.query(
-        `SELECT id, title, description, video_url, duration_label, is_preview, position
-         FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`, [id]
-      );
-      lessons = lessonsRes.rows;
-    } catch (_) { /* bảng chưa tồn tại thì bỏ qua */ }
-
-    return res.json({ ...course, lessons });
-  } catch (err) {
-    console.error("GET /api/courses/:id error:", err);
-    return res.status(500).json({ message: "Lỗi máy chủ." });
-  }
-});
+// Route /api/courses/:id đã được di chuyển và mở rộng xuống phía dưới (xem mục "Chi tiết khóa học")
 
 // ── POST /api/coupons/validate ── Kiểm tra mã giảm giá ──────────────────────
 app.post("/api/coupons/validate", async (req, res) => {
@@ -8085,11 +8057,11 @@ app.get('/api/student/my-courses', verifyToken, async (req, res) => {
         c.price,
         c.thumbnail_url,
         c.tutor_id,
-        u.full_name    AS tutor_name,
+        COALESCE(u.full_name, c.instructor_name) AS tutor_name,
         u.picture      AS tutor_avatar,
         COALESCE(
           ROUND(
-            100.0 * COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true)
+            (COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true))::numeric * 100.0
             / NULLIF(COUNT(DISTINCT cl.id), 0)
           )::int, 0
         ) AS progress_percent,
@@ -8491,6 +8463,45 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
   }
 });
 
+// ── PATCH /api/courses/:courseId/lessons/:lessonId/progress ── Cập nhật tiến độ ──
+app.patch("/api/courses/:courseId/lessons/:lessonId/progress", verifyToken, async (req, res) => {
+  try {
+    const { courseId, lessonId } = req.params;
+    const { isCompleted, watchedSeconds } = req.body;
+    const studentId = req.user?.userId || req.user?.id; // Lấy từ req.user do verifyToken cung cấp
+
+    // Lấy enrollment_id
+    const enrollRes = await pool.query(
+      `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+      [courseId, studentId]
+    );
+
+    if (enrollRes.rows.length === 0) {
+      return res.status(403).json({ message: "Bạn chưa đăng ký khóa học này." });
+    }
+
+    const enrollmentId = enrollRes.rows[0].id;
+
+    // Upsert course_progress
+    await pool.query(
+      `INSERT INTO course_progress (enrollment_id, lesson_id, is_completed, watched_seconds, completed_at, updated_at)
+       VALUES ($1, $2, $3, $4, CASE WHEN $3 = true THEN NOW() ELSE NULL END, NOW())
+       ON CONFLICT (enrollment_id, lesson_id) 
+       DO UPDATE SET 
+         is_completed = EXCLUDED.is_completed,
+         watched_seconds = EXCLUDED.watched_seconds,
+         completed_at = CASE WHEN EXCLUDED.is_completed = true AND course_progress.is_completed = false THEN NOW() ELSE course_progress.completed_at END,
+         updated_at = NOW()`,
+      [enrollmentId, lessonId, isCompleted || false, watchedSeconds || 0]
+    );
+
+    return res.json({ success: true, message: "Cập nhật tiến độ thành công." });
+  } catch (err) {
+    console.error("PATCH /progress error:", err);
+    return res.status(500).json({ message: "Lỗi server khi cập nhật tiến độ." });
+  }
+});
+
 
 // Tất cả user có role='tutor', LEFT JOIN tutor_profiles để lấy thêm thông tin.
 app.get("/api/tutors", async (req, res) => {
@@ -8800,10 +8811,10 @@ app.get("/api/courses/:id", async (req, res) => {
     
     const courseRes = await pool.query(
       `SELECT c.*, 
-              u.id as tutor_id, u.full_name as tutor_name, u.picture as tutor_picture,
+              u.id as tutor_id, COALESCE(u.full_name, c.instructor_name) as tutor_name, u.picture as tutor_picture,
               tp.headline as tutor_headline
        FROM courses c
-       JOIN users u ON c.tutor_id = u.id
+       LEFT JOIN users u ON c.tutor_id = u.id
        LEFT JOIN tutor_profiles tp ON u.id = tp.user_id
        WHERE c.id = $1`,
       [id]
@@ -8823,6 +8834,7 @@ app.get("/api/courses/:id", async (req, res) => {
     let isEnrolled = false;
     let userId = null;
     let userRole = null;
+    let enrollmentId = null;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
@@ -8832,14 +8844,32 @@ app.get("/api/courses/:id", async (req, res) => {
         userRole = decoded.role;
         if (userId) {
           const enrollRes = await pool.query(
-            `SELECT 1 FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+            `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
             [id, userId]
           );
-          isEnrolled = enrollRes.rows.length > 0;
+          if (enrollRes.rows.length > 0) {
+            isEnrolled = true;
+            enrollmentId = enrollRes.rows[0].id;
+          }
         }
       } catch (err) {
         // Bỏ qua lỗi token (để xem dưới quyền khách)
       }
+    }
+
+    // Lấy tiến độ học tập nếu đã mua
+    let progressMap = {};
+    if (enrollmentId) {
+       const progressRes = await pool.query(
+         `SELECT lesson_id, is_completed, watched_seconds FROM course_progress WHERE enrollment_id = $1`,
+         [enrollmentId]
+       );
+       progressRes.rows.forEach(p => {
+         progressMap[p.lesson_id] = {
+           isCompleted: p.is_completed,
+           watchedSeconds: p.watched_seconds
+         };
+       });
     }
 
     const isCourseTutor = userId === courseData.tutor_id;
@@ -8855,9 +8885,11 @@ app.get("/api/courses/:id", async (req, res) => {
         picture: courseData.tutor_picture,
         headline: courseData.tutor_headline
       },
+      tutorName: courseData.tutor_name,
       lessons: lessonsRes.rows.map(lesson => {
         const isPreview = lesson.is_preview;
         const isLocked = !isEnrolled && !isCourseTutor && !isAdmin && !isPreview;
+        const prog = progressMap[lesson.id] || {};
         return {
           id: lesson.id,
           title: lesson.title,
@@ -8866,6 +8898,8 @@ app.get("/api/courses/:id", async (req, res) => {
           durationLabel: lesson.duration_label,
           isPreview: isPreview,
           isLocked: isLocked,
+          isCompleted: prog.isCompleted || false,
+          watchedSeconds: prog.watchedSeconds || 0,
           videoUrl: isLocked ? null : lesson.video_url,
           materialUrl: isLocked ? null : lesson.material_url,
           createdAt: lesson.created_at,
@@ -11530,11 +11564,53 @@ async function callGeminiModel(model, prompt) {
     if (!res.ok) {
       return { ok: false, status: res.status, errText: await res.text() };
     }
-    return { ok: true, data: await res.json() };
-  } catch (err) {
-    return { ok: false, status: 0, errText: err.message };
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
   }
 }
+
+const rawGroqKeys = process.env.GROQ_API_KEYS || "";
+const GROQ_API_KEYS = rawGroqKeys.split(',').map(k => k.trim()).filter(Boolean);
+let currentGroqKeyIndex = 0;
+
+async function callGroqModel(prompt, jsonMode = false) {
+  const apiKey = GROQ_API_KEYS[currentGroqKeyIndex];
+  currentGroqKeyIndex = (currentGroqKeyIndex + 1) % GROQ_API_KEYS.length;
+  
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const body = {
+    model: "llama-3.3-70b-versatile",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.7,
+    max_tokens: 2048,
+  };
+  
+  if (jsonMode) {
+    body.response_format = { type: "json_object" };
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(body),
+    });
+    
+    if (!res.ok) {
+      return { ok: false, status: res.status, errText: await res.text() };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
+  }
+}
+
 
 // 2. Tạo URL Nạp Tiền VNPAY
 app.post('/api/payment/create-url', verifyToken, async (req, res) => {
@@ -11681,38 +11757,21 @@ ${JSON.stringify(tutorSummary, null, 2)}
 
 TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
 
-    // Thử lần lượt các model — fallback khi gặp 429 (hết quota) hoặc 503 (quá tải)
-    let data = null;
-    let lastErr = { status: 0, errText: "Không có model khả dụng" };
-    let usedModel = null;
-
-    for (const model of GEMINI_MODELS) {
-      const result = await callGeminiModel(model, systemPrompt);
-      if (result.ok) {
-        data = result.data;
-        usedModel = model;
-        break;
-      }
-      lastErr = result;
-      console.warn(`[Gemini] Model ${model} lỗi ${result.status} — thử model tiếp theo`);
-      // Chỉ fallback khi lỗi tạm thời (quota/quá tải). Lỗi khác (400, 401) thì dừng luôn.
-      if (result.status !== 429 && result.status !== 503 && result.status !== 0) break;
+    const result = await callGroqModel(systemPrompt, true);
+    if (!result.ok) {
+      console.error("[Groq] Lỗi API:", result.status, result.errText);
+      return res.status(502).json({ error: "Lỗi từ AI API", detail: result.errText });
     }
 
-    if (!data) {
-      console.error("[Gemini] Tất cả model đều lỗi:", lastErr.status, lastErr.errText);
-      return res.status(502).json({ error: "Lỗi từ Gemini API", detail: lastErr.errText });
-    }
+    console.log(`[Groq] ✓ Trả lời thành công`);
 
-    console.log(`[Gemini] ✓ Trả lời bằng model: ${usedModel}`);
-
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const rawText = result.data?.choices?.[0]?.message?.content;
     if (!rawText) {
-      console.error("[Gemini] Empty response", data);
-      return res.status(502).json({ error: "Gemini trả phản hồi rỗng" });
+      console.error("[Groq] Empty response", result.data);
+      return res.status(502).json({ error: "AI trả phản hồi rỗng" });
     }
 
-    // Bóc markdown nếu Gemini lỡ trả ```json ... ```
+    // Bóc markdown nếu lỡ trả ```json ... ```
     let cleaned = rawText
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
@@ -11730,18 +11789,18 @@ TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
         try {
           parsed = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
         } catch (e2) {
-          console.error("[Gemini] JSON parse error:", e2.message, "raw:", rawText);
-          return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+          console.error("[Groq] JSON parse error:", e2.message, "raw:", rawText);
+          return res.status(502).json({ error: "AI trả JSON không hợp lệ" });
         }
       } else {
-        console.error("[Gemini] JSON parse error:", e.message, "raw:", rawText);
-        return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+        console.error("[Groq] JSON parse error:", e.message, "raw:", rawText);
+        return res.status(502).json({ error: "AI trả JSON không hợp lệ" });
       }
     }
 
     if (typeof parsed.reply !== "string" || !Array.isArray(parsed.tutorIds)) {
-      console.error("[Gemini] Invalid schema", parsed);
-      return res.status(502).json({ error: "Gemini trả format không hợp lệ" });
+      console.error("[Groq] Invalid schema", parsed);
+      return res.status(502).json({ error: "AI trả format không hợp lệ" });
     }
 
     return res.json(parsed);
@@ -11756,6 +11815,32 @@ TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
 //   /api/ask-ai     — tên cũ, giữ để không vỡ frontend hiện tại
 app.post("/api/ai-suggest", askAiHandler);
 app.post("/api/ask-ai", askAiHandler);
+
+// ── POST /api/course-ai-chat ── AI Chat cho không gian học tập ───────────────
+app.post("/api/course-ai-chat", async (req, res) => {
+  try {
+    const { message, lessonTitle } = req.body;
+    if (!message) return res.status(400).json({ error: "Thiếu tin nhắn." });
+
+    const systemPrompt = `Bạn là EduX AI Tutor, một trợ lý học tập xuất sắc và tận tình.
+Bạn đang trợ giúp học sinh trong bài học: "${lessonTitle || 'Bài học chung'}".
+Nhiệm vụ của bạn là giải đáp các thắc mắc của học sinh về nội dung bài học một cách thân thiện, súc tích và dễ hiểu.
+Tuyệt đối không dùng markdown phức tạp (chỉ dùng chữ thường). Trả lời bằng tiếng Việt.
+TIN NHẮN CỦA HỌC SINH: "${message}"`;
+
+    const result = await callGroqModel(systemPrompt, false);
+    if (!result.ok) {
+      console.error("[Groq] Lỗi AI:", result.status, result.errText);
+      return res.status(502).json({ error: "Lỗi kết nối máy chủ AI" });
+    }
+
+    const rawText = result.data?.choices?.[0]?.message?.content;
+    return res.json({ reply: rawText || "Xin lỗi, tôi không thể đưa ra câu trả lời lúc này." });
+  } catch (error) {
+    console.error("POST /api/course-ai-chat error:", error);
+    return res.status(500).json({ error: "Lỗi hệ thống AI." });
+  }
+});
 
 // ─── Start server ─────────────────────────────────────────────────────────────
 
