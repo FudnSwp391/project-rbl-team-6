@@ -287,7 +287,7 @@ export default function TutorDashboard() {
         }
 
         const pendingBookings = bookingsList
-          .filter(b => b.status === 'Pending')
+          .filter(b => b.status === 'Pending' && b.booking_type !== 'Instant' && b.bookingType !== 'Instant')
           .map(b => ({
             id: b.id,
             initials: toInitials(toStudentName(b)),
