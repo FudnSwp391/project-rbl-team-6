@@ -15,6 +15,7 @@ const querystring = require("qs");
 const {
   PLATFORM_COMMISSION_RATE, COMMISSION_POLICY_VERSION, calculateCommissionSplit,
   REFUND_POLICY_VERSION, getCourseRefundDecision, getLessonRefundDecision,
+  ATTENDANCE_POLICY_VERSION, ATTENDANCE_ABSENT_GRACE_MINUTES, getAttendanceSettlement,
   WITHDRAWAL_POLICY_VERSION, MIN_WITHDRAWAL_AMOUNT, normalizeWithdrawalAmount, sanitizeBankText,
   lessonDateStr, lessonStartFrom, lessonEndFrom, parseMethodSupport, parseBookingStartDateTime,
 } = require("./utils/businessRules");
@@ -10929,12 +10930,26 @@ app.post("/api/tutor/bookings/:id/checkin", verifyToken, requireTutor, async (re
 
     // Verify booking belongs to tutor and is approved
     const checkResult = await pool.query(
-      `SELECT id FROM bookings WHERE id = $1 AND tutor_id = $2 AND status = 'Approved'`,
+      `SELECT id, lesson_date, time_slot FROM bookings WHERE id = $1 AND tutor_id = $2 AND status = 'Approved'`,
       [bookingId, tutorId]
     );
 
     if (checkResult.rows.length === 0) {
       return res.status(404).json({ message: "Lesson not found or not approved." });
+    }
+
+    // Check-in chỉ có giá trị làm bằng chứng có mặt khi được thực hiện QUANH giờ
+    // học (server-side — UI cũng giới hạn nhưng không tin client). Cửa sổ:
+    // từ 30 phút trước giờ bắt đầu đến 60 phút sau giờ kết thúc.
+    // Dữ liệu cũ không parse được giờ học thì bỏ qua guard (không chặn oan).
+    const b = checkResult.rows[0];
+    const winStart = lessonStartFrom(b.lesson_date, b.time_slot);
+    const winEnd = lessonEndFrom(b.lesson_date, b.time_slot);
+    if (winStart && Date.now() < winStart.getTime() - 30 * 60000) {
+      return res.status(400).json({ message: "Chưa đến giờ check-in. Bạn có thể check-in từ 30 phút trước giờ học." });
+    }
+    if (winEnd && Date.now() > winEnd.getTime() + 60 * 60000) {
+      return res.status(400).json({ message: "Đã quá thời gian check-in cho buổi học này (60 phút sau giờ kết thúc)." });
     }
 
     const updateResult = await pool.query(
@@ -12614,7 +12629,8 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
 
     const bookingResult = await client.query(
       `SELECT b.id, b.tutor_id, b.student_id, b.escrow_tx_id, b.escrow_released_at,
-              b.payer_wallet_id, b.lesson_fee, b.subject, b.lesson_date, b.booking_type
+              b.payer_wallet_id, b.lesson_fee, b.subject, b.lesson_date, b.time_slot,
+              b.booking_type, b.tutor_check_in_at
        FROM bookings b
        WHERE b.id = $1 AND b.tutor_id = $2 AND b.status IN ('Approved', 'InProgress')
        LIMIT 1`,
@@ -12626,6 +12642,21 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
     }
     const booking = bookingResult.rows[0];
     const lessonFee = Number(booking.lesson_fee || 0);
+
+    // ── ATTENDANCE_SETTLEMENT_V1: quyết định dòng tiền TRƯỚC khi ghi bất cứ gì ──
+    // (xem utils/businessRules.js — 'absent' cần bằng chứng: sau giờ học + check-in)
+    const lessonStart = lessonStartFrom(booking.lesson_date, booking.time_slot);
+    const minutesSinceStart = lessonStart ? (Date.now() - lessonStart.getTime()) / 60000 : null;
+    const settlement = getAttendanceSettlement(status, {
+      minutesSinceStart,
+      tutorCheckedIn: !!booking.tutor_check_in_at,
+    });
+
+    if (settlement.action === 'REJECT_TOO_EARLY') {
+      return res.status(400).json({
+        message: `Chỉ có thể đánh dấu vắng mặt sau khi buổi học bắt đầu ít nhất ${ATTENDANCE_ABSENT_GRACE_MINUTES} phút. Vui lòng chờ học sinh.`,
+      });
+    }
 
     await client.query('BEGIN');
 
@@ -12732,38 +12763,174 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
       });
     }
 
-    // ── ABSENT / EXCUSED: Hoàn tiền 100% cho học sinh (Batch 16.1: refund_logs) ──
+    // ── ABSENT / EXCUSED: ATTENDANCE_SETTLEMENT_V1 (xem utils/businessRules.js) ──
+    // excused → hoàn 100% (gia sư tự nguyện). absent + check-in + sau grace →
+    // học sinh no-show mất phí, gia sư nhận 90% (như iTalki/Wyzant). absent mà
+    // gia sư KHÔNG check-in → không có bằng chứng → vẫn hoàn học sinh 100%.
+    // Học sinh/phụ huynh luôn còn 48h khiếu nại qua /api/bookings/:id/report.
     if (['absent', 'excused'].includes(status) && booking.escrow_tx_id && lessonFee > 0 && !booking.escrow_released_at) {
-      const reasonCode = status === 'absent' ? 'ATTENDANCE_ABSENT' : 'ATTENDANCE_EXCUSED';
 
-      // Idempotency guard (UNIQUE(target,student)) — skip if already refunded
-      const logId = await createRefundLog(client, {
-        target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
-        tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 1.0,
-        refund_amount: lessonFee, non_refunded_amount: 0, reason_code: reasonCode,
-        decision_by: 'tutor',
-        metadata: { source: 'attendance', attendance_status: status },
-      });
-
-      if (logId) {
-        await setLedgerContext(client, { reason_code: reasonCode, source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId });
-        await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, lessonFee]);
-        await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
-
-        const notifTitle = status === 'absent' ? 'Hoàn tiền — buổi học vắng mặt' : 'Hoàn tiền — nghỉ có phép';
-        const notifBody = status === 'absent'
-          ? `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`
-          : `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`;
-        // Batch 20.1: safeNotifyUser, same client. logId (refund_logs) is the
-        // natural idempotency anchor — one notification per refund event.
-        await safeNotifyUser(client, {
-          userId: booking.student_id, type: 'refund', channels: ['IN_APP'],
-          templateKey: 'refund_resolved', eventType: 'refund_resolved',
-          title: notifTitle, body: notifBody, icon: 'undo',
-          refId: booking.id, refType: 'booking',
-          sourceType: 'booking', sourceId: booking.id, priority: 'normal',
-          idempotencyKey: `refund_log:${logId}`,
+      if (settlement.action === 'REFUND_STUDENT') {
+        // Idempotency guard (UNIQUE(target,student)) — skip if already refunded
+        const logId = await createRefundLog(client, {
+          target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
+          tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 1.0,
+          refund_amount: lessonFee, non_refunded_amount: 0, reason_code: settlement.reasonCode,
+          decision_by: 'tutor',
+          metadata: { source: 'attendance', attendance_status: status, policy_version: ATTENDANCE_POLICY_VERSION },
         });
+
+        if (logId) {
+          await setLedgerContext(client, { reason_code: settlement.reasonCode, source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId, policy_version: ATTENDANCE_POLICY_VERSION });
+          await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, lessonFee]);
+          await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
+
+          const notifTitle = status === 'excused' ? 'Hoàn tiền — nghỉ có phép' : 'Hoàn tiền — buổi học vắng mặt';
+          const notifBody = status === 'excused'
+            ? `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`
+            : `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`;
+          // logId (refund_logs) is the natural idempotency anchor
+          await safeNotifyUser(client, {
+            userId: booking.student_id, type: 'refund', channels: ['IN_APP'],
+            templateKey: 'refund_resolved', eventType: 'refund_resolved',
+            title: notifTitle, body: notifBody, icon: 'undo',
+            refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+            idempotencyKey: `refund_log:${logId}`,
+          });
+
+          // Gia sư tố vắng mặt nhưng thiếu check-in → giải thích vì sao không được bồi hoàn
+          if (settlement.reasonCode === 'ATTENDANCE_ABSENT_NO_CHECKIN') {
+            await safeNotifyUser(client, {
+              userId: booking.tutor_id, type: 'attendance', channels: ['IN_APP'],
+              templateKey: 'generic', eventType: 'attendance_no_checkin',
+              title: 'Không đủ điều kiện nhận bồi hoàn vắng mặt',
+              body: `Bạn chưa check-in buổi học ${booking.subject || ''} nên không có bằng chứng có mặt — học phí đã được hoàn cho học sinh. Lần sau hãy bấm "Check-in" khi bắt đầu buổi học để được bảo vệ quyền lợi khi học sinh vắng mặt.`,
+              icon: 'info', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+              idempotencyKey: `booking:${booking.id}:absent_no_checkin:${booking.tutor_id}`,
+            });
+          }
+        }
+      }
+
+      else if (settlement.action === 'COMPENSATE_TUTOR') {
+        // Học sinh no-show (có bằng chứng check-in) → gia sư nhận 90%, nền tảng 10%.
+        // refund_logs với refund_amount=0 vừa là audit vừa là khóa chống xử lý trùng
+        // (cùng pattern với phí hủy <1h ở luồng Cancelled).
+        const logId = await createRefundLog(client, {
+          target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
+          tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 0,
+          refund_amount: 0, non_refunded_amount: lessonFee, reason_code: settlement.reasonCode,
+          decision_by: 'tutor',
+          metadata: {
+            source: 'attendance', attendance_status: status, policy_version: ATTENDANCE_POLICY_VERSION,
+            tutor_check_in_at: booking.tutor_check_in_at,
+            minutes_since_start: minutesSinceStart == null ? null : Math.round(minutesSinceStart),
+          },
+        });
+
+        if (logId) {
+          const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+          const tutorWalletId = tw.rows[0]?.id || null;
+          const adminWalletId = await getAdminWalletId(client);
+
+          if (tutorWalletId && adminWalletId) {
+            const tutorAmount = Math.floor(lessonFee * 0.9);
+            const adminAmount = lessonFee - tutorAmount;
+
+            await setLedgerContext(client, {
+              reason_code: settlement.reasonCode, source: 'api',
+              reference_type: 'booking', reference_id: booking.id,
+              transaction_id: booking.escrow_tx_id, actor_id: req.user.userId,
+              policy_version: ATTENDANCE_POLICY_VERSION,
+            });
+
+            // Cọc ảo như buổi dạy thường: gia sư <2 buổi hoàn thành → tiền vào
+            // held_balance (chưa rút được) — chặn kịch bản gia sư mới tự tạo
+            // học sinh ảo rồi tố no-show để rút tiền. KHÔNG cộng
+            // completed_lessons_count vì đây không phải buổi đã dạy.
+            const completedRes = await client.query(
+              'SELECT completed_lessons_count FROM tutor_profiles WHERE user_id=$1', [booking.tutor_id]
+            );
+            const completedCount = completedRes.rows[0]?.completed_lessons_count || 0;
+
+            if (completedCount < 2) {
+              await client.query('UPDATE wallets SET held_balance=held_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+              await client.query('UPDATE wallets SET held_balance=held_balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId]);
+              await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
+              await client.query("UPDATE transactions SET status='RELEASED', updated_at=NOW() WHERE id=$1", [booking.escrow_tx_id]);
+            } else {
+              await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+                booking.escrow_tx_id, booking.payer_wallet_id, tutorWalletId, adminWalletId, lessonFee, 0.1,
+              ]);
+            }
+
+            const _nsSplit = calculateCommissionSplit(lessonFee);
+            await createCommissionLog(client, {
+              source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+              transaction_id: booking.escrow_tx_id,
+              student_id: booking.student_id, tutor_id: booking.tutor_id,
+              gross_amount: _nsSplit.grossAmount, commission_rate: _nsSplit.commissionRate,
+              commission_amount: _nsSplit.commissionAmount, tutor_amount: _nsSplit.tutorAmount,
+              event_type: 'EARNED', reason_code: settlement.reasonCode,
+              decision_by: 'tutor', actor_id: req.user.userId,
+              idempotency_key: `commission:booking:${booking.id}:${settlement.reasonCode}`,
+              metadata: { virtual_deposit: completedCount < 2, attendance_status: status },
+            });
+
+            await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
+
+            // Học sinh: nêu rõ chính sách + quyền khiếu nại 48h.
+            // (title/body lặp trong data để template 'generic' render đúng cả kênh EMAIL)
+            const noShowTitle = 'Buổi học ghi nhận vắng mặt không phép';
+            const noShowBody = `Bạn được ghi nhận vắng mặt không báo trước ở buổi học ${booking.subject || ''}. Theo chính sách, học phí ${lessonFee.toLocaleString('vi-VN')}đ không được hoàn vì gia sư đã giữ chỗ và có mặt (đã check-in). Nếu thông tin không đúng, bạn có 48 giờ để khiếu nại trong mục "Lịch học của tôi".`;
+            await safeNotifyUser(client, {
+              userId: booking.student_id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+              templateKey: 'generic', eventType: 'student_no_show_charged',
+              title: noShowTitle, body: noShowBody,
+              data: { title: noShowTitle, body: noShowBody },
+              icon: 'event_busy', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'high',
+              idempotencyKey: `refund_log:${logId}:student`,
+            });
+
+            // Phụ huynh liên kết: cần biết con vắng học không phép
+            const parentsRes = await client.query(
+              'SELECT parent_id FROM parent_children WHERE student_id=$1', [booking.student_id]
+            );
+            for (const p of parentsRes.rows) {
+              await safeNotifyUser(client, {
+                userId: p.parent_id, type: 'attendance', channels: ['IN_APP'],
+                templateKey: 'generic', eventType: 'child_no_show',
+                title: 'Con bạn vắng buổi học không phép',
+                body: `Học sinh vắng mặt không báo trước ở buổi học ${booking.subject || ''} ngày ${lessonDateStr(booking.lesson_date)}. Học phí ${lessonFee.toLocaleString('vi-VN')}đ không được hoàn theo chính sách. Nếu có nhầm lẫn, vui lòng khiếu nại trong vòng 48 giờ.`,
+                icon: 'family_restroom', refId: booking.id, refType: 'booking',
+                sourceType: 'booking', sourceId: booking.id, priority: 'high',
+                idempotencyKey: `refund_log:${logId}:parent:${p.parent_id}`,
+              });
+            }
+
+            // Gia sư: xác nhận bồi hoàn
+            await safeNotifyUser(client, {
+              userId: booking.tutor_id, type: 'attendance', channels: ['IN_APP'],
+              templateKey: 'generic', eventType: 'no_show_compensated',
+              title: 'Bồi hoàn buổi học vắng mặt',
+              body: completedCount < 2
+                ? `Học sinh vắng mặt không phép. ${tutorAmount.toLocaleString('vi-VN')}đ bồi hoàn đã vào ví (tạm giữ theo chính sách 2 buổi đầu).`
+                : `Học sinh vắng mặt không phép. ${tutorAmount.toLocaleString('vi-VN')}đ bồi hoàn đã được chuyển vào ví của bạn.`,
+              icon: 'account_balance_wallet', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+              idempotencyKey: `refund_log:${logId}:tutor`,
+            });
+          } else {
+            // Thiếu ví gia sư/admin: để cron auto-release xử lý sau (an toàn, không nuốt tiền)
+            await client.query(
+              `UPDATE bookings SET auto_release_at = NOW() WHERE id=$1 AND escrow_released_at IS NULL`,
+              [booking.id]
+            );
+          }
+        }
       }
     }
 
@@ -12788,9 +12955,40 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
           
           await client.query("UPDATE bookings SET status='Completed', escrow_released_at=NOW() WHERE id=$1", [booking.id]);
         }
-      } else if (['absent', 'excused'].includes(status)) {
+      } else if (status === 'excused') {
+        // Gia sư châm chước → hoàn toàn bộ từ frozen_balance
         await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1, balance=balance+$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
         await client.query("UPDATE bookings SET status='Completed', updated_at=NOW() WHERE id=$1", [booking.id]);
+      } else if (status === 'absent') {
+        // ATTENDANCE_SETTLEMENT_V1 cho Học Ngay: học sinh no-show → gia sư nhận 90%.
+        // Không yêu cầu check-in như booking thường vì với Instant, việc gia sư
+        // bấm chấp nhận yêu cầu ngay tại thời điểm đó đã là bằng chứng có mặt
+        // (guard "sau giờ bắt đầu + 15 phút" vẫn áp dụng ở đầu handler).
+        const tw2 = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+        const tutorWalletId2 = tw2.rows[0]?.id || null;
+        const adminWalletId2 = await getAdminWalletId(client);
+        if (tutorWalletId2 && adminWalletId2) {
+          const tutorAmount = Math.floor(lessonFee * 0.9);
+          const adminAmount = lessonFee - tutorAmount;
+          await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId2]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId2]);
+          await client.query("UPDATE bookings SET status='Completed', escrow_released_at=NOW() WHERE id=$1", [booking.id]);
+
+          await safeNotifyUser(client, {
+            userId: booking.student_id, type: 'attendance', channels: ['IN_APP'],
+            templateKey: 'generic', eventType: 'student_no_show_charged',
+            title: 'Buổi Học Ngay ghi nhận vắng mặt',
+            body: `Bạn được ghi nhận vắng mặt ở buổi Học Ngay ${booking.subject || ''}. Học phí ${lessonFee.toLocaleString('vi-VN')}đ không được hoàn theo chính sách. Nếu thông tin không đúng, bạn có 48 giờ để khiếu nại.`,
+            icon: 'event_busy', refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id, priority: 'high',
+            idempotencyKey: `booking:${booking.id}:instant_no_show:${booking.student_id}`,
+          });
+        } else {
+          // Thiếu ví: hoàn học sinh (an toàn hơn là treo tiền trong frozen_balance)
+          await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1, balance=balance+$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query("UPDATE bookings SET status='Completed', updated_at=NOW() WHERE id=$1", [booking.id]);
+        }
       }
       
       // Tutor becomes Online again if they were Busy

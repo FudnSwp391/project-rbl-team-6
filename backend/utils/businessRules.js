@@ -57,6 +57,61 @@ function getLessonRefundDecision(hoursBeforeLesson, reasonCode) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ATTENDANCE SETTLEMENT POLICY V1 — xử lý tiền khi gia sư điểm danh
+//
+// Nguyên tắc thiết kế (chống động cơ ngược):
+// - Người bấm điểm danh là GIA SƯ — cũng là người hưởng lợi từ kết quả, nên
+//   mọi kết quả CÓ LỢI cho gia sư đều phải kèm bằng chứng:
+//     • 'absent' (tố học sinh no-show → gia sư được bồi hoàn 90%) chỉ hợp lệ khi
+//       (1) buổi học đã bắt đầu được ít nhất GRACE phút, và
+//       (2) gia sư đã check-in buổi học (tutor_check_in_at) — không có bằng
+//           chứng mình có mặt thì không có quyền đòi bồi hoàn → tiền hoàn về
+//           học sinh (burden of proof thuộc về bên nhận tiền).
+// - 'excused' (nghỉ có phép) hoàn 100% cho học sinh và gia sư nhận 0đ — đây là
+//   gia sư TỰ NGUYỆN bỏ quyền lợi nên không cần guard (lạm dụng = tự thiệt).
+// - Học sinh luôn còn cửa sổ khiếu nại 48h (dispute) sau buổi học để lật lại
+//   quyết định no-show sai; admin xử qua resolve-dispute-v2 (hỗ trợ hoàn 1 phần).
+// - Hủy TRƯỚC buổi học không đi qua đây — đã có getLessonRefundDecision
+//   (bậc thang theo số giờ báo trước) ở luồng hủy booking.
+// ═══════════════════════════════════════════════════════════════════════════
+const ATTENDANCE_POLICY_VERSION = "ATTENDANCE_SETTLEMENT_V1";
+const ATTENDANCE_ABSENT_GRACE_MINUTES = 15;
+
+/**
+ * Quyết định dòng tiền khi điểm danh.
+ * @param {'present'|'absent'|'excused'} status
+ * @param {object} ctx
+ * @param {number|null} ctx.minutesSinceStart  phút kể từ giờ bắt đầu buổi học
+ *        (âm = chưa tới giờ; null = không xác định được giờ học — dữ liệu cũ)
+ * @param {boolean} ctx.tutorCheckedIn         gia sư đã check-in buổi học chưa
+ * @returns {{ action: 'RELEASE_TO_TUTOR'|'REFUND_STUDENT'|'COMPENSATE_TUTOR'|'REJECT_TOO_EARLY',
+ *            refundRate: number, reasonCode: string }}
+ */
+function getAttendanceSettlement(status, { minutesSinceStart = null, tutorCheckedIn = false } = {}) {
+  if (status === 'present') {
+    return { action: 'RELEASE_TO_TUTOR', refundRate: 0, reasonCode: 'INSTANT_RELEASE_ON_PRESENT' };
+  }
+
+  if (status === 'excused') {
+    // Gia sư châm chước — hoàn toàn bộ, gia sư nhận 0đ (tự nguyện, không cần guard)
+    return { action: 'REFUND_STUDENT', refundRate: 1.0, reasonCode: 'ATTENDANCE_EXCUSED' };
+  }
+
+  // status === 'absent' — tố no-show, kết quả có lợi cho gia sư → cần bằng chứng
+  if (minutesSinceStart != null && minutesSinceStart < ATTENDANCE_ABSENT_GRACE_MINUTES) {
+    // Chưa đủ thời gian chờ học sinh — không thể kết luận vắng mặt
+    return { action: 'REJECT_TOO_EARLY', refundRate: 0, reasonCode: 'ATTENDANCE_ABSENT_TOO_EARLY' };
+  }
+  if (!tutorCheckedIn) {
+    // Không có bằng chứng gia sư có mặt → không bồi hoàn, tiền về học sinh
+    return { action: 'REFUND_STUDENT', refundRate: 1.0, reasonCode: 'ATTENDANCE_ABSENT_NO_CHECKIN' };
+  }
+  // Đủ điều kiện: học sinh no-show → gia sư nhận 90% (slot đã giữ = buổi đã bán),
+  // nền tảng giữ 10% hoa hồng như một buổi dạy bình thường
+  return { action: 'COMPENSATE_TUTOR', refundRate: 0, reasonCode: 'STUDENT_NO_SHOW_COMPENSATION' };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // WITHDRAWAL POLICY V1 — chuẩn hoá lệnh rút tiền
 // ═══════════════════════════════════════════════════════════════════════════
 const WITHDRAWAL_POLICY_VERSION = "WITHDRAWAL_POLICY_V1";
@@ -150,6 +205,9 @@ module.exports = {
   REFUND_POLICY_VERSION,
   getCourseRefundDecision,
   getLessonRefundDecision,
+  ATTENDANCE_POLICY_VERSION,
+  ATTENDANCE_ABSENT_GRACE_MINUTES,
+  getAttendanceSettlement,
   WITHDRAWAL_POLICY_VERSION,
   MIN_WITHDRAWAL_AMOUNT,
   normalizeWithdrawalAmount,

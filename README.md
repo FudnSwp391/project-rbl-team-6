@@ -17,7 +17,11 @@
 
 ## Điểm nhấn nghiệp vụ tiền
 
-- **Escrow**: tiền học phí bị giữ khi đặt lịch, chỉ giải ngân khi gia sư điểm danh `present` (hoặc cron auto-release); vắng/nghỉ có phép → hoàn học sinh.
+- **Escrow**: tiền học phí bị giữ khi đặt lịch, chỉ giải ngân khi gia sư điểm danh `present` (hoặc cron auto-release).
+- **Chính sách điểm danh** (ATTENDANCE_SETTLEMENT_V1 — chống động cơ ngược, tiền chỉ đi khi có bằng chứng):
+  - Nghỉ **có phép** (`excused`) → hoàn 100% cho học sinh (gia sư tự nguyện bỏ thù lao nên không cần guard).
+  - Học sinh **vắng không phép** (`absent`) → gia sư nhận 90% bồi hoàn (như iTalki/Wyzant), **nhưng chỉ khi**: đã qua giờ bắt đầu ≥15 phút **và** gia sư đã check-in buổi học (bằng chứng có mặt, cửa sổ check-in được kiểm tra server-side). Thiếu check-in → hoàn học sinh.
+  - Học sinh/phụ huynh được thông báo và có **48h khiếu nại** (dispute) để lật lại quyết định sai; hủy TRƯỚC buổi học đi theo bậc thang giờ báo trước (REFUND_POLICY_V2_1).
 - **Cọc ảo**: 2 buổi dạy đầu của gia sư mới, tiền vào `held_balance` (chưa rút được) — chống lừa đảo.
 - **Sổ cái (wallet ledger)** + **commission log** append-only: mọi biến động ví đều có `reason_code` truy vết được.
 - **Hoàn tiền theo chính sách** (REFUND_POLICY_V2_1): khóa học theo % tiến độ trong 48h; buổi học theo số giờ báo trước. Logic thuần nằm ở `backend/utils/businessRules.js` và có unit test.

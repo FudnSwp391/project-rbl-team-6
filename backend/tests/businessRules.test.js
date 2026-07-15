@@ -10,6 +10,8 @@ const {
   calculateCommissionSplit,
   getCourseRefundDecision,
   getLessonRefundDecision,
+  ATTENDANCE_ABSENT_GRACE_MINUTES,
+  getAttendanceSettlement,
   MIN_WITHDRAWAL_AMOUNT,
   normalizeWithdrawalAmount,
   sanitizeBankText,
@@ -117,6 +119,68 @@ describe('getLessonRefundDecision', () => {
     const r = getLessonRefundDecision(10, 'SOMETHING_ELSE');
     assert.equal(r.mode, 'ADMIN_REVIEW');
     assert.equal(r.refundRate, 0);
+  });
+});
+
+// ─── getAttendanceSettlement ─────────────────────────────────────────────────
+describe('getAttendanceSettlement', () => {
+  test('present → giải ngân cho gia sư, không hoàn', () => {
+    const r = getAttendanceSettlement('present', { minutesSinceStart: 30, tutorCheckedIn: true });
+    assert.equal(r.action, 'RELEASE_TO_TUTOR');
+    assert.equal(r.refundRate, 0);
+  });
+
+  test('excused → hoàn 100% cho học sinh, KHÔNG cần guard (gia sư tự nguyện bỏ quyền lợi)', () => {
+    // Không check-in, thậm chí trước giờ học — excused vẫn hợp lệ vì nó CÓ HẠI cho gia sư
+    const r = getAttendanceSettlement('excused', { minutesSinceStart: -60, tutorCheckedIn: false });
+    assert.equal(r.action, 'REFUND_STUDENT');
+    assert.equal(r.refundRate, 1.0);
+    assert.equal(r.reasonCode, 'ATTENDANCE_EXCUSED');
+  });
+
+  test('absent trước giờ học → từ chối (không thể kết luận vắng khi buổi học chưa diễn ra)', () => {
+    const r = getAttendanceSettlement('absent', { minutesSinceStart: -10, tutorCheckedIn: true });
+    assert.equal(r.action, 'REJECT_TOO_EARLY');
+  });
+
+  test('absent trong thời gian chờ (grace 15 phút) → vẫn từ chối', () => {
+    const r = getAttendanceSettlement('absent', {
+      minutesSinceStart: ATTENDANCE_ABSENT_GRACE_MINUTES - 1, tutorCheckedIn: true,
+    });
+    assert.equal(r.action, 'REJECT_TOO_EARLY');
+  });
+
+  test('absent đúng mốc grace → được phép xử lý', () => {
+    const r = getAttendanceSettlement('absent', {
+      minutesSinceStart: ATTENDANCE_ABSENT_GRACE_MINUTES, tutorCheckedIn: true,
+    });
+    assert.equal(r.action, 'COMPENSATE_TUTOR');
+  });
+
+  test('absent KHÔNG check-in → không có bằng chứng → tiền hoàn về học sinh', () => {
+    const r = getAttendanceSettlement('absent', { minutesSinceStart: 30, tutorCheckedIn: false });
+    assert.equal(r.action, 'REFUND_STUDENT');
+    assert.equal(r.refundRate, 1.0);
+    assert.equal(r.reasonCode, 'ATTENDANCE_ABSENT_NO_CHECKIN');
+  });
+
+  test('absent + đã check-in + sau grace → gia sư được bồi hoàn (học sinh no-show mất phí)', () => {
+    const r = getAttendanceSettlement('absent', { minutesSinceStart: 30, tutorCheckedIn: true });
+    assert.equal(r.action, 'COMPENSATE_TUTOR');
+    assert.equal(r.refundRate, 0);
+    assert.equal(r.reasonCode, 'STUDENT_NO_SHOW_COMPENSATION');
+  });
+
+  test('dữ liệu cũ không xác định được giờ học (null) → bỏ guard giờ nhưng VẪN đòi check-in', () => {
+    const noCheckin = getAttendanceSettlement('absent', { minutesSinceStart: null, tutorCheckedIn: false });
+    assert.equal(noCheckin.action, 'REFUND_STUDENT');
+    const checkedIn = getAttendanceSettlement('absent', { minutesSinceStart: null, tutorCheckedIn: true });
+    assert.equal(checkedIn.action, 'COMPENSATE_TUTOR');
+  });
+
+  test('không truyền context → mặc định an toàn nhất (hoàn học sinh, không bồi hoàn)', () => {
+    const r = getAttendanceSettlement('absent');
+    assert.equal(r.action, 'REFUND_STUDENT');
   });
 });
 

@@ -1598,6 +1598,20 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
 
   const canCheckIn = approved && isWithinCheckInWindow() && !checkInTime;
 
+  // ATTENDANCE_SETTLEMENT_V1: đánh vắng/có phép ảnh hưởng trực tiếp tới tiền —
+  // bắt xác nhận và nêu rõ hệ quả trước khi gửi.
+  const confirmMark = (status) => {
+    if (status === 'absent') {
+      const moneyLine = checkInTime
+        ? 'Bạn đã check-in buổi học — theo chính sách, học phí sẽ KHÔNG hoàn cho học sinh và bạn nhận 90% bồi hoàn vào ví.'
+        : '⚠️ Bạn CHƯA check-in buổi học này. Không có bằng chứng có mặt, học phí sẽ được HOÀN LẠI cho học sinh và bạn không nhận được bồi hoàn.';
+      if (!window.confirm(`Xác nhận học sinh VẮNG MẶT KHÔNG PHÉP?\n\n${moneyLine}\n\nHọc sinh và phụ huynh sẽ được thông báo, và có 48 giờ để khiếu nại nếu thông tin không đúng.`)) return;
+    } else if (status === 'excused') {
+      if (!window.confirm('Xác nhận NGHỈ CÓ PHÉP?\n\nToàn bộ học phí sẽ được hoàn lại cho học sinh và bạn không nhận thù lao buổi này.')) return;
+    }
+    onMark(status);
+  };
+
   return (
     <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center">
       <div>
@@ -1638,8 +1652,8 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
           </button>
         )}
         <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Có mặt</button>
-        <button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Vắng</button>
-        <button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Có phép</button>
+        <button disabled={!approved || saving} onClick={() => confirmMark('absent')} title={checkInTime ? 'Học sinh vắng không phép — bạn nhận 90% bồi hoàn' : 'Chưa check-in: đánh vắng sẽ hoàn tiền cho học sinh'} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Vắng</button>
+        <button disabled={!approved || saving} onClick={() => confirmMark('excused')} title="Nghỉ có phép — hoàn 100% học phí cho học sinh" className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Có phép</button>
         <button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1">
           <span className="material-symbols-outlined text-[14px]">edit_note</span>Đánh giá
         </button>
