@@ -569,19 +569,8 @@ export default function TutorDashboard() {
               <span className="material-symbols-outlined">menu</span>
             </button>
 
-            {/* Search */}
-            <div className="flex-1 flex items-center">
-              <div className="relative w-full max-w-md hidden md:block">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">
-                  search
-                </span>
-                <input
-                  className="w-full h-10 pl-10 pr-4 rounded-lg border border-outline-variant bg-surface-container-lowest focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all font-body-md text-body-md outline-none"
-                  placeholder="Search students, classes, or subjects..."
-                  type="text"
-                />
-              </div>
-            </div>
+            {/* Search (Removed) */}
+            <div className="flex-1"></div>
 
             {/* Right actions */}
             <div className="flex items-center gap-md">
