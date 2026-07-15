@@ -12,6 +12,12 @@ const { generateQuizQuestions, chatWithAI, gradeEssayAnswer, suggestTutors } = r
 const crypto = require("crypto");
 const moment = require("moment");
 const querystring = require("qs");
+const {
+  PLATFORM_COMMISSION_RATE, COMMISSION_POLICY_VERSION, calculateCommissionSplit,
+  REFUND_POLICY_VERSION, getCourseRefundDecision, getLessonRefundDecision,
+  WITHDRAWAL_POLICY_VERSION, MIN_WITHDRAWAL_AMOUNT, normalizeWithdrawalAmount, sanitizeBankText,
+  lessonDateStr, lessonStartFrom, lessonEndFrom, parseMethodSupport, parseBookingStartDateTime,
+} = require("./utils/businessRules");
 
 dotenv.config();
 
@@ -8531,15 +8537,7 @@ async function setLedgerContext(client, context) {
 // COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
 // commission_logs is append-only; wallet_ledger remains the low-level audit.
 // ═══════════════════════════════════════════════════════════════════════════
-const PLATFORM_COMMISSION_RATE = 0.10;
-const COMMISSION_POLICY_VERSION = "COMMISSION_POLICY_V1";
-
-function calculateCommissionSplit(grossAmount, rate = PLATFORM_COMMISSION_RATE) {
-  const gross = Math.max(0, Math.round(Number(grossAmount || 0)));
-  const commissionAmount = gross - Math.floor(gross * (1 - rate));
-  const tutorAmount = gross - commissionAmount;
-  return { grossAmount: gross, commissionRate: rate, commissionAmount, tutorAmount };
-}
+// calculateCommissionSplit + hằng số hoa hồng → utils/businessRules.js
 
 // Idempotent commission log insert. Returns new row id or null on duplicate.
 // Must be called inside caller's transaction so rollback covers the log too.
@@ -11217,60 +11215,7 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
 // Lấy chuỗi YYYY-MM-DD từ cột DATE của pg.
 // LƯU Ý: pg trả DATE thành JS Date ở local-midnight → toISOString() bị lùi 1 ngày (múi +07).
 // Phải đọc bằng getFullYear/getMonth/getDate (giờ local) để giữ đúng ngày.
-function lessonDateStr(lessonDate) {
-  if (!lessonDate) return '';
-  if (typeof lessonDate === 'string') return lessonDate.slice(0, 10);
-  const d = new Date(lessonDate);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-// Tính thời điểm bắt đầu buổi học từ lesson_date + time_slot (múi giờ VN +07:00)
-function lessonStartFrom(lessonDate, timeSlot) {
-  if (!lessonDate) return null;
-  const dateStr = lessonDateStr(lessonDate);
-  if (!dateStr) return null;
-  const m = String(timeSlot || '').match(/(\d+):(\d+)\s*(AM|PM)?/i);
-  let h = 0, min = 0;
-  if (m) {
-    h = parseInt(m[1], 10);
-    min = parseInt(m[2], 10);
-    if (m[3] && m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
-    if (m[3] && m[3].toUpperCase() === 'AM' && h === 12) h = 0;
-  }
-  const d = new Date(`${dateStr}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+07:00`);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-// Tính thời điểm kết thúc buổi học từ lesson_date + time_slot (múi giờ VN +07:00)
-// time_slot dạng "8:00 AM - 9:00 AM" → lấy phần sau dấu "-"
-function lessonEndFrom(lessonDate, timeSlot) {
-  if (!lessonDate) return null;
-  const dateStr = lessonDateStr(lessonDate);
-  if (!dateStr) return null;
-  const parts = String(timeSlot || '').split('-');
-  const endPart = parts[1] || parts[0] || '';
-  const m = endPart.match(/(\d+):(\d+)\s*(AM|PM)?/i);
-  let h = 1, min = 0;
-  if (m) {
-    h = parseInt(m[1], 10);
-    min = parseInt(m[2], 10);
-    if (m[3] && m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
-    if (m[3] && m[3].toUpperCase() === 'AM' && h === 12) h = 0;
-  }
-  const d = new Date(`${dateStr}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+07:00`);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-// Chuẩn hóa hình thức dạy từ tutor_profiles.teaching_methods (JSONB mảng text tự do).
-// Chưa khai báo gì → coi như dạy cả 2 (không chặn đặt lịch).
-function parseMethodSupport(teachingMethods) {
-  const arr = Array.isArray(teachingMethods) ? teachingMethods : [];
-  const txt = arr.join(' ').toLowerCase();
-  const online  = /online|trực tuyến|truc tuyen/.test(txt);
-  const offline = /offline|trực tiếp|truc tiep|tại nhà|tai nha|tại địa điểm/.test(txt);
-  if (!online && !offline) return { online: true, offline: true };
-  return { online, offline };
-}
+  // lessonDateStr / lessonStartFrom / lessonEndFrom / parseMethodSupport → utils/businessRules.js
 
 // POST /api/bookings — tạo lịch học mới
 // Hỗ trợ cả định dạng cũ (lessonDate, timeSlot, tutorName) và mới (sessions, notes, childName)
@@ -11920,44 +11865,7 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // REFUND POLICY V2.1 — helpers (Batch 16). Pure decision helpers + audit utils.
 // ═══════════════════════════════════════════════════════════════════════════
-const REFUND_POLICY_VERSION = "REFUND_POLICY_V2_1";
-
-// Course purchase: 48h window, progress-tiered refund rate.
-function getCourseRefundDecision(hoursSincePurchase, progressPercent) {
-  if (hoursSincePurchase > 48)
-    return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "COURSE_AFTER_48H_ADMIN_REVIEW" };
-  if (progressPercent <= 20)
-    return { eligible: true, mode: "AUTO_FULL", refundRate: 1.0, reasonCode: "COURSE_WITHIN_48H_PROGRESS_LE_20" };
-  if (progressPercent <= 40)
-    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.7, reasonCode: "COURSE_WITHIN_48H_PROGRESS_21_40" };
-  if (progressPercent <= 60)
-    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.4, reasonCode: "COURSE_WITHIN_48H_PROGRESS_41_60" };
-  if (progressPercent <= 80)
-    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.2, reasonCode: "COURSE_WITHIN_48H_PROGRESS_61_80" };
-  return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "COURSE_PROGRESS_GT_80_ADMIN_REVIEW" };
-}
-
-// Lesson/booking: tutor fault = full; student cancel = hours-before-lesson tiered.
-function getLessonRefundDecision(hoursBeforeLesson, reasonCode) {
-  if (["TUTOR_CANCELLED", "TUTOR_NO_SHOW", "TUTOR_FAULT"].includes(reasonCode))
-    return { eligible: true, mode: "AUTO_FULL", refundRate: 1.0, reasonCode };
-  if (reasonCode === "STUDENT_CANCELLED") {
-    if (hoursBeforeLesson >= 6) return { eligible: true, mode: "AUTO_FULL",    refundRate: 1.0,  reasonCode: "STUDENT_CANCEL_GE_6H" };
-    if (hoursBeforeLesson >= 3) return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.5,  reasonCode: "STUDENT_CANCEL_3_TO_6H" };
-    if (hoursBeforeLesson >= 1) return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.25, reasonCode: "STUDENT_CANCEL_1_TO_3H" };
-    return { eligible: false, mode: "NO_REFUND", refundRate: 0, reasonCode: "STUDENT_CANCEL_LT_1H_NO_REFUND" };
-  }
-  if (reasonCode === "STUDENT_NO_SHOW")
-    return { eligible: false, mode: "NO_REFUND", refundRate: 0, reasonCode: "STUDENT_NO_SHOW_NO_REFUND" };
-  return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "UNKNOWN_REASON_ADMIN_REVIEW" };
-}
-
-// Combine booking.lesson_date (date) + booking.time_slot ('HH:MM') into a Date.
-function parseBookingStartDateTime(booking) {
-  const d = String(booking.lesson_date).slice(0, 10);
-  const t = (booking.time_slot || '00:00').slice(0, 5);
-  return new Date(`${d}T${t}:00`);
-}
+// Refund decision helpers + parseBookingStartDateTime → utils/businessRules.js
 
 async function getAdminWalletId(client) {
   if (process.env.ADMIN_WALLET_ID) return process.env.ADMIN_WALLET_ID;
@@ -11999,23 +11907,7 @@ async function createRefundLog(client, log) {
 // maps to 'SUCCESS', cancel/reject map to 'FAILED'. wallets has CHECK
 // balance>=0 / held_balance>=0, enforced by SELECT ... FOR UPDATE + guards.
 // ═══════════════════════════════════════════════════════════════════════════
-const WITHDRAWAL_POLICY_VERSION = "WITHDRAWAL_POLICY_V1";
-const MIN_WITHDRAWAL_AMOUNT = 50000;
-
-// Return a rounded non-negative integer VND amount, or 0 if invalid.
-function normalizeWithdrawalAmount(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.floor(n);
-}
-
-// Trim, strip control chars, collapse whitespace, cap length. Null-safe.
-function sanitizeBankText(value, maxLength = 120) {
-  if (value == null) return null;
-  let s = String(value).replace(/[\x00-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim();
-  if (!s) return null;
-  return s.slice(0, maxLength);
-}
+// normalizeWithdrawalAmount / sanitizeBankText + hằng số rút tiền → utils/businessRules.js
 
 // Lock the tutor's wallet row FOR UPDATE (prevents concurrent balance races).
 async function getTutorWalletForUpdate(client, tutorId) {
