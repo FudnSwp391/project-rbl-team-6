@@ -579,7 +579,7 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
               />
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Điểm đỗ (Passing Score)</label>
+              <label className="text-label-md font-bold">Điểm đạt (tối thiểu)</label>
               <input 
                 type="number" 
                 value={formData.total_score}
@@ -869,7 +869,7 @@ function UploadHomeworkModal({ onClose, onSuccess, courses }) {
 
           <div className="grid grid-cols-2 gap-md mt-4">
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Hạn nộp (Deadline)</label>
+              <label className="text-label-md font-bold">Hạn nộp bài</label>
               <input 
                 type="date"
                 value={formData.deadline}
@@ -878,7 +878,7 @@ function UploadHomeworkModal({ onClose, onSuccess, courses }) {
               />
             </div>
             <div className="space-y-sm">
-              <label className="text-label-md font-bold">Thang điểm (Max Score)</label>
+              <label className="text-label-md font-bold">Thang điểm tối đa</label>
               <input 
                 type="number" 
                 value={formData.max_score}
