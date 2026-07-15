@@ -128,7 +128,13 @@ export default function CourseDetail({ courseId }) {
       <div className="text-center space-y-4">
         <span className="material-symbols-outlined text-[64px] text-[#9aa3b8]">error_outline</span>
         <p className="text-[#5d5f5f] text-lg">{error}</p>
-        <button onClick={() => window.location.hash = '#/courses'} className="px-6 py-3 bg-[#00288e] text-white rounded-xl font-semibold hover:bg-[#001d6e] transition-colors">
+        <button onClick={() => {
+          if (user && (user.id === c?.tutor_id || user.userId === c?.tutor_id)) {
+            window.location.hash = '#/tutor?tab=Khóa Học';
+          } else {
+            window.location.hash = '#/courses';
+          }
+        }} className="px-6 py-3 bg-[#00288e] text-white rounded-xl font-semibold hover:bg-[#001d6e] transition-colors">
           ← Quay lại danh sách
         </button>
       </div>
@@ -368,9 +374,9 @@ export default function CourseDetail({ courseId }) {
 
               {/* Action buttons */}
               {user && (user.id === c.tutor_id || user.userId === c.tutor_id) ? (
-                <button onClick={() => window.location.hash = '#/tutor-dashboard'} className="w-full py-3.5 rounded-xl bg-[#6366f1] text-white font-bold text-base flex items-center justify-center gap-2 hover:bg-[#4f46e5] transition-colors mb-3">
-                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>manage_accounts</span>
-                  Quản lý khóa học của bạn
+                <button onClick={() => window.location.hash = `#/tutor?tab=Khóa Học&editCourseId=${c.id}`} className="w-full py-3.5 rounded-xl bg-[#6366f1] text-white font-bold text-base flex items-center justify-center gap-2 hover:bg-[#4f46e5] transition-colors mb-3">
+                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>edit</span>
+                  Chỉnh sửa khóa học
                 </button>
               ) : enrolled ? (
                 <button onClick={() => window.location.hash = '#/my-courses'} className="w-full py-3.5 rounded-xl bg-[#16a34a] text-white font-bold text-base flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors mb-3">
@@ -389,7 +395,13 @@ export default function CourseDetail({ courseId }) {
                   )}
                 </button>
               )}
-              <button onClick={() => window.location.hash = '#/courses'} className="w-full py-3 rounded-xl border-2 border-[#00288e] text-[#00288e] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#00288e]/5 transition-colors">
+              <button onClick={() => {
+                if (user && (user.id === c.tutor_id || user.userId === c.tutor_id)) {
+                  window.location.hash = '#/tutor?tab=Khóa Học';
+                } else {
+                  window.location.hash = '#/courses';
+                }
+              }} className="w-full py-3 rounded-xl border-2 border-[#00288e] text-[#00288e] font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#00288e]/5 transition-colors">
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
                 Quay lại danh sách
               </button>

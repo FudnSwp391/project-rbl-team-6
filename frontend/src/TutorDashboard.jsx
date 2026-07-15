@@ -4,7 +4,7 @@
  * Dashboard dÄ‚Â nh cho gia sĂ†Â° (role: tutor).
  * HiĂ¡Â»Æ’n thĂ¡Â»â€¹: thu nhĂ¡ÂºÂ­p, giĂ¡Â»Â  dĂ¡ÂºÂ¡y, hĂ¡Â»Â c sinh, yÄ‚Âªu cĂ¡ÂºÂ§u chĂ¡Â»Â  duyĂ¡Â»â€¡t, lĂ¡Â»â€¹ch hÄ‚Â´m nay.
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useAuth } from './AuthContext'
 import AIChatBox from './AIChatBox'
 import TutorFeedbackModal from './components/MicroFeedback/TutorFeedbackModal'
@@ -26,6 +26,7 @@ import MessageIcon from './components/MessageIcon'
 import WalletDashboard from './components/Wallet/WalletDashboard'
 import WalletDeposit from './components/Wallet/WalletDeposit'
 import WalletWithdraw from './components/Wallet/WalletWithdraw'
+import { supabase } from './services/supabase'
 
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Tổng Quan' },
@@ -43,9 +44,71 @@ const NAV_ITEMS = [
 export default function TutorDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState('Tổng Quan')
+  const getInitialTab = () => {
+    try {
+      const searchParams = new URLSearchParams(window.location.hash.split('?')[1]);
+      if (searchParams.has('tab')) return searchParams.get('tab');
+    } catch (e) {}
+    return 'Tổng Quan';
+  }
+  const [activeTab, setActiveTab] = useState(getInitialTab)
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      try {
+        const searchParams = new URLSearchParams(window.location.hash.split('?')[1]);
+        if (searchParams.has('tab')) setActiveTab(searchParams.get('tab'));
+      } catch (e) {}
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const searchParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+  const editCourseId = searchParams.get('editCourseId');
+
   const [requests, setRequests] = useState([])
+  const [activeRequestTab, setActiveRequestTab] = useState('single')
   const [scheduleToday, setScheduleToday] = useState([])
+  
+  // Instant Learning Modal State
+  const [instantRequest, setInstantRequest] = useState(null);
+  
+  const conflictingIds = useMemo(() => {
+    const conflicts = new Set();
+    const occupiedSlots = new Set();
+    
+    // Sort pending requests by createdAt ascending
+    const sortedRequests = [...requests].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+    sortedRequests.forEach(req => {
+      let hasConflict = false;
+      const reqSlots = [];
+      
+      if (req.isPackage) {
+        req.packageSessions.forEach(s => {
+          reqSlots.push(`${s.lessonDate || s.date}_${s.timeSlot || s.time}`);
+        });
+      } else {
+        reqSlots.push(`${req.lessonDate || req.date}_${req.timeSlot || req.time}`);
+      }
+
+      for (const slot of reqSlots) {
+        if (occupiedSlots.has(slot)) {
+          hasConflict = true;
+          break;
+        }
+      }
+
+      if (hasConflict) {
+        conflicts.add(req.id);
+      } else {
+        reqSlots.forEach(slot => occupiedSlots.add(slot));
+      }
+    });
+
+    return conflicts;
+  }, [requests]);
   const [overviewStats, setOverviewStats] = useState({
     thisMonthEarned: 0,
     completedLessons: 0,
@@ -70,6 +133,61 @@ export default function TutorDashboard() {
     }, 30000)
     return () => clearInterval(timer)
   }, [])
+
+  // Supabase realtime for Instant Bookings
+  useEffect(() => {
+    if (!user?.id || !supabase) return;
+    const channel = supabase
+      .channel('tutor-instant-requests')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'bookings', filter: `tutor_id=eq.${user.id}` },
+        (payload) => {
+          if (payload.new.booking_type === 'Instant' && payload.new.status === 'Pending') {
+            setInstantRequest(payload.new);
+            // Play notification sound if needed
+            try { new Audio('/notification.mp3').play().catch(()=>{}) } catch(e){}
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'bookings', filter: `tutor_id=eq.${user.id}` },
+        (payload) => {
+          if (payload.new.booking_type === 'Instant' && payload.new.status !== 'Pending') {
+            setInstantRequest(prev => prev?.id === payload.new.id ? null : prev);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
+  const handleInstantAction = async (bookingId, action) => {
+    try {
+      const res = await fetch(`http://localhost:5000/api/tutor/bookings/${bookingId}/instant-${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Lỗi hệ thống');
+      
+      setInstantRequest(null);
+      
+      if (action === 'accept') {
+        alert('Đã chấp nhận yêu cầu Học Ngay. Đang chuyển hướng tới phòng học...');
+        window.location.hash = `/session/${bookingId}`;
+      } else {
+        alert('Đã từ chối yêu cầu. Tiền đã được hoàn lại cho học viên.');
+      }
+    } catch (e) {
+      alert(e.message);
+      setInstantRequest(null);
+    }
+  };
 
   useEffect(() => {
     async function loadTutorData() {
@@ -121,11 +239,67 @@ export default function TutorDashboard() {
             name: toStudentName(b),
             studentName: b.studentName,
             childName: b.childName,
-            subject: b.subject || 'General lesson',
+            subject: b.subject || 'General',
             date: toScheduleDate(b),
+            lessonDate: b.lesson_date || b.lessonDate || b.date || '',
+            timeSlot: b.time_slot || b.timeSlot || b.time || '',
             bookingType: b.bookingType || b.booking_type || 'regular',
-            note: b.notes || b.note || ''
+            teachingMethod: b.teaching_method || b.teachingMethod || '',
+            level: b.level || '',
+            sessionsRequested: b.sessions_requested || b.sessionsRequested || b.sessions || 1,
+            pricePerSession: b.price_per_session || b.pricePerSession || b.price || 0,
+            note: b.notes || b.note || b.student_note || b.studentNote || '',
+            studentAge: b.student_age || b.studentAge || '',
+            grade: b.grade || b.student_grade || '',
+            createdAt: b.created_at || b.createdAt || '',
+            avatarUrl: b.student_avatar || b.studentAvatar || b.avatar_url || '',
+            packageId: b.package_id || null,
           }))
+
+        // Group pending bookings by packageId
+        const groupedPendingBookings = [];
+        const packageGroups = {};
+
+        pendingBookings.forEach(b => {
+          if (b.packageId) {
+            if (!packageGroups[b.packageId]) {
+              packageGroups[b.packageId] = {
+                ...b,
+                isPackage: true,
+                packageBookingIds: [b.id],
+                packageSessions: [b]
+              };
+              groupedPendingBookings.push(packageGroups[b.packageId]);
+            } else {
+              packageGroups[b.packageId].packageBookingIds.push(b.id);
+              packageGroups[b.packageId].packageSessions.push(b);
+            }
+          } else {
+            groupedPendingBookings.push(b);
+          }
+        });
+
+        // Format summaries for packages
+        Object.values(packageGroups).forEach(g => {
+          g.date = `Gói tháng: ${g.packageSessions.length} buổi`;
+          g.sessionsRequested = g.packageSessions.length;
+          
+          const sortedSessions = [...g.packageSessions].sort((a, b) => new Date(a.lessonDate || a.date) - new Date(b.lessonDate || b.date));
+          if (sortedSessions.length > 0) {
+            g.startDate = sortedSessions[0].lessonDate || sortedSessions[0].date;
+            
+            const uniqueSchedules = new Set();
+            sortedSessions.forEach(s => {
+              try {
+                const d = new Date(s.lessonDate || s.date);
+                const weekday = d.toLocaleDateString('vi-VN', { weekday: 'short' });
+                uniqueSchedules.add(`Mỗi ${weekday} - ${s.timeSlot || s.timeSlot}`);
+              } catch (e) {}
+            });
+            g.scheduleSummary = Array.from(uniqueSchedules).join(', ');
+          }
+          g.timeSlot = 'Lịch học cố định';
+        });
 
         const approvedBookings = bookingsList
           .filter(b => b.status === 'Approved')
@@ -141,7 +315,7 @@ export default function TutorDashboard() {
             isNow: false
           }))
 
-        setRequests(pendingBookings)
+        setRequests(groupedPendingBookings)
         setScheduleToday(approvedBookings)
         const activeStudentKeys = new Set(
           bookingsList
@@ -165,35 +339,57 @@ export default function TutorDashboard() {
 
   const handleAccept = async (id) => {
     try {
-      await updateBookingStatus(id, 'Approved')
-      const accepted = requests.find(r => r.id === id)
-      if (accepted) {
+      const targetReq = requests.find(r => r.id === id);
+      if (!targetReq) return;
+
+      const idsToAccept = targetReq.isPackage ? targetReq.packageBookingIds : [id];
+
+      await Promise.all(idsToAccept.map(bookingId => updateBookingStatus(bookingId, 'Approved')));
+
+      if (targetReq.isPackage) {
+        // Add all sessions to schedule today (or just the first one if it's too much, but let's add them)
+        const newApproved = targetReq.packageSessions.map(s => ({
+          id: s.id,
+          initials: s.initials,
+          name: s.name,
+          subject: s.subject,
+          time: s.date,
+          isNow: false
+        }));
+        setScheduleToday(prev => [...newApproved, ...prev]);
+      } else {
         setScheduleToday(prev => [
           {
-            id: accepted.id,
-            initials: accepted.initials,
-            name: accepted.name,
-            subject: accepted.subject,
-            time: accepted.date,
+            id: targetReq.id,
+            initials: targetReq.initials,
+            name: targetReq.name,
+            subject: targetReq.subject,
+            time: targetReq.date,
             isNow: false
           },
           ...prev
-        ])
+        ]);
       }
-      setRequests((prev) => prev.filter((r) => r.id !== id))
+
+      setRequests((prev) => prev.filter((r) => r.id !== id));
     } catch (err) {
-      console.error("Failed to approve booking:", err)
-      alert(err.message || 'Failed to approve booking.')
+      console.error("Failed to approve booking:", err);
+      alert(err.message || 'Failed to approve booking.');
     }
   }
 
   const handleDecline = async (id) => {
     try {
-      await updateBookingStatus(id, 'Declined')
-      setRequests((prev) => prev.filter((r) => r.id !== id))
+      const targetReq = requests.find(r => r.id === id);
+      if (!targetReq) return;
+
+      const idsToDecline = targetReq.isPackage ? targetReq.packageBookingIds : [id];
+      await Promise.all(idsToDecline.map(bookingId => updateBookingStatus(bookingId, 'Declined')));
+
+      setRequests((prev) => prev.filter((r) => r.id !== id));
     } catch (err) {
-      console.error("Failed to decline booking:", err)
-      alert(err.message || 'Failed to decline booking.')
+      console.error("Failed to decline booking:", err);
+      alert(err.message || 'Failed to decline booking.');
     }
   }
 
@@ -467,30 +663,41 @@ export default function TutorDashboard() {
                 )}
               </div>
 
+              {/* Tabs for Pending Requests */}
+              <div className="flex bg-surface-container-low p-1 rounded-xl mb-4 w-fit">
+                <button
+                  onClick={() => setActiveRequestTab('single')}
+                  className={`px-6 py-2 rounded-lg font-bold text-[14px] transition-all ${activeRequestTab === 'single' ? 'bg-white shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+                >
+                  Lịch dạy lẻ ({requests.filter(r => !r.isPackage).length})
+                </button>
+                <button
+                  onClick={() => setActiveRequestTab('monthly')}
+                  className={`px-6 py-2 rounded-lg font-bold text-[14px] transition-all ${activeRequestTab === 'monthly' ? 'bg-white shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+                >
+                  Gói tháng ({requests.filter(r => r.isPackage).length})
+                </button>
+              </div>
+
               <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-[0_10px_15px_-3px_rgba(0,0,0,0.08)] rounded-[1rem] overflow-hidden">
-                {requests.length === 0 ? (
+                {requests.filter(r => activeRequestTab === 'monthly' ? r.isPackage : !r.isPackage).length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 gap-3 text-on-surface-variant">
                     <span className="material-symbols-outlined text-[48px]">task_alt</span>
-                    <p className="font-label-md text-label-md">No pending requests. All clear!</p>
+                    <p className="font-label-md text-label-md">Không có yêu cầu nào!</p>
                   </div>
                 ) : (
                   <div className="divide-y divide-surface-variant/50">
-                    {requests.map((req) => (
+                    {requests.filter(r => activeRequestTab === 'monthly' ? r.isPackage : !r.isPackage).map((req) => (
                       <RequestRow
                         key={req.id}
                         request={req}
+                        isConflicting={conflictingIds.has(req.id)}
                         onAccept={() => handleAccept(req.id)}
                         onDecline={() => handleDecline(req.id)}
                       />
                     ))}
                   </div>
                 )}
-
-                <div className="p-4 bg-surface-container-lowest/30 border-t border-surface-variant/50 text-center">
-                  <a href="#" onClick={(e) => e.preventDefault()} className="text-primary font-label-md hover:underline">
-                    View all requests ({requests.length})
-                  </a>
-                </div>
               </div>
             </div>
 
@@ -538,7 +745,7 @@ export default function TutorDashboard() {
           )}
 
           {profileStatus === 'approved' && activeTab === 'Khóa Học' && (
-            <TutorCoursesTab user={user} />
+            <TutorCoursesTab user={user} editCourseId={editCourseId} />
           )}
 
           {profileStatus === 'approved' && activeTab === 'Bài Kiểm Tra' && (
@@ -572,6 +779,41 @@ export default function TutorDashboard() {
             <WalletWithdraw onBack={() => setActiveTab('Wallet')} />
           )}
 
+          {/* Instant Request Modal */}
+          {instantRequest && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+                <div className="flex flex-col items-center text-center">
+                  <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-4">
+                    <span className="material-symbols-outlined text-[32px] text-amber-600">bolt</span>
+                  </div>
+                  <h3 className="font-headline-sm text-headline-sm text-on-surface mb-2">Yêu cầu Học Ngay!</h3>
+                  <p className="text-[14px] text-on-surface-variant mb-4">
+                    Học viên <span className="font-bold text-primary">{instantRequest.student_name || 'Học viên'}</span> muốn học ngay môn <span className="font-bold">{instantRequest.subject}</span>.
+                  </p>
+                  <div className="bg-amber-50 text-amber-700 px-4 py-3 rounded-xl w-full mb-6 text-[13px] border border-amber-200">
+                    <p className="font-semibold mb-1 flex items-center justify-center gap-1">
+                      <span className="material-symbols-outlined text-[16px]">timer</span>
+                      Hệ thống sẽ tự hủy sau 60 giây.
+                    </p>
+                  </div>
+                  <div className="flex gap-3 w-full">
+                    <button 
+                      onClick={() => handleInstantAction(instantRequest.id, 'reject')}
+                      className="flex-1 h-11 border-2 border-red-200 text-red-600 font-label-lg rounded-xl hover:bg-red-50 transition-colors">
+                      Từ chối
+                    </button>
+                    <button 
+                      onClick={() => handleInstantAction(instantRequest.id, 'accept')}
+                      className="flex-1 h-11 bg-primary text-on-primary font-label-lg rounded-xl shadow-md hover:bg-primary/90 hover:shadow-lg transition-all flex items-center justify-center gap-1">
+                      <span className="material-symbols-outlined text-[18px]">check</span> Chấp nhận
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
         </main>
       </div>
     </div>
@@ -579,56 +821,229 @@ export default function TutorDashboard() {
 }
 
 // Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬ Request Row Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
-function RequestRow({ request, onAccept, onDecline }) {
+function RequestRow({ request, isConflicting, onAccept, onDecline }) {
+  const [expanded, setExpanded] = useState(false)
+  const isTrial = request.bookingType === 'trial'
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return ''
+    try {
+      return new Date(dateStr).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })
+    } catch { return dateStr }
+  }
+
+  const timeAgo = (dateStr) => {
+    if (!dateStr) return ''
+    const diff = Math.floor((Date.now() - new Date(dateStr)) / 60000)
+    if (diff < 1) return 'Vừa xong'
+    if (diff < 60) return `${diff} phút trước`
+    if (diff < 1440) return `${Math.floor(diff / 60)} giờ trước`
+    return `${Math.floor(diff / 1440)} ngày trước`
+  }
+
+  const methodLabel = request.teachingMethod === 'online' ? 'Trực tuyến' : request.teachingMethod === 'offline' ? 'Trực tiếp' : request.teachingMethod || ''
+  const methodIcon = request.teachingMethod === 'online' ? 'videocam' : request.teachingMethod === 'offline' ? 'location_on' : 'school'
+  const displayDate = request.isPackage ? request.date : (request.lessonDate ? formatDate(request.lessonDate) : request.date || '')
+
   return (
-    <div className="p-4 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:bg-surface-container-lowest/50 transition-colors">
-      <div className="flex items-center gap-4">
-        {/* Avatar initials */}
-        <div className="w-12 h-12 rounded-full bg-secondary-container flex-shrink-0 flex items-center justify-center text-on-secondary-container font-label-md font-bold">
-          {request.initials}
-        </div>
-        <div>
-          <p className="font-label-md text-[16px] text-on-surface mb-0.5">{request.name}</p>
-          <p className="font-body-md text-[14px] text-on-surface-variant flex items-center gap-2 flex-wrap">
-            {request.bookingType === 'trial' && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold">
-                <span className="material-symbols-outlined text-[14px]">workspace_premium</span>
-                Trial
-              </span>
-            )}
-            <span className="inline-block px-2 py-0.5 rounded-full bg-tertiary-fixed-dim/20 text-primary font-label-sm">
-              {request.subject}
+    <div className={`border-b border-gray-100 last:border-0 transition-colors ${expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50/60'} ${isConflicting ? 'opacity-60 grayscale-[30%]' : ''}`}>
+      {/* ── Collapsed summary row (always visible) ── */}
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="w-full flex items-center gap-3 px-5 py-3.5 text-left"
+      >
+        {/* Avatar */}
+        <div className="relative shrink-0">
+          {request.avatarUrl ? (
+            <img src={request.avatarUrl} alt={request.name} className="w-10 h-10 rounded-full object-cover ring-2 ring-white shadow" />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow">
+              {request.initials}
+            </div>
+          )}
+          {isTrial && (
+            <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-amber-400 flex items-center justify-center shadow">
+              <span className="material-symbols-outlined text-white text-[10px]">star</span>
             </span>
-            <span>-</span>
-            <span className="flex items-center gap-1">
-              <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-              {request.date}
-            </span>
-          </p>
-          {request.note && (
-            <p className="mt-1 text-[13px] text-on-surface-variant line-clamp-2">
-              Note: {request.note}
-            </p>
           )}
         </div>
-      </div>
-      <div className="flex items-center gap-2 w-full sm:w-auto">
-        <button
-          className="flex-1 sm:flex-none px-4 h-10 rounded-lg border border-outline-variant text-on-surface-variant font-label-md hover:bg-surface-container-high transition-colors"
-          onClick={onDecline}
-        >
-          Decline
-        </button>
-        <button
-          className="flex-1 sm:flex-none px-4 h-10 rounded-lg bg-primary text-on-primary font-label-md hover:bg-primary/90 transition-colors shadow-sm"
-          onClick={onAccept}
-        >
-          Accept
-        </button>
-      </div>
+
+        {/* Summary text */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`font-bold text-[14px] ${isConflicting ? 'text-gray-500 line-through' : 'text-gray-900'}`}>{request.name}</span>
+            {isConflicting && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold">
+                <span className="material-symbols-outlined text-[10px]">error</span>
+                Trùng lịch
+              </span>
+            )}
+            {isTrial && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
+                <span className="material-symbols-outlined text-[10px]">workspace_premium</span>
+                Buổi thử
+              </span>
+            )}
+          </div>
+          <p className="text-[12px] text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 font-semibold text-indigo-600">
+              <span className="material-symbols-outlined text-[13px]">menu_book</span>
+              {request.subject}
+            </span>
+            {displayDate && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[13px]">calendar_today</span>
+                  {displayDate}
+                </span>
+              </>
+            )}
+            {request.timeSlot && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[13px]">schedule</span>
+                  {request.timeSlot}
+                </span>
+              </>
+            )}
+            {request.createdAt && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="text-gray-400">{timeAgo(request.createdAt)}</span>
+              </>
+            )}
+          </p>
+        </div>
+
+        {/* Chevron */}
+        <span className={`material-symbols-outlined text-[20px] text-gray-400 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}>
+          expand_more
+        </span>
+      </button>
+
+      {/* ── Expanded detail panel ── */}
+      {expanded && (
+        <div className="px-5 pb-5">
+          {/* Divider */}
+          <div className="border-t border-blue-100 mb-4" />
+
+          {/* Info grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="flex items-center gap-1.5 bg-indigo-50 rounded-lg px-3 py-2">
+              <span className="material-symbols-outlined text-[16px] text-indigo-500">menu_book</span>
+              <div>
+                <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-wide">Môn học</p>
+                <p className="text-[13px] font-bold text-indigo-800">{request.subject}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-sky-50 rounded-lg px-3 py-2">
+              <span className="material-symbols-outlined text-[16px] text-sky-500">calendar_today</span>
+              <div>
+                <p className="text-[10px] text-sky-400 font-bold uppercase tracking-wide">
+                  {request.isPackage ? 'Bắt đầu từ' : 'Ngày học'}
+                </p>
+                <p className="text-[13px] font-bold text-sky-800">
+                  {request.isPackage && request.startDate ? formatDate(request.startDate) : (displayDate || 'Chưa xác định')}
+                </p>
+              </div>
+            </div>
+
+            {(request.timeSlot || request.scheduleSummary) && (
+              <div className={`flex items-center gap-1.5 bg-violet-50 rounded-lg px-3 py-2 ${request.isPackage ? 'col-span-2' : ''}`}>
+                <span className="material-symbols-outlined text-[16px] text-violet-500">schedule</span>
+                <div>
+                  <p className="text-[10px] text-violet-400 font-bold uppercase tracking-wide">
+                    {request.isPackage ? 'Lịch học hàng tuần' : 'Giờ học'}
+                  </p>
+                  <p className="text-[13px] font-bold text-violet-800">
+                    {request.isPackage && request.scheduleSummary ? request.scheduleSummary : request.timeSlot}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {methodLabel && (
+              <div className="flex items-center gap-1.5 bg-teal-50 rounded-lg px-3 py-2">
+                <span className="material-symbols-outlined text-[16px] text-teal-500">{methodIcon}</span>
+                <div>
+                  <p className="text-[10px] text-teal-400 font-bold uppercase tracking-wide">Hình thức</p>
+                  <p className="text-[13px] font-bold text-teal-800">{methodLabel}</p>
+                </div>
+              </div>
+            )}
+
+            {request.level && (
+              <div className="flex items-center gap-1.5 bg-orange-50 rounded-lg px-3 py-2">
+                <span className="material-symbols-outlined text-[16px] text-orange-500">signal_cellular_alt</span>
+                <div>
+                  <p className="text-[10px] text-orange-400 font-bold uppercase tracking-wide">Trình độ</p>
+                  <p className="text-[13px] font-bold text-orange-800">{request.level}</p>
+                </div>
+              </div>
+            )}
+
+            {Number(request.sessionsRequested) > 0 && (
+              <div className="flex items-center gap-1.5 bg-rose-50 rounded-lg px-3 py-2">
+                <span className="material-symbols-outlined text-[16px] text-rose-500">repeat</span>
+                <div>
+                  <p className="text-[10px] text-rose-400 font-bold uppercase tracking-wide">Số buổi</p>
+                  <p className="text-[13px] font-bold text-rose-800">{request.sessionsRequested} buổi</p>
+                </div>
+              </div>
+            )}
+
+            {(request.grade || request.studentAge) && (
+              <div className="flex items-center gap-1.5 bg-green-50 rounded-lg px-3 py-2">
+                <span className="material-symbols-outlined text-[16px] text-green-500">school</span>
+                <div>
+                  <p className="text-[10px] text-green-400 font-bold uppercase tracking-wide">Học sinh</p>
+                  <p className="text-[13px] font-bold text-green-800">{request.grade || `${request.studentAge} tuổi`}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Note */}
+          {request.note && (
+            <div className="mt-3 flex items-start gap-2 bg-white rounded-lg px-3 py-2.5 border border-gray-100 shadow-sm">
+              <span className="material-symbols-outlined text-[16px] text-gray-400 mt-0.5 shrink-0">chat_bubble</span>
+              <p className="text-[13px] text-gray-600 leading-relaxed">
+                <span className="font-bold text-gray-700">Yêu cầu: </span>{request.note}
+              </p>
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="mt-4 flex gap-2">
+            <button
+              className="flex-1 h-10 rounded-xl border-2 border-red-100 text-red-500 font-bold text-sm hover:bg-red-50 hover:border-red-200 transition-all flex items-center justify-center gap-1.5"
+              onClick={(e) => { e.stopPropagation(); onDecline() }}
+            >
+              <span className="material-symbols-outlined text-[18px]">close</span>
+              Từ chối
+            </button>
+            <button
+              className={`flex-1 h-10 rounded-xl font-bold text-sm transition-all shadow-sm flex items-center justify-center gap-1.5 ${
+                isConflicting 
+                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed border border-gray-400' 
+                  : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700'
+              }`}
+              disabled={isConflicting}
+              onClick={(e) => { e.stopPropagation(); onAccept() }}
+            >
+              <span className="material-symbols-outlined text-[18px]">{isConflicting ? 'block' : 'check'}</span>
+              {isConflicting ? 'Trùng lịch' : 'Chấp nhận'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
 
 // Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬ Schedule Item Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
 function ScheduleItem({ slot }) {
@@ -1070,9 +1485,97 @@ function StudentDetailCard({ student }) {
 }
 
 function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback }) {
-  const approved = lesson.bookingStatus === 'Approved'
-  const statusConfig = { present: 'bg-[#dcfce7] text-[#16a34a] border-[#bbf7d0]', absent: 'bg-red-50 text-red-600 border-red-200', excused: 'bg-amber-50 text-amber-700 border-amber-200' }
-  return <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center"><div><p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'General'}</p><p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p><span className={`inline-flex mt-2 px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>{lesson.attendanceStatus || lesson.bookingStatus}</span></div><input value={note} onChange={(e) => onNoteChange(e.target.value)} placeholder="Attendance note..." disabled={!approved || saving} className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" /><div className="flex flex-wrap gap-2 justify-start lg:justify-end"><button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Present</button><button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Absent</button><button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Excused</button><button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">edit_note</span>Feedback</button></div></div>
+  const approved = lesson.bookingStatus === 'Approved';
+  const statusConfig = { present: 'bg-[#dcfce7] text-[#16a34a] border-[#bbf7d0]', absent: 'bg-red-50 text-red-600 border-red-200', excused: 'bg-amber-50 text-amber-700 border-amber-200' };
+
+  const [checkingIn, setCheckingIn] = useState(false);
+  const [checkInTime, setCheckInTime] = useState(lesson.tutorCheckInAt);
+
+  const isWithinCheckInWindow = () => {
+    if (!lesson.date || !lesson.timeSlot) return false;
+    let [timeStr, modifier] = lesson.timeSlot.split(' ');
+    let [hours, minutes] = timeStr.split(':');
+    if (hours === '12') hours = '00';
+    if (modifier === 'PM') hours = parseInt(hours, 10) + 12;
+    const dateStr = `${lesson.date}T${String(hours).padStart(2, '0')}:${minutes}:00`;
+    const lessonTime = new Date(dateStr);
+    if (isNaN(lessonTime.getTime())) return false;
+    
+    const now = new Date();
+    const diffMs = lessonTime.getTime() - now.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    return diffMins <= 30 && diffMins >= -120; // within 30 min before, or up to 2 hours after
+  };
+
+  const handleCheckIn = async () => {
+    try {
+      setCheckingIn(true);
+      const token = localStorage.getItem('token');
+      const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+      const res = await fetch(`${apiBase}/api/tutor/bookings/${lesson.bookingId}/checkin`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCheckInTime(data.tutorCheckInAt);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCheckingIn(false);
+    }
+  };
+
+  const canCheckIn = approved && isWithinCheckInWindow() && !checkInTime;
+
+  return (
+    <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center">
+      <div>
+        <p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'General'}</p>
+        <p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p>
+        <div className="flex gap-2 items-center mt-2">
+          <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>
+            {lesson.attendanceStatus || lesson.bookingStatus}
+          </span>
+          {checkInTime && (
+            <span className="inline-flex px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200 text-[11px] font-bold items-center gap-1">
+              <span className="material-symbols-outlined text-[12px]">check_circle</span>
+              Đã bắt đầu lúc {new Date(checkInTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+            </span>
+          )}
+        </div>
+      </div>
+      <input 
+        value={note} 
+        onChange={(e) => onNoteChange(e.target.value)} 
+        placeholder="Attendance note..." 
+        disabled={!approved || saving} 
+        className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" 
+      />
+      <div className="flex flex-wrap gap-2 justify-start lg:justify-end">
+        {canCheckIn && (
+          <button 
+            disabled={checkingIn} 
+            onClick={handleCheckIn} 
+            className="h-9 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-bold disabled:opacity-40 flex items-center gap-1"
+          >
+            <span className="material-symbols-outlined text-[14px]">play_arrow</span>
+            Bắt đầu dạy
+          </button>
+        )}
+        <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Present</button>
+        <button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Absent</button>
+        <button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Excused</button>
+        <button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1">
+          <span className="material-symbols-outlined text-[14px]">edit_note</span>Feedback
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function AbsenceTimeline({ lessons }) {
@@ -1265,8 +1768,8 @@ function MyScheduleTab() {
         {loading ? (
           <div className="min-h-[320px] flex items-center justify-center text-on-surface-variant">Loading schedule...</div>
         ) : view === 'week' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-7 divide-y lg:divide-y-0 lg:divide-x divide-outline-variant/20">
-            {weekDates.map((date) => <ScheduleDayColumn key={toDateKey(date)} date={date} events={eventsForDate(date)} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />)}
+          <div className="border-t border-outline-variant/20 relative">
+            <TimeGridWeekView weekDates={weekDates} eventsForDate={eventsForDate} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />
           </div>
         ) : (
           <div>
@@ -1311,20 +1814,151 @@ function ScheduleSummaryCard({ icon, label, value }) {
   )
 }
 
-function ScheduleDayColumn({ date, events, onEventClick, sessionInfoMap }) {
-  const isToday = toDateKey(date) === toDateKey(new Date())
+const parseTimeToMinutes = (timeStr) => {
+  if (!timeStr) return 0;
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?$/);
+  if (!match) return 0;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const modifier = match[3] ? match[3].toUpperCase() : null;
+
+  if (modifier === 'PM' && hours < 12) hours += 12;
+  if (modifier === 'AM' && hours === 12) hours = 0;
+
+  return hours * 60 + minutes;
+};
+
+const START_HOUR = 6;
+const END_HOUR = 23;
+const HOUR_HEIGHT = 84; // Increased from 64 to 84px for better text fit
+
+function TimeGridWeekView({ weekDates, eventsForDate, onEventClick, sessionInfoMap }) {
+  const hours = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const currentMins = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const currentTop = ((currentMins - START_HOUR * 60) / 60) * HOUR_HEIGHT;
+
   return (
-    <div className={`min-h-[420px] p-4 ${isToday ? 'bg-primary/5' : 'bg-white/50'}`}>
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <p className="text-[12px] font-bold uppercase text-outline">{getDayName(date)}</p>
-          <p className="font-headline-md text-headline-md text-on-surface">{formatShortDate(date)}</p>
-        </div>
-        {isToday && <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-primary text-on-primary">Today</span>}
+    <div className="flex bg-white overflow-hidden">
+      {/* Time Gutter */}
+      <div className="w-14 flex-shrink-0 bg-white border-r border-gray-100 pt-14 relative">
+        {hours.map((hour) => (
+          <div key={hour} className="absolute w-full pr-2 text-right" style={{ top: (hour - START_HOUR) * HOUR_HEIGHT + 56 }}>
+            <span className="text-[10px] font-medium text-gray-400 transform -translate-y-1/2 block">
+              {hour === 12 ? '12 PM' : hour > 12 ? `${hour - 12} PM` : `${hour} AM`}
+            </span>
+          </div>
+        ))}
       </div>
-      {events.length === 0 ? <p className="text-[12px] text-outline italic">No slots</p> : <div className="space-y-2">{events.map((event) => <ScheduleEventPill key={event.id} event={event} onClick={onEventClick} hasInfo={!!sessionInfoMap?.[event.id]} />)}</div>}
+
+      {/* Days Grid */}
+      <div className="flex-1 flex overflow-x-auto relative">
+        {/* Horizontal grid lines */}
+        <div className="absolute inset-0 pointer-events-none mt-14">
+          {hours.map((hour) => (
+            <div key={hour} className="absolute w-full border-t border-gray-100" style={{ top: (hour - START_HOUR) * HOUR_HEIGHT }} />
+          ))}
+        </div>
+
+        {weekDates.map((date) => {
+          const events = eventsForDate(date);
+          const isToday = toDateKey(date) === toDateKey(new Date());
+
+          return (
+            <div key={toDateKey(date)} className={`flex-1 min-w-[120px] relative border-r border-gray-100 last:border-r-0 ${isToday ? 'bg-blue-50/20' : ''}`}>
+              {/* Day Header */}
+              <div className="h-14 border-b border-gray-100 flex flex-col items-center justify-center bg-white sticky top-0 z-20">
+                <span className={`text-[11px] font-semibold uppercase ${isToday ? 'text-blue-600' : 'text-gray-500'}`}>{getDayName(date).slice(0, 3)}</span>
+                <div className={`mt-0.5 text-[18px] w-8 h-8 flex items-center justify-center rounded-full ${isToday ? 'bg-blue-600 text-white font-bold shadow-md' : 'text-gray-700'}`}>
+                  {date.getDate()}
+                </div>
+              </div>
+
+              {/* Events Container */}
+              <div className="relative w-full" style={{ height: (END_HOUR - START_HOUR) * HOUR_HEIGHT }}>
+                {/* Current Time Indicator */}
+                {isToday && currentMins >= START_HOUR * 60 && currentMins <= END_HOUR * 60 && (
+                  <div className="absolute left-0 right-0 z-30 pointer-events-none" style={{ top: `${currentTop}px` }}>
+                    <div className="h-0.5 bg-red-500 w-full relative">
+                      <div className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
+                    </div>
+                  </div>
+                )}
+
+                {(() => {
+                  const groupedEvents = {};
+                  events.forEach((event) => {
+                    const startMins = parseTimeToMinutes(event.time);
+                    if (startMins < START_HOUR * 60 || startMins >= END_HOUR * 60) return;
+                    if (!groupedEvents[startMins]) groupedEvents[startMins] = [];
+                    groupedEvents[startMins].push(event);
+                  });
+                  
+                  // Filter out "available" if there is a "booking" in the same time slot
+                  Object.keys(groupedEvents).forEach(startMins => {
+                    const hasBooking = groupedEvents[startMins].some(e => e.type === 'booking');
+                    if (hasBooking) {
+                       groupedEvents[startMins] = groupedEvents[startMins].filter(e => e.type === 'booking');
+                    }
+                  });
+
+                  return Object.entries(groupedEvents).map(([startMinsStr, timeEvents]) => {
+                    const startMins = parseInt(startMinsStr, 10);
+                    const top = ((startMins - (START_HOUR * 60)) / 60) * HOUR_HEIGHT;
+                    const durationMins = 60; // Default 1 hr
+                    const height = (durationMins / 60) * HOUR_HEIGHT;
+
+                    return (
+                      <div key={startMins} className="absolute left-1.5 right-1.5 flex gap-1" style={{ top: `${top + 2}px`, height: `${height - 4}px` }}>
+                        {timeEvents.map((event) => {
+                          const isBooking = event.type === 'booking';
+                          const hasInfo = !!sessionInfoMap?.[event.id];
+                          return (
+                            <div
+                              key={event.id}
+                              onClick={isBooking ? () => onEventClick?.(event) : undefined}
+                              className={`flex-1 rounded-[6px] p-1.5 px-2 overflow-hidden transition-all text-xs border shadow-sm group relative ${
+                                isBooking 
+                                  ? 'bg-blue-600 text-white border-blue-700 cursor-pointer hover:bg-blue-700 hover:shadow-md hover:z-30' 
+                                  : 'bg-indigo-50/80 text-indigo-700 border-indigo-200'
+                              }`}
+                            >
+                              <div className="font-bold flex items-center justify-between text-[10px] leading-tight opacity-90">
+                                <span>{event.time}</span>
+                                {isBooking && hasInfo && <span className="material-symbols-outlined text-[12px]">check_circle</span>}
+                              </div>
+                              <div className="font-semibold truncate text-[11px] leading-tight mt-0.5">
+                                {isBooking ? event.title : 'Available'}
+                              </div>
+                              {isBooking && (
+                                <div className="truncate opacity-80 text-[10px] leading-tight mt-0.5">{event.meta}</div>
+                              )}
+                              
+                              {isBooking && (
+                                <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <span className="material-symbols-outlined text-[12px] bg-white/20 rounded-full p-0.5">{hasInfo ? 'edit' : 'add'}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
-  )
+  );
 }
 
 function ScheduleMonthCell({ date, events, isCurrentMonth, onEventClick, sessionInfoMap }) {
@@ -1358,41 +1992,7 @@ function ScheduleMonthCell({ date, events, isCurrentMonth, onEventClick, session
   )
 }
 
-function ScheduleEventPill({ event, onClick, hasInfo }) {
-  const isBooking = event.type === 'booking'
-  return (
-    <div
-      onClick={isBooking ? () => onClick?.(event) : undefined}
-      className={`rounded-xl border px-3 py-2 transition-all ${
-        isBooking
-          ? 'bg-primary text-on-primary border-primary cursor-pointer hover:bg-primary/80 active:scale-95'
-          : 'bg-primary/5 text-primary border-primary/20'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-1">
-        <div className="min-w-0">
-          <p className="text-[12px] font-bold">{event.time}</p>
-          <p className={`text-[12px] truncate ${isBooking ? 'text-on-primary' : 'text-on-surface'}`}>{event.title}</p>
-          <p className={`text-[11px] truncate ${isBooking ? 'text-on-primary/80' : 'text-on-surface-variant'}`}>{event.meta}</p>
-        </div>
-        {isBooking && (
-          <span
-            className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center mt-0.5 ${hasInfo ? 'bg-white/30' : 'bg-white/15'}`}
-            title={hasInfo ? 'Đã điền thông tin buổi học — nhấn để chỉnh sửa' : 'Nhấn để điền thông tin buổi học'}
-          >
-            <span className="material-symbols-outlined text-[11px] text-on-primary">{hasInfo ? 'edit' : 'add'}</span>
-          </span>
-        )}
-      </div>
-      {isBooking && hasInfo && (
-        <p className="text-[10px] text-on-primary/70 mt-1 flex items-center gap-0.5">
-          <span className="material-symbols-outlined text-[10px]">check_circle</span>
-          Đã điền thông tin
-        </p>
-      )}
-    </div>
-  )
-}
+
 
 // ─── Session Info Modal ─────────────────────────────────────────────────────
 function SessionInfoModal({ event, booking, onClose, onSaved }) {
@@ -1908,8 +2508,61 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   // Availability edit
   const [availEdit, setAvailEdit]       = useState(false)
   const [availData, setAvailData]       = useState({})
+  const [monthlyAvailData, setMonthlyAvailData] = useState({})
   const [availSaving, setAvailSaving]   = useState(false)
   const [slotDuration, setSlotDuration] = useState(60) // 60 | 120 | 180 phút
+
+  // Instant Learning settings
+  const [instantEdit, setInstantEdit]   = useState(false)
+  const [instantForm, setInstantForm]   = useState({ price: '', duration: 30, online: false })
+  const [instantSaving, setInstantSaving] = useState(false)
+
+  const handleInstantSave = async () => {
+    try {
+      setInstantSaving(true)
+      const token = localStorage.getItem('token')
+      const res = await fetch('http://localhost:5000/api/tutor/instant-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          instant_price: instantForm.price,
+          instant_price_unit: 'VND',
+          instant_duration_mins: instantForm.duration,
+          availability_status: profile?.availability_status === 'Online' ? 'Online' : 'Offline'
+        })
+      })
+      if (!res.ok) throw new Error('Cập nhật thất bại')
+      setProfile(p => ({ ...p, instant_price: instantForm.price, instant_duration: instantForm.duration }))
+      setInstantEdit(false)
+      alert('Đã cập nhật cài đặt Học Ngay')
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setInstantSaving(false)
+    }
+  }
+
+
+  const handleToggleOnlineStatus = async (isOnline) => {
+    try {
+      const token = localStorage.getItem('token')
+      const newStatus = isOnline ? 'Online' : 'Offline'
+      const res = await fetch('http://localhost:5000/api/tutor/instant-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          instant_price: profile?.instant_price || '',
+          instant_price_unit: 'VND',
+          availability_status: newStatus
+        })
+      })
+      if (!res.ok) throw new Error('Cập nhật thất bại')
+      setProfile(p => ({ ...p, availability_status: newStatus }))
+      setInstantForm(f => ({ ...f, online: isOnline }))
+    } catch (e) {
+      alert(e.message)
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -1918,6 +2571,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         setProfile(data)
         setBioValue(data.bio_pending || data.bio || '')
         setAvailData(data.availability || {})
+        setMonthlyAvailData(data.monthly_availability || {})
         setSlotDuration(Number(data.slot_duration_mins) || 60)
         setAvatarUrl(data.picture || user?.picture || '')
         setCvForm({
@@ -1933,8 +2587,12 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
           demo_video_url: data.demo_video_url || '',
           teaching_methods: Array.isArray(data.teaching_methods) ? data.teaching_methods : [],
         })
+        setInstantForm({
+          price: data.instant_price || '',
+          online: data.availability_status === 'Online'
+        })
       } catch (e) {
-        setProfile({ bio: '', bio_status: 'approved', status: 'draft', credentials: [], availability: {} })
+        setProfile({ bio: '', bio_status: 'approved', status: 'draft', credentials: [], availability: {}, monthly_availability: {} })
       } finally {
         setProfileLoading(false)
       }
@@ -2044,11 +2702,20 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const toggleSlot = (day, slot) => {
     setAvailData(prev => {
       const current = prev[day] || []
-      // Nếu slot đang được chọn → bỏ chọn
       if (current.includes(slot)) {
         return { ...prev, [day]: current.filter(s => s !== slot) }
       }
-      // Kiểm tra xem slot có bị block không
+      if (isSlotBlocked(slot, current, slotDuration)) return prev
+      return { ...prev, [day]: [...current, slot].sort() }
+    })
+  }
+
+  const toggleMonthlySlot = (day, slot) => {
+    setMonthlyAvailData(prev => {
+      const current = prev[day] || []
+      if (current.includes(slot)) {
+        return { ...prev, [day]: current.filter(s => s !== slot) }
+      }
       if (isSlotBlocked(slot, current, slotDuration)) return prev
       return { ...prev, [day]: [...current, slot].sort() }
     })
@@ -2057,8 +2724,8 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const handleAvailSave = async () => {
     setAvailSaving(true)
     try {
-      await updateTutorAvailability(availData, slotDuration)
-      setProfile(p => ({ ...p, availability: availData, slot_duration_mins: slotDuration }))
+      await updateTutorAvailability(availData, monthlyAvailData, slotDuration)
+      setProfile(p => ({ ...p, availability: availData, monthly_availability: monthlyAvailData, slot_duration_mins: slotDuration }))
       setAvailEdit(false)
     } catch { /* ignore */ }
     finally { setAvailSaving(false) }
@@ -2358,6 +3025,123 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         </div>
 
         <div className="space-y-5">
+          {/* Instant Learning Settings */}
+          <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-sm rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-amber-500">bolt</span>
+                Cài đặt Học Ngay (Instant Learning)
+              </h4>
+              {!instantEdit ? (
+                <button onClick={() => { setInstantEdit(true); setInstantForm({ ...instantForm, price: profile?.instant_price || '', duration: profile?.instant_duration || 30 }); }}
+                  className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[15px]">edit</span>Chỉnh sửa
+                </button>
+              ) : (
+                <div className="flex gap-1">
+                  <button onClick={() => { setInstantEdit(false); setInstantForm({ ...instantForm, price: profile?.instant_price || '', duration: profile?.instant_duration || 30 }); }}
+                    className="h-8 px-2 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors">
+                    Hủy
+                  </button>
+                  <button onClick={handleInstantSave} disabled={instantSaving}
+                    className="h-8 px-3 bg-primary text-on-primary font-label-sm text-[12px] rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50">
+                    {instantSaving ? '...' : 'Lưu'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {instantEdit ? (
+              <div className="space-y-5">
+                {/* Row: Mức phí + Đơn vị thời gian */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[13px] font-semibold text-on-surface">Mức phí Học Ngay</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        className="h-10 pl-3 pr-12 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary w-full transition-shadow"
+                        value={instantForm.price}
+                        onChange={(e) => setInstantForm({ ...instantForm, price: e.target.value })}
+                        placeholder="VD: 200000"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-on-surface-variant font-medium select-none">VNĐ</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[13px] font-semibold text-on-surface">Đơn vị thời gian</label>
+                    <select
+                      className="h-10 px-3 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-white transition-shadow cursor-pointer"
+                      value={instantForm.duration}
+                      onChange={(e) => setInstantForm({ ...instantForm, duration: parseInt(e.target.value) })}
+                    >
+                      <option value={30}>30 phút</option>
+                      <option value={45}>45 phút</option>
+                      <option value={60}>60 phút</option>
+                      <option value={90}>90 phút</option>
+                      <option value={120}>120 phút</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Preview */}
+                <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container/40 p-4">
+                  <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider mb-2">Học sinh sẽ nhìn thấy</p>
+                  <div className="flex items-center justify-center gap-2 py-2">
+                    <span className="material-symbols-outlined text-amber-500">bolt</span>
+                    <span className="text-[18px] font-bold text-amber-600">
+                      {instantForm.price ? Number(instantForm.price).toLocaleString() : '—'} VNĐ
+                    </span>
+                    <span className="text-[14px] text-on-surface-variant font-medium">
+                      / {instantForm.duration} phút
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tips */}
+                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                  <p className="text-[12px] font-bold text-blue-700 flex items-center gap-1.5 mb-2">
+                    <span className="material-symbols-outlined text-[15px]">lightbulb</span>
+                    Lưu ý
+                  </p>
+                  <ul className="space-y-1 text-[12px] text-blue-700/80 leading-relaxed">
+                    <li>• Học viên chỉ có thể gửi yêu cầu khi bạn <strong>Online</strong>.</li>
+                    <li>• Bạn có <strong>60 giây</strong> để phản hồi yêu cầu.</li>
+                    <li>• Khi chấp nhận, trạng thái sẽ tự chuyển sang <strong>Busy</strong>.</li>
+                    <li>• Sau khi kết thúc, hệ thống tự chuyển về <strong>Online</strong> (hoặc Offline nếu bạn đã tắt nhận học).</li>
+                  </ul>
+                </div>
+              </div>
+            ) : (
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-[13px] items-start mt-2">
+                <div>
+                  <p className="font-semibold text-on-surface-variant mb-1">Giá Học Ngay</p>
+                  <p className="font-medium text-on-surface text-[15px] bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg inline-block border border-amber-200">
+                    {profile?.instant_price ? `${Number(profile.instant_price).toLocaleString()} VNĐ` : <span className="italic text-amber-600/70">Chưa cấu hình</span>}
+                  </p>
+                </div>
+                <div className="flex flex-col items-start gap-2">
+                  <p className="font-semibold text-on-surface-variant mb-1">Trạng thái Nhận Yêu Cầu</p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => handleToggleOnlineStatus(profile?.availability_status !== 'Online')}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${profile?.availability_status === 'Online' ? 'bg-green-500' : 'bg-gray-300'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${profile?.availability_status === 'Online' ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                    <span className={`font-semibold text-[14px] flex items-center gap-1 ${profile?.availability_status === 'Online' ? 'text-green-600' : profile?.availability_status === 'Busy' ? 'text-amber-600' : 'text-outline'}`}>
+                      {profile?.availability_status === 'Online' ? 'Đang Online' : profile?.availability_status === 'Busy' ? 'Đang Bận (Dạy)' : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                    Khi bật, học viên có thể gửi yêu cầu học ngay cho bạn bất cứ lúc nào. Hệ thống sẽ duy trì trạng thái này cho tới khi bạn tắt.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-sm rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
               <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
@@ -2365,7 +3149,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                 Weekly Schedule
               </h4>
               {!availEdit ? (
-                <button onClick={() => { setAvailEdit(true); setAvailData(profile?.availability || {}) }}
+                <button onClick={() => { setAvailEdit(true); setAvailData(profile?.availability || {}); setMonthlyAvailData(profile?.monthly_availability || {}); }}
                   className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1">
                   <span className="material-symbols-outlined text-[15px]">edit</span>Edit
                 </button>
@@ -2415,30 +3199,65 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                   </p>
                 </div>
 
-                {DAY_ORDER.map(day => (
-                  <div key={day}>
-                    <p className="font-label-sm text-[12px] font-bold text-on-surface mb-1.5">{day}</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {TIME_SLOTS.map(slot => {
-                        const active  = (availData[day] || []).includes(slot)
-                        const blocked = !active && isSlotBlocked(slot, availData[day] || [], slotDuration)
-                        return (
-                          <button key={slot} type="button"
-                            onClick={() => toggleSlot(day, slot)}
-                            disabled={blocked}
-                            title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
-                            className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
-                              active   ? 'bg-primary text-on-primary border-primary' :
-                              blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
-                                         'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'
-                            }`}>
-                            {slot}
-                          </button>
-                        )
-                      })}
+                {/* Lịch dạy từng buổi */}
+                <div className="mt-6 border-t pt-4">
+                  <p className="font-label-md text-[13px] font-bold text-on-surface mb-2">1. Lịch Rảnh Dạy Lẻ Từng Buổi</p>
+                  <p className="text-[11px] text-on-surface-variant mb-3">Học sinh chọn từng ngày trên lịch để đặt buổi học.</p>
+                  {DAY_ORDER.map(day => (
+                    <div key={day} className="mb-2">
+                      <p className="font-label-sm text-[12px] font-bold text-on-surface mb-1.5">{day}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {TIME_SLOTS.map(slot => {
+                          const active  = (availData[day] || []).includes(slot)
+                          const blocked = !active && isSlotBlocked(slot, availData[day] || [], slotDuration)
+                          return (
+                            <button key={slot} type="button"
+                              onClick={() => toggleSlot(day, slot)}
+                              disabled={blocked}
+                              title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
+                              className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
+                                active   ? 'bg-primary text-on-primary border-primary' :
+                                blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
+                                           'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'
+                              }`}>
+                              {slot}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+
+                {/* Lịch dạy theo tháng */}
+                <div className="mt-6 border-t pt-4">
+                  <p className="font-label-md text-[13px] font-bold text-on-surface mb-2">2. Lịch Dạy Cố Định Theo Tháng</p>
+                  <p className="text-[11px] text-on-surface-variant mb-3">Học sinh đăng ký theo gói tháng sẽ học cố định vào các khung giờ này hàng tuần.</p>
+                  {DAY_ORDER.map(day => (
+                    <div key={day} className="mb-2">
+                      <p className="font-label-sm text-[12px] font-bold text-on-surface mb-1.5">{day}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {TIME_SLOTS.map(slot => {
+                          const active  = (monthlyAvailData[day] || []).includes(slot)
+                          const blocked = !active && isSlotBlocked(slot, monthlyAvailData[day] || [], slotDuration)
+                          return (
+                            <button key={slot} type="button"
+                              onClick={() => toggleMonthlySlot(day, slot)}
+                              disabled={blocked}
+                              title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
+                              className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
+                                active   ? 'bg-green-600 text-white border-green-600' :
+                                blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
+                                           'bg-white text-on-surface-variant border-outline-variant/40 hover:border-green-600/40'
+                              }`}>
+                              {slot}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : (
               <div className="space-y-2">
@@ -2454,21 +3273,47 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                     </span>
                   </div>
                 )}
-                {DAY_ORDER.map(day => {
-                  const slots = (profile?.availability || {})[day] || []
-                  return (
-                    <div key={day} className={`rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
-                      <p className={`font-label-md text-[12px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{day}</p>
-                      {slots.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {slots.map(s => (
-                            <span key={s} className="text-[10px] font-semibold px-2 py-0.5 rounded border text-primary border-primary/20" style={{ background: 'rgba(0,40,142,0.06)' }}>{s}</span>
-                          ))}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* View: Lẻ */}
+                  <div>
+                    <p className="font-label-md text-[13px] font-bold mb-3 border-b pb-2">Lịch dạy lẻ từng buổi</p>
+                    {DAY_ORDER.map(day => {
+                      const slots = (profile?.availability || {})[day] || []
+                      return (
+                        <div key={day} className={`mb-2 rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
+                          <p className={`font-label-md text-[12px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{day}</p>
+                          {slots.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {slots.map(s => (
+                                <span key={s} className="text-[10px] font-semibold px-2 py-0.5 rounded border text-primary border-primary/20" style={{ background: 'rgba(0,40,142,0.06)' }}>{s}</span>
+                              ))}
+                            </div>
+                          ) : <span className="text-[11px] text-outline italic">Trống</span>}
                         </div>
-                      ) : <span className="text-[11px] text-outline italic">Unavailable</span>}
-                    </div>
-                  )
-                })}
+                      )
+                    })}
+                  </div>
+
+                  {/* View: Tháng */}
+                  <div>
+                    <p className="font-label-md text-[13px] font-bold mb-3 border-b pb-2">Lịch cố định theo gói tháng</p>
+                    {DAY_ORDER.map(day => {
+                      const slots = (profile?.monthly_availability || {})[day] || []
+                      return (
+                        <div key={day} className={`mb-2 rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
+                          <p className={`font-label-md text-[12px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{day}</p>
+                          {slots.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {slots.map(s => (
+                                <span key={s} className="text-[10px] font-semibold px-2 py-0.5 rounded border text-green-700 border-green-700/20" style={{ background: 'rgba(21,128,61,0.06)' }}>{s}</span>
+                              ))}
+                            </div>
+                          ) : <span className="text-[11px] text-outline italic">Trống</span>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               </div>
             )}
           </div>
