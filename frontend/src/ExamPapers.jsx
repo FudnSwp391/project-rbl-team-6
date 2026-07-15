@@ -12,15 +12,19 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 const SUBJECT_CONFIG = {
   'Toán': { icon: 'calculate', color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', chipBg: 'bg-blue-100 text-blue-700', gradientFrom: 'from-blue-500', gradientTo: 'to-blue-600', iconBg: 'bg-blue-100 text-blue-600', hoverIconBg: 'group-hover:bg-blue-200' },
   'Ngữ văn': { icon: 'menu_book', color: 'text-purple-600', bg: 'bg-purple-50', border: 'border-purple-200', chipBg: 'bg-purple-100 text-purple-700', gradientFrom: 'from-purple-500', gradientTo: 'to-purple-600', iconBg: 'bg-purple-100 text-purple-600', hoverIconBg: 'group-hover:bg-purple-200' },
+  'Tiếng Việt': { icon: 'import_contacts', color: 'text-fuchsia-600', bg: 'bg-fuchsia-50', border: 'border-fuchsia-200', chipBg: 'bg-fuchsia-100 text-fuchsia-700', gradientFrom: 'from-fuchsia-500', gradientTo: 'to-fuchsia-600', iconBg: 'bg-fuchsia-100 text-fuchsia-600', hoverIconBg: 'group-hover:bg-fuchsia-200' },
   'Tiếng Anh': { icon: 'translate', color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200', chipBg: 'bg-green-100 text-green-700', gradientFrom: 'from-green-500', gradientTo: 'to-green-600', iconBg: 'bg-green-100 text-green-600', hoverIconBg: 'group-hover:bg-green-200' },
   'Vật lí': { icon: 'bolt', color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200', chipBg: 'bg-orange-100 text-orange-700', gradientFrom: 'from-orange-500', gradientTo: 'to-orange-600', iconBg: 'bg-orange-100 text-orange-600', hoverIconBg: 'group-hover:bg-orange-200' },
   'Hoá học': { icon: 'biotech', color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', chipBg: 'bg-red-100 text-red-700', gradientFrom: 'from-red-500', gradientTo: 'to-red-600', iconBg: 'bg-red-100 text-red-600', hoverIconBg: 'group-hover:bg-red-200' },
   'Sinh học': { icon: 'eco', color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200', chipBg: 'bg-emerald-100 text-emerald-700', gradientFrom: 'from-emerald-500', gradientTo: 'to-emerald-600', iconBg: 'bg-emerald-100 text-emerald-600', hoverIconBg: 'group-hover:bg-emerald-200' },
   'Khoa học tự nhiên': { icon: 'science', color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200', chipBg: 'bg-emerald-100 text-emerald-700', gradientFrom: 'from-emerald-500', gradientTo: 'to-emerald-600', iconBg: 'bg-emerald-100 text-emerald-600', hoverIconBg: 'group-hover:bg-emerald-200' },
+  'Tự nhiên và Xã hội': { icon: 'park', color: 'text-lime-600', bg: 'bg-lime-50', border: 'border-lime-200', chipBg: 'bg-lime-100 text-lime-700', gradientFrom: 'from-lime-500', gradientTo: 'to-lime-600', iconBg: 'bg-lime-100 text-lime-600', hoverIconBg: 'group-hover:bg-lime-200' },
+  'Khoa học': { icon: 'biotech', color: 'text-cyan-600', bg: 'bg-cyan-50', border: 'border-cyan-200', chipBg: 'bg-cyan-100 text-cyan-700', gradientFrom: 'from-cyan-500', gradientTo: 'to-cyan-600', iconBg: 'bg-cyan-100 text-cyan-600', hoverIconBg: 'group-hover:bg-cyan-200' },
   'Lịch sử': { icon: 'history_edu', color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200', chipBg: 'bg-amber-100 text-amber-700', gradientFrom: 'from-amber-500', gradientTo: 'to-amber-600', iconBg: 'bg-amber-100 text-amber-600', hoverIconBg: 'group-hover:bg-amber-200' },
   'Địa lí': { icon: 'map', color: 'text-teal-600', bg: 'bg-teal-50', border: 'border-teal-200', chipBg: 'bg-teal-100 text-teal-700', gradientFrom: 'from-teal-500', gradientTo: 'to-teal-600', iconBg: 'bg-teal-100 text-teal-600', hoverIconBg: 'group-hover:bg-teal-200' },
   'Lịch sử và Địa lí': { icon: 'public', color: 'text-teal-600', bg: 'bg-teal-50', border: 'border-teal-200', chipBg: 'bg-teal-100 text-teal-700', gradientFrom: 'from-teal-500', gradientTo: 'to-teal-600', iconBg: 'bg-teal-100 text-teal-600', hoverIconBg: 'group-hover:bg-teal-200' },
   'Tin học': { icon: 'computer', color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200', chipBg: 'bg-indigo-100 text-indigo-700', gradientFrom: 'from-indigo-500', gradientTo: 'to-indigo-600', iconBg: 'bg-indigo-100 text-indigo-600', hoverIconBg: 'group-hover:bg-indigo-200' },
+  'Đạo đức': { icon: 'favorite', color: 'text-pink-600', bg: 'bg-pink-50', border: 'border-pink-200', chipBg: 'bg-pink-100 text-pink-700', gradientFrom: 'from-pink-500', gradientTo: 'to-pink-600', iconBg: 'bg-pink-100 text-pink-600', hoverIconBg: 'group-hover:bg-pink-200' },
   'Giáo dục công dân': { icon: 'balance', color: 'text-rose-600', bg: 'bg-rose-50', border: 'border-rose-200', chipBg: 'bg-rose-100 text-rose-700', gradientFrom: 'from-rose-500', gradientTo: 'to-rose-600', iconBg: 'bg-rose-100 text-rose-600', hoverIconBg: 'group-hover:bg-rose-200' },
   'Giáo dục kinh tế và pháp luật': { icon: 'gavel', color: 'text-rose-600', bg: 'bg-rose-50', border: 'border-rose-200', chipBg: 'bg-rose-100 text-rose-700', gradientFrom: 'from-rose-500', gradientTo: 'to-rose-600', iconBg: 'bg-rose-100 text-rose-600', hoverIconBg: 'group-hover:bg-rose-200' },
 }
@@ -34,13 +38,14 @@ function getSubjectConfig(subject) {
 }
 
 const ALL_SUBJECTS = Object.keys(SUBJECT_CONFIG)
+const SUBJECTS_TH = ['Toán', 'Tiếng Việt', 'Tiếng Anh', 'Tự nhiên và Xã hội', 'Khoa học', 'Lịch sử và Địa lí', 'Đạo đức', 'Tin học']
 const SUBJECTS_THCS = ['Toán', 'Ngữ văn', 'Tiếng Anh', 'Khoa học tự nhiên', 'Lịch sử và Địa lí', 'Giáo dục công dân', 'Tin học']
 const SUBJECTS_THPT = ['Toán', 'Ngữ văn', 'Tiếng Anh', 'Vật lí', 'Hoá học', 'Sinh học', 'Lịch sử', 'Địa lí', 'Giáo dục kinh tế và pháp luật', 'Tin học']
 
 const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = Array.from({ length: CURRENT_YEAR - 2019 }, (_, i) => CURRENT_YEAR - i)
 
-const GRADES = Array.from({ length: 7 }, (_, i) => i + 6) // 6–12
+const GRADES = Array.from({ length: 12 }, (_, i) => i + 1) // 1-12
 
 // ─── Skeleton card ─────────────────────────────────────────────────────────────
 function ExamCardSkeleton() {
@@ -441,7 +446,7 @@ export default function ExamPapers({ token }) {
               active={filterSubject === ''}
               onClick={() => setFilterSubject('')}
             />
-            {(filterGrade === null ? ALL_SUBJECTS : (filterGrade <= 9 ? SUBJECTS_THCS : SUBJECTS_THPT)).map(s => {
+            {(filterGrade === null ? ALL_SUBJECTS : (filterGrade <= 5 ? SUBJECTS_TH : filterGrade <= 9 ? SUBJECTS_THCS : SUBJECTS_THPT)).map(s => {
               const cfg = SUBJECT_CONFIG[s] || DEFAULT_SUBJECT_CONFIG
               return (
                 <button

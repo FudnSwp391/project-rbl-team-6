@@ -11,6 +11,61 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
 // Vietnam GDPT 2018 Curriculum by grade
 const CURRICULUM = {
+  1: {
+    level: 'Tiểu học', badge: 'Lớp 1',
+    subjects: [
+      { name: 'Toán', icon: 'calculate', color: 'text-blue-600', bg: 'bg-blue-50' },
+      { name: 'Tiếng Việt', icon: 'menu_book', color: 'text-purple-600', bg: 'bg-purple-50' },
+      { name: 'Tiếng Anh', icon: 'language', color: 'text-emerald-600', bg: 'bg-emerald-50' },
+      { name: 'Tự nhiên & Xã hội', icon: 'eco', color: 'text-green-600', bg: 'bg-green-50' },
+      { name: 'Đạo đức', icon: 'psychology', color: 'text-amber-600', bg: 'bg-amber-50' },
+    ],
+  },
+  2: {
+    level: 'Tiểu học', badge: 'Lớp 2',
+    subjects: [
+      { name: 'Toán', icon: 'calculate', color: 'text-blue-600', bg: 'bg-blue-50' },
+      { name: 'Tiếng Việt', icon: 'menu_book', color: 'text-purple-600', bg: 'bg-purple-50' },
+      { name: 'Tiếng Anh', icon: 'language', color: 'text-emerald-600', bg: 'bg-emerald-50' },
+      { name: 'Tự nhiên & Xã hội', icon: 'eco', color: 'text-green-600', bg: 'bg-green-50' },
+      { name: 'Đạo đức', icon: 'psychology', color: 'text-amber-600', bg: 'bg-amber-50' },
+    ],
+  },
+  3: {
+    level: 'Tiểu học', badge: 'Lớp 3',
+    subjects: [
+      { name: 'Toán', icon: 'calculate', color: 'text-blue-600', bg: 'bg-blue-50' },
+      { name: 'Tiếng Việt', icon: 'menu_book', color: 'text-purple-600', bg: 'bg-purple-50' },
+      { name: 'Tiếng Anh', icon: 'language', color: 'text-emerald-600', bg: 'bg-emerald-50' },
+      { name: 'Tự nhiên & Xã hội', icon: 'eco', color: 'text-green-600', bg: 'bg-green-50' },
+      { name: 'Tin học', icon: 'computer', color: 'text-indigo-600', bg: 'bg-indigo-50' },
+      { name: 'Đạo đức', icon: 'psychology', color: 'text-amber-600', bg: 'bg-amber-50' },
+    ],
+  },
+  4: {
+    level: 'Tiểu học', badge: 'Lớp 4',
+    subjects: [
+      { name: 'Toán', icon: 'calculate', color: 'text-blue-600', bg: 'bg-blue-50' },
+      { name: 'Tiếng Việt', icon: 'menu_book', color: 'text-purple-600', bg: 'bg-purple-50' },
+      { name: 'Tiếng Anh', icon: 'language', color: 'text-emerald-600', bg: 'bg-emerald-50' },
+      { name: 'Khoa học', icon: 'science', color: 'text-green-600', bg: 'bg-green-50' },
+      { name: 'Lịch sử & Địa lí', icon: 'public', color: 'text-teal-600', bg: 'bg-teal-50' },
+      { name: 'Tin học', icon: 'computer', color: 'text-indigo-600', bg: 'bg-indigo-50' },
+      { name: 'Đạo đức', icon: 'psychology', color: 'text-amber-600', bg: 'bg-amber-50' },
+    ],
+  },
+  5: {
+    level: 'Tiểu học', badge: 'Lớp 5',
+    subjects: [
+      { name: 'Toán', icon: 'calculate', color: 'text-blue-600', bg: 'bg-blue-50' },
+      { name: 'Tiếng Việt', icon: 'menu_book', color: 'text-purple-600', bg: 'bg-purple-50' },
+      { name: 'Tiếng Anh', icon: 'language', color: 'text-emerald-600', bg: 'bg-emerald-50' },
+      { name: 'Khoa học', icon: 'science', color: 'text-green-600', bg: 'bg-green-50' },
+      { name: 'Lịch sử & Địa lí', icon: 'public', color: 'text-teal-600', bg: 'bg-teal-50' },
+      { name: 'Tin học', icon: 'computer', color: 'text-indigo-600', bg: 'bg-indigo-50' },
+      { name: 'Đạo đức', icon: 'psychology', color: 'text-amber-600', bg: 'bg-amber-50' },
+    ],
+  },
   6: {
     level: 'THCS', badge: 'Lớp 6',
     subjects: [
@@ -118,7 +173,7 @@ const CURRICULUM = {
   },
 }
 
-const GRADES = [6, 7, 8, 9, 10, 11, 12]
+const GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
 const QUESTION_PRESETS = [5, 10, 15, 20]
 
@@ -601,6 +656,23 @@ export default function PracticeMode({ token }) {
                   >
                     Tất cả
                   </button>
+                  {/* Tiểu học group */}
+                  <div className="flex items-center gap-xs">
+                    <span className="text-[10px] font-label-sm text-on-surface-variant bg-surface-container px-1.5 py-0.5 rounded-md">Tiểu học</span>
+                    {[1, 2, 3, 4, 5].map(g => (
+                      <button
+                        key={g}
+                        onClick={() => setSelectedGrade(g)}
+                        className={`h-9 w-12 rounded-xl border-2 font-label-sm text-label-sm transition-all duration-200 ${
+                          selectedGrade === g
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm scale-105'
+                            : 'bg-surface-container border-outline-variant/30 text-on-surface hover:border-emerald-300 hover:bg-emerald-50'
+                        }`}
+                      >
+                        {g}
+                      </button>
+                    ))}
+                  </div>
                   {/* THCS group */}
                   <div className="flex items-center gap-xs">
                     <span className="text-[10px] font-label-sm text-on-surface-variant bg-surface-container px-1.5 py-0.5 rounded-md">THCS</span>

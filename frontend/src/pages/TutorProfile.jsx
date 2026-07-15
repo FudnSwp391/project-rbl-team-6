@@ -92,32 +92,73 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
   const [instantError, setInstantError] = useState('')
   const [timeLeft, setTimeLeft] = useState(60)
 
-  useEffect(() => {
-    window.scrollTo(0, 0)
+  // ── Viết đánh giá ──
+  const [showReviewModal, setShowReviewModal] = useState(false)
+  const [reviewRating, setReviewRating] = useState(5)
+  const [reviewComment, setReviewComment] = useState('')
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
+  const [reviewError, setReviewError] = useState('')
+
+  const loadTutor = async () => {
     setLoading(true)
     setNotFound(false)
     setErrorMsg(null)
-
-    fetch(`${API_BASE}/api/tutors/${tutorId}`)
-      .then(async r => {
-        if (r.status === 404) {
-          setNotFound(true); 
-          setLoading(false);
-          return;
-        }
-        if (!r.ok) {
-          throw new Error(`HTTP ${r.status}`)
-        }
-        const data = await r.json()
-        setTutor(data)
-        setLoading(false)
-      })
-      .catch((err) => {
+    try {
+      const r = await fetch(`${API_BASE}/api/tutors/${tutorId}`)
+      if (r.status === 404) {
         setNotFound(true)
-        setErrorMsg('Đã có lỗi xảy ra khi tải hồ sơ.')
         setLoading(false)
-      })
+        return
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const data = await r.json()
+      setTutor(data)
+      setLoading(false)
+    } catch {
+      setNotFound(true)
+      setErrorMsg('Đã có lỗi xảy ra khi tải hồ sơ.')
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    window.scrollTo(0, 0)
+    loadTutor()
   }, [tutorId])
+
+  const openReviewModal = () => {
+    if (!user) { onGoSignIn(); return }
+    setReviewRating(5)
+    setReviewComment('')
+    setReviewError('')
+    setShowReviewModal(true)
+  }
+
+  const submitReview = async () => {
+    if (!reviewComment.trim() || reviewSubmitting) return
+    setReviewSubmitting(true)
+    setReviewError('')
+    try {
+      const res = await fetch(`${API_BASE}/api/entity-reviews`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ target_type: 'tutor', target_id: tutorId, rating: reviewRating, comment: reviewComment.trim() })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok) {
+        setShowReviewModal(false)
+        // Refresh nhẹ danh sách đánh giá — không setLoading(true) để tránh
+        // cả trang chớp về màn hình loading toàn màn hình sau khi vừa gửi xong.
+        const r = await fetch(`${API_BASE}/api/tutors/${tutorId}`)
+        if (r.ok) setTutor(await r.json())
+      } else {
+        setReviewError(data.message || 'Không gửi được đánh giá.')
+      }
+    } catch {
+      setReviewError('Lỗi kết nối. Vui lòng thử lại.')
+    }
+    setReviewSubmitting(false)
+  }
 
   // ── Mở chat widget với gia sư ──
   const openChatWidget = async () => {
@@ -506,7 +547,10 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               </h2>
 
               <div className="mb-6">
-                <button className="bg-[#1e40af] text-white px-4 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 hover:bg-[#1e3a8a] transition-colors shadow-sm active:scale-95">
+                <button
+                  onClick={openReviewModal}
+                  className="bg-[#1e40af] text-white px-4 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 hover:bg-[#1e3a8a] transition-colors shadow-sm active:scale-95"
+                >
                   <span className="material-symbols-outlined text-[18px]">edit_square</span>
                   Viết đánh giá
                 </button>
@@ -936,6 +980,70 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             Nhắn tin với gia sư
           </span>
         </button>
+      )}
+
+      {/* ── Modal viết đánh giá ── */}
+      {showReviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-[#e1e2e4]">
+              <h3 className="text-lg font-bold text-[#191c1e] flex items-center gap-2">
+                <span className="material-symbols-outlined text-[#00288e]">edit_square</span>
+                Đánh giá {tutor.full_name || tutor.display_name || tutor.first_name || 'gia sư'}
+              </h3>
+              <button
+                onClick={() => setShowReviewModal(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#f8f9fb]"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="p-5 flex flex-col gap-4">
+              <div>
+                <label className="block text-sm font-medium text-[#444653] mb-2">Số sao</label>
+                <div className="flex items-center gap-1">
+                  {[1, 2, 3, 4, 5].map(i => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setReviewRating(i)}
+                      className="p-0.5"
+                      aria-label={`${i} sao`}
+                    >
+                      <span
+                        className="material-symbols-outlined text-[#FFB800] text-[28px]"
+                        style={{ fontVariationSettings: i <= reviewRating ? "'FILL' 1" : "'FILL' 0" }}
+                      >
+                        star
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#444653] mb-2">Nhận xét</label>
+                <textarea
+                  value={reviewComment}
+                  onChange={e => setReviewComment(e.target.value)}
+                  rows={4}
+                  placeholder="Buổi học thế nào? Gia sư dạy có dễ hiểu không?"
+                  className="w-full p-3 rounded-xl border border-[#c4c5d5] text-sm focus:border-[#00288e] focus:ring-1 focus:ring-[#00288e]/20 focus:outline-none resize-none"
+                />
+              </div>
+              {reviewError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{reviewError}</p>
+              )}
+              <button
+                onClick={submitReview}
+                disabled={!reviewComment.trim() || reviewSubmitting}
+                className="h-11 w-full rounded-xl bg-[#00288e] text-white font-semibold hover:bg-[#1e40af] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {reviewSubmitting && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                Gửi đánh giá
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

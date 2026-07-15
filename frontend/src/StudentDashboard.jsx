@@ -12,33 +12,9 @@ import PracticeMode from './PracticeMode'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
+import MessageIcon from './components/MessageIcon'
 import SchedulePage from './components/SchedulePage'
 import { getStudentBookings, confirmLessonComplete, reportTutor } from './services/api'
-
-// ─── Mock data (sẽ thay bằng API call thực sau) ───────────────────────────────
-const MY_TUTORS = [
-  {
-    id: 1,
-    name: 'Dr. Sarah Wilson',
-    subject: 'Mathematics',
-    avatar:
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuDVYO71mJBASGfG1vF2_6Trsov2ilKMsn_A3OU-3uzp89l0QkjyIgb_Dpg63y-jkeQlVukPMmmzu_zAJDeS61qwmxPFD7wuA351p1UJf7cRD8LX2jypOd4VncoK7LwXmiPuzqmSGGab4NAsmRLMzTf2MSXh-BYPgkdp-oNWgD3kBNzHBo5TYDWS08mB1x-Vbh5lCxW7hKVSvO9cL3vLfhZmbHpGEHS4nDpBXDH-6OsaGsna5U03XCwgUXoqjOoAywHQ94ekYH9ryns',
-  },
-  {
-    id: 2,
-    name: 'Prof. James',
-    subject: 'Physics',
-    avatar:
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuAIGco9G7B1c6ZsIhphXIBXcWDXHkVFZFV907MyzCj2D9cREJvEcZNjHjlCAMA64icYKvJbCv2d8jvYuYPwpQc0sPCGOen0e0SooGAV9Q1a-tZP3mqDe2F5aXiT9859rJhd9OUKrLZd4o184cEOIcaLb9ZMRgKcKPwaqsehOyyPOOdjkMZh0x6Df8cGzEJZo8Du8MpGlzlwEP7s3mtXMSF9PqwE0gtwY7cvuIrl7PJEAGFJSlQ5UZ254NjyJlQOgy3WMqlgFC-js0E',
-  },
-  {
-    id: 3,
-    name: 'Ms. Emily',
-    subject: 'English Lit',
-    avatar:
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuAR19xJ0-KvBFubfrm4NfrN666UMMtCuzeBE2Hl3qEC9UuwQaJE7MsC3gpV0IjEtUohP-6shEdUYgU9EbVuNw8U1wIuwg5uklk8imiM-huafUQMcim7Uo1nmTJEih4x2lhWhv_vVr986D2LqB0gI_iwFVdlqIg7ZP58DAS9AkFoT1eu57K3pSna0f9t_8cFTWczJSgw7vcWLn0iS_BqDoH3cfpGqPbpTRr6vg2TK95lxlqSdctD8i91SsmMNljG6J6nb31C46CCZOQ',
-  },
-]
 
 import StudentSidebar from './components/StudentSidebar'
 
@@ -72,6 +48,71 @@ export default function StudentDashboard() {
   const displayName = user?.name || user?.email?.split('@')[0] || 'Student'
   // Lấy chữ cái đầu để làm avatar fallback
   const initials = displayName.charAt(0).toUpperCase()
+
+  // ── Dữ liệu thật cho Dashboard Home (khóa học, giờ học, bài tập, hoạt động gần đây) ──
+  const [dashboardCourses, setDashboardCourses] = useState([])
+  const [courseStats, setCourseStats] = useState({ totalCourses: 0, completedCourses: 0, inProgressCourses: 0 })
+  const [scheduleSummary, setScheduleSummary] = useState(null)
+  const [scheduleSessions, setScheduleSessions] = useState([])
+  const [examPapers, setExamPapers] = useState([])
+  const [recentNotifications, setRecentNotifications] = useState([])
+  const [dashboardLoading, setDashboardLoading] = useState(true)
+
+  useEffect(() => {
+    if (!token) return
+    const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+    const authHeader = { Authorization: `Bearer ${token}` }
+    Promise.all([
+      fetch(`${API}/api/student/my-courses`, { headers: authHeader }).then(r => r.json()).catch(() => null),
+      fetch(`${API}/api/student/schedule`, { headers: authHeader }).then(r => r.json()).catch(() => null),
+      fetch(`${API}/api/exam-papers`, { headers: authHeader }).then(r => r.json()).catch(() => null),
+      fetch(`${API}/api/notifications`, { headers: authHeader }).then(r => r.json()).catch(() => null),
+    ]).then(([coursesRes, scheduleRes, examRes, notifRes]) => {
+      if (coursesRes?.success) {
+        setDashboardCourses(coursesRes.data.courses || [])
+        setCourseStats(coursesRes.data.stats || { totalCourses: 0, completedCourses: 0, inProgressCourses: 0 })
+      }
+      if (scheduleRes?.success) {
+        setScheduleSummary(scheduleRes.data.summary || null)
+        setScheduleSessions(scheduleRes.data.sessions || [])
+      }
+      if (Array.isArray(examRes?.papers)) setExamPapers(examRes.papers)
+      if (Array.isArray(notifRes?.notifications)) setRecentNotifications(notifRes.notifications)
+    }).finally(() => setDashboardLoading(false))
+  }, [token])
+
+  // Gia sư hiện tại: gộp từ khóa học đã đăng ký VÀ từ lịch đặt 1-kèm-1 (bookings), bỏ trùng theo tutor_id.
+  // Chỉ lấy tutor_id/tutor_name từ courses/bookings — không có thì bỏ qua học sinh chưa gắn gia sư nào.
+  const myTutors = Object.values(
+    [
+      ...dashboardCourses.map(c => ({ tutor_id: c.tutor_id, name: c.tutor_name, subject: c.subject, avatar: c.tutor_avatar })),
+      ...scheduleSessions.map(s => ({ tutor_id: s.tutor_id, name: s.tutor_name, subject: s.subject, avatar: null })),
+    ].reduce((acc, t) => {
+      if (!t.tutor_id) return acc
+      if (!acc[t.tutor_id]) {
+        acc[t.tutor_id] = { id: t.tutor_id, name: t.name || 'Gia sư', subject: t.subject || '', avatar: t.avatar }
+      } else if (!acc[t.tutor_id].avatar && t.avatar) {
+        acc[t.tutor_id].avatar = t.avatar
+      }
+      return acc
+    }, {})
+  )
+
+  // Bài tập/đề thi chưa hoàn thành: attempt_status null (chưa làm) hoặc in_progress (làm dở)
+  const allPendingExamPapers = examPapers.filter(p => !p.attempt_status || p.attempt_status === 'in_progress')
+  const pendingExamPapers = allPendingExamPapers.slice(0, 5)
+
+  // Giờ học tuần này (Thứ 2 → Chủ nhật hiện tại), tính từ chính các session đã hoàn thành
+  const weeklyHoursStudied = (() => {
+    const now = new Date()
+    const day = now.getDay()
+    const monday = new Date(now); monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1)); monday.setHours(0, 0, 0, 0)
+    const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6); sunday.setHours(23, 59, 59, 999)
+    const hours = scheduleSessions
+      .filter(s => s.status === 'completed' && new Date(s.start_time) >= monday && new Date(s.start_time) <= sunday)
+      .reduce((sum, s) => sum + (new Date(s.end_time) - new Date(s.start_time)) / 3600000, 0)
+    return Math.round(hours * 10) / 10
+  })()
 
   return (
     <div className={`bg-background text-on-background font-body-md text-body-md antialiased ${activeSection === 'schedule' ? 'block min-h-screen' : 'flex h-screen overflow-hidden'}`}>
@@ -112,7 +153,8 @@ export default function StudentDashboard() {
             </div>
 
             <div className="flex items-center gap-sm lg:gap-md">
-              {/* Notification */}
+              {/* Messages & Notifications */}
+              <MessageIcon token={token} />
               <NotificationDropdown token={token} />
 
               <button
@@ -185,117 +227,274 @@ export default function StudentDashboard() {
 
             {/* ── Dashboard Home ── */}
             {(activeSection === 'dashboard' || activeSection === 'courses') && (
-              <>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
 
-            {/* ── Welcome Header ── */}
-            <div className="flex justify-between items-end flex-wrap gap-md">
-              <div>
-                <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs">
-                  Chào mừng trở lại, {displayName} 👋
-                </h2>
-                <p className="font-body-lg text-body-lg text-on-surface-variant">
-                  Đây là tổng quan học tập của bạn hôm nay.
-                </p>
-              </div>
-              <button className="h-12 px-md bg-surface-container border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface flex items-center gap-sm hover:bg-surface-container-highest transition-colors">
-                <span className="material-symbols-outlined">tune</span>
-                Tùy Chỉnh
-              </button>
-            </div>
+                {/* ── Left column ── */}
+                <div className="lg:col-span-8 flex flex-col gap-gutter">
 
-            {/* ── Hero: Next Class ── */}
-            <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/5 to-tertiary-container/5">
-              {/* Decorative glow */}
-              <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 pointer-events-none" />
-
-              <div className="relative z-10 bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md flex flex-col lg:flex-row justify-between items-start lg:items-center gap-lg border-primary/10">
-                <div className="flex gap-lg items-center w-full">
-                  {/* Icon */}
-                  <div className="w-16 h-16 rounded-xl bg-primary-container flex items-center justify-center text-on-primary-container shrink-0 shadow-sm">
-                    <span className="material-symbols-outlined text-[32px]">functions</span>
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-sm mb-xs flex-wrap">
-                      <span className="inline-flex items-center px-2 py-1 rounded bg-on-tertiary-container/20 text-primary font-label-sm text-label-sm">
-                        Sắp Diễn Ra
-                      </span>
-                      <span className="font-label-sm text-label-sm text-error flex items-center gap-xs">
-                        <span className="material-symbols-outlined text-[14px]">schedule</span>
-                        Bắt đầu sau 15 phút
-                      </span>
+                  {/* ── Welcome Hero ── */}
+                  <div className="relative overflow-hidden rounded-xl bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] p-lg flex flex-col md:flex-row items-center gap-lg">
+                    <div className="absolute top-0 right-0 w-96 h-96 bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/4 pointer-events-none" />
+                    <div className="flex-1 z-10">
+                      {scheduleSummary && (
+                        <div className="flex items-center gap-sm mb-xs flex-wrap">
+                          <span className="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded uppercase tracking-wider">
+                            {scheduleSummary.weekly_completed}/{scheduleSummary.weekly_total} Buổi Tuần Này
+                          </span>
+                          <span className="font-label-sm text-label-sm text-on-surface-variant">• {weeklyHoursStudied}/{scheduleSummary.weekly_goal_hours}h Mục Tiêu Tuần</span>
+                        </div>
+                      )}
+                      <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs">
+                        Chào mừng trở lại, {displayName} 👋
+                      </h2>
+                      <p className="font-body-md text-body-md text-on-surface-variant mb-md max-w-md">
+                        {scheduleSummary
+                          ? `Bạn đã hoàn thành ${scheduleSummary.weekly_completed} buổi học trong tuần này. Tiếp tục duy trì để đạt mục tiêu.`
+                          : 'Đây là tổng quan học tập của bạn hôm nay.'}
+                      </p>
+                      <div className="flex flex-wrap gap-sm">
+                        <a
+                          href="#/dashboard/courses"
+                          className="h-11 px-lg flex items-center bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-surface-tint transition-all shadow-md hover:-translate-y-0.5 duration-200"
+                        >
+                          Tiếp Tục Học
+                        </a>
+                        <a
+                          href="#/dashboard/schedule"
+                          className="h-11 px-lg flex items-center bg-surface-container-lowest border border-outline-variant/50 text-on-surface font-label-md text-label-md rounded-lg hover:bg-surface-container-low transition-all hover:-translate-y-0.5 duration-200"
+                        >
+                          Xem Lịch Học
+                        </a>
+                      </div>
                     </div>
-                    <h3 className="font-headline-md text-headline-md text-on-surface mb-xs">
-                      Toán Học Nâng Cao
-                    </h3>
-                    <p className="font-body-md text-body-md text-on-surface-variant flex items-center gap-xs">
-                      <span className="material-symbols-outlined text-[18px]">person</span>
-                      Dr. Sarah Wilson • Hôm nay, 14:00
-                    </p>
+                    {user?.picture && (
+                      <div className="w-40 h-40 flex-shrink-0 z-10 hidden md:block">
+                        <img
+                          src={user.picture}
+                          alt={displayName}
+                          className="w-full h-full object-cover rounded-full border-4 border-surface shadow-md"
+                        />
+                      </div>
+                    )}
                   </div>
+
+                  {/* ── Stats Grid ── */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-md lg:gap-gutter">
+                    <StatCard
+                      icon="library_books"
+                      label="Khóa Học Đang Học"
+                      value={dashboardLoading ? '—' : String(courseStats.totalCourses)}
+                    />
+                    <StatCard
+                      icon="assignment_late"
+                      label="Bài Tập Sắp Hết Hạn"
+                      value={dashboardLoading ? '—' : String(allPendingExamPapers.length)}
+                    />
+                    <StatCard
+                      icon="timer"
+                      label="Số Giờ Đã Học"
+                      value={dashboardLoading ? '—' : <>{scheduleSummary?.learning_hours ?? 0}<span className="font-headline-md text-headline-md text-on-surface-variant">giờ</span></>}
+                    />
+                  </div>
+
+                  {/* ── Active Courses ── */}
+                  <div>
+                    <div className="flex justify-between items-center mb-md">
+                      <h3 className="font-headline-md text-headline-md text-on-surface">Khóa Học Đang Học</h3>
+                      <a
+                        href="#/courses"
+                        className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
+                      >
+                        Xem Tất Cả
+                      </a>
+                    </div>
+                    {dashboardCourses.length === 0 ? (
+                      <div className="bg-surface-container-lowest/70 border border-surface-container-lowest/30 rounded-xl p-lg text-center text-on-surface-variant font-body-md text-body-md">
+                        {dashboardLoading ? 'Đang tải khóa học...' : 'Bạn chưa đăng ký khóa học nào.'}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+                        {dashboardCourses.map((course) => (
+                          <CourseCard key={course.enrollment_id} course={course} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── My Tutors ── */}
+                  <div>
+                    <div className="flex justify-between items-center mb-md">
+                      <h3 className="font-headline-md text-headline-md text-on-surface">Gia Sư Của Tôi</h3>
+                      <a
+                        href="#/find-tutors"
+                        className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
+                      >
+                        Xem Tất Cả
+                      </a>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-md">
+                      {/* Tutor cards */}
+                      {myTutors.map((tutor) => (
+                        <TutorCard key={tutor.id} tutor={tutor} />
+                      ))}
+
+                      {/* Find New Tutor CTA */}
+                      <a
+                        href="#/tutor-request"
+                        className="bg-white border-2 border-dashed border-[#c4c5d5] rounded-xl p-6 flex flex-col items-center justify-center text-center hover:border-primary hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer group min-h-[250px]"
+                      >
+                        <div className="w-16 h-16 rounded-full bg-[#f3f4f6] flex items-center justify-center text-primary mb-4 group-hover:bg-primary group-hover:text-white transition-colors duration-300">
+                          <span className="material-symbols-outlined text-[28px]">person_search</span>
+                        </div>
+                        <h4 className="text-[16px] font-bold text-[#191c1e] mb-2">Tạo yêu cầu tìm gia sư</h4>
+                        <p className="text-[14px] text-[#5d5f5f] mb-6 leading-relaxed px-2">
+                          EduX sẽ gợi ý gia sư phù hợp với nhu cầu học tập của bạn.
+                        </p>
+                        <button className="bg-primary/10 text-primary font-semibold text-[14px] px-6 py-2.5 rounded-full group-hover:bg-primary group-hover:text-white transition-all shadow-sm">
+                          Bắt đầu
+                        </button>
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* ── Pending Assignments ── */}
+                  <div className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-lg">
+                    <div className="flex justify-between items-center mb-md">
+                      <h3 className="font-headline-md text-headline-md text-on-surface">Bài Tập Sắp Hết Hạn</h3>
+                      <a
+                        href="#/dashboard/assessments"
+                        className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
+                      >
+                        Xem Tất Cả
+                      </a>
+                    </div>
+                    {pendingExamPapers.length === 0 ? (
+                      <p className="text-center text-on-surface-variant font-body-md text-body-md py-md">
+                        {dashboardLoading ? 'Đang tải bài tập...' : 'Bạn đã hoàn thành hết bài tập/đề thi.'}
+                      </p>
+                    ) : (
+                      <div className="flex flex-col gap-sm">
+                        {pendingExamPapers.map((a) => (
+                          <a
+                            key={a.id}
+                            href="#/dashboard/assessments"
+                            className="flex items-center justify-between p-md rounded-lg border border-outline-variant/30 hover:bg-surface-container-lowest transition-colors group cursor-pointer"
+                          >
+                            <div className="flex items-center gap-md">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${a.attempt_status === 'in_progress' ? 'bg-surface-tint/10 text-surface-tint' : 'bg-error-container/20 text-error'}`}>
+                                <span className="material-symbols-outlined">quiz</span>
+                              </div>
+                              <div>
+                                <h4 className="font-body-md text-body-md font-bold group-hover:text-primary transition-colors">{a.title}</h4>
+                                <p className="font-label-sm text-label-sm text-on-surface-variant">{a.subject}{a.grade ? ` • Lớp ${a.grade}` : ''}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-md">
+                              <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${a.attempt_status === 'in_progress' ? 'bg-surface-variant text-on-surface-variant' : 'bg-error-container text-on-error-container'}`}>
+                                {a.attempt_status === 'in_progress' ? 'Đang Làm Dở' : 'Chưa Làm'}
+                              </span>
+                              {a.duration_minutes && (
+                                <span className="font-label-sm text-label-sm text-on-surface-variant">{a.duration_minutes} phút</span>
+                              )}
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                 </div>
-                <button className="w-full lg:w-auto h-12 px-xl bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-surface-tint hover:shadow-md transition-all duration-200 whitespace-nowrap">
-                  Vào Lớp Học
-                </button>
-              </div>
-            </div>
 
-            {/* ── Stats Grid ── */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-md lg:gap-gutter">
-              <StatCard
-                icon="library_books"
-                label="Khóa Học Đang Học"
-                value="4"
-              />
-              <StatCard
-                icon="assignment_late"
-                label="Bài Tập Sắp Hết Hạn"
-                value="2"
-              />
-              <StatCard
-                icon="timer"
-                label="Số Giờ Đã Học"
-                value={<>28<span className="font-headline-md text-headline-md text-on-surface-variant">giờ</span></>}
-              />
-            </div>
+                {/* ── Right column: widgets ── */}
+                <div className="lg:col-span-4 flex flex-col gap-gutter">
 
-            {/* ── My Tutors ── */}
-            <div>
-              <div className="flex justify-between items-center mb-md">
-                <h3 className="font-headline-md text-headline-md text-on-surface">Gia Sư Của Tôi</h3>
-                <a
-                  href="#/find-tutors"
-                  className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"
-                >
-                  Xem Tất Cả
-                </a>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-md">
-                {/* Tutor cards */}
-                {MY_TUTORS.map((tutor) => (
-                  <TutorCard key={tutor.id} tutor={tutor} />
-                ))}
-
-                {/* Find New Tutor CTA */}
-                <a
-                  href="#/tutor-request"
-                  className="bg-white border-2 border-dashed border-[#c4c5d5] rounded-xl p-6 flex flex-col items-center justify-center text-center hover:border-primary hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer group min-h-[250px]"
-                >
-                  <div className="w-16 h-16 rounded-full bg-[#f3f4f6] flex items-center justify-center text-primary mb-4 group-hover:bg-primary group-hover:text-white transition-colors duration-300">
-                    <span className="material-symbols-outlined text-[28px]">person_search</span>
+                  {/* ── AI Assistant widget ── */}
+                  <div className="bg-primary text-on-primary rounded-xl p-lg shadow-lg relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl translate-x-1/2 -translate-y-1/2" />
+                    <div className="relative z-10">
+                      <div className="flex items-center gap-sm mb-md">
+                        <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center backdrop-blur-md">
+                          <span className="material-symbols-outlined text-[24px]">psychology_alt</span>
+                        </div>
+                        <h3 className="font-headline-md text-headline-md font-bold">Trợ Lý EduAI</h3>
+                      </div>
+                      <p className="font-label-md text-label-md text-on-primary/80 mb-md">
+                        Cần hỗ trợ học tập? Mình có thể giải thích khái niệm hoặc tóm tắt bài học.
+                      </p>
+                      <div className="flex flex-col gap-2">
+                        <button
+                          onClick={() => window.dispatchEvent(new CustomEvent('navigate-section', { detail: 'practice' }))}
+                          className="w-full h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center px-md transition-colors font-label-md font-bold"
+                        >
+                          Đặt Câu Hỏi
+                        </button>
+                        <button
+                          onClick={() => window.dispatchEvent(new CustomEvent('navigate-section', { detail: 'assessments' }))}
+                          className="w-full h-10 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center px-md transition-colors font-label-md font-bold"
+                        >
+                          Xem Bài Tập
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <h4 className="text-[16px] font-bold text-[#191c1e] mb-2">Tạo yêu cầu tìm gia sư</h4>
-                  <p className="text-[14px] text-[#5d5f5f] mb-6 leading-relaxed px-2">
-                    EduX sẽ gợi ý gia sư phù hợp với nhu cầu học tập của bạn.
-                  </p>
-                  <button className="bg-primary/10 text-primary font-semibold text-[14px] px-6 py-2.5 rounded-full group-hover:bg-primary group-hover:text-white transition-all shadow-sm">
-                    Bắt đầu
-                  </button>
-                </a>
-              </div>
-            </div>
 
-              </>
+                  {/* ── Learning Goals widget ── */}
+                  <div className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-lg">
+                    <h3 className="font-label-md text-label-md font-bold mb-md uppercase tracking-widest text-on-surface-variant">Mục Tiêu Học Tập</h3>
+                    <div className="flex flex-col gap-md">
+                      <div className="flex flex-col gap-2">
+                        <div className="flex justify-between font-label-sm text-label-sm">
+                          <span>Giờ Học Trong Tuần</span>
+                          <span className="font-bold">{weeklyHoursStudied}/{scheduleSummary?.weekly_goal_hours ?? 10}h</span>
+                        </div>
+                        <div className="w-full bg-surface-container rounded-full h-1.5">
+                          <div
+                            className="bg-primary h-1.5 rounded-full"
+                            style={{ width: `${Math.min(100, Math.round((weeklyHoursStudied / (scheduleSummary?.weekly_goal_hours || 10)) * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <div className="flex justify-between font-label-sm text-label-sm">
+                          <span>Hoàn Thành Khóa Học</span>
+                          <span className="font-bold">{courseStats.completedCourses}/{courseStats.totalCourses}</span>
+                        </div>
+                        <div className="w-full bg-surface-container rounded-full h-1.5">
+                          <div
+                            className="bg-tertiary h-1.5 rounded-full"
+                            style={{ width: `${courseStats.totalCourses ? Math.round((courseStats.completedCourses / courseStats.totalCourses) * 100) : 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── Recent Activity widget ── */}
+                  <div className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-lg flex-1">
+                    <h3 className="font-headline-md text-headline-md font-bold mb-md">Hoạt Động Gần Đây</h3>
+                    {recentNotifications.length === 0 ? (
+                      <p className="text-center text-on-surface-variant font-body-md text-body-md py-md">
+                        {dashboardLoading ? 'Đang tải...' : 'Chưa có hoạt động nào gần đây.'}
+                      </p>
+                    ) : (
+                      <div className="relative border-l border-outline-variant/30 ml-2 py-1 flex flex-col gap-md">
+                        {recentNotifications.slice(0, 5).map((item) => (
+                          <div key={item.id} className="relative pl-md">
+                            <div className="absolute left-[-4.5px] top-1.5 w-2 h-2 rounded-full bg-primary" />
+                            <p className="text-[11px] text-on-surface-variant mb-0.5">
+                              {new Date(item.created_at).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                            <p className="font-label-md text-label-md font-bold">{item.title}</p>
+                            <p className="text-[11px] text-on-surface-variant line-clamp-2">{item.body}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </div>
             )}
 
           </div>
@@ -322,23 +521,77 @@ function StatCard({ icon, label, value }) {
   )
 }
 
+// ─── Course Card component ──────────────────────────────────────────────────────
+function CourseCard({ course }) {
+  const progress = course.progress_percent || 0
+  return (
+    <div className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md flex flex-col gap-md hover:-translate-y-1 transition-transform duration-300 group">
+      <div className="h-36 rounded-lg bg-surface-container-highest overflow-hidden relative flex items-center justify-center">
+        {course.thumbnail_url ? (
+          <img
+            src={course.thumbnail_url}
+            alt={course.title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            loading="lazy"
+          />
+        ) : (
+          <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40">school</span>
+        )}
+      </div>
+      <div>
+        <h4 className="font-body-lg text-body-lg font-bold mb-0.5">{course.title}</h4>
+        <p className="font-label-sm text-label-sm text-on-surface-variant mb-md">{course.tutor_name || 'Gia sư'}</p>
+        <div className="flex justify-between items-center mb-1.5">
+          <span className="text-[11px] font-bold text-primary">{progress}% Hoàn Thành</span>
+          <span className="text-[11px] text-on-surface-variant">{course.completed_lessons}/{course.total_lessons} Bài</span>
+        </div>
+        <div className="w-full bg-surface-container-high rounded-full h-1.5 mb-md">
+          <div className="bg-primary h-1.5 rounded-full" style={{ width: `${progress}%` }} />
+        </div>
+        <a
+          href={`#/course/${course.course_id}`}
+          className="w-full h-10 flex items-center justify-center bg-surface-container-low border border-outline-variant/30 text-on-surface font-label-md text-label-md rounded-lg hover:bg-surface-container-high transition-all"
+        >
+          Tiếp Tục
+        </a>
+      </div>
+    </div>
+  )
+}
+
 // ─── Tutor Card component ──────────────────────────────────────────────────────
 function TutorCard({ tutor }) {
   return (
     <div className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md flex flex-col items-center text-center hover:shadow-md transition-shadow duration-300">
-      <img
-        src={tutor.avatar}
-        alt={tutor.name}
-        className="w-20 h-20 rounded-full object-cover mb-sm border-2 border-surface bg-surface-container-lowest shadow-sm"
-        loading="lazy"
-      />
-      <h4 className="font-label-md text-label-md text-on-surface mb-xs">{tutor.name}</h4>
-      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm mb-md">
-        {tutor.subject}
-      </span>
-      <button className="w-full h-10 border border-outline-variant text-on-surface font-label-sm text-label-sm rounded-lg hover:bg-surface-container hover:text-primary transition-colors">
-        Nhắn Tin
-      </button>
+      <a href={`#/tutor-detail/${tutor.id}`} className="flex flex-col items-center w-full">
+        {tutor.avatar ? (
+          <img
+            src={tutor.avatar}
+            alt={tutor.name}
+            className="w-20 h-20 rounded-full object-cover mb-sm border-2 border-surface bg-surface-container-lowest shadow-sm"
+            loading="lazy"
+          />
+        ) : (
+          <div className="w-20 h-20 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-sm border-2 border-surface shadow-sm text-headline-md font-bold">
+            {(tutor.name || '?').charAt(0).toUpperCase()}
+          </div>
+        )}
+        <h4 className="font-label-md text-label-md text-on-surface mb-xs hover:text-primary transition-colors">{tutor.name}</h4>
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm mb-md">
+          {tutor.subject}
+        </span>
+      </a>
+      <div className="w-full flex flex-col gap-2">
+        <a
+          href={`#/tutor-detail/${tutor.id}`}
+          className="w-full h-10 flex items-center justify-center bg-primary/10 text-primary font-label-sm text-label-sm rounded-lg hover:bg-primary/20 transition-colors"
+        >
+          Xem Hồ Sơ
+        </a>
+        <button className="w-full h-10 border border-outline-variant text-on-surface font-label-sm text-label-sm rounded-lg hover:bg-surface-container hover:text-primary transition-colors">
+          Nhắn Tin
+        </button>
+      </div>
     </div>
   )
 }
@@ -349,22 +602,38 @@ function ParentLinkSection({ token }) {
   const [parents, setParents] = useState([])
   const [loading, setLoading] = useState(true)
 
+  const [errorMsg, setErrorMsg] = useState(null)
+
   useEffect(() => {
     // Lấy mã chia sẻ
     fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/link-code`, {
       headers: { Authorization: `Bearer ${token}` }
     })
-      .then(r => r.json())
-      .then(d => setCode(d.code))
-      .catch(console.error)
+      .then(r => {
+        if (!r.ok) throw new Error('API error')
+        return r.json()
+      })
+      .then(d => {
+        if (d.code) setCode(d.code)
+      })
+      .catch(e => {
+        console.error('Failed to load link code:', e)
+        setErrorMsg('Không thể tải mã. Có thể server chưa cập nhật (Hãy khởi động lại backend).')
+      })
 
     // Lấy danh sách phụ huynh
     fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/student/parents`, {
       headers: { Authorization: `Bearer ${token}` }
     })
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('API error')
+        return r.json()
+      })
       .then(d => { setParents(d.parents || []); setLoading(false) })
-      .catch(() => setLoading(false))
+      .catch(e => {
+        console.error('Failed to load parents:', e)
+        setLoading(false)
+      })
   }, [token])
 
   if (loading) return <div className="text-center py-xl"><span className="material-symbols-outlined animate-spin text-primary text-[40px]">sync</span></div>
@@ -385,20 +654,28 @@ function ParentLinkSection({ token }) {
           </div>
 
           <div className="bg-surface-container-low rounded-2xl border border-outline-variant/30 p-md flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-widest text-on-surface-variant mb-1">Mã của bạn</p>
-              <p className="font-mono text-3xl font-black text-primary tracking-[0.2em]">{code || '--------'}</p>
-            </div>
-            <button 
-              onClick={() => {
-                navigator.clipboard.writeText(code)
-                alert('Đã sao chép mã!')
-              }}
-              className="w-12 h-12 flex items-center justify-center bg-primary/10 text-primary hover:bg-primary/20 rounded-xl transition-colors"
-              title="Sao chép"
-            >
-              <span className="material-symbols-outlined text-[24px]">content_copy</span>
-            </button>
+            {errorMsg ? (
+              <div className="text-error font-medium">{errorMsg}</div>
+            ) : (
+              <>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-widest text-on-surface-variant mb-1">Mã của bạn</p>
+                  <p className="font-mono text-3xl font-black text-primary tracking-[0.2em]">{code || '--------'}</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    if(!code) return;
+                    navigator.clipboard.writeText(code)
+                    alert('Đã sao chép mã!')
+                  }}
+                  className="w-12 h-12 flex items-center justify-center bg-primary/10 text-primary hover:bg-primary/20 rounded-xl transition-colors disabled:opacity-50"
+                  disabled={!code}
+                  title="Sao chép"
+                >
+                  <span className="material-symbols-outlined text-[24px]">content_copy</span>
+                </button>
+              </>
+            )}
           </div>
           
           <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200/50">
@@ -444,355 +721,6 @@ function ParentLinkSection({ token }) {
         )}
       </div>
 
-    </div>
-  )
-}
-
-// ─── Student Bookings Section ─────────────────────────────────────────────────
-function StudentBookingsSection({ token }) {
-  const [bookings, setBookings] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('all')
-  const [actionLoading, setActionLoading] = useState(null)
-  const [reportModal, setReportModal] = useState(null) // booking object
-  const [reportReason, setReportReason] = useState('')
-  const [reportSeverity, setReportSeverity] = useState('medium')
-  const [reportEvidence, setReportEvidence] = useState(null)
-  
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
-
-  const fetchBookings = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`${API_BASE}/api/student/bookings`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      const data = await res.json()
-      setBookings(data.bookings || [])
-    } catch (e) {
-      console.error('Failed to load bookings', e)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { fetchBookings() }, [token])
-
-  const handleConfirmComplete = async (booking) => {
-    if (!window.confirm(`Xác nhận buổi học "${booking.subject}" đã hoàn thành? Tiền sẽ được giải ngân cho gia sư ngay lập tức.`)) return
-    setActionLoading(booking.id + '_confirm')
-    try {
-      const res = await fetch(`${API_BASE}/api/escrow/manual-release/${booking.id}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      const data = await res.json()
-      if (data.success) {
-        alert('✅ Xác nhận thành công! Tiền đã được giải ngân cho gia sư.')
-        fetchBookings()
-      } else {
-        alert(data.message || 'Có lỗi xảy ra.')
-      }
-    } catch { alert('Lỗi kết nối.') }
-    setActionLoading(null)
-  }
-
-  const handleReport = async () => {
-    if (!reportReason.trim()) return alert('Vui lòng nhập lý do báo cáo.')
-    setActionLoading(reportModal.id + '_report')
-    try {
-      let evidenceUrl = null;
-      if (reportEvidence) {
-        const { uploadEvidenceFile } = await import('./services/upload');
-        const { useAuth } = await import('./AuthContext');
-        // We might not have user directly, but uploadEvidenceFile can just use 'anonymous' or token decoded id if not provided.
-        evidenceUrl = await uploadEvidenceFile(reportEvidence, 'student');
-      }
-
-      const res = await fetch(`${API_BASE}/api/bookings/${reportModal.id}/report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ reason: reportReason, severity: reportSeverity, evidenceUrl })
-      })
-      const data = await res.json()
-      if (res.ok) {
-        alert('✅ Đã gửi khiếu nại. Admin sẽ xem xét. Tiền tạm thời bị giữ lại.')
-        setReportModal(null)
-        setReportReason('')
-        setReportSeverity('medium')
-        setReportEvidence(null)
-        fetchBookings()
-      } else {
-        alert(data.message || 'Có lỗi xảy ra.')
-      }
-    } catch { alert('Lỗi kết nối.') }
-    setActionLoading(null)
-  }
-
-  const fmtMoney = (n) => Number(n || 0).toLocaleString('vi-VN') + 'đ'
-  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'
-
-  const statusConfig = {
-    'Pending':   { label: 'Chờ duyệt',    cls: 'bg-amber-100 text-amber-700',  icon: 'pending' },
-    'Approved':  { label: 'Đã duyệt',     cls: 'bg-blue-100 text-blue-700',    icon: 'check_circle' },
-    'Cancelled': { label: 'Đã hủy',       cls: 'bg-red-100 text-red-700',      icon: 'cancel' },
-    'Declined':  { label: 'Bị từ chối',   cls: 'bg-red-100 text-red-700',      icon: 'block' },
-    'Rejected':  { label: 'Bị từ chối',   cls: 'bg-red-100 text-red-700',      icon: 'block' },
-  }
-
-  const escrowConfig = (b) => {
-    if (b.has_open_dispute) return { label: 'Đang khiếu nại', cls: 'bg-orange-100 text-orange-700', icon: 'gavel' }
-    if (b.escrow_released_at) return { label: 'Đã giải ngân', cls: 'bg-green-100 text-green-700', icon: 'payments' }
-    if (b.attendance_status === 'present' && b.auto_release_at) {
-      const releaseAt = new Date(b.auto_release_at)
-      const hoursLeft = Math.max(0, Math.round((releaseAt - Date.now()) / 3600000))
-      return { label: `Giải ngân sau ${hoursLeft}h`, cls: 'bg-blue-100 text-blue-700', icon: 'hourglass_top' }
-    }
-    if (b.escrow_tx_id && !b.escrow_released_at) return { label: 'Tiền tạm giữ', cls: 'bg-amber-100 text-amber-700', icon: 'lock' }
-    return null
-  }
-
-  const filtered = bookings.filter(b => {
-    if (filter === 'active') return ['Pending', 'Approved'].includes(b.status)
-    if (filter === 'completed') return b.escrow_released_at != null
-    if (filter === 'cancelled') return ['Cancelled', 'Declined', 'Rejected'].includes(b.status)
-    return true
-  })
-
-  const upcoming = bookings.filter(b => b.status === 'Approved' && !b.escrow_released_at)
-  const pendingRelease = bookings.filter(b => b.attendance_status === 'present' && !b.escrow_released_at && !b.has_open_dispute)
-
-  return (
-    <div className="flex flex-col gap-lg max-w-5xl mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-md">
-        <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>calendar_month</span>
-            Lịch học của tôi
-          </h2>
-          <p className="font-body-sm text-on-surface-variant">{bookings.length} buổi học tổng cộng</p>
-        </div>
-        <a href="#/tutor" className="h-10 px-4 bg-primary text-on-primary rounded-xl font-label-md flex items-center gap-1 hover:bg-primary/90 transition-colors">
-          <span className="material-symbols-outlined text-[18px]">add</span>
-          Đặt lịch mới
-        </a>
-      </div>
-
-      {/* Pending release banner */}
-      {pendingRelease.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-start gap-3">
-          <span className="material-symbols-outlined text-blue-600 text-[24px] shrink-0 mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
-          <div className="flex-1">
-            <p className="font-label-md text-blue-800 font-semibold">
-              {pendingRelease.length} buổi học đang chờ xác nhận
-            </p>
-            <p className="font-body-sm text-blue-600 mt-0.5">
-              Tiền sẽ tự động giải ngân sau 24h. Nếu hài lòng, bấm "Xác nhận hoàn thành" để giải ngân ngay và không cần đợi.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Filter tabs */}
-      <div className="flex bg-surface-container-high/60 rounded-xl p-1 gap-1">
-        {[
-          { key: 'all', label: 'Tất cả' },
-          { key: 'active', label: 'Đang học' },
-          { key: 'completed', label: 'Đã hoàn thành' },
-          { key: 'cancelled', label: 'Đã hủy' },
-        ].map(f => (
-          <button key={f.key} onClick={() => setFilter(f.key)}
-            className={`flex-1 h-9 rounded-lg font-label-sm transition-all ${filter === f.key ? 'bg-surface shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}>
-            {f.label}
-          </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center py-xl">
-          <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-xl gap-md text-center bg-surface rounded-2xl border border-outline-variant/20">
-          <span className="material-symbols-outlined text-[48px] text-on-surface-variant">event_available</span>
-          <p className="font-body-md text-on-surface-variant">Chưa có buổi học nào</p>
-          <a href="#/tutor" className="h-10 px-6 bg-primary text-on-primary rounded-xl font-label-md hover:bg-primary/90 transition-colors">
-            Tìm gia sư ngay
-          </a>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-md">
-          {filtered.map(b => {
-            const sc = statusConfig[b.status] || statusConfig['Pending']
-            const ec = escrowConfig(b)
-            const canConfirm = b.attendance_status === 'present' && !b.escrow_released_at && !b.has_open_dispute && b.escrow_tx_id
-            const canReport = b.status === 'Approved' && !b.has_open_dispute && !b.escrow_released_at
-            const canCancel = b.status === 'Pending' || (b.status === 'Approved' && !b.escrow_released_at)
-
-            return (
-              <div key={b.id} className="bg-surface rounded-2xl border border-outline-variant/20 shadow-sm p-md">
-                <div className="flex items-start justify-between gap-md flex-wrap">
-                  {/* Tutor info */}
-                  <div className="flex items-center gap-3">
-                    {b.tutor_picture
-                      ? <img src={b.tutor_picture} alt={b.tutor_name} className="w-11 h-11 rounded-full object-cover border border-outline-variant/20" />
-                      : <div className="w-11 h-11 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center">{(b.tutor_full_name || b.tutor_name || 'T')[0].toUpperCase()}</div>
-                    }
-                    <div>
-                      <p className="font-label-md text-on-surface font-semibold">{b.tutor_full_name || b.tutor_name || 'Gia sư'}</p>
-                      <p className="font-label-sm text-on-surface-variant">{b.subject}</p>
-                      {b.child_name && <p className="text-xs text-on-surface-variant">Học sinh: {b.child_name}</p>}
-                    </div>
-                  </div>
-
-                  {/* Date & time */}
-                  <div className="text-right">
-                    <p className="font-label-md text-on-surface">{fmtDate(b.lesson_date)}</p>
-                    <p className="font-label-sm text-on-surface-variant">{b.time_slot}</p>
-                    {b.lesson_fee > 0 && (
-                      <p className="text-xs text-primary font-semibold mt-0.5">{fmtMoney(b.lesson_fee)}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Status badges */}
-                <div className="flex items-center gap-2 mt-3 flex-wrap">
-                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${sc.cls}`}>
-                    <span className="material-symbols-outlined text-[13px]">{sc.icon}</span>
-                    {sc.label}
-                  </span>
-                  {ec && (
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${ec.cls}`}>
-                      <span className="material-symbols-outlined text-[13px]">{ec.icon}</span>
-                      {ec.label}
-                    </span>
-                  )}
-                  {b.attendance_status && (
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                      b.attendance_status === 'present' ? 'bg-green-100 text-green-700' :
-                      b.attendance_status === 'absent' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {b.attendance_status === 'present' ? '✓ Có mặt' : b.attendance_status === 'absent' ? '✗ Vắng' : '~ Có phép'}
-                    </span>
-                  )}
-                </div>
-
-                {/* Actions */}
-                {(canConfirm || canReport || canCancel) && (
-                  <div className="flex gap-2 mt-3 flex-wrap">
-                    {canConfirm && (
-                      <button
-                        onClick={() => handleConfirmComplete(b)}
-                        disabled={actionLoading === b.id + '_confirm'}
-                        className="h-8 px-3 bg-green-600 text-white rounded-lg text-xs font-semibold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-1"
-                      >
-                        <span className="material-symbols-outlined text-[14px]">done_all</span>
-                        {actionLoading === b.id + '_confirm' ? 'Đang xử lý...' : 'Xác nhận hoàn thành'}
-                      </button>
-                    )}
-                    {canReport && (
-                      <button
-                        onClick={() => { setReportModal(b); setReportReason('') }}
-                        className="h-8 px-3 bg-red-50 border border-red-300 text-red-700 rounded-lg text-xs font-semibold hover:bg-red-100 transition-colors flex items-center gap-1"
-                      >
-                        <span className="material-symbols-outlined text-[14px]">report</span>
-                        Báo cáo vi phạm
-                      </button>
-                    )}
-                    {canCancel && (
-                      <button
-                        onClick={async () => {
-                          if (!window.confirm(
-                            'Hủy buổi học này?\n\n' +
-                            'Chính sách hoàn tiền (tính theo thời gian trước buổi học):\n' +
-                            '• Từ 6 giờ trở lên: hoàn 100%\n' +
-                            '• 3–6 giờ: hoàn 50%\n' +
-                            '• 1–3 giờ: hoàn 25%\n' +
-                            '• Dưới 1 giờ hoặc đã qua giờ học: không hoàn tiền\n' +
-                            '(Nếu gia sư hủy, học sinh được hoàn 100%.)'
-                          )) return
-                          setActionLoading(b.id + '_cancel')
-                          try {
-                            const res = await fetch(`${API_BASE}/api/bookings/${b.id}`, {
-                              method: 'PATCH',
-                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                              body: JSON.stringify({ status: 'Cancelled' })
-                            })
-                            const data = await res.json()
-                            if (res.ok) { fetchBookings() } else { alert(data.message) }
-                          } catch { alert('Lỗi kết nối.') }
-                          setActionLoading(null)
-                        }}
-                        disabled={actionLoading === b.id + '_cancel'}
-                        className="h-8 px-3 bg-surface-container border border-outline-variant text-on-surface-variant rounded-lg text-xs font-semibold hover:bg-surface-container-high transition-colors disabled:opacity-50 flex items-center gap-1"
-                      >
-                        <span className="material-symbols-outlined text-[14px]">cancel</span>
-                        Hủy lịch
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Report Modal */}
-      {reportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-surface w-full max-w-sm rounded-3xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between p-4 border-b border-outline-variant/20">
-              <h3 className="font-headline-sm text-on-surface flex items-center gap-2">
-                <span className="material-symbols-outlined text-red-500">report</span>
-                Báo cáo vi phạm
-              </h3>
-              <button onClick={() => setReportModal(null)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-container">
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
-            </div>
-            <div className="p-4 flex flex-col gap-4 overflow-y-auto">
-              <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm">
-                <p className="font-medium text-red-800">{reportModal.subject} — {reportModal.tutor_full_name || reportModal.tutor_name}</p>
-                <p className="text-red-600 text-xs mt-1">Tiền sẽ bị tạm giữ cho đến khi Admin giải quyết (24–48h).</p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-on-surface-variant mb-1">Mức độ nghiêm trọng</label>
-                <select className="w-full p-3 border border-outline-variant rounded-xl mb-1 focus:border-primary focus:ring-1 focus:ring-primary outline-none" value={reportSeverity} onChange={e => setReportSeverity(e.target.value)}>
-                  <option value="low">Thấp (Góp ý nhẹ)</option>
-                  <option value="medium">Trung bình (Vắng không phép, trễ giờ)</option>
-                  <option value="high">Cao (Hành vi sai trái, lừa đảo)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-on-surface-variant mb-1">Lý do báo cáo <span className="text-error">*</span></label>
-                <textarea value={reportReason} onChange={e => setReportReason(e.target.value)} rows={4}
-                  placeholder="Mô tả vấn đề bạn gặp phải (gia sư không đến, dạy sai nội dung, hành vi không phù hợp...)"
-                  className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-on-surface-variant mb-1">Bằng chứng (Hình ảnh/Video nếu có)</label>
-                <input 
-                  type="file" 
-                  accept="image/*,video/*"
-                  className="w-full text-body-sm text-on-surface-variant file:mr-sm file:py-xs file:px-md file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-container file:text-primary hover:file:bg-primary/20"
-                  onChange={e => setReportEvidence(e.target.files[0])}
-                />
-              </div>
-
-              <button onClick={handleReport} disabled={!reportReason.trim() || actionLoading === reportModal.id + '_report'}
-                className="h-11 w-full rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-                {actionLoading === reportModal.id + '_report' && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                Gửi báo cáo
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
