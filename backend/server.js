@@ -30,8 +30,10 @@ app.use(cors({
     return cb(new Error("Not allowed by CORS"));
   },
 }));
-app.use(express.json({ limit: '500mb' }));
-app.use(express.urlencoded({ limit: '500mb', extended: true }));
+// File upload đi qua presigned URL (Supabase) hoặc multer — JSON body chỉ chứa
+// metadata nên 25mb là quá đủ, tránh nhận payload khổng lồ vào bộ nhớ.
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
 // ΓöÇΓöÇΓöÇ Helper: tß║ío JWT token ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 function createToken(user) {
@@ -7175,11 +7177,11 @@ app.post('/api/parent/create-child', verifyToken, async (req, res) => {
     const parentId = req.user.userId;
     const { full_name, email, password, nickname } = req.body;
     if (!full_name?.trim()||!email?.trim()||!password) return res.status(400).json({ message: 'Vui lòng điền đầy đủ thông tin.' });
-    if (password.length<6) return res.status(400).json({ message: 'Mật khẩu phải ít nhất 6 ký tự.' });
+    if (password.length < 8) return res.status(400).json({ message: 'Mật khẩu phải có ít nhất 8 ký tự.' });
     const exists = await pool.query('SELECT id FROM users WHERE email=$1', [email.trim().toLowerCase()]);
     if (exists.rows.length) return res.status(409).json({ message: 'Email đã tồn tại. Dùng mã liên kết nếu đây là con bạn.' });
     const bcrypt = require('bcryptjs');
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, 12);
     const student = await pool.query(`INSERT INTO users (full_name,email,password_hash,role) VALUES ($1,$2,$3,'student') RETURNING id,full_name,email,role`, [full_name.trim(),email.trim().toLowerCase(),hash]);
     const s = student.rows[0];
     await pool.query('INSERT INTO parent_children (parent_id,student_id,nickname) VALUES ($1,$2,$3)', [parentId,s.id,nickname?.trim()||null]);
@@ -12703,9 +12705,6 @@ TIN NHẮN CỦA HỌC SINH: "${message}"`;
   });
 
 
-  app.listen(port, () => {
-  console.log(`🚀 Server is running on http://localhost:${port}`);
-});
 
 
 app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req, res) => {
@@ -13411,11 +13410,11 @@ app.patch("/api/admin/withdrawal-requests/:id/mark-paid", verifyToken, requireAd
 // ==================== PAYMENT & ESCROW ROUTES ============================
 // =========================================================================
 
-// 1. Lấy th?�ng tin V?�
+// 1. Lấy thông tin ví
 app.get('/api/payment/wallet', verifyToken, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM wallets WHERE user_id = $1', [req.user.userId]);
-    if (rows.length === 0) return res.status(404).json({ message: 'V?� kh?�ng tồn tại' });
+    if (rows.length === 0) return res.status(404).json({ message: 'Ví không tồn tại.' });
     res.json({ wallet: rows[0] });
   } catch (err) {
     console.error(err);
@@ -13507,70 +13506,6 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
   }
 });
 
-// 4. Hold Money (Book Lesson)
-app.post('/api/escrow/hold', verifyToken, async (req, res) => {
-  const { amount, lessonId } = req.body;
-  try {
-      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
-      const payerWalletId = walletRes.rows[0].id;
-
-      const { rows } = await pool.query('SELECT hold_money_for_lesson($1, $2, $3) AS tx_id', [payerWalletId, amount, lessonId]);
-      
-      res.json({ success: true, transactionId: rows[0].tx_id });
-  } catch (err) {
-      // Trigger error from CHECK (balance >= amount)
-      res.status(400).json({ success: false, message: 'Số dư kh?�ng đủ để thanh to?�n hoặc lỗi hệ thống.' });
-  }
-});
-
-// 5. Release Escrow (Giải ng?�n cho Gia sư)
-app.post('/api/escrow/release', verifyToken, async (req, res) => {
-    const { transactionId, payerWalletId, tutorWalletId, amount } = req.body;
-    // Lấy admin_wallet_id từ m?�i trường hoặc truy vấn user admin đầu ti?�n
-    try {
-        let adminWalletId = process.env.ADMIN_WALLET_ID;
-        if (!adminWalletId) {
-            const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
-            if (rows.length > 0) adminWalletId = rows[0].id;
-            else return res.status(500).json({ success: false, message: 'Lỗi hệ thống: Chưa cấu h?�nh v?� Admin.' });
-        }
-
-        const commissionRate = 0.1; // 10%
-        const { error } = await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [
-            transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, commissionRate
-        ]);
-        res.json({ success: true, message: 'Đ?� giải ng?�n cho Gia sư' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 6. Resolve Dispute (Xử l?� khiếu nại - Admin)
-app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
-    
-    const { disputeId, transactionId, payerWalletId, tutorWalletId, amount, decision, adminNote } = req.body;
-    
-    try {
-        if (decision === 'REFUND_TO_STUDENT') {
-            await pool.query('SELECT refund_escrow($1, $2, $3)', [transactionId, payerWalletId, amount]);
-            await pool.query("UPDATE disputes SET status = 'RESOLVED_REFUND', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
-        } 
-        else if (decision === 'RELEASE_TO_TUTOR') {
-            let adminWalletId = process.env.ADMIN_WALLET_ID;
-            if (!adminWalletId) {
-                const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
-                adminWalletId = rows[0].id;
-            }
-            await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
-            await pool.query("UPDATE disputes SET status = 'RESOLVED_RELEASE', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
-        }
-        res.json({ success: true, message: 'Đ?� xử l?� khiếu nại th?�nh c?�ng' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  ESCROW EXTENDED — Report, Manual Release, Wallet History
