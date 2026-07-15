@@ -10563,6 +10563,9 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
       const marked = approvedLessons.filter((lesson) => lesson.attendanceStatus);
       const absences = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'absent');
       const present = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'present');
+      const excused = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'excused');
+      const rateBase = marked.length - excused.length;
+      
       const upcoming = approvedLessons
         .filter((lesson) => new Date(`${lesson.date}T00:00:00`) >= new Date(new Date().toDateString()))
         .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.timeSlot).localeCompare(String(b.timeSlot)))[0] || null;
@@ -10575,7 +10578,8 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
         markedLessons: marked.length,
         absentCount: absences.length,
         presentCount: present.length,
-        attendanceRate: marked.length ? Math.round((present.length / marked.length) * 100) : null,
+        excusedCount: excused.length,
+        attendanceRate: rateBase > 0 ? Math.round((present.length / rateBase) * 100) : null,
         nextLesson: upcoming,
       };
     });

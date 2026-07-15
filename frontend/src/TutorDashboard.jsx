@@ -1416,7 +1416,9 @@ function TutorStudentsTab() {
   const totalAbsent = students.reduce((sum, student) => sum + (student.absentCount || 0), 0)
   const markedLessons = students.reduce((sum, student) => sum + (student.markedLessons || 0), 0)
   const presentLessons = students.reduce((sum, student) => sum + (student.presentCount || 0), 0)
-  const attendanceRate = markedLessons ? Math.round((presentLessons / markedLessons) * 100) : 0
+  const excusedLessons = students.reduce((sum, student) => sum + (student.excusedCount || 0), 0)
+  const rateBase = markedLessons - excusedLessons
+  const attendanceRate = rateBase > 0 ? Math.round((presentLessons / rateBase) * 100) : 0
 
   const handleAttendance = async (lesson, status) => {
     setSavingId(lesson.bookingId)
@@ -1470,37 +1472,37 @@ function TutorStudentsTab() {
     <div className="space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">Students</h2>
-          <p className="font-body-md text-body-md text-on-surface-variant">Manage students, approved lessons, attendance, absences, and class notes.</p>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Quản Lý Học Sinh</h2>
+          <p className="font-body-md text-body-md text-on-surface-variant">Quản lý danh sách học sinh, điểm danh, xin phép và ghi chú buổi học.</p>
         </div>
         <button onClick={loadStudents} className="h-10 px-4 border border-outline-variant rounded-xl text-on-surface-variant font-label-md hover:bg-surface-container transition-colors flex items-center gap-2">
-          <span className="material-symbols-outlined text-[18px]">refresh</span>Refresh
+          <span className="material-symbols-outlined text-[18px]">refresh</span>Làm mới
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StudentStatCard icon="groups" label="Students" value={totalStudents} />
-        <StudentStatCard icon="event_available" label="Lessons" value={totalLessons} />
-        <StudentStatCard icon="person_off" label="Absences" value={totalAbsent} />
-        <StudentStatCard icon="fact_check" label="Attendance" value={markedLessons ? `${attendanceRate}%` : '--'} />
+        <StudentStatCard icon="groups" label="Học sinh" value={totalStudents} />
+        <StudentStatCard icon="event_available" label="Buổi học" value={totalLessons} />
+        <StudentStatCard icon="person_off" label="Vắng mặt" value={totalAbsent} />
+        <StudentStatCard icon="fact_check" label="Chuyên cần" value={markedLessons ? `${attendanceRate}%` : '--'} />
       </div>
 
       {error && <p className="text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
 
       {loading ? (
-        <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-12 text-center text-on-surface-variant">Loading students...</div>
+        <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-12 text-center text-on-surface-variant">Đang tải dữ liệu học sinh...</div>
       ) : students.length === 0 ? (
         <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-12 text-center">
           <span className="material-symbols-outlined text-[48px] text-outline">group_off</span>
-          <h3 className="font-headline-md text-headline-md text-on-surface mt-2">No students yet</h3>
-          <p className="text-on-surface-variant mt-1">Students will appear here after you approve booking requests.</p>
+          <h3 className="font-headline-md text-headline-md text-on-surface mt-2">Chưa có học sinh nào</h3>
+          <p className="text-on-surface-variant mt-1">Học sinh sẽ hiển thị ở đây sau khi bạn chấp nhận yêu cầu học.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
           <div className="bg-white/80 border border-outline-variant/20 rounded-2xl shadow-sm overflow-hidden">
             <div className="p-4 border-b border-outline-variant/20">
-              <h3 className="font-headline-md text-headline-md text-on-surface">Student List</h3>
-              <p className="text-[12px] text-on-surface-variant">Select a student to view lesson records.</p>
+              <h3 className="font-headline-md text-headline-md text-on-surface">Danh sách học sinh</h3>
+              <p className="text-[12px] text-on-surface-variant">Chọn một học sinh để xem lịch sử buổi học.</p>
             </div>
             <div className="divide-y divide-outline-variant/10 max-h-[620px] overflow-auto">
               {students.map((student) => {
@@ -1511,9 +1513,9 @@ function TutorStudentsTab() {
                     {student.studentAvatar ? <img src={student.studentAvatar} alt={student.studentName} className="w-12 h-12 rounded-full object-cover" /> : <div className="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">{(student.childName || student.studentName || 'S').charAt(0)}</div>}
                     <div className="min-w-0 flex-1">
                       <p className="font-label-md text-label-md text-on-surface truncate">{student.childName || student.studentName}</p>
-                      {student.childName && <p className="text-[12px] text-on-surface-variant truncate">Parent: {student.studentName}</p>}
-                      <p className="text-[12px] text-primary truncate">{student.subjects.join(', ') || 'General'}</p>
-                      <div className="flex gap-2 mt-2 text-[11px]"><span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">{student.totalLessons} lessons</span><span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600">{student.absentCount} absent</span></div>
+                      {student.childName && <p className="text-[12px] text-on-surface-variant truncate">Phụ huynh: {student.studentName}</p>}
+                      <p className="text-[12px] text-primary truncate">{student.subjects.join(', ') || 'Chung'}</p>
+                      <div className="flex gap-2 mt-2 text-[11px]"><span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">{student.totalLessons} buổi</span><span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600">{student.absentCount} vắng</span></div>
                     </div>
                   </button>
                 )
@@ -1525,8 +1527,8 @@ function TutorStudentsTab() {
             <StudentDetailCard student={selectedStudent} />
             <div className="bg-white/80 border border-outline-variant/20 rounded-2xl shadow-sm overflow-hidden">
               <div className="p-4 border-b border-outline-variant/20 flex items-center justify-between gap-3">
-                <div><h3 className="font-headline-md text-headline-md text-on-surface">Lesson Attendance</h3><p className="text-[12px] text-on-surface-variant">Mark attendance for approved lessons. Pending requests cannot be marked yet.</p></div>
-                <span className="text-[12px] font-bold text-on-surface-variant">{selectedStudent?.lessons?.length || 0} records</span>
+                <div><h3 className="font-headline-md text-headline-md text-on-surface">Điểm danh & Ghi chú</h3><p className="text-[12px] text-on-surface-variant">Chỉ có thể điểm danh các buổi học đã được phê duyệt.</p></div>
+                <span className="text-[12px] font-bold text-on-surface-variant">{selectedStudent?.lessons?.length || 0} bản ghi</span>
               </div>
               <div className="divide-y divide-outline-variant/10">
                 {(selectedStudent?.lessons || []).map((lesson) => <AttendanceRow key={lesson.bookingId} lesson={lesson} saving={savingId === lesson.bookingId} note={attendanceNotes[lesson.bookingId] ?? lesson.attendanceNote ?? ''} onNoteChange={(value) => setAttendanceNotes((prev) => ({ ...prev, [lesson.bookingId]: value }))} onMark={(status) => handleAttendance(lesson, status)} onFeedback={() => setFeedbackLesson(lesson)} />)}
@@ -1555,7 +1557,7 @@ function StudentStatCard({ icon, label, value }) {
 
 function StudentDetailCard({ student }) {
   if (!student) return null
-  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Selected student</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'No email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Lessons</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Absent</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Rate</p></div></div></div>{student.nextLesson && <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Next lesson: <strong>{student.nextLesson.date}</strong> at <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div>}</div>
+  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Đang chọn</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'Chưa có email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Buổi</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Vắng</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Tỉ lệ</p></div></div></div>{student.nextLesson && <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Buổi tiếp theo: <strong>{student.nextLesson.date}</strong> lúc <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div>}</div>
 }
 
 function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback }) {
@@ -1609,11 +1611,15 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
   return (
     <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center">
       <div>
-        <p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'General'}</p>
+        <p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'Chung'}</p>
         <p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p>
         <div className="flex gap-2 items-center mt-2">
           <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>
-            {lesson.attendanceStatus || lesson.bookingStatus}
+            {lesson.attendanceStatus === 'present' ? 'Có mặt' 
+            : lesson.attendanceStatus === 'absent' ? 'Vắng mặt'
+            : lesson.attendanceStatus === 'excused' ? 'Có phép'
+            : lesson.bookingStatus === 'Approved' ? 'Chưa điểm danh'
+            : lesson.bookingStatus}
           </span>
           {checkInTime && (
             <span className="inline-flex px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200 text-[11px] font-bold items-center gap-1">
@@ -1626,7 +1632,7 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
       <input 
         value={note} 
         onChange={(e) => onNoteChange(e.target.value)} 
-        placeholder="Attendance note..." 
+        placeholder="Ghi chú buổi học..." 
         disabled={!approved || saving} 
         className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" 
       />
@@ -1641,11 +1647,11 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
             Bắt đầu dạy
           </button>
         )}
-        <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Present</button>
-        <button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Absent</button>
-        <button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Excused</button>
+        <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Có mặt</button>
+        <button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Vắng</button>
+        <button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Có phép</button>
         <button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1">
-          <span className="material-symbols-outlined text-[14px]">edit_note</span>Feedback
+          <span className="material-symbols-outlined text-[14px]">edit_note</span>Đánh giá
         </button>
       </div>
     </div>
