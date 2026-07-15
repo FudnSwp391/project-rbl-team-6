@@ -159,7 +159,7 @@ export default function TutorGradingDashboard({ token }) {
 
 
   return (
-    <div className="flex flex-col gap-lg h-full">
+    <div className="flex flex-col gap-5 pb-8">
       {/* Toast */}
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
 
