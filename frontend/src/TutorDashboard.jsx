@@ -2021,7 +2021,7 @@ function TimeGridWeekView({ weekDates, eventsForDate, onEventClick, sessionInfoM
                                 {isBooking && hasInfo && <span className="material-symbols-outlined text-[12px]">check_circle</span>}
                               </div>
                               <div className="font-semibold truncate text-[11px] leading-tight mt-0.5">
-                                {isBooking ? event.title : 'Available'}
+                                {isBooking ? event.title : 'Trống'}
                               </div>
                               {isBooking && (
                                 <div className="truncate opacity-80 text-[10px] leading-tight mt-0.5">{event.meta}</div>
