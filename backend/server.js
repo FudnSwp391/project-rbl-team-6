@@ -8959,7 +8959,7 @@ app.get("/api/tutors", async (req, res) => {
   const where = `WHERE ${conditions.join(" AND ")}`;
 
   const orderMap = {
-    rating:     "tp.experience_years DESC NULLS LAST",
+    rating:     "tp.avg_rating DESC NULLS LAST, tp.review_count DESC NULLS LAST",
     price_asc:  "tp.hourly_rate ASC NULLS LAST",
     price_desc: "tp.hourly_rate DESC NULLS LAST",
     experience: "tp.experience_years DESC NULLS LAST",
