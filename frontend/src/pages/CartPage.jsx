@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../AuthContext'
 import Toast from '../components/Toast'
+import CartButton from '../components/CartButton';
+import { API_BASE_URL } from '../config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_BASE = API_BASE_URL;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function CartPage({ onGoSignIn, user }) {
@@ -293,9 +295,7 @@ export default function CartPage({ onGoSignIn, user }) {
 
           <div className="flex items-center gap-6">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
-                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
-              </a>
+              <CartButton />
             )}
             {user ? (
               <a href="#/dashboard" className="flex items-center gap-2 cursor-pointer text-[#444653] hover:text-[#00288e] transition-colors">

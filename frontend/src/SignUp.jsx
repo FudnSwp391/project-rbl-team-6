@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from './AuthContext'   // ← Global auth state
 import { GoogleLogin } from '@react-oauth/google'
+import { API_BASE_URL } from './config';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
@@ -12,7 +13,7 @@ const ROLE_OPTIONS = [
 
 export default function SignUp({ onSwitchToSignIn, onGoHome }) {
   const { loginAfterRegister } = useAuth()
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+  const apiBaseUrl = API_BASE_URL
   const initialRole = window.location.hash.includes('role=tutor') ? 'tutor' : 'student'
   const [role, setRole] = useState(initialRole)
   const [formData, setFormData] = useState({

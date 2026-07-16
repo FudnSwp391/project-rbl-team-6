@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { methodSupport } from './utils/teachingMethod';
+import CartButton from './components/CartButton';
+import { API_BASE_URL } from './config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const API_BASE = API_BASE_URL;
 
 const SUBJECT_OPTIONS = ['Toán Học', 'Vật Lý', 'Hóa Học', 'Tiếng Anh', 'Lập Trình', 'Văn Học', 'Lịch Sử', 'Địa Lý'];
 
@@ -148,7 +150,7 @@ function TutorCard({ tutor, isMock, onFav }) {
               e.stopPropagation();
               handleViewProfile();
             }}
-            className="btn-shine px-5 py-2 border border-[#00288e] text-[#00288e] hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 rounded-lg text-sm font-semibold transition-all"
+            className="btn-shine whitespace-nowrap shrink-0 px-5 py-2 border border-[#00288e] text-[#00288e] hover:text-white hover:border-transparent hover:bg-gradient-to-r hover:from-[#00288e] hover:to-[#3a6fe0] hover:-translate-y-0.5 rounded-lg text-sm font-semibold transition-all"
           >
             Xem Hồ Sơ
           </button>
@@ -248,6 +250,9 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   };
 
   const displayTutors = (isMock ? MOCK_TUTORS : tutors).filter(t => {
+    // 0. Exclude current user if they are a tutor
+    if (user && (t.user_id === user.id || t.id === user.id)) return false;
+
     // 1. Max price
     const matchPrice = !maxPrice || !t.hourly_rate || Number(t.hourly_rate) <= maxPrice * 1000 || Number(t.hourly_rate) <= maxPrice;
     
@@ -300,9 +305,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
           </nav>
           <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
-                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
-              </a>
+              <CartButton />
             )}
             {user ? (
               <button

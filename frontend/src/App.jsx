@@ -34,6 +34,7 @@ import CartPage from './pages/CartPage'
 import CompleteStudentProfile from './pages/CompleteStudentProfile'
 import MyAiCases from './pages/MyAiCases'
 import { useAuth } from './AuthContext'
+import { API_BASE_URL } from './config';
 
 const subjects = [
   { name: 'Toán Học', icon: 'calculate' },
@@ -228,7 +229,7 @@ const feedbackData = [
   }
 ];
 // ─── Home Page ────────────────────────────────────────────────────────────────
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API_BASE = API_BASE_URL
 
 function formatTimeAgo(dateStr) {
   if (!dateStr) return ''
@@ -237,6 +238,14 @@ function formatTimeAgo(dateStr) {
   if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`
   if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`
   return `${Math.floor(diff / 86400)} ngày trước`
+}
+
+// Giá/giờ: >=1000 coi là VND, <1000 là data test USD cũ, 0/null = thỏa thuận
+function fmtHourlyRate(val) {
+  const n = Number(val)
+  if (!n) return 'Thỏa thuận'
+  if (n >= 1000) return new Intl.NumberFormat('vi-VN').format(n) + 'đ'
+  return `$${n}`
 }
 
 // Map 1 dòng gia sư từ /api/tutors → shape mà card "Gia Sư Nổi Bật" cần
@@ -291,6 +300,34 @@ function HomePage({ onGoSignIn }) {
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Hiệu ứng xuất hiện khi cuộn tới (fade + slide up, stagger cho grid).
+  // Dùng scroll + getBoundingClientRect thay vì IntersectionObserver để
+  // chạy được cả trong webview/iframe không phát intersection event.
+  useEffect(() => {
+    const els = Array.from(document.querySelectorAll('.reveal'))
+    if (els.length === 0) return
+    // Check trực tiếp (không rAF — rAF bị throttle trong webview/tab nền)
+    const check = () => {
+      const vh = window.innerHeight
+      els.forEach(el => {
+        if (el.classList.contains('is-visible')) return
+        if (el.getBoundingClientRect().top < vh - 60) el.classList.add('is-visible')
+      })
+    }
+    check() // hiện ngay những phần đã nằm trong viewport khi tải trang
+    // Check lại sau khi data async (gia sư nổi bật, review) về làm đổi layout
+    const t1 = setTimeout(check, 600)
+    const t2 = setTimeout(check, 1800)
+    window.addEventListener('scroll', check, { passive: true })
+    window.addEventListener('resize', check)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+      window.removeEventListener('scroll', check)
+      window.removeEventListener('resize', check)
+    }
   }, [])
 
   const reviewsToShow = liveReviews.length > 0 ? liveReviews : feedbackData
@@ -470,8 +507,11 @@ function HomePage({ onGoSignIn }) {
 
         <section className="section section-subjects">
           <div className="container">
-            <h2>Môn Học Phổ Biến</h2>
-            <div className="subject-grid">
+            <div className="reveal">
+              <p className="section-eyebrow">Khám phá</p>
+              <h2>Môn Học Phổ Biến</h2>
+            </div>
+            <div className="subject-grid reveal reveal-stagger">
               {subjects.map((item) => (
                 <a href="#" onClick={(e) => e.preventDefault()} className="subject-card" key={item.name}>
                   <span className="subject-icon material-symbols-outlined">
@@ -486,15 +526,18 @@ function HomePage({ onGoSignIn }) {
 
         <section className="section section-tutors">
           <div className="container">
-            <div className="section-head">
-              <h2>Gia Sư Nổi Bật</h2>
+            <div className="section-head reveal">
+              <div>
+                <p className="section-eyebrow">Đội ngũ hàng đầu</p>
+                <h2>Gia Sư Nổi Bật</h2>
+              </div>
               <a href="#/find-tutors" className="see-all">
                 Xem tất cả
                 <span className="material-symbols-outlined">arrow_forward</span>
               </a>
             </div>
 
-            <div className="tutor-grid">
+            <div className="tutor-grid reveal reveal-stagger">
               {featuredToShow.map((tutor) => (
                 <article className="tutor-card" key={tutor.id}>
                   <div className="tutor-top">
@@ -531,10 +574,15 @@ function HomePage({ onGoSignIn }) {
 
                   <p className="desc">{tutor.description}</p>
                   <div className="tutor-foot">
-                    <p className="price">
-                      <strong>${tutor.rate}</strong>
-                      <span>/giờ</span>
-                    </p>
+                    {(() => {
+                      const rate = fmtHourlyRate(tutor.rate)
+                      return (
+                        <p className="price">
+                          <strong>{rate}</strong>
+                          {rate !== 'Thỏa thuận' && <span>/giờ</span>}
+                        </p>
+                      )
+                    })()}
                     <button
                       type="button"
                       className="btn btn-outline"
@@ -548,6 +596,7 @@ function HomePage({ onGoSignIn }) {
                       }}
                     >
                       Xem Hồ Sơ
+                      <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
                     </button>
                   </div>
                 </article>
@@ -579,7 +628,8 @@ function HomePage({ onGoSignIn }) {
                 animation-play-state: paused;
             }
           `}</style>
-          <div className="max-w-[1280px] mx-auto px-6 mb-10">
+          <div className="max-w-[1280px] mx-auto px-6 mb-10 reveal">
+            <p className="section-eyebrow">Phản hồi thật</p>
             <h2 className="text-3xl font-bold text-[#191c1e]">Cộng đồng chúng tôi nói gì</h2>
             <p className="text-[#444653] mt-2">Trải nghiệm thực tế từ học sinh và phụ huynh trên toàn thế giới.</p>
           </div>
@@ -632,6 +682,32 @@ function HomePage({ onGoSignIn }) {
                   </div>
                 )
               })}
+            </div>
+          </div>
+        </section>
+
+        {/* CTA cuối trang */}
+        <section className="section cta-band">
+          <div className="container">
+            <div className="cta-inner reveal">
+              <span className="cta-glow cta-glow-1" aria-hidden="true" />
+              <span className="cta-glow cta-glow-2" aria-hidden="true" />
+              <div className="cta-copy">
+                <h2>Sẵn sàng chinh phục mục tiêu học tập?</h2>
+                <p>
+                  Hàng trăm gia sư đã được xác minh đang chờ đồng hành cùng bạn —
+                  buổi học đầu tiên có thể bắt đầu ngay tuần này.
+                </p>
+              </div>
+              <div className="cta-actions">
+                <button type="button" className="btn cta-btn-light" onClick={() => { window.location.hash = '/find-tutors' }}>
+                  Tìm gia sư ngay
+                  <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+                </button>
+                <button type="button" className="btn cta-btn-ghost" onClick={() => { window.location.hash = '/become-tutor' }}>
+                  Trở thành gia sư
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -1038,7 +1114,7 @@ function App() {
   // ── Route: Course Detail (protected) ──
   if (routeName === 'courseplayer') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
-    return <CoursePlayer courseId={route.id} onGoHome={() => navigateTo('home')} />
+    return <CoursePlayer courseId={route.id} onGoHome={() => navigateTo('mycourses')} />
   }
 
   if (routeName === 'coursedetail') {

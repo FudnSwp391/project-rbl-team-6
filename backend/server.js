@@ -12,6 +12,13 @@ const { generateQuizQuestions, chatWithAI, gradeEssayAnswer, suggestTutors } = r
 const crypto = require("crypto");
 const moment = require("moment");
 const querystring = require("qs");
+const {
+  PLATFORM_COMMISSION_RATE, COMMISSION_POLICY_VERSION, calculateCommissionSplit,
+  REFUND_POLICY_VERSION, getCourseRefundDecision, getLessonRefundDecision,
+  ATTENDANCE_POLICY_VERSION, ATTENDANCE_ABSENT_GRACE_MINUTES, getAttendanceSettlement,
+  WITHDRAWAL_POLICY_VERSION, MIN_WITHDRAWAL_AMOUNT, normalizeWithdrawalAmount, sanitizeBankText,
+  lessonDateStr, lessonStartFrom, lessonEndFrom, parseMethodSupport, parseBookingStartDateTime,
+} = require("./utils/businessRules");
 
 dotenv.config();
 
@@ -30,8 +37,10 @@ app.use(cors({
     return cb(new Error("Not allowed by CORS"));
   },
 }));
-app.use(express.json({ limit: '500mb' }));
-app.use(express.urlencoded({ limit: '500mb', extended: true }));
+// File upload đi qua presigned URL (Supabase) hoặc multer — JSON body chỉ chứa
+// metadata nên 25mb là quá đủ, tránh nhận payload khổng lồ vào bộ nhớ.
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
 // ΓöÇΓöÇΓöÇ Helper: tß║ío JWT token ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 function createToken(user) {
@@ -638,6 +647,7 @@ async function runPendingAiCases({ triggeredBy = 'cron', adminId = null } = {}) 
          FROM disputes d
          LEFT JOIN bookings b ON b.id = d.booking_id
         WHERE d.status = 'OPEN'
+          AND d.withdrawn_at IS NULL
           AND d.created_at <= NOW() - make_interval(hours => $1::int)
           AND NOT EXISTS (SELECT 1 FROM ai_case_resolutions r WHERE r.dispute_id = d.id)
         ORDER BY d.created_at ASC
@@ -896,7 +906,7 @@ async function collectTransactionCopilotContext(transactionId) {
 
 async function collectPageCopilotContext(pageKey, pageContext) {
   const ctx = { entity_type: 'PAGE', entity_id: null, page_key: pageKey || null, identity: {}, metrics: {}, notes: [] };
-  ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN'`);
+  ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN' AND withdrawn_at IS NULL`);
   ctx.metrics.pending_tutors   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='pending'`);
   ctx.metrics.appealed_ai_cases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`);
   ctx.metrics.failed_tx_24h    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE status='FAILED' AND created_at > NOW() - INTERVAL '24 hours'`);
@@ -1596,7 +1606,7 @@ async function analyzeWithdrawalRisk(tutorId, period) {
   const wr = await copilotSafeRows(`SELECT COUNT(*)::int n, COALESCE(SUM(amount),0)::numeric total FROM withdrawal_requests WHERE tutor_id=$1 AND requested_at > $2`, [tutorId, period.start]);
   const wcount = wr.length ? Number(wr[0].n) : 0, wtotal = wr.length ? Number(wr[0].total) : 0;
   if (!wcount) return null;
-  const activeDisputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE tutor_id=$1 AND status='OPEN'`, [tutorId]);
+  const activeDisputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE tutor_id=$1 AND status='OPEN' AND withdrawn_at IS NULL`, [tutorId]);
   const releases = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND escrow_released_at > $2`, [tutorId, period.start]);
   const extPay = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
   const distinctStudents = await copilotSafeCount(`SELECT COUNT(DISTINCT student_id)::int n FROM bookings WHERE tutor_id=$1 AND created_at > $2`, [tutorId, period.start]);
@@ -1929,7 +1939,7 @@ const ANALYTICS_TEMPLATES = [
     requiredTables: ['withdrawal_requests', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'pending_amount',
     columns: ['tutor_id', 'tutor_name', 'pending_amount', 'active_disputes', 'fraud_reports', 'external_payment_reports'],
     sql: `SELECT w.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(w.amount),0)::numeric AS pending_amount,
-                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=w.tutor_id AND d.status='OPEN') AS active_disputes,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=w.tutor_id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS active_disputes,
                  (SELECT COUNT(*)::int FROM fraud_intel_reports f WHERE f.tutor_id=w.tutor_id AND f.created_at > NOW()-make_interval(days=>$1::int)) AS fraud_reports,
                  (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=w.tutor_id AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT') AS external_payment_reports
             FROM withdrawal_requests w LEFT JOIN users u ON u.id=w.tutor_id
@@ -2224,10 +2234,21 @@ const NOTIFICATION_TEMPLATES = {
     body: 'Admin xem xét và phán quyết gia sư không vi phạm.',
     icon: 'gavel', priority: 'normal',
   }),
+  dispute_withdrawn: d => ({
+    subject: '[EduX] Khiếu nại đã được rút', title: d.forAdmin ? 'Học sinh đã rút khiếu nại' : 'Khiếu nại đã được rút',
+    body: d.forAdmin
+      ? `${d.reporterName || 'Học sinh'} đã rút khiếu nại, không cần xử lý nữa.`
+      : 'Học sinh đã rút khiếu nại đối với bạn. Không cần phản hồi thêm.',
+    icon: 'undo', priority: 'normal',
+  }),
   booking_approved: d => ({
-    subject: '[EduX] Lịch học đã được xác nhận', title: 'Lịch học đã được xác nhận — Tiền tạm giữ',
-    body: `Gia sư đã duyệt lịch học. ${fmtVnd(d.amount)} đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`,
+    subject: '[EduX] Lịch học đã được xác nhận',
+    title: Number(d.amount) > 0 ? 'Lịch học đã được xác nhận — Tiền tạm giữ' : 'Lịch học đã được xác nhận',
+    body: Number(d.amount) > 0
+      ? `Gia sư đã duyệt lịch học. ${fmtVnd(d.amount)} đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`
+      : 'Gia sư đã duyệt lịch học của bạn. Hẹn gặp bạn trong buổi học!',
     icon: 'lock', priority: 'normal',
+    ctaLabel: 'Xem lịch học', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
   }),
   booking_declined: d => ({
     subject: '[EduX] Lịch học bị từ chối', title: 'Hoàn tiền lịch học bị từ chối',
@@ -2317,10 +2338,99 @@ const NOTIFICATION_TEMPLATES = {
     body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
     icon: 'block', priority: 'critical',
   }),
+  booking_new_request: d => ({
+    subject: '[EduX] Lịch học mới đang chờ bạn duyệt', title: 'Lịch học mới chờ duyệt',
+    body: `Học sinh ${d.studentName || ''} vừa đặt lịch ${d.subject ? `môn ${d.subject} ` : ''}lúc ${d.timeSlot || ''} ngày ${d.date || ''}${d.method ? ` (hình thức ${d.method === 'online' ? 'Online' : 'Offline'})` : ''}. Vui lòng duyệt trong 24 giờ — quá hạn hệ thống sẽ tự hủy và hoàn tiền cho học sinh.`,
+    icon: 'event', priority: 'high',
+    ctaLabel: 'Duyệt lịch ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  lesson_reminder: d => ({
+    subject: d.hoursLeft <= 1 ? '[EduX] Buoi hoc bat dau trong 1 gio' : '[EduX] Nhac lich: buoi hoc trong 24h toi',
+    title: d.forTutor
+      ? (d.hoursLeft <= 1 ? 'Sắp đến giờ dạy (còn ~1 tiếng)' : 'Nhắc lịch: buổi dạy trong 24h tới')
+      : (d.hoursLeft <= 1 ? 'Sắp đến giờ học (còn ~1 tiếng)' : 'Nhắc lịch: buổi học trong 24h tới'),
+    body: d.message || '',
+    icon: 'alarm', priority: d.hoursLeft <= 1 ? 'high' : 'normal',
+    ctaLabel: d.meetLink ? 'Vào phòng học' : null, ctaUrl: d.meetLink || null,
+  }),
+  session_info_updated: d => ({
+    subject: '[EduX] Gia su da cap nhat thong tin buoi hoc', title: 'Thông tin buổi học đã được cập nhật',
+    body: `Gia sư ${d.tutorName || ''} vừa cập nhật thông tin buổi học ${d.subject ? `môn ${d.subject} ` : ''}ngày ${d.date || ''}.${d.mode === 'online' ? (d.meetLink ? `\nHình thức: Online — link phòng học đã đính kèm bên dưới.` : '\nHình thức: Online.') : d.mode === 'offline' ? `\nHình thức: Offline${d.location ? ` — địa điểm: ${d.location}` : ''}.` : ''}${d.topic ? `\nChủ đề: ${d.topic}` : ''}`,
+    icon: 'edit_calendar', priority: 'normal',
+    ctaLabel: d.meetLink ? 'Vào phòng học' : 'Xem lịch học', ctaUrl: d.meetLink || `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  method_change_requested: d => ({
+    subject: '[EduX] Hoc sinh xin doi hinh thuc hoc', title: 'Học sinh xin đổi hình thức học',
+    body: `${d.studentName || 'Học sinh'} xin đổi buổi học ngày ${d.date || ''} sang ${d.requested === 'online' ? 'Online' : 'Offline'}.${d.reason ? `\nLý do: ${d.reason}` : ''}\nVui lòng vào Lịch trình để đồng ý hoặc từ chối.`,
+    icon: 'swap_horiz', priority: 'high',
+    ctaLabel: 'Xem yêu cầu', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  method_change_resolved: d => ({
+    subject: d.accepted ? '[EduX] Yeu cau doi hinh thuc duoc chap nhan' : '[EduX] Yeu cau doi hinh thuc bi tu choi',
+    title: d.accepted ? 'Gia sư đồng ý đổi hình thức học' : 'Gia sư từ chối đổi hình thức học',
+    body: d.accepted
+      ? `Buổi học ngày ${d.date || ''} sẽ chuyển sang ${d.requested === 'online' ? 'Online — gia sư sẽ gắn link phòng học trước giờ' : 'Offline'}.`
+      : `Buổi học ngày ${d.date || ''} giữ nguyên hình thức cũ. Bạn có thể nhắn tin trao đổi thêm với gia sư.`,
+    icon: d.accepted ? 'check_circle' : 'cancel', priority: 'normal',
+  }),
+  welcome_user: d => ({
+    subject: '[EduX] Chao mung ban den voi EduX', title: `Chào mừng ${d.name || 'bạn'} đến với EduX!`,
+    body: `Tài khoản của bạn đã sẵn sàng. Với EduX bạn có thể:\n• Tìm gia sư theo môn học, hình thức Online/Offline\n• Đặt lịch học thử miễn phí trước khi quyết định\n• Thanh toán an toàn — tiền chỉ chuyển cho gia sư sau khi buổi học hoàn thành\n\nChúc bạn học tốt!`,
+    icon: 'celebration', priority: 'normal',
+    ctaLabel: 'Tìm gia sư ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/find-tutors`,
+  }),
+  wallet_topup_success: d => ({
+    subject: '[EduX] Nap tien thanh cong', title: 'Nạp tiền thành công',
+    body: `Bạn đã nạp ${fmtVnd(d.amount)} vào ví EduX qua ${d.provider || 'VNPAY'}.${d.txnRef ? `\nMã giao dịch: ${d.txnRef}` : ''}\nSố tiền đã sẵn sàng để đặt lịch học hoặc mua khóa học.`,
+    icon: 'account_balance_wallet', priority: 'high',
+    ctaLabel: 'Xem ví của tôi', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  admin_new_tutor_profile: d => ({
+    subject: '[EduX][Admin] Ho so gia su moi cho duyet', title: 'Hồ sơ gia sư mới chờ duyệt',
+    body: `${d.tutorName || 'Một gia sư'} vừa nộp hồ sơ${d.subjects ? ` (môn: ${d.subjects})` : ''}. Vui lòng vào trang quản trị để xét duyệt.`,
+    icon: 'assignment_ind', priority: 'high',
+    ctaLabel: 'Xét duyệt ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/admin`,
+  }),
+  admin_new_withdrawal: d => ({
+    subject: '[EduX][Admin] Yeu cau rut tien moi', title: 'Yêu cầu rút tiền mới',
+    body: `Gia sư ${d.tutorName || ''} yêu cầu rút ${fmtVnd(d.amount)}. Vui lòng xử lý trong trang quản trị.`,
+    icon: 'account_balance', priority: 'high',
+    ctaLabel: 'Xử lý ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/admin`,
+  }),
 };
 
 // Renders a template into {subject,title,body,htmlBody,icon,priority}. Unknown
 // keys fall back to a generic safe template rather than throwing.
+// Khung HTML chung cho mọi email outbox: header gradient EduX, nút CTA tùy
+// chọn, footer có link hủy đăng ký. Mọi giá trị text ĐÃ được escape trước khi
+// gọi (title/body qua sanitize + escapeHtml, url do server sinh).
+function buildEmailHtml({ title, body, ctaLabel, ctaUrl, unsubUrl }) {
+  const htmlTitle = escapeHtml(title || 'Thông báo');
+  const htmlBodyText = escapeHtml(body || '');
+  const ctaBlock = (ctaLabel && ctaUrl) ? `
+<table cellpadding="0" cellspacing="0" style="margin:24px 0 4px;"><tr><td align="center" style="border-radius:10px;background:linear-gradient(120deg,#00288e,#2747c4);">
+<a href="${escapeHtml(ctaUrl)}" style="display:inline-block;padding:13px 32px;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;">${escapeHtml(ctaLabel)}</a>
+</td></tr></table>` : '';
+  const unsubBlock = unsubUrl
+    ? `<p style="margin:8px 0 0;color:#9a9bab;font-size:11px;">Không muốn nhận email thông báo? <a href="${escapeHtml(unsubUrl)}" style="color:#757684;">Hủy đăng ký</a></p>`
+    : '';
+  return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:32px 16px;"><tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+<tr><td style="background:linear-gradient(135deg,#00288e 0%,#1e40af 100%);padding:28px 32px;">
+<h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.5px;">EduX</h1>
+<p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:13px;">Nền tảng kết nối gia sư chuyên nghiệp</p></td></tr>
+<tr><td style="padding:32px;">
+<h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${htmlTitle}</h2>
+<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${htmlBodyText}</p>
+${ctaBlock}</td></tr>
+<tr><td style="background:#f8f9fb;padding:16px 32px;border-top:1px solid #e1e2e4;">
+<p style="margin:0;color:#757684;font-size:12px;">© EduX — mọi thắc mắc liên hệ <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
+${unsubBlock}</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
 function renderNotificationTemplate(templateKey, data = {}) {
   const fn = NOTIFICATION_TEMPLATES[templateKey];
   const base = fn ? fn(data) : {
@@ -2330,18 +2440,19 @@ function renderNotificationTemplate(templateKey, data = {}) {
   const title = sanitizeNotificationText(base.title, 200) || 'Thông báo';
   const body  = sanitizeNotificationText(base.body, 1000) || '';
   const subject = sanitizeNotificationText(base.subject, 200) || `[EduX] ${title}`;
-  const htmlTitle = escapeHtml(title);
-  const htmlBodyText = escapeHtml(body);
-  const htmlBody = `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/></head>
-<body style="margin:0;padding:0;background:#f8f9fb;font-family:Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:32px 16px;"><tr><td align="center">
-<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);">
-<tr><td style="background:#00288e;padding:24px 32px;"><h1 style="margin:0;color:#fff;font-size:20px;">EduX</h1></td></tr>
-<tr><td style="padding:32px;"><h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${htmlTitle}</h2>
-<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${htmlBodyText}</p></td></tr>
-<tr><td style="background:#f8f9fb;padding:16px 32px;border-top:1px solid #e1e2e4;"><p style="margin:0;color:#757684;font-size:12px;">EduX — support@edux.com</p></td></tr>
-</table></td></tr></table></body></html>`;
-  return { subject, title, body, htmlBody, icon: base.icon || 'notifications', priority: base.priority || 'normal' };
+  const ctaLabel = base.ctaLabel || data.ctaLabel || null;
+  const ctaUrl   = base.ctaUrl   || data.ctaUrl   || null;
+  const htmlBody = buildEmailHtml({ title, body, ctaLabel, ctaUrl });
+  return {
+    subject, title, body, htmlBody,
+    icon: base.icon || 'notifications', priority: base.priority || 'normal',
+    ctaLabel, ctaUrl,
+  };
+}
+
+// Token hủy đăng ký email — nhúng vào footer mọi email outbox
+function makeUnsubToken(userId) {
+  return jwt.sign({ userId, purpose: 'email_unsub' }, jwtSecret, { expiresIn: '180d' });
 }
 
 // Insert an in-app notification row. Idempotent via idempotency_key (ON
@@ -2372,6 +2483,15 @@ async function createInAppNotification(clientOrPool, payload) {
 // idempotency_key. Returns the outbox row id, or null if duplicate.
 async function queueEmailNotification(clientOrPool, payload) {
   const rendered = renderNotificationTemplate(payload.templateKey, payload.data || {});
+  // Gắn link hủy đăng ký cá nhân hóa vào footer khi biết userId
+  if (payload.userId) {
+    const backendOrigin = process.env.BACKEND_ORIGIN || `http://localhost:${process.env.PORT || 5000}`;
+    const unsubUrl = `${backendOrigin}/api/email/unsubscribe?token=${encodeURIComponent(makeUnsubToken(payload.userId))}`;
+    rendered.htmlBody = buildEmailHtml({
+      title: rendered.title, body: rendered.body,
+      ctaLabel: rendered.ctaLabel, ctaUrl: rendered.ctaUrl, unsubUrl,
+    });
+  }
   const r = await clientOrPool.query(
     `INSERT INTO notification_outbox
        (user_id, email, channel, event_type, template_key, subject, title, body, html_body,
@@ -2408,11 +2528,13 @@ async function notifyUser(clientOrPool, payload) {
 
   if (channels.includes('EMAIL') && (payload.email || payload.userId)) {
     let email = payload.email;
-    if (!email && payload.userId) {
-      const u = await clientOrPool.query('SELECT email FROM users WHERE id=$1', [payload.userId]);
-      email = u.rows[0]?.email || null;
+    let optOut = false;
+    if (payload.userId) {
+      const u = await clientOrPool.query('SELECT email, email_opt_out FROM users WHERE id=$1', [payload.userId]);
+      if (!email) email = u.rows[0]?.email || null;
+      optOut = !!u.rows[0]?.email_opt_out;
     }
-    if (email) {
+    if (email && !optOut) {
       const idemKey = payload.idempotencyKey ? `email:${payload.idempotencyKey}` : null;
       result.outboxId = await queueEmailNotification(clientOrPool, {
         ...payload, email, notificationId: result.notificationId, idempotencyKey: idemKey,
@@ -2535,11 +2657,16 @@ async function processNotificationOutbox(limit = 20) {
         continue;
       }
       try {
+        // EMAIL_DEMO_REDIRECT: hộp thư chung cho demo — mọi email đổ về 1 địa
+        // chỉ, tiêu đề ghi kèm người nhận gốc. Bỏ biến env này để gửi thật.
+        const demoRedirect = (process.env.EMAIL_DEMO_REDIRECT || '').trim();
         const info = await emailTransporter.sendMail({
           from: process.env.SMTP_FROM || process.env.SMTP_USER,
-          to: row.email,
+          to: demoRedirect || row.email,
           replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
-          subject: row.subject || row.title || 'EduX',
+          subject: demoRedirect
+            ? `${row.subject || row.title || 'EduX'} [gửi cho: ${row.email}]`
+            : (row.subject || row.title || 'EduX'),
           text: row.body,
           html: row.html_body || undefined,
           headers: { 'X-Mailer': 'EduX Notification System' },
@@ -2811,6 +2938,15 @@ app.post("/api/auth/verify-register-otp", async (req, res) => {
     // Xóa record OTP
     await pool.query("DELETE FROM registration_otps WHERE email = $1", [userData.email]);
 
+    // Email chào mừng (qua outbox — không chặn response đăng ký)
+    await safeNotifyUser(pool, {
+      userId: newUser.id, type: 'welcome',
+      channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'welcome_user', eventType: 'welcome_user',
+      idempotencyKey: `welcome:${newUser.id}`,
+      data: { name: newUser.full_name },
+    });
+
     return res.status(201).json({
       token,
       user: {
@@ -2824,6 +2960,24 @@ app.post("/api/auth/verify-register-otp", async (req, res) => {
   } catch (error) {
     console.error("Verify OTP error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ─── GET /api/email/unsubscribe?token= ── hủy đăng ký email từ footer ────────
+app.get("/api/email/unsubscribe", async (req, res) => {
+  const page = (msg, ok) => `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/><title>EduX</title></head>
+<body style="margin:0;font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fb;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+<div style="background:#fff;border-radius:16px;padding:40px;max-width:420px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+<h1 style="margin:0 0 8px;color:#00288e;font-size:22px;">EduX</h1>
+<p style="margin:0;color:${ok ? '#15803d' : '#b91c1c'};font-size:15px;line-height:1.6;">${msg}</p>
+</div></body></html>`;
+  try {
+    const decoded = jwt.verify(String(req.query.token || ''), jwtSecret);
+    if (decoded.purpose !== 'email_unsub' || !decoded.userId) throw new Error('bad purpose');
+    await pool.query('UPDATE users SET email_opt_out = TRUE WHERE id = $1', [decoded.userId]);
+    return res.send(page('Đã hủy đăng ký email thông báo. Bạn vẫn nhận được thông báo trên web và các email bảo mật (OTP).', true));
+  } catch {
+    return res.status(400).send(page('Liên kết hủy đăng ký không hợp lệ hoặc đã hết hạn.', false));
   }
 });
 
@@ -3062,14 +3216,23 @@ app.post("/api/auth/google", async (req, res) => {
 // PUT /api/tutor/availability
 app.put("/api/tutor/availability", verifyToken, async (req, res) => {
   try {
-    const { availability, slot_duration_mins } = req.body;
+    const { availability, monthly_availability, slot_duration_mins } = req.body;
     // Validate slot_duration_mins: chỉ chấp nhận 60, 120, 180
     const validDurations = [60, 120, 180];
     const duration = validDurations.includes(Number(slot_duration_mins)) ? Number(slot_duration_mins) : 60;
-    await pool.query(
-      "UPDATE tutor_profiles SET availability = $1, slot_duration_mins = $2 WHERE user_id = $3",
-      [availability, duration, req.user.userId]
-    );
+    
+    // Nếu client không gửi monthly_availability, giữ nguyên giá trị cũ
+    if (monthly_availability !== undefined) {
+      await pool.query(
+        "UPDATE tutor_profiles SET availability = $1, monthly_availability = $2, slot_duration_mins = $3 WHERE user_id = $4",
+        [availability, monthly_availability, duration, req.user.userId]
+      );
+    } else {
+      await pool.query(
+        "UPDATE tutor_profiles SET availability = $1, slot_duration_mins = $2 WHERE user_id = $3",
+        [availability, duration, req.user.userId]
+      );
+    }
     return res.json({ message: "Cập nhật lịch trống thành công.", slot_duration_mins: duration });
   } catch (error) {
     console.error("PUT /api/tutor/availability error:", error);
@@ -3086,17 +3249,18 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
 
     // Get availability + slot_duration_mins from tutor_profiles (try both user_id and profile id)
     let result = await pool.query(
-      "SELECT availability, slot_duration_mins FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
+      "SELECT availability, monthly_availability, slot_duration_mins FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
       [tutorId]
     );
     if (!result.rows.length) {
       result = await pool.query(
-        "SELECT availability, slot_duration_mins FROM tutor_profiles WHERE id::text = $1 LIMIT 1",
+        "SELECT availability, monthly_availability, slot_duration_mins FROM tutor_profiles WHERE id::text = $1 LIMIT 1",
         [tutorId]
       );
     }
 
     const availability = result.rows.length ? (result.rows[0].availability || {}) : {};
+    const monthly_availability = result.rows.length ? (result.rows[0].monthly_availability || {}) : {};
     const slot_duration_mins = result.rows.length ? (result.rows[0].slot_duration_mins || 60) : 60;
 
     // Get booked slots for the date range
@@ -3119,7 +3283,7 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
       }
     }
 
-    return res.json({ availability, bookedSlots, slot_duration_mins });
+    return res.json({ availability, monthly_availability, bookedSlots, slot_duration_mins });
   } catch (error) {
     console.error("GET /api/tutors/:id/availability error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
@@ -3218,6 +3382,86 @@ app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
   }
 });
 
+// Báo mọi admin có hồ sơ gia sư mới / nộp lại chờ duyệt (chuông + email,
+// idempotent theo hồ sơ + ngày + admin để không spam khi bấm lưu nhiều lần)
+async function notifyAdminsTutorProfilePending(profile, tutorName) {
+  try {
+    const admins = await pool.query(
+      `SELECT id FROM users WHERE role = 'admin' AND COALESCE(is_banned, FALSE) = FALSE`
+    );
+    const day = new Date().toISOString().slice(0, 10);
+    for (const admin of admins.rows) {
+      await safeNotifyUser(pool, {
+        userId: admin.id, type: 'admin_alert',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'admin_new_tutor_profile', eventType: 'admin_new_tutor_profile',
+        refId: profile.id, refType: 'tutor_profile',
+        idempotencyKey: `admin_new_tutor:${profile.id}:${day}:${admin.id}`,
+        data: { tutorName: tutorName || '', subjects: profile.subjects || '' },
+      });
+    }
+  } catch (err) {
+    console.error('[notifyAdminsTutorProfilePending] non-fatal:', err.message);
+  }
+}
+
+// PUT /api/tutor/instant-settings
+app.put('/api/tutor/instant-settings', verifyToken, requireTutor, async (req, res) => {
+  try {
+    let { instant_price, instant_price_unit, instant_duration_mins, availability_status } = req.body;
+    if (instant_price === '') instant_price = null;
+    const durationMins = parseInt(instant_duration_mins) || 30;
+    // Ensure column exists (idempotent)
+    await pool.query(`ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS instant_duration_mins INT DEFAULT 30`);
+    await pool.query(
+      `UPDATE tutor_profiles 
+       SET instant_price = $1, 
+           instant_price_unit = $2, 
+           instant_duration_mins = $3,
+           availability_status = COALESCE($4, availability_status),
+           updated_at = NOW()
+       WHERE user_id = $5`,
+      [instant_price, instant_price_unit, durationMins, availability_status, req.user.userId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('PUT /api/tutor/instant-settings error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// GET /api/tutor/instant-pending — Gia sư poll kiểm tra có yêu cầu Học Ngay đang chờ không
+// Dùng khi Supabase Realtime không khả dụng ở frontend
+app.get('/api/tutor/instant-pending', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.id, b.student_id, b.student_name, b.subject, b.lesson_fee,
+              b.duration_mins, b.note, b.created_at,
+              u.full_name AS student_full_name, u.picture AS student_picture
+       FROM bookings b
+       LEFT JOIN users u ON u.id = b.student_id
+       WHERE b.tutor_id = $1
+         AND b.booking_type = 'Instant'
+         AND b.status = 'Pending'
+         AND b.created_at > NOW() - INTERVAL '70 seconds'
+       ORDER BY b.created_at DESC
+       LIMIT 1`,
+      [req.user.userId]
+    );
+    const booking = result.rows[0] || null;
+    if (booking) {
+      // Tính số giây còn lại trước khi timeout
+      const elapsed = Math.floor((Date.now() - new Date(booking.created_at).getTime()) / 1000);
+      booking.seconds_left = Math.max(0, 60 - elapsed);
+      booking.student_name = booking.student_name || booking.student_full_name || 'Học viên';
+    }
+    res.json({ booking });
+  } catch (err) {
+    console.error('GET /api/tutor/instant-pending error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 // PATCH /api/tutor/profile/submit — nộp lại hồ sơ cho admin duyệt
 app.patch("/api/tutor/profile/submit", verifyToken, async (req, res) => {
   try {
@@ -3226,6 +3470,7 @@ app.patch("/api/tutor/profile/submit", verifyToken, async (req, res) => {
       [req.user.userId]
     );
     if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy hồ sơ gia sư." });
+    await notifyAdminsTutorProfilePending(result.rows[0], req.user.name);
     return res.json(result.rows[0]);
   } catch (error) {
     console.error("Submit tutor profile error:", error);
@@ -3390,6 +3635,12 @@ app.post(
           }
         }
       }
+
+      // Báo admin có hồ sơ chờ duyệt (mọi lần lưu đều đưa status về pending)
+      await notifyAdminsTutorProfilePending(
+        result.rows[0],
+        display_name || `${first_name || ''} ${last_name || ''}`.trim() || req.user.name
+      );
 
       return res.status(200).json(result.rows[0]);
     } catch (error) {
@@ -4033,7 +4284,7 @@ app.get("/api/admin/analytics/dashboard/stats", verifyToken, requireAdmin, async
       `),
 
       // 6. Open disputes requiring admin attention
-      pool.query("SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'"),
+      pool.query("SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN' AND withdrawn_at IS NULL"),
     ]);
 
     // COUNT fields: pg returns bigint as string → parseInt is safe.
@@ -6074,7 +6325,7 @@ app.get("/api/admin/transactions/refunds", verifyToken, requireAdmin, async (req
               d.created_at,
               d.resolved_at,
               d.target_type,
-              d.evidence_url,
+              d.evidence_urls,
               COALESCE(u.full_name, '')               AS user_name,
               COALESCE(u.email,     '')               AS user_email,
               COALESCE(c.title,     '')               AS course_title,
@@ -6137,7 +6388,7 @@ app.get("/api/admin/financial/overview", verifyToken, requireAdmin, async (req, 
       `),
       pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'SUCCESS'`),
       pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'FAILED'`),
-      pool.query(`SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'`),
+      pool.query(`SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN' AND withdrawn_at IS NULL`),
       // Internal deposits (no external gateway) ≈ tutor earnings released
       pool.query(`
         SELECT COALESCE(SUM(amount), 0) AS total
@@ -6530,7 +6781,22 @@ app.get('/api/exam-papers', verifyToken, async (req, res) => {
   try {
     const { grade, subject, year } = req.query;
     const studentId = req.user.userId;
-    let q = `SELECT ep.*, epa.id AS attempt_id, epa.status AS attempt_status, epa.score AS attempt_score FROM exam_papers ep LEFT JOIN exam_paper_attempts epa ON ep.id=epa.exam_paper_id AND epa.student_id=$1 WHERE ep.is_published=true`;
+    let q = `
+      SELECT ep.*, epa.id AS attempt_id, epa.status AS attempt_status, epa.score AS attempt_score 
+      FROM exam_papers ep 
+      LEFT JOIN exam_paper_attempts epa ON ep.id=epa.exam_paper_id AND epa.student_id=$1 
+      WHERE ep.is_published=true 
+        AND (
+          ep.uploaded_by IS NULL
+          OR (ep.assigned_students IS NOT NULL AND jsonb_array_length(ep.assigned_students) > 0 AND ep.assigned_students ? $1)
+          OR (
+            (ep.assigned_students IS NULL OR jsonb_array_length(ep.assigned_students) = 0)
+            AND ep.uploaded_by IN (
+              SELECT tutor_id FROM bookings WHERE student_id = $1 AND status = 'Approved'
+            )
+          )
+        )
+    `;
     const params = [studentId]; let idx=2;
     if (grade) { q+=` AND ep.grade=$${idx++}`; params.push(parseInt(grade)); }
     if (subject) { q+=` AND ep.subject ILIKE $${idx++}`; params.push(`%${subject}%`); }
@@ -6858,7 +7124,10 @@ app.get('/api/student/link-code', verifyToken, async (req, res) => {
     do { code=generateLinkCode(); tries++; } while (tries<10 && (await pool.query('SELECT id FROM student_link_codes WHERE code=$1',[code])).rows.length>0);
     const r = await pool.query('INSERT INTO student_link_codes (student_id,code) VALUES ($1,$2) RETURNING code,created_at', [studentId,code]);
     return res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+  } catch (e) { 
+    console.error('Error in link-code:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' }); 
+  }
 });
 
 // Student: view parents monitoring them
@@ -6915,11 +7184,11 @@ app.post('/api/parent/create-child', verifyToken, async (req, res) => {
     const parentId = req.user.userId;
     const { full_name, email, password, nickname } = req.body;
     if (!full_name?.trim()||!email?.trim()||!password) return res.status(400).json({ message: 'Vui lòng điền đầy đủ thông tin.' });
-    if (password.length<6) return res.status(400).json({ message: 'Mật khẩu phải ít nhất 6 ký tự.' });
+    if (password.length < 8) return res.status(400).json({ message: 'Mật khẩu phải có ít nhất 8 ký tự.' });
     const exists = await pool.query('SELECT id FROM users WHERE email=$1', [email.trim().toLowerCase()]);
     if (exists.rows.length) return res.status(409).json({ message: 'Email đã tồn tại. Dùng mã liên kết nếu đây là con bạn.' });
     const bcrypt = require('bcryptjs');
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, 12);
     const student = await pool.query(`INSERT INTO users (full_name,email,password_hash,role) VALUES ($1,$2,$3,'student') RETURNING id,full_name,email,role`, [full_name.trim(),email.trim().toLowerCase(),hash]);
     const s = student.rows[0];
     await pool.query('INSERT INTO parent_children (parent_id,student_id,nickname) VALUES ($1,$2,$3)', [parentId,s.id,nickname?.trim()||null]);
@@ -7227,35 +7496,53 @@ const chatUpload = multer({
   } catch (e) { console.error('chat_messages table error:', e.message); }
 })();
 
+// GET /api/messages/unread-count — Đếm tổng số tin nhắn chưa đọc
+app.get('/api/messages/unread-count', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await pool.query(
+      `SELECT count(*) AS n FROM chat_messages WHERE receiver_id = $1 AND is_read = false`,
+      [userId]
+    );
+    return res.json({ count: parseInt(result.rows[0].n, 10) || 0 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
 // GET /api/chat/conversations — danh sách hội thoại
 app.get('/api/chat/conversations', verifyToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const result = await pool.query(`
-      SELECT DISTINCT ON (other_id)
-        other_id, other_name, other_email, other_picture, other_role,
-        last_message, last_msg_type, last_message_at, unread_count
-      FROM (
-        SELECT
-          CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END AS other_id,
-          CASE WHEN m.sender_id=$1 THEN ru.full_name  ELSE su.full_name  END AS other_name,
-          CASE WHEN m.sender_id=$1 THEN ru.email      ELSE su.email      END AS other_email,
-          CASE WHEN m.sender_id=$1 THEN ru.picture    ELSE su.picture    END AS other_picture,
-          CASE WHEN m.sender_id=$1 THEN ru.role       ELSE su.role       END AS other_role,
-          COALESCE(m.content, m.file_name, '[File]')  AS last_message,
-          m.msg_type                                   AS last_msg_type,
-          m.created_at                                 AS last_message_at,
-          (SELECT COUNT(*) FROM chat_messages um
-           WHERE um.sender_id != $1 AND um.receiver_id=$1 AND um.is_read=false
-             AND um.sender_id = CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END
-          ) AS unread_count
-        FROM chat_messages m
-        JOIN users su ON su.id=m.sender_id
-        JOIN users ru ON ru.id=m.receiver_id
-        WHERE m.sender_id=$1 OR m.receiver_id=$1
-        ORDER BY m.created_at DESC
-      ) sub
-      ORDER BY other_id, last_message_at DESC
+      SELECT * FROM (
+        SELECT DISTINCT ON (other_id)
+          other_id, other_name, other_email, other_picture, other_role,
+          last_message, last_msg_type, last_message_at, unread_count
+        FROM (
+          SELECT
+            CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END AS other_id,
+            CASE WHEN m.sender_id=$1 THEN ru.full_name  ELSE su.full_name  END AS other_name,
+            CASE WHEN m.sender_id=$1 THEN ru.email      ELSE su.email      END AS other_email,
+            CASE WHEN m.sender_id=$1 THEN ru.picture    ELSE su.picture    END AS other_picture,
+            CASE WHEN m.sender_id=$1 THEN ru.role       ELSE su.role       END AS other_role,
+            COALESCE(m.content, m.file_name, '[File]')  AS last_message,
+            m.msg_type                                   AS last_msg_type,
+            m.created_at                                 AS last_message_at,
+            (SELECT COUNT(*) FROM chat_messages um
+             WHERE um.sender_id != $1 AND um.receiver_id=$1 AND um.is_read=false
+               AND um.sender_id = CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END
+            ) AS unread_count
+          FROM chat_messages m
+          JOIN users su ON su.id=m.sender_id
+          JOIN users ru ON ru.id=m.receiver_id
+          WHERE m.sender_id=$1 OR m.receiver_id=$1
+          ORDER BY m.created_at DESC
+        ) sub
+        ORDER BY other_id, last_message_at DESC
+      ) final_sub
+      ORDER BY last_message_at DESC
     `, [userId]);
     return res.json({ conversations: result.rows });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -7501,6 +7788,22 @@ app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
+// PUT /api/chat/:otherId/read — đánh dấu đã đọc một hội thoại cụ thể
+app.put('/api/chat/:otherId/read', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { otherId } = req.params;
+    await pool.query(
+      `UPDATE chat_messages SET is_read=true WHERE sender_id=$1 AND receiver_id=$2 AND is_read=false`,
+      [otherId, userId]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
 // POST /api/chat — gửi tin nhắn text
 app.post('/api/chat', verifyToken, async (req, res) => {
   try {
@@ -7532,15 +7835,8 @@ app.post('/api/chat', verifyToken, async (req, res) => {
       [senderId, receiver_id, content.trim()]
     );
 
-    // Thêm thông báo cho người nhận (Batch 20.1: safeNotifyUser, IN_APP only)
-    await safeNotifyUser(pool, {
-      userId: receiver_id, type: 'new_message', channels: ['IN_APP'],
-      templateKey: 'chat_new_message', eventType: 'chat_new_message',
-      title: `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`,
-      body: content.trim(), icon: 'chat', refId: senderId, refType: 'chat',
-      sourceType: 'chat_message', sourceId: msg.rows[0].id, priority: 'low',
-      idempotencyKey: `chat_message:${msg.rows[0].id}:${receiver_id}`,
-    });
+    // Đã bỏ safeNotifyUser cho tin nhắn ở đây để tách riêng Notification và Messages.
+    // Frontend tự bắt event INSERT trên bảng chat_messages qua Supabase để hiện popup.
 
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -7718,13 +8014,13 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { title, subject, grade, duration_minutes, description, questions } = req.body;
+    const { title, subject, grade, duration_minutes, description, questions, assigned_students } = req.body;
     
     // Create exam_paper
     const insertPaperRes = await client.query(
-      `INSERT INTO exam_papers (title, subject, grade, duration_minutes, description, uploaded_by, total_questions)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [title, subject, grade, duration_minutes, description, req.user.userId, questions.length]
+      `INSERT INTO exam_papers (title, subject, grade, duration_minutes, description, uploaded_by, total_questions, assigned_students)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING *`,
+      [title, subject, grade, duration_minutes, description, req.user.userId, questions.length, JSON.stringify(assigned_students || [])]
     );
     const paper = insertPaperRes.rows[0];
 
@@ -7758,6 +8054,98 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
     res.status(500).json({ message: 'Server error' });
   } finally {
     client.release();
+  }
+});
+
+// ── Homework Table Init ──
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_homeworks (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title             VARCHAR(255) NOT NULL,
+        course            VARCHAR(255),
+        deadline          TIMESTAMP,
+        max_score         INTEGER DEFAULT 100,
+        allow_late        BOOLEAN DEFAULT false,
+        status            VARCHAR(50) DEFAULT 'Draft',
+        file_url          TEXT,
+        file_type         VARCHAR(100),
+        tutor_id          UUID REFERENCES users(id),
+        assigned_students JSONB DEFAULT '[]'::jsonb,
+        submission_count  INTEGER DEFAULT 0,
+        created_at        TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_homework_submissions (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        homework_id   UUID REFERENCES tutor_homeworks(id) ON DELETE CASCADE,
+        student_id    UUID REFERENCES users(id),
+        file_url      TEXT NOT NULL,
+        status        VARCHAR(50) DEFAULT 'Submitted',
+        score         INTEGER,
+        feedback      TEXT,
+        submitted_at  TIMESTAMP DEFAULT NOW(),
+        UNIQUE(homework_id, student_id)
+      )
+    `);
+    console.log('[DB] tutor_homeworks and tutor_homework_submissions tables ready');
+  } catch (err) {
+    console.error('Error creating tutor_homeworks:', err);
+  }
+})();
+
+// GET /api/tutor/assessments/homework
+app.get('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM tutor_homeworks WHERE tutor_id=$1 ORDER BY created_at DESC`,
+      [req.user.userId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST /api/tutor/assessments/homework
+app.post('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { title, course, deadline, max_score, allow_late, status, file_url, file_type, assigned_students } = req.body;
+    const result = await pool.query(
+      `INSERT INTO tutor_homeworks (title, course, deadline, max_score, allow_late, status, file_url, file_type, tutor_id, assigned_students)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb) RETURNING *`,
+      [title, course, deadline || null, max_score || 100, allow_late || false, status || 'Draft', file_url, file_type, req.user.userId, JSON.stringify(assigned_students || [])]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    console.error('POST homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PATCH /api/tutor/assessments/homework/:id/status
+app.patch('/api/tutor/assessments/homework/:id/status', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { status } = req.body;
+    await pool.query(`UPDATE tutor_homeworks SET status=$1 WHERE id=$2 AND tutor_id=$3`, [status, req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH homework status error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE /api/tutor/assessments/homework/:id
+app.delete('/api/tutor/assessments/homework/:id', verifyToken, requireTutor, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM tutor_homeworks WHERE id=$1 AND tutor_id=$2`, [req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE homework error:', e);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -7928,35 +8316,6 @@ app.get("/api/courses", async (req, res) => {
 });
 
 // ── GET /api/courses/:id ── Chi tiết 1 khóa học (public) ─────────────────────
-app.get("/api/courses/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const courseRes = await pool.query(
-      `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture, u.email AS tutor_email
-       FROM courses c
-       JOIN users u ON c.tutor_id = u.id
-       WHERE c.id = $1`, [id]
-    );
-    if (courseRes.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy khóa học." });
-    const course = courseRes.rows[0];
-
-    // Lấy danh sách bài học
-    let lessons = [];
-    try {
-      const lessonsRes = await pool.query(
-        `SELECT id, title, description, video_url, duration_label, is_preview, position
-         FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`, [id]
-      );
-      lessons = lessonsRes.rows;
-    } catch (_) { /* bảng chưa tồn tại thì bỏ qua */ }
-
-    return res.json({ ...course, lessons });
-  } catch (err) {
-    console.error("GET /api/courses/:id error:", err);
-    return res.status(500).json({ message: "Lỗi máy chủ." });
-  }
-});
-
 // ── POST /api/coupons/validate ── Kiểm tra mã giảm giá ──────────────────────
 app.post("/api/coupons/validate", async (req, res) => {
   try {
@@ -8058,11 +8417,11 @@ app.get('/api/student/my-courses', verifyToken, async (req, res) => {
         c.price,
         c.thumbnail_url,
         c.tutor_id,
-        u.full_name    AS tutor_name,
+        COALESCE(u.full_name, c.instructor_name) AS tutor_name,
         u.picture      AS tutor_avatar,
         COALESCE(
           ROUND(
-            100.0 * COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true)
+            (COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true))::numeric * 100.0
             / NULLIF(COUNT(DISTINCT cl.id), 0)
           )::int, 0
         ) AS progress_percent,
@@ -8070,7 +8429,7 @@ app.get('/api/student/my-courses', verifyToken, async (req, res) => {
         COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true)::int AS completed_lessons,
         EXISTS (
           SELECT 1 FROM disputes d
-          WHERE d.course_id = c.id AND d.raised_by = $1 AND d.status = 'OPEN'
+          WHERE d.course_id = c.id AND d.raised_by = $1 AND d.status = 'OPEN' AND d.withdrawn_at IS NULL
         ) AS has_open_dispute
       FROM course_enrollments ce
       JOIN courses c ON c.id = ce.course_id
@@ -8165,6 +8524,58 @@ app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
 });
 
 // ══ Thanh toán giỏ hàng bằng VÍ (trừ số dư + đăng ký nhiều khóa) ══════════
+// ═══════════════════════════════════════════════════════════════════════════
+// WALLET LEDGER (Batch 17) — set transaction-local context so the wallets
+// trigger records meaningful reason codes. MUST be called on the same `client`
+// inside an active transaction (set_config is_local=true => auto-cleared on
+// COMMIT/ROLLBACK, never leaks across requests). Safe to call multiple times.
+// ═══════════════════════════════════════════════════════════════════════════
+async function setLedgerContext(client, context) {
+  await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
+// commission_logs is append-only; wallet_ledger remains the low-level audit.
+// ═══════════════════════════════════════════════════════════════════════════
+// calculateCommissionSplit + hằng số hoa hồng → utils/businessRules.js
+
+// Idempotent commission log insert. Returns new row id or null on duplicate.
+// Must be called inside caller's transaction so rollback covers the log too.
+async function createCommissionLog(client, log) {
+  try {
+    const r = await client.query(
+      `INSERT INTO commission_logs
+         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
+          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
+          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING id`,
+      [
+        log.source_type, log.source_id,
+        log.booking_id   || null,
+        log.course_id    || null,
+        log.dispute_id   || null,
+        log.transaction_id || null,
+        log.student_id   || null,
+        log.tutor_id     || null,
+        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
+        log.commission_amount, log.tutor_amount,
+        log.event_type, log.reason_code,
+        log.policy_version || COMMISSION_POLICY_VERSION,
+        log.decision_by || 'system',
+        log.actor_id    || null,
+        log.idempotency_key || null,
+        JSON.stringify(log.metadata || {}),
+      ]
+    );
+    return r.rows.length ? r.rows[0].id : null;
+  } catch (e) {
+    throw e;
+  }
+}
+
 app.post("/api/cart/checkout", verifyToken, async (req, res) => {
   const studentId = req.user.userId;
   const { items, couponCode, source } = req.body || {};
@@ -8251,7 +8662,7 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
         });
         // Notify student (Batch 20)
         await safeNotifyUser(client, {
-          userId: studentId, channels: ['IN_APP'],
+          userId: studentId, channels: ['IN_APP', 'EMAIL'],
           templateKey: 'course_purchased', eventType: 'course_purchased',
           data: { courseName: c.title }, refId: c.id, refType: 'course',
           sourceType: 'course', sourceId: c.id,
@@ -8430,7 +8841,7 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
 
     // Gửi thông báo (Batch 20.1: safeNotifyUser, same client, rollback-safe)
     await safeNotifyUser(client, {
-      userId: course.tutor_id, type: 'course_enrollment', channels: ['IN_APP'],
+      userId: course.tutor_id, type: 'course_enrollment', channels: ['IN_APP', 'EMAIL'],
       templateKey: 'course_enrollment_ping', eventType: 'course_enrollment_ping',
       title: 'Học sinh mới đăng ký khóa học',
       body: `${studentName} vừa mua khóa học "${course.title}"`,
@@ -8461,6 +8872,45 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
     return res.status(500).json({ message: "Lỗi server khi đăng ký." });
   } finally {
     client.release();
+  }
+});
+
+// ── PATCH /api/courses/:courseId/lessons/:lessonId/progress ── Cập nhật tiến độ ──
+app.patch("/api/courses/:courseId/lessons/:lessonId/progress", verifyToken, async (req, res) => {
+  try {
+    const { courseId, lessonId } = req.params;
+    const { isCompleted, watchedSeconds } = req.body;
+    const studentId = req.user?.userId || req.user?.id; // Lấy từ req.user do verifyToken cung cấp
+
+    // Lấy enrollment_id
+    const enrollRes = await pool.query(
+      `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+      [courseId, studentId]
+    );
+
+    if (enrollRes.rows.length === 0) {
+      return res.status(403).json({ message: "Bạn chưa đăng ký khóa học này." });
+    }
+
+    const enrollmentId = enrollRes.rows[0].id;
+
+    // Upsert course_progress
+    await pool.query(
+      `INSERT INTO course_progress (enrollment_id, lesson_id, is_completed, watched_seconds, completed_at, updated_at)
+       VALUES ($1, $2, $3, $4, CASE WHEN $3 = true THEN NOW() ELSE NULL END, NOW())
+       ON CONFLICT (enrollment_id, lesson_id) 
+       DO UPDATE SET 
+         is_completed = EXCLUDED.is_completed,
+         watched_seconds = EXCLUDED.watched_seconds,
+         completed_at = CASE WHEN EXCLUDED.is_completed = true AND course_progress.is_completed = false THEN NOW() ELSE course_progress.completed_at END,
+         updated_at = NOW()`,
+      [enrollmentId, lessonId, isCompleted || false, watchedSeconds || 0]
+    );
+
+    return res.json({ success: true, message: "Cập nhật tiến độ thành công." });
+  } catch (err) {
+    console.error("PATCH /progress error:", err);
+    return res.status(500).json({ message: "Lỗi server khi cập nhật tiến độ." });
   }
 });
 
@@ -8689,6 +9139,8 @@ app.get("/api/tutors/:id", async (req, res) => {
          tp.education, tp.language, tp.teaching_style, tp.qualifications,
          tp.first_name, tp.last_name, tp.display_name, tp.phone,
          tp.headline, tp.teaching_methods, tp.suitable_students, tp.availability,
+         tp.availability_status, tp.instant_price,
+         COALESCE(tp.instant_duration_mins, 30) AS instant_duration_mins,
          COALESCE(tp.total_students, 0) AS total_students, tp.completed_lessons_count,
          COALESCE(
            (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = tp.id),
@@ -8754,7 +9206,10 @@ app.get("/api/tutors/:id", async (req, res) => {
         created_at: r.created_at
       })),
       total_students: parseInt(tutorInfo.total_students) || 0,
-      completed_lessons_count: parseInt(tutorInfo.completed_lessons_count) || 0
+      completed_lessons_count: parseInt(tutorInfo.completed_lessons_count) || 0,
+      availability_status: tutorInfo.availability_status || 'Offline',
+      instant_price: tutorInfo.instant_price ? parseFloat(tutorInfo.instant_price) : null,
+      instant_duration_mins: parseInt(tutorInfo.instant_duration_mins) || 30
     };
 
     return res.json(responseData);
@@ -8773,10 +9228,10 @@ app.get("/api/courses/:id", async (req, res) => {
     
     const courseRes = await pool.query(
       `SELECT c.*, 
-              u.id as tutor_id, u.full_name as tutor_name, u.picture as tutor_picture,
+              u.id as tutor_id, COALESCE(u.full_name, c.instructor_name) as tutor_name, u.picture as tutor_picture,
               tp.headline as tutor_headline
        FROM courses c
-       JOIN users u ON c.tutor_id = u.id
+       LEFT JOIN users u ON c.tutor_id = u.id
        LEFT JOIN tutor_profiles tp ON u.id = tp.user_id
        WHERE c.id = $1`,
       [id]
@@ -8796,6 +9251,7 @@ app.get("/api/courses/:id", async (req, res) => {
     let isEnrolled = false;
     let userId = null;
     let userRole = null;
+    let enrollmentId = null;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
@@ -8805,18 +9261,44 @@ app.get("/api/courses/:id", async (req, res) => {
         userRole = decoded.role;
         if (userId) {
           const enrollRes = await pool.query(
-            `SELECT 1 FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+            `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
             [id, userId]
           );
           isEnrolled = enrollRes.rows.length > 0;
+          enrollmentId = enrollRes.rows[0]?.id || null;
         }
       } catch (err) {
         // Bỏ qua lỗi token (để xem dưới quyền khách)
       }
     }
 
+    // Lấy tiến độ học tập nếu đã mua
+    let progressMap = {};
+    if (enrollmentId) {
+       const progressRes = await pool.query(
+         `SELECT lesson_id, is_completed, watched_seconds FROM course_progress WHERE enrollment_id = $1`,
+         [enrollmentId]
+       );
+       progressRes.rows.forEach(p => {
+         progressMap[p.lesson_id] = {
+           isCompleted: p.is_completed,
+           watchedSeconds: p.watched_seconds
+         };
+       });
+    }
+
     const isCourseTutor = userId === courseData.tutor_id;
     const isAdmin = userRole === 'admin';
+
+    // Tiến độ từng bài học của chính học sinh này (nếu đã đăng ký)
+    let completedLessonIds = new Set();
+    if (enrollmentId) {
+      const progressRes = await pool.query(
+        `SELECT lesson_id FROM course_progress WHERE enrollment_id = $1 AND is_completed = true`,
+        [enrollmentId]
+      );
+      completedLessonIds = new Set(progressRes.rows.map(p => p.lesson_id));
+    }
 
     const response = {
       ...courseData,
@@ -8828,19 +9310,27 @@ app.get("/api/courses/:id", async (req, res) => {
         picture: courseData.tutor_picture,
         headline: courseData.tutor_headline
       },
+      tutorName: courseData.tutor_name,
       lessons: lessonsRes.rows.map(lesson => {
         const isPreview = lesson.is_preview;
         const isLocked = !isEnrolled && !isCourseTutor && !isAdmin && !isPreview;
+        const prog = progressMap[lesson.id] || {};
         return {
           id: lesson.id,
           title: lesson.title,
           description: lesson.description,
           position: lesson.position,
+          duration_label: lesson.duration_label,
           durationLabel: lesson.duration_label,
+          is_preview: isPreview,
           isPreview: isPreview,
           isLocked: isLocked,
+          video_url: isLocked ? null : lesson.video_url,
+          isCompleted: prog.isCompleted || false,
+          watchedSeconds: prog.watchedSeconds || 0,
           videoUrl: isLocked ? null : lesson.video_url,
           materialUrl: isLocked ? null : lesson.material_url,
+          isCompleted: completedLessonIds.has(lesson.id),
           createdAt: lesson.created_at,
           updatedAt: lesson.updated_at
         };
@@ -8848,13 +9338,54 @@ app.get("/api/courses/:id", async (req, res) => {
       learningOutcomes: courseData.learning_outcomes || [],
       requirements: courseData.requirements || [],
       isEnrolled,
-      isCourseTutor
+      isCourseTutor,
+      enrollmentId
     };
 
     return res.json(response);
   } catch (err) {
     console.error("GET /api/courses/:id error:", err);
     return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PATCH /api/courses/:id/lessons/:lessonId/progress — học sinh đánh dấu (bỏ) hoàn thành 1 bài học
+app.patch("/api/courses/:id/lessons/:lessonId/progress", verifyToken, async (req, res) => {
+  try {
+    const { id: courseId, lessonId } = req.params;
+    const { watchedSeconds, isCompleted } = req.body;
+    const studentId = req.user.userId;
+
+    const enrollRes = await pool.query(
+      `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+      [courseId, studentId]
+    );
+    if (!enrollRes.rows.length) {
+      return res.status(403).json({ message: "Bạn chưa đăng ký khóa học này." });
+    }
+    const enrollmentId = enrollRes.rows[0].id;
+
+    const lessonRes = await pool.query(`SELECT id FROM course_lessons WHERE id = $1 AND course_id = $2`, [lessonId, courseId]);
+    if (!lessonRes.rows.length) {
+      return res.status(404).json({ message: "Không tìm thấy bài học." });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO course_progress (enrollment_id, lesson_id, watched_seconds, is_completed, completed_at)
+       VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
+       ON CONFLICT (enrollment_id, lesson_id) DO UPDATE SET
+         watched_seconds = GREATEST(course_progress.watched_seconds, EXCLUDED.watched_seconds),
+         is_completed = EXCLUDED.is_completed,
+         completed_at = EXCLUDED.completed_at,
+         updated_at = NOW()
+       RETURNING *`,
+      [enrollmentId, lessonId, Math.max(0, Number(watchedSeconds) || 0), !!isCompleted]
+    );
+
+    return res.json({ success: true, progress: result.rows[0] });
+  } catch (err) {
+    console.error("PATCH /api/courses/:id/lessons/:lessonId/progress error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
 
@@ -8986,10 +9517,12 @@ app.post("/api/entity-reviews", verifyToken, async (req, res) => {
       const p = await pool.query(`SELECT id FROM tutor_profiles WHERE user_id = $1`, [target_id]);
       if (p.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy gia sư." });
       tutorProfileId = p.rows[0].id;
-      // Điều kiện (TV3): đã HOÀN THÀNH ≥1 buổi học (booking 'Approved' đã qua ngày học)
+      // Điều kiện: đã THỰC SỰ HỌC ≥1 buổi với gia sư này (điểm danh present), không chỉ đặt lịch
+      // được duyệt + qua ngày — booking có thể "Approved" nhưng gia sư no-show/học sinh vắng.
       const bk = await pool.query(
-        `SELECT 1 FROM bookings
-          WHERE student_id = $1 AND tutor_id = $2 AND status = 'Approved' AND lesson_date <= CURRENT_DATE
+        `SELECT 1 FROM bookings b
+           JOIN attendance a ON a.booking_id = b.id
+          WHERE b.student_id = $1 AND b.tutor_id = $2 AND a.status = 'present'
           LIMIT 1`,
         [req.user.userId, target_id]
       );
@@ -9742,7 +10275,10 @@ async function startServer() {
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE
     `);
-    console.log("✅ DB migration: users.is_banned ready");
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email_opt_out BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    console.log("✅ DB migration: users.is_banned + email_opt_out ready");
   } catch (err) {
     console.error("❌  DB migration warning:", err.message);
   }
@@ -9955,7 +10491,11 @@ async function startServer() {
     console.error("⚠️  DB migration (wishlists) warning:", err.message);
   }
 
+  let courseSchemaEnsured = false;
   async function ensureCourseSchema() {
+    if (courseSchemaEnsured) return;
+    courseSchemaEnsured = true;
+    try {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS courses (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -10116,6 +10656,10 @@ async function startServer() {
     `);
   } catch (error) {
     console.warn("[Courses] Could not create unique progress index. Existing duplicate progress rows may need cleanup.", error.message);
+  }
+  } catch(e) {
+    courseSchemaEnsured = false;
+    throw e;
   }
 }
 
@@ -10315,7 +10859,8 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
          b.status AS "bookingStatus",
          a.status AS "attendanceStatus",
          a.note AS "attendanceNote",
-         a.marked_at AS "markedAt"
+         a.marked_at AS "markedAt",
+         b.tutor_check_in_at AS "tutorCheckInAt"
        FROM bookings b
        LEFT JOIN users s ON s.id = b.student_id
        LEFT JOIN attendance a ON a.booking_id = b.id
@@ -10349,6 +10894,9 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
       const marked = approvedLessons.filter((lesson) => lesson.attendanceStatus);
       const absences = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'absent');
       const present = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'present');
+      const excused = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'excused');
+      const rateBase = marked.length - excused.length;
+      
       const upcoming = approvedLessons
         .filter((lesson) => new Date(`${lesson.date}T00:00:00`) >= new Date(new Date().toDateString()))
         .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.timeSlot).localeCompare(String(b.timeSlot)))[0] || null;
@@ -10361,7 +10909,8 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
         markedLessons: marked.length,
         absentCount: absences.length,
         presentCount: present.length,
-        attendanceRate: marked.length ? Math.round((present.length / marked.length) * 100) : null,
+        excusedCount: excused.length,
+        attendanceRate: rateBase > 0 ? Math.round((present.length / rateBase) * 100) : null,
         nextLesson: upcoming,
       };
     });
@@ -10373,12 +10922,59 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
   }
 });
 
+// POST /api/tutor/bookings/:id/checkin
+app.post("/api/tutor/bookings/:id/checkin", verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const bookingId = req.params.id;
+
+    // Verify booking belongs to tutor and is approved
+    const checkResult = await pool.query(
+      `SELECT id, lesson_date, time_slot FROM bookings WHERE id = $1 AND tutor_id = $2 AND status = 'Approved'`,
+      [bookingId, tutorId]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: "Lesson not found or not approved." });
+    }
+
+    // Check-in chỉ có giá trị làm bằng chứng có mặt khi được thực hiện QUANH giờ
+    // học (server-side — UI cũng giới hạn nhưng không tin client). Cửa sổ:
+    // từ 30 phút trước giờ bắt đầu đến 60 phút sau giờ kết thúc.
+    // Dữ liệu cũ không parse được giờ học thì bỏ qua guard (không chặn oan).
+    const b = checkResult.rows[0];
+    const winStart = lessonStartFrom(b.lesson_date, b.time_slot);
+    const winEnd = lessonEndFrom(b.lesson_date, b.time_slot);
+    if (winStart && Date.now() < winStart.getTime() - 30 * 60000) {
+      return res.status(400).json({ message: "Chưa đến giờ check-in. Bạn có thể check-in từ 30 phút trước giờ học." });
+    }
+    if (winEnd && Date.now() > winEnd.getTime() + 60 * 60000) {
+      return res.status(400).json({ message: "Đã quá thời gian check-in cho buổi học này (60 phút sau giờ kết thúc)." });
+    }
+
+    const updateResult = await pool.query(
+      `UPDATE bookings SET tutor_check_in_at = NOW() WHERE id = $1 AND tutor_check_in_at IS NULL RETURNING tutor_check_in_at`,
+      [bookingId]
+    );
+
+    if (updateResult.rows.length === 0) {
+      return res.status(400).json({ message: "Lesson already checked in or not found." });
+    }
+
+    return res.json({ message: "Checked in successfully.", tutorCheckInAt: updateResult.rows[0].tutor_check_in_at });
+  } catch (error) {
+    console.error("Tutor check-in error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+
 // GET /api/bookings — danh sách lịch học của user hiện tại
 app.get("/api/bookings", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT b.id, b.tutor_id, b.tutor_name, b.student_id, b.subject, b.lesson_date,
-              b.time_slot, b.note, b.child_name, b.status, b.created_at,
+              b.time_slot, b.note, b.child_name, b.status, b.created_at, b.package_id,
               b.lesson_fee, b.escrow_tx_id, b.escrow_released_at, b.auto_release_at,
               b.teaching_method, b.meeting_link, b.meeting_password, b.location, b.location_note,
               b.session_topic, b.session_duration, b.session_materials, b.session_homework,
@@ -10386,7 +10982,7 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
               u_tutor.picture AS tutor_picture,
               u_student.picture AS student_picture, u_student.full_name AS "studentName",
               a.status AS attendance_status,
-              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS has_open_dispute
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute
        FROM bookings b
        LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
        LEFT JOIN users u_student ON u_student.id = b.student_id
@@ -10417,9 +11013,11 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
     const result = await pool.query(
       `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date_str, b.time_slot, b.status,
               b.teaching_method, b.meeting_link, b.location, b.location_note,
-              b.session_topic, b.session_duration,
+              b.session_topic, b.session_duration, b.duration_mins,
               b.method_change_requested, b.method_change_status,
-              tp.teaching_methods AS tutor_teaching_methods
+              tp.teaching_methods AS tutor_teaching_methods,
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute,
+              (SELECT d.id FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL LIMIT 1) AS open_dispute_id
        FROM bookings b
        LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
        WHERE b.student_id = $1`,
@@ -10449,29 +11047,31 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
       const timeParts = (row.time_slot || '').split('-').map(t => t.trim());
       
       let startMatch = timeParts[0] ? timeParts[0].match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/) : null;
+      // time_slot chỉ lưu 1 mốc giờ bắt đầu (vd "10:00 AM"), không phải khoảng "start-end" —
+      // chỉ có timeParts[1] khi dữ liệu cũ dùng đúng định dạng "HH:MM-HH:MM".
       let endMatch = timeParts[1] ? timeParts[1].match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/) : null;
 
-      let sh = 0, sm = 0, eh = 1, em = 0;
+      let sh = 0, sm = 0;
       if (startMatch) {
          sh = parseInt(startMatch[1], 10);
          sm = parseInt(startMatch[2], 10);
          if (startMatch[3] && startMatch[3].toUpperCase() === 'PM' && sh !== 12) sh += 12;
          if (startMatch[3] && startMatch[3].toUpperCase() === 'AM' && sh === 12) sh = 0;
       }
+
+      const startDate = new Date(`${row.lesson_date_str}T${sh.toString().padStart(2, '0')}:${sm.toString().padStart(2, '0')}:00+07:00`);
+
+      let endDate;
       if (endMatch) {
-         eh = parseInt(endMatch[1], 10);
-         em = parseInt(endMatch[2], 10);
+         let eh = parseInt(endMatch[1], 10);
+         let em = parseInt(endMatch[2], 10);
          if (endMatch[3] && endMatch[3].toUpperCase() === 'PM' && eh !== 12) eh += 12;
          if (endMatch[3] && endMatch[3].toUpperCase() === 'AM' && eh === 12) eh = 0;
+         endDate = new Date(`${row.lesson_date_str}T${eh.toString().padStart(2, '0')}:${em.toString().padStart(2, '0')}:00+07:00`);
+      } else {
+         // Không có mốc kết thúc tường minh -> tính từ duration_mins thật của booking.
+         endDate = new Date(startDate.getTime() + (Number(row.duration_mins) || 60) * 60000);
       }
-
-      sh = sh.toString().padStart(2, '0');
-      sm = sm.toString().padStart(2, '0');
-      eh = eh.toString().padStart(2, '0');
-      em = em.toString().padStart(2, '0');
-      
-      const startDate = new Date(`${row.lesson_date_str}T${sh}:${sm}:00+07:00`);
-      const endDate = new Date(`${row.lesson_date_str}T${eh}:${em}:00+07:00`);
 
       let status = row.status ? row.status.toLowerCase() : 'pending';
       if (status === 'accepted' || status === 'approved') {
@@ -10515,7 +11115,9 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
         method_change_status: row.method_change_status || null,
         tutor_supports_online: methodSupport.online,
         tutor_supports_offline: methodSupport.offline,
-        subject: row.subject || 'Khác'
+        subject: row.subject || 'Khác',
+        has_open_dispute: row.has_open_dispute,
+        open_dispute_id: row.open_dispute_id || null
       });
     });
 
@@ -10577,7 +11179,7 @@ app.get("/api/student/bookings", verifyToken, async (req, res) => {
               u_tutor.picture AS tutor_picture,
               tp.reputation_score, tp.subjects AS tutor_subjects,
               a.status AS attendance_status,
-              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS has_open_dispute
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute
        FROM bookings b
        LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
        LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
@@ -10599,7 +11201,8 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT d.id, d.reason, d.status, d.admin_note, d.created_at, d.resolved_at,
-             d.booking_id, d.target_type, d.course_id, d.tutor_id AS d_tutor_id, d.severity, d.penalty_type, d.raised_by_parent, d.evidence_url,
+             d.booking_id, d.target_type, d.course_id, d.tutor_id AS d_tutor_id, d.severity, d.penalty_type, d.raised_by_parent, d.evidence_urls,
+             d.tutor_response, d.tutor_response_at, d.student_requested_resolution, d.withdrawn_at,
              b.subject, to_char(b.lesson_date,'YYYY-MM-DD') AS lesson_date,
              b.lesson_fee, b.tutor_name,
              c.title AS course_title,
@@ -10613,7 +11216,7 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
       LEFT JOIN users u_tutor ON u_tutor.id = COALESCE(b.tutor_id, c.tutor_id, d.tutor_id)
       LEFT JOIN users u_student ON u_student.id = COALESCE(b.student_id, d.raised_by)
       ORDER BY
-        CASE d.status WHEN 'OPEN' THEN 0 ELSE 1 END,
+        CASE WHEN d.status = 'OPEN' AND d.withdrawn_at IS NULL THEN 0 ELSE 1 END,
         d.created_at DESC
       LIMIT 100
     `);
@@ -10627,43 +11230,149 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
 // Lấy chuỗi YYYY-MM-DD từ cột DATE của pg.
 // LƯU Ý: pg trả DATE thành JS Date ở local-midnight → toISOString() bị lùi 1 ngày (múi +07).
 // Phải đọc bằng getFullYear/getMonth/getDate (giờ local) để giữ đúng ngày.
-function lessonDateStr(lessonDate) {
-  if (!lessonDate) return '';
-  if (typeof lessonDate === 'string') return lessonDate.slice(0, 10);
-  const d = new Date(lessonDate);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-// Tính thời điểm bắt đầu buổi học từ lesson_date + time_slot (múi giờ VN +07:00)
-function lessonStartFrom(lessonDate, timeSlot) {
-  if (!lessonDate) return null;
-  const dateStr = lessonDateStr(lessonDate);
-  if (!dateStr) return null;
-  const m = String(timeSlot || '').match(/(\d+):(\d+)\s*(AM|PM)?/i);
-  let h = 0, min = 0;
-  if (m) {
-    h = parseInt(m[1], 10);
-    min = parseInt(m[2], 10);
-    if (m[3] && m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
-    if (m[3] && m[3].toUpperCase() === 'AM' && h === 12) h = 0;
-  }
-  const d = new Date(`${dateStr}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+07:00`);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-// Chuẩn hóa hình thức dạy từ tutor_profiles.teaching_methods (JSONB mảng text tự do).
-// Chưa khai báo gì → coi như dạy cả 2 (không chặn đặt lịch).
-function parseMethodSupport(teachingMethods) {
-  const arr = Array.isArray(teachingMethods) ? teachingMethods : [];
-  const txt = arr.join(' ').toLowerCase();
-  const online  = /online|trực tuyến|truc tuyen/.test(txt);
-  const offline = /offline|trực tiếp|truc tiep|tại nhà|tai nha|tại địa điểm/.test(txt);
-  if (!online && !offline) return { online: true, offline: true };
-  return { online, offline };
-}
+  // lessonDateStr / lessonStartFrom / lessonEndFrom / parseMethodSupport → utils/businessRules.js
 
 // POST /api/bookings — tạo lịch học mới
 // Hỗ trợ cả định dạng cũ (lessonDate, timeSlot, tutorName) và mới (sessions, notes, childName)
+// POST /api/bookings/instant
+app.post('/api/bookings/instant', verifyToken, async (req, res) => {
+  try {
+    const { tutor_id, tutor_name, subject, time_slot, note, child_name, duration_mins } = req.body;
+    
+    if (!tutor_id) return res.status(400).json({ message: 'Thiếu tutor_id.' });
+
+    // ── Rate Limit / Cooldown chống spam ──
+    // Kiểm tra xem học sinh có vừa tạo yêu cầu Học Ngay nào trong vòng 2 phút qua không
+    const recentRes = await pool.query(
+      `SELECT created_at FROM bookings 
+       WHERE student_id = $1 AND booking_type = 'Instant' 
+       ORDER BY created_at DESC LIMIT 1`,
+      [req.user.userId]
+    );
+    if (recentRes.rows.length > 0) {
+      const lastBookingTime = new Date(recentRes.rows[0].created_at).getTime();
+      const elapsedMs = Date.now() - lastBookingTime;
+      const cooldownMs = 2 * 60 * 1000; // 2 phút
+      if (elapsedMs < cooldownMs) {
+        const waitSec = Math.ceil((cooldownMs - elapsedMs) / 1000);
+        return res.status(429).json({ message: `Vui lòng đợi thêm ${waitSec} giây trước khi gửi yêu cầu Học Ngay mới.` });
+      }
+    }
+    
+    const tRes = await pool.query('SELECT instant_price, availability_status FROM tutor_profiles WHERE user_id = $1', [tutor_id]);
+    if (!tRes.rows.length) {
+      return res.status(404).json({ message: 'Không tìm thấy gia sư.' });
+    }
+    if (!tRes.rows[0].instant_price) {
+      return res.status(400).json({ message: 'Gia sư chưa cấu hình giá Học ngay.' });
+    }
+    if (tRes.rows[0].availability_status !== 'Online') {
+      return res.status(400).json({ message: 'Gia sư hiện không trực tuyến.' });
+    }
+    
+    const price = tRes.rows[0].instant_price;
+    const student_name = req.user.fullName || req.user.full_name || 'Học viên';
+    
+    let response;
+    try {
+      const result = await pool.query(
+        `SELECT process_instant_booking($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) AS response`,
+        [req.user.userId, tutor_id, price, time_slot || null, note || null, child_name || null, student_name, tutor_name || null, subject || 'Môn học', duration_mins || 30]
+      );
+      response = result.rows[0].response;
+    } catch (fnErr) {
+      // Nếu function chưa tồn tại (chưa chạy migration), fallback thủ công
+      console.warn('process_instant_booking function not found, falling back:', fnErr.message);
+
+      const fbClient = await pool.connect();
+      try {
+        await fbClient.query('BEGIN');
+
+        // Kiểm tra ví học sinh (lock để tránh race condition)
+        const walletRes = await fbClient.query(
+          'SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE',
+          [req.user.userId]
+        );
+        if (!walletRes.rows.length) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Không tìm thấy ví học sinh.' });
+        }
+        const { id: walletId, balance } = walletRes.rows[0];
+        if (Number(balance) < Number(price)) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Số dư không đủ. Vui lòng nạp thêm tiền.' });
+        }
+
+        // Kiểm tra pending
+        const pendingStudentRes = await fbClient.query(
+          `SELECT COUNT(*) FROM bookings WHERE student_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
+          [req.user.userId]
+        );
+        if (parseInt(pendingStudentRes.rows[0].count) > 0) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Bạn đã có một yêu cầu Học ngay đang chờ xử lý.' });
+        }
+
+        const pendingTutorRes = await fbClient.query(
+          `SELECT COUNT(*) FROM bookings WHERE tutor_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
+          [tutor_id]
+        );
+        if (parseInt(pendingTutorRes.rows[0].count) > 0) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Gia sư vừa nhận một buổi học khác.' });
+        }
+
+        // Trừ ví (trong cùng transaction)
+        await fbClient.query(
+          `UPDATE wallets SET balance = balance - $1, frozen_balance = COALESCE(frozen_balance, 0) + $1 WHERE id = $2`,
+          [price, walletId]
+        );
+
+        // Tạo booking — nếu INSERT lỗi, transaction sẽ ROLLBACK hoàn tiền tự động
+        const resolved_time_slot = time_slot || null;
+        const bookingRes = await fbClient.query(
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, child_name, student_name, booking_type, lesson_fee, duration_mins, payer_wallet_id, created_at)
+           VALUES ($1,$2,$3,$4,CURRENT_DATE,COALESCE($5, to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI')),$6,'Pending',$7,$8,'Instant',$9,$10,$11,NOW()) RETURNING id`,
+          [req.user.userId, tutor_id, tutor_name || null, subject || 'Môn học', resolved_time_slot, note || null, child_name || null, student_name, price, duration_mins || 30, walletId]
+        );
+
+        await fbClient.query('COMMIT');
+        response = { success: true, booking_id: bookingRes.rows[0].id };
+      } catch (fbErr) {
+        await fbClient.query('ROLLBACK');
+        // Transaction đã rollback → tiền học sinh được hoàn tự động
+        throw new Error(fbErr.message || 'Lỗi khi tạo yêu cầu Học Ngay. Tiền của bạn chưa bị trừ.');
+      } finally {
+        fbClient.release();
+      }
+    }
+    
+    if (!response.success) {
+      return res.status(400).json({ message: response.message });
+    }
+    
+    // Emit SignalR / Realtime notification tới Tutor
+    const bookingId = response.booking_id || response.bookingId;
+    
+    // Notify tutor via Socket.io nếu có
+    if (req.app && req.app.get('io')) {
+      req.app.get('io').to(`user-${tutor_id}`).emit('instantBookingRequest', {
+        booking_id: bookingId,
+        student_id: req.user.userId,
+        student_name,
+        subject: subject || 'Môn học',
+        price,
+        note
+      });
+    }
+    
+    res.json({ success: true, booking: { id: bookingId }, booking_id: bookingId });
+  } catch (err) {
+    console.error('POST /api/bookings/instant error:', err);
+    res.status(500).json({ message: err.message || 'Internal server error' });
+  }
+});
+
 app.post("/api/bookings", verifyToken, async (req, res) => {
   try {
     const body = req.body || {};
@@ -10756,6 +11465,8 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         studentWalletId = walletRes.rows[0].id;
       }
       
+      const packageId = bookingSessions.length > 1 ? crypto.randomUUID() : null;
+
       // Chèn từng session
       for (const session of bookingSessions) {
         const sessionDate = session.date || session.lessonDate || session.lesson_date;
@@ -10780,10 +11491,10 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         }
 
         const result = await client.query(
-          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at`,
-          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod]
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at, package_id`,
+          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId]
         );
         const booking = result.rows[0];
 
@@ -10827,11 +11538,31 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Không thể tạo lịch hẹn." });
     }
 
-    return res.status(201).json({ 
-      message: "Đặt lịch thành công.", 
+    // Báo gia sư có lịch mới chờ duyệt — in-app + email (ngoài transaction,
+    // lỗi thông báo không được phép ảnh hưởng tới booking đã tạo)
+    if (tutorId) {
+      const first = createdBookings[0];
+      await safeNotifyUser(pool, {
+        userId: tutorId, type: 'booking_request',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'booking_new_request', eventType: 'booking_new_request',
+        refId: first.id, refType: 'booking',
+        idempotencyKey: `booking_new_request:${first.id}`,
+        data: {
+          studentName: req.user.name || 'Học sinh',
+          subject: subject || '',
+          timeSlot: first.time_slot,
+          date: lessonDateStr(first.lesson_date),
+          method: teachingMethod,
+        },
+      });
+    }
+
+    return res.status(201).json({
+      message: "Đặt lịch thành công.",
       bookings: createdBookings,
       // Trả về bản ghi đầu tiên để tương thích ngược với API cũ
-      ...createdBookings[0] 
+      ...createdBookings[0]
     });
   } catch (error) {
     console.error("[bookings] POST error:", error.code, error.message, error.detail || "");
@@ -10899,18 +11630,21 @@ app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
 
     if (b.notifyStudent !== false && booking.student_id) {
       const dateStr = lessonDateStr(booking.lesson_date);
-      const methodChanged = booking.teaching_method && newMethod && newMethod !== booking.teaching_method;
-      const detail = newMethod === 'offline'
-        ? (result.rows[0].location ? `Địa điểm: ${result.rows[0].location}.` : '')
-        : (finalLink ? `Link phòng học: ${finalLink}` : '');
-      await pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-         VALUES ($1, 'session_info', $2, $3, 'event_note', $4, 'booking')`,
-        [booking.student_id,
-         methodChanged ? 'Gia sư đổi hình thức buổi học' : 'Thông tin buổi học đã được cập nhật',
-         `Buổi học ${booking.subject || ''} ngày ${dateStr} (${booking.time_slot}) — hình thức: ${newMethod === 'offline' ? 'Offline (trực tiếp)' : 'Online'}. ${detail}`.trim(),
-         booking.id]
-      );
+      await safeNotifyUser(pool, {
+        userId: booking.student_id, type: 'session_info',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'session_info_updated', eventType: 'session_info_updated',
+        refId: booking.id, refType: 'booking',
+        data: {
+          tutorName: booking.tutor_name || '',
+          subject: booking.subject || '',
+          date: `${dateStr} (${booking.time_slot})`,
+          mode: newMethod,
+          meetLink: newMethod === 'online' ? (finalLink || null) : null,
+          location: newMethod === 'offline' ? (result.rows[0].location || null) : null,
+          topic: result.rows[0].session_topic || null,
+        },
+      });
     }
 
     return res.json(result.rows[0]);
@@ -10964,13 +11698,18 @@ app.post("/api/bookings/:id/request-method-change", verifyToken, async (req, res
 
     if (booking.tutor_id) {
       const dateStr = lessonDateStr(booking.lesson_date);
-      await pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-         VALUES ($1, 'method_change', 'Yêu cầu đổi hình thức học', $2, 'swap_horiz', $3, 'booking')`,
-        [booking.tutor_id,
-         `Học sinh xin đổi buổi học ${booking.subject || ''} ngày ${dateStr} (${booking.time_slot}) sang ${method === 'online' ? 'Online' : 'Offline'}.${reason ? ` Lý do: ${String(reason).trim()}` : ''} Vào Lịch trình → nhấn buổi học để phản hồi.`,
-         booking.id]
-      );
+      await safeNotifyUser(pool, {
+        userId: booking.tutor_id, type: 'method_change',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'method_change_requested', eventType: 'method_change_requested',
+        refId: booking.id, refType: 'booking',
+        data: {
+          studentName: req.user.name || 'Học sinh',
+          date: `${dateStr} (${booking.time_slot})`,
+          requested: method,
+          reason: String(reason || '').trim() || null,
+        },
+      });
     }
     return res.json({
       message: "Đã gửi yêu cầu đổi hình thức. Gia sư sẽ phản hồi sớm.",
@@ -11015,25 +11754,106 @@ app.patch("/api/bookings/:id/method-change", verifyToken, async (req, res) => {
     }
 
     if (booking.student_id) {
-      const label = newMethod === 'online' ? 'Online' : 'Offline';
-      const extra = decision === 'accepted' && newMethod === 'online' && !booking.meeting_link
-        ? ' Gia sư sẽ gửi link phòng học trước giờ học.' : '';
-      await pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-         VALUES ($1, 'method_change', $2, $3, $4, $5, 'booking')`,
-        [booking.student_id,
-         decision === 'accepted' ? `Đã đồng ý đổi sang ${label}` : 'Yêu cầu đổi hình thức bị từ chối',
-         decision === 'accepted'
-           ? `Gia sư đã đồng ý đổi buổi học ${booking.subject || ''} (${booking.time_slot}) sang ${label}.${extra}`
-           : `Gia sư từ chối đổi hình thức buổi học ${booking.subject || ''} (${booking.time_slot}). Buổi học giữ nguyên hình thức cũ.`,
-         decision === 'accepted' ? 'check_circle' : 'cancel',
-         booking.id]
-      );
+      const dateStr = lessonDateStr(booking.lesson_date);
+      await safeNotifyUser(pool, {
+        userId: booking.student_id, type: 'method_change',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'method_change_resolved', eventType: 'method_change_resolved',
+        refId: booking.id, refType: 'booking',
+        data: {
+          accepted: decision === 'accepted',
+          requested: newMethod,
+          date: `${dateStr} (${booking.time_slot})`,
+        },
+      });
     }
     return res.json(result.rows[0]);
   } catch (error) {
     console.error("[method-change] PATCH error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// POST /api/tutor/bookings/:id/instant-accept
+app.post('/api/tutor/bookings/:id/instant-accept', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const bRes = await client.query(
+      'SELECT status, booking_type, student_id, subject, lesson_fee FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE',
+      [req.params.id, req.user.userId]
+    );
+    if (!bRes.rows.length) throw new Error('Booking not found');
+    if (bRes.rows[0].status !== 'Pending') throw new Error('Yêu cầu không còn ở trạng thái chờ.');
+    if (bRes.rows[0].booking_type !== 'Instant') throw new Error('Not an instant booking');
+
+    const { student_id, subject } = bRes.rows[0];
+
+    await client.query("UPDATE bookings SET status = 'InProgress', updated_at = NOW() WHERE id = $1", [req.params.id]);
+    await client.query("UPDATE tutor_profiles SET availability_status = 'Busy', updated_at = NOW() WHERE user_id = $1", [req.user.userId]);
+
+    // Thông báo cho học sinh biết gia sư đã chấp nhận
+    await safeNotifyUser(client, {
+      userId: student_id, type: 'instant_accepted', channels: ['IN_APP'],
+      templateKey: 'instant_accepted', eventType: 'instant_accepted',
+      title: 'Gia sư đã chấp nhận!',
+      body: `Gia sư đã chấp nhận yêu cầu Học Ngay môn ${subject || ''}. Hãy vào phòng học ngay!`,
+      icon: 'bolt', refId: req.params.id, refType: 'booking',
+      sourceType: 'booking', sourceId: req.params.id, priority: 'high',
+      idempotencyKey: `instant_accept:${req.params.id}:${student_id}`,
+    });
+
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Accept instant error:', err);
+    res.status(400).json({ message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/tutor/bookings/:id/instant-reject
+app.post('/api/tutor/bookings/:id/instant-reject', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const bRes = await client.query(
+      'SELECT student_id, lesson_fee, status, payer_wallet_id FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE',
+      [req.params.id, req.user.userId]
+    );
+    if (!bRes.rows.length) throw new Error('Booking not found');
+    if (bRes.rows[0].status !== 'Pending') throw new Error('Booking is not Pending');
+
+    const { student_id, lesson_fee } = bRes.rows[0];
+    let { payer_wallet_id } = bRes.rows[0];
+
+    // Fallback: nếu payer_wallet_id NULL, tìm ví qua student_id
+    if (!payer_wallet_id) {
+      const wRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [student_id]);
+      if (!wRes.rows.length) throw new Error('Không tìm thấy ví để hoàn tiền.');
+      payer_wallet_id = wRes.rows[0].id;
+      // Cập nhật lại booking để đồng bộ
+      await client.query('UPDATE bookings SET payer_wallet_id = $1 WHERE id = $2', [payer_wallet_id, req.params.id]);
+    }
+
+    await client.query("UPDATE bookings SET status = 'Declined', updated_at = NOW() WHERE id = $1", [req.params.id]);
+    await client.query(
+      'UPDATE wallets SET balance = balance + $1, frozen_balance = GREATEST(frozen_balance - $1, 0) WHERE id = $2',
+      [lesson_fee, payer_wallet_id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Reject instant error:', err);
+    res.status(400).json({ message: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -11060,44 +11880,7 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // REFUND POLICY V2.1 — helpers (Batch 16). Pure decision helpers + audit utils.
 // ═══════════════════════════════════════════════════════════════════════════
-const REFUND_POLICY_VERSION = "REFUND_POLICY_V2_1";
-
-// Course purchase: 48h window, progress-tiered refund rate.
-function getCourseRefundDecision(hoursSincePurchase, progressPercent) {
-  if (hoursSincePurchase > 48)
-    return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "COURSE_AFTER_48H_ADMIN_REVIEW" };
-  if (progressPercent <= 20)
-    return { eligible: true, mode: "AUTO_FULL", refundRate: 1.0, reasonCode: "COURSE_WITHIN_48H_PROGRESS_LE_20" };
-  if (progressPercent <= 40)
-    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.7, reasonCode: "COURSE_WITHIN_48H_PROGRESS_21_40" };
-  if (progressPercent <= 60)
-    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.4, reasonCode: "COURSE_WITHIN_48H_PROGRESS_41_60" };
-  if (progressPercent <= 80)
-    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.2, reasonCode: "COURSE_WITHIN_48H_PROGRESS_61_80" };
-  return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "COURSE_PROGRESS_GT_80_ADMIN_REVIEW" };
-}
-
-// Lesson/booking: tutor fault = full; student cancel = hours-before-lesson tiered.
-function getLessonRefundDecision(hoursBeforeLesson, reasonCode) {
-  if (["TUTOR_CANCELLED", "TUTOR_NO_SHOW", "TUTOR_FAULT"].includes(reasonCode))
-    return { eligible: true, mode: "AUTO_FULL", refundRate: 1.0, reasonCode };
-  if (reasonCode === "STUDENT_CANCELLED") {
-    if (hoursBeforeLesson >= 6) return { eligible: true, mode: "AUTO_FULL",    refundRate: 1.0,  reasonCode: "STUDENT_CANCEL_GE_6H" };
-    if (hoursBeforeLesson >= 3) return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.5,  reasonCode: "STUDENT_CANCEL_3_TO_6H" };
-    if (hoursBeforeLesson >= 1) return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.25, reasonCode: "STUDENT_CANCEL_1_TO_3H" };
-    return { eligible: false, mode: "NO_REFUND", refundRate: 0, reasonCode: "STUDENT_CANCEL_LT_1H_NO_REFUND" };
-  }
-  if (reasonCode === "STUDENT_NO_SHOW")
-    return { eligible: false, mode: "NO_REFUND", refundRate: 0, reasonCode: "STUDENT_NO_SHOW_NO_REFUND" };
-  return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "UNKNOWN_REASON_ADMIN_REVIEW" };
-}
-
-// Combine booking.lesson_date (date) + booking.time_slot ('HH:MM') into a Date.
-function parseBookingStartDateTime(booking) {
-  const d = String(booking.lesson_date).slice(0, 10);
-  const t = (booking.time_slot || '00:00').slice(0, 5);
-  return new Date(`${d}T${t}:00`);
-}
+// Refund decision helpers + parseBookingStartDateTime → utils/businessRules.js
 
 async function getAdminWalletId(client) {
   if (process.env.ADMIN_WALLET_ID) return process.env.ADMIN_WALLET_ID;
@@ -11125,65 +11908,8 @@ async function createRefundLog(client, log) {
   return r.rows.length ? r.rows[0].id : null;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// WALLET LEDGER (Batch 17) — set transaction-local context so the wallets
-// trigger records meaningful reason codes. MUST be called on the same `client`
-// inside an active transaction (set_config is_local=true => auto-cleared on
-// COMMIT/ROLLBACK, never leaks across requests). Safe to call multiple times.
-// ═══════════════════════════════════════════════════════════════════════════
-async function setLedgerContext(client, context) {
-  await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
-// commission_logs is append-only; wallet_ledger remains the low-level audit.
-// ═══════════════════════════════════════════════════════════════════════════
-const PLATFORM_COMMISSION_RATE = 0.10;
-const COMMISSION_POLICY_VERSION = "COMMISSION_POLICY_V1";
-
-function calculateCommissionSplit(grossAmount, rate = PLATFORM_COMMISSION_RATE) {
-  const gross = Math.max(0, Math.round(Number(grossAmount || 0)));
-  const commissionAmount = gross - Math.floor(gross * (1 - rate));
-  const tutorAmount = gross - commissionAmount;
-  return { grossAmount: gross, commissionRate: rate, commissionAmount, tutorAmount };
-}
-
-// Idempotent commission log insert. Returns new row id or null on duplicate.
-// Must be called inside caller's transaction so rollback covers the log too.
-async function createCommissionLog(client, log) {
-  try {
-    const r = await client.query(
-      `INSERT INTO commission_logs
-         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
-          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
-          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
-       ON CONFLICT (idempotency_key) DO NOTHING
-       RETURNING id`,
-      [
-        log.source_type, log.source_id,
-        log.booking_id   || null,
-        log.course_id    || null,
-        log.dispute_id   || null,
-        log.transaction_id || null,
-        log.student_id   || null,
-        log.tutor_id     || null,
-        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
-        log.commission_amount, log.tutor_amount,
-        log.event_type, log.reason_code,
-        log.policy_version || COMMISSION_POLICY_VERSION,
-        log.decision_by || 'system',
-        log.actor_id    || null,
-        log.idempotency_key || null,
-        JSON.stringify(log.metadata || {}),
-      ]
-    );
-    return r.rows.length ? r.rows[0].id : null;
-  } catch (e) {
-    throw e;
-  }
-}
+// (setLedgerContext + commission helpers đã chuyển lên top-level — phía trên
+// route /api/cart/checkout — để route ngoài startServer() cũng gọi được.)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WITHDRAWAL POLICY V1 (Batch 19) — tutor manual payout. Money is HELD when a
@@ -11196,23 +11922,7 @@ async function createCommissionLog(client, log) {
 // maps to 'SUCCESS', cancel/reject map to 'FAILED'. wallets has CHECK
 // balance>=0 / held_balance>=0, enforced by SELECT ... FOR UPDATE + guards.
 // ═══════════════════════════════════════════════════════════════════════════
-const WITHDRAWAL_POLICY_VERSION = "WITHDRAWAL_POLICY_V1";
-const MIN_WITHDRAWAL_AMOUNT = 50000;
-
-// Return a rounded non-negative integer VND amount, or 0 if invalid.
-function normalizeWithdrawalAmount(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.floor(n);
-}
-
-// Trim, strip control chars, collapse whitespace, cap length. Null-safe.
-function sanitizeBankText(value, maxLength = 120) {
-  if (value == null) return null;
-  let s = String(value).replace(/[\x00-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim();
-  if (!s) return null;
-  return s.slice(0, maxLength);
-}
+// normalizeWithdrawalAmount / sanitizeBankText + hằng số rút tiền → utils/businessRules.js
 
 // Lock the tutor's wallet row FOR UPDATE (prevents concurrent balance races).
 async function getTutorWalletForUpdate(client, tutorId) {
@@ -11222,6 +11932,17 @@ async function getTutorWalletForUpdate(client, tutorId) {
   );
   return r.rows.length ? r.rows[0] : null;
 }
+
+// GET /api/bookings/:id/status — API siêu nhẹ để polling status của booking
+app.get('/api/bookings/:id/status', verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT status FROM bookings WHERE id = $1', [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json({ status: result.rows[0].status });
+  } catch (err) {
+    res.status(500).json({ message: 'Error' });
+  }
+});
 
 // PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
 // Logic escrow:
@@ -11281,9 +12002,9 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             WHERE id=$5
           `, [status, txId, booking.payer_wallet_id_val, lessonFee, booking.id]);
 
-          // Notify học sinh: tiền đã bị hold (Batch 20)
+          // Notify học sinh: tiền đã bị hold (Batch 20) — kèm email xác nhận
           await safeNotifyUser(client, {
-            userId: booking.student_id, channels: ['IN_APP'],
+            userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
             templateKey: 'booking_approved', eventType: 'booking_approved',
             data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
             sourceType: 'booking', sourceId: booking.id,
@@ -11297,13 +12018,14 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
         // Không có ví hoặc fee = 0: approve bình thường
         await client.query(`UPDATE bookings SET status=$1 WHERE id=$2`, [status, booking.id]);
 
-        // Notify học sinh: gia sư đã duyệt
-        await client.query(`
-          INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-          VALUES ($1,'booking_approved','Lịch học đã được xác nhận',$2,'check_circle',$3,'booking')
-        `, [booking.student_id,
-            `Gia sư đã duyệt lịch học của bạn. Số tiền ${lessonFee.toLocaleString('vi-VN')}đ đã được bảo đảm an toàn.`,
-            booking.id]);
+        // Notify học sinh: gia sư đã duyệt — kèm email xác nhận
+        await safeNotifyUser(client, {
+          userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'booking_approved', eventType: 'booking_approved',
+          data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
+          sourceType: 'booking', sourceId: booking.id,
+          idempotencyKey: `booking:${booking.id}:approved:${booking.student_id}`,
+        });
       }
     }
 
@@ -11402,7 +12124,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             : `Không hoàn tiền theo chính sách (${decision.reasonCode}).`;
 
         await safeNotifyUser(client, {
-          userId: booking.student_id, channels: ['IN_APP'],
+          userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
           templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
           data: { message: refundMsg }, refId: booking.id, refType: 'booking',
           sourceType: 'booking', sourceId: booking.id,
@@ -11415,7 +12137,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             ? `Học sinh đã hủy buổi học. Bạn nhận phí hủy ${Math.floor(nonRefunded * 0.9).toLocaleString('vi-VN')}đ.`
             : `Học sinh đã hủy buổi học và được hoàn tiền theo chính sách.`;
           await safeNotifyUser(client, {
-            userId: booking.tutor_id, channels: ['IN_APP'],
+            userId: booking.tutor_id, channels: ['IN_APP', 'EMAIL'],
             templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
             title: 'Học sinh đã hủy lịch học', data: { message: tutorMsg },
             refId: booking.id, refType: 'booking',
@@ -11503,11 +12225,53 @@ async function callGeminiModel(model, prompt) {
     if (!res.ok) {
       return { ok: false, status: res.status, errText: await res.text() };
     }
-    return { ok: true, data: await res.json() };
-  } catch (err) {
-    return { ok: false, status: 0, errText: err.message };
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
   }
 }
+
+const rawGroqKeys = process.env.GROQ_API_KEYS || "";
+const GROQ_API_KEYS = rawGroqKeys.split(',').map(k => k.trim()).filter(Boolean);
+let currentGroqKeyIndex = 0;
+
+async function callGroqModel(prompt, jsonMode = false) {
+  const apiKey = GROQ_API_KEYS[currentGroqKeyIndex];
+  currentGroqKeyIndex = (currentGroqKeyIndex + 1) % GROQ_API_KEYS.length;
+  
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const body = {
+    model: "llama-3.3-70b-versatile",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.7,
+    max_tokens: 2048,
+  };
+  
+  if (jsonMode) {
+    body.response_format = { type: "json_object" };
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(body),
+    });
+    
+    if (!res.ok) {
+      return { ok: false, status: res.status, errText: await res.text() };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
+  }
+}
+
 
 // 2. Tạo URL Nạp Tiền VNPAY
 app.post('/api/payment/create-url', verifyToken, async (req, res) => {
@@ -11654,38 +12418,21 @@ ${JSON.stringify(tutorSummary, null, 2)}
 
 TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
 
-    // Thử lần lượt các model — fallback khi gặp 429 (hết quota) hoặc 503 (quá tải)
-    let data = null;
-    let lastErr = { status: 0, errText: "Không có model khả dụng" };
-    let usedModel = null;
-
-    for (const model of GEMINI_MODELS) {
-      const result = await callGeminiModel(model, systemPrompt);
-      if (result.ok) {
-        data = result.data;
-        usedModel = model;
-        break;
-      }
-      lastErr = result;
-      console.warn(`[Gemini] Model ${model} lỗi ${result.status} — thử model tiếp theo`);
-      // Chỉ fallback khi lỗi tạm thời (quota/quá tải). Lỗi khác (400, 401) thì dừng luôn.
-      if (result.status !== 429 && result.status !== 503 && result.status !== 0) break;
+    const result = await callGroqModel(systemPrompt, true);
+    if (!result.ok) {
+      console.error("[Groq] Lỗi API:", result.status, result.errText);
+      return res.status(502).json({ error: "Lỗi từ AI API", detail: result.errText });
     }
 
-    if (!data) {
-      console.error("[Gemini] Tất cả model đều lỗi:", lastErr.status, lastErr.errText);
-      return res.status(502).json({ error: "Lỗi từ Gemini API", detail: lastErr.errText });
-    }
+    console.log(`[Groq] ✓ Trả lời thành công`);
 
-    console.log(`[Gemini] ✓ Trả lời bằng model: ${usedModel}`);
-
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const rawText = result.data?.choices?.[0]?.message?.content;
     if (!rawText) {
-      console.error("[Gemini] Empty response", data);
-      return res.status(502).json({ error: "Gemini trả phản hồi rỗng" });
+      console.error("[Groq] Empty response", result.data);
+      return res.status(502).json({ error: "AI trả phản hồi rỗng" });
     }
 
-    // Bóc markdown nếu Gemini lỡ trả ```json ... ```
+    // Bóc markdown nếu lỡ trả ```json ... ```
     let cleaned = rawText
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
@@ -11703,18 +12450,18 @@ TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
         try {
           parsed = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
         } catch (e2) {
-          console.error("[Gemini] JSON parse error:", e2.message, "raw:", rawText);
-          return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+          console.error("[Groq] JSON parse error:", e2.message, "raw:", rawText);
+          return res.status(502).json({ error: "AI trả JSON không hợp lệ" });
         }
       } else {
-        console.error("[Gemini] JSON parse error:", e.message, "raw:", rawText);
-        return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+        console.error("[Groq] JSON parse error:", e.message, "raw:", rawText);
+        return res.status(502).json({ error: "AI trả JSON không hợp lệ" });
       }
     }
 
     if (typeof parsed.reply !== "string" || !Array.isArray(parsed.tutorIds)) {
-      console.error("[Gemini] Invalid schema", parsed);
-      return res.status(502).json({ error: "Gemini trả format không hợp lệ" });
+      console.error("[Groq] Invalid schema", parsed);
+      return res.status(502).json({ error: "AI trả format không hợp lệ" });
     }
 
     return res.json(parsed);
@@ -11729,6 +12476,32 @@ TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
 //   /api/ask-ai     — tên cũ, giữ để không vỡ frontend hiện tại
 app.post("/api/ai-suggest", askAiHandler);
 app.post("/api/ask-ai", askAiHandler);
+
+// ── POST /api/course-ai-chat ── AI Chat cho không gian học tập ───────────────
+app.post("/api/course-ai-chat", async (req, res) => {
+  try {
+    const { message, lessonTitle } = req.body;
+    if (!message) return res.status(400).json({ error: "Thiếu tin nhắn." });
+
+    const systemPrompt = `Bạn là EduX AI Tutor, một trợ lý học tập xuất sắc và tận tình.
+Bạn đang trợ giúp học sinh trong bài học: "${lessonTitle || 'Bài học chung'}".
+Nhiệm vụ của bạn là giải đáp các thắc mắc của học sinh về nội dung bài học một cách thân thiện, súc tích và dễ hiểu.
+Tuyệt đối không dùng markdown phức tạp (chỉ dùng chữ thường). Trả lời bằng tiếng Việt.
+TIN NHẮN CỦA HỌC SINH: "${message}"`;
+
+    const result = await callGroqModel(systemPrompt, false);
+    if (!result.ok) {
+      console.error("[Groq] Lỗi AI:", result.status, result.errText);
+      return res.status(502).json({ error: "Lỗi kết nối máy chủ AI" });
+    }
+
+    const rawText = result.data?.choices?.[0]?.message?.content;
+    return res.json({ reply: rawText || "Xin lỗi, tôi không thể đưa ra câu trả lời lúc này." });
+  } catch (error) {
+    console.error("POST /api/course-ai-chat error:", error);
+    return res.status(500).json({ error: "Lỗi hệ thống AI." });
+  }
+});
 
 // ─── Start server ─────────────────────────────────────────────────────────────
 
@@ -11839,9 +12612,6 @@ app.post("/api/ask-ai", askAiHandler);
   });
 
 
-  app.listen(port, () => {
-  console.log(`🚀 Server is running on http://localhost:${port}`);
-});
 
 
 app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req, res) => {
@@ -11858,10 +12628,11 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
     }
 
     const bookingResult = await client.query(
-      `SELECT b.id, b.tutor_id, b.student_id, b.escrow_tx_id,
-              b.payer_wallet_id, b.lesson_fee, b.subject, b.lesson_date
+      `SELECT b.id, b.tutor_id, b.student_id, b.escrow_tx_id, b.escrow_released_at,
+              b.payer_wallet_id, b.lesson_fee, b.subject, b.lesson_date, b.time_slot,
+              b.booking_type, b.tutor_check_in_at
        FROM bookings b
-       WHERE b.id = $1 AND b.tutor_id = $2 AND b.status = 'Approved'
+       WHERE b.id = $1 AND b.tutor_id = $2 AND b.status IN ('Approved', 'InProgress')
        LIMIT 1`,
       [id, tutorId]
     );
@@ -11871,6 +12642,21 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
     }
     const booking = bookingResult.rows[0];
     const lessonFee = Number(booking.lesson_fee || 0);
+
+    // ── ATTENDANCE_SETTLEMENT_V1: quyết định dòng tiền TRƯỚC khi ghi bất cứ gì ──
+    // (xem utils/businessRules.js — 'absent' cần bằng chứng: sau giờ học + check-in)
+    const lessonStart = lessonStartFrom(booking.lesson_date, booking.time_slot);
+    const minutesSinceStart = lessonStart ? (Date.now() - lessonStart.getTime()) / 60000 : null;
+    const settlement = getAttendanceSettlement(status, {
+      minutesSinceStart,
+      tutorCheckedIn: !!booking.tutor_check_in_at,
+    });
+
+    if (settlement.action === 'REJECT_TOO_EARLY') {
+      return res.status(400).json({
+        message: `Chỉ có thể đánh dấu vắng mặt sau khi buổi học bắt đầu ít nhất ${ATTENDANCE_ABSENT_GRACE_MINUTES} phút. Vui lòng chờ học sinh.`,
+      });
+    }
 
     await client.query('BEGIN');
 
@@ -11884,8 +12670,8 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
       [booking.id, booking.tutor_id, booking.student_id, status, note?.trim() || null]
     );
 
-    // ── PRESENT: Giải ngân ngay lập tức vào ví gia sư ──
-    if (status === 'present' && booking.escrow_tx_id && lessonFee > 0) {
+    // ── PRESENT: Giải ngân ngay lập tức vào ví gia sư (Chỉ nếu chưa giải ngân) ──
+    if (status === 'present' && booking.escrow_tx_id && lessonFee > 0 && !booking.escrow_released_at) {
       // Lấy ví gia sư và admin
       const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
       const tutorWalletId = tw.rows[0]?.id || null;
@@ -11977,39 +12763,236 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
       });
     }
 
-    // ── ABSENT / EXCUSED: Hoàn tiền 100% cho học sinh (Batch 16.1: refund_logs) ──
-    if (['absent', 'excused'].includes(status) && booking.escrow_tx_id && lessonFee > 0) {
-      const reasonCode = status === 'absent' ? 'ATTENDANCE_ABSENT' : 'ATTENDANCE_EXCUSED';
+    // ── ABSENT / EXCUSED: ATTENDANCE_SETTLEMENT_V1 (xem utils/businessRules.js) ──
+    // excused → hoàn 100% (gia sư tự nguyện). absent + check-in + sau grace →
+    // học sinh no-show mất phí, gia sư nhận 90% (như iTalki/Wyzant). absent mà
+    // gia sư KHÔNG check-in → không có bằng chứng → vẫn hoàn học sinh 100%.
+    // Học sinh/phụ huynh luôn còn 48h khiếu nại qua /api/bookings/:id/report.
+    if (['absent', 'excused'].includes(status) && booking.escrow_tx_id && lessonFee > 0 && !booking.escrow_released_at) {
 
-      // Idempotency guard (UNIQUE(target,student)) — skip if already refunded
-      const logId = await createRefundLog(client, {
-        target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
-        tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 1.0,
-        refund_amount: lessonFee, non_refunded_amount: 0, reason_code: reasonCode,
-        decision_by: 'tutor',
-        metadata: { source: 'attendance', attendance_status: status },
-      });
-
-      if (logId) {
-        await setLedgerContext(client, { reason_code: reasonCode, source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId });
-        await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, lessonFee]);
-        await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
-
-        const notifTitle = status === 'absent' ? 'Hoàn tiền — buổi học vắng mặt' : 'Hoàn tiền — nghỉ có phép';
-        const notifBody = status === 'absent'
-          ? `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`
-          : `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`;
-        // Batch 20.1: safeNotifyUser, same client. logId (refund_logs) is the
-        // natural idempotency anchor — one notification per refund event.
-        await safeNotifyUser(client, {
-          userId: booking.student_id, type: 'refund', channels: ['IN_APP'],
-          templateKey: 'refund_resolved', eventType: 'refund_resolved',
-          title: notifTitle, body: notifBody, icon: 'undo',
-          refId: booking.id, refType: 'booking',
-          sourceType: 'booking', sourceId: booking.id, priority: 'normal',
-          idempotencyKey: `refund_log:${logId}`,
+      if (settlement.action === 'REFUND_STUDENT') {
+        // Idempotency guard (UNIQUE(target,student)) — skip if already refunded
+        const logId = await createRefundLog(client, {
+          target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
+          tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 1.0,
+          refund_amount: lessonFee, non_refunded_amount: 0, reason_code: settlement.reasonCode,
+          decision_by: 'tutor',
+          metadata: { source: 'attendance', attendance_status: status, policy_version: ATTENDANCE_POLICY_VERSION },
         });
+
+        if (logId) {
+          await setLedgerContext(client, { reason_code: settlement.reasonCode, source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId, policy_version: ATTENDANCE_POLICY_VERSION });
+          await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, lessonFee]);
+          await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
+
+          const notifTitle = status === 'excused' ? 'Hoàn tiền — nghỉ có phép' : 'Hoàn tiền — buổi học vắng mặt';
+          const notifBody = status === 'excused'
+            ? `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`
+            : `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`;
+          // logId (refund_logs) is the natural idempotency anchor
+          await safeNotifyUser(client, {
+            userId: booking.student_id, type: 'refund', channels: ['IN_APP'],
+            templateKey: 'refund_resolved', eventType: 'refund_resolved',
+            title: notifTitle, body: notifBody, icon: 'undo',
+            refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+            idempotencyKey: `refund_log:${logId}`,
+          });
+
+          // Gia sư tố vắng mặt nhưng thiếu check-in → giải thích vì sao không được bồi hoàn
+          if (settlement.reasonCode === 'ATTENDANCE_ABSENT_NO_CHECKIN') {
+            await safeNotifyUser(client, {
+              userId: booking.tutor_id, type: 'attendance', channels: ['IN_APP'],
+              templateKey: 'generic', eventType: 'attendance_no_checkin',
+              title: 'Không đủ điều kiện nhận bồi hoàn vắng mặt',
+              body: `Bạn chưa check-in buổi học ${booking.subject || ''} nên không có bằng chứng có mặt — học phí đã được hoàn cho học sinh. Lần sau hãy bấm "Check-in" khi bắt đầu buổi học để được bảo vệ quyền lợi khi học sinh vắng mặt.`,
+              icon: 'info', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+              idempotencyKey: `booking:${booking.id}:absent_no_checkin:${booking.tutor_id}`,
+            });
+          }
+        }
       }
+
+      else if (settlement.action === 'COMPENSATE_TUTOR') {
+        // Học sinh no-show (có bằng chứng check-in) → gia sư nhận 90%, nền tảng 10%.
+        // refund_logs với refund_amount=0 vừa là audit vừa là khóa chống xử lý trùng
+        // (cùng pattern với phí hủy <1h ở luồng Cancelled).
+        const logId = await createRefundLog(client, {
+          target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
+          tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 0,
+          refund_amount: 0, non_refunded_amount: lessonFee, reason_code: settlement.reasonCode,
+          decision_by: 'tutor',
+          metadata: {
+            source: 'attendance', attendance_status: status, policy_version: ATTENDANCE_POLICY_VERSION,
+            tutor_check_in_at: booking.tutor_check_in_at,
+            minutes_since_start: minutesSinceStart == null ? null : Math.round(minutesSinceStart),
+          },
+        });
+
+        if (logId) {
+          const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+          const tutorWalletId = tw.rows[0]?.id || null;
+          const adminWalletId = await getAdminWalletId(client);
+
+          if (tutorWalletId && adminWalletId) {
+            const tutorAmount = Math.floor(lessonFee * 0.9);
+            const adminAmount = lessonFee - tutorAmount;
+
+            await setLedgerContext(client, {
+              reason_code: settlement.reasonCode, source: 'api',
+              reference_type: 'booking', reference_id: booking.id,
+              transaction_id: booking.escrow_tx_id, actor_id: req.user.userId,
+              policy_version: ATTENDANCE_POLICY_VERSION,
+            });
+
+            // Cọc ảo như buổi dạy thường: gia sư <2 buổi hoàn thành → tiền vào
+            // held_balance (chưa rút được) — chặn kịch bản gia sư mới tự tạo
+            // học sinh ảo rồi tố no-show để rút tiền. KHÔNG cộng
+            // completed_lessons_count vì đây không phải buổi đã dạy.
+            const completedRes = await client.query(
+              'SELECT completed_lessons_count FROM tutor_profiles WHERE user_id=$1', [booking.tutor_id]
+            );
+            const completedCount = completedRes.rows[0]?.completed_lessons_count || 0;
+
+            if (completedCount < 2) {
+              await client.query('UPDATE wallets SET held_balance=held_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+              await client.query('UPDATE wallets SET held_balance=held_balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId]);
+              await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
+              await client.query("UPDATE transactions SET status='RELEASED', updated_at=NOW() WHERE id=$1", [booking.escrow_tx_id]);
+            } else {
+              await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+                booking.escrow_tx_id, booking.payer_wallet_id, tutorWalletId, adminWalletId, lessonFee, 0.1,
+              ]);
+            }
+
+            const _nsSplit = calculateCommissionSplit(lessonFee);
+            await createCommissionLog(client, {
+              source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+              transaction_id: booking.escrow_tx_id,
+              student_id: booking.student_id, tutor_id: booking.tutor_id,
+              gross_amount: _nsSplit.grossAmount, commission_rate: _nsSplit.commissionRate,
+              commission_amount: _nsSplit.commissionAmount, tutor_amount: _nsSplit.tutorAmount,
+              event_type: 'EARNED', reason_code: settlement.reasonCode,
+              decision_by: 'tutor', actor_id: req.user.userId,
+              idempotency_key: `commission:booking:${booking.id}:${settlement.reasonCode}`,
+              metadata: { virtual_deposit: completedCount < 2, attendance_status: status },
+            });
+
+            await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
+
+            // Học sinh: nêu rõ chính sách + quyền khiếu nại 48h.
+            // (title/body lặp trong data để template 'generic' render đúng cả kênh EMAIL)
+            const noShowTitle = 'Buổi học ghi nhận vắng mặt không phép';
+            const noShowBody = `Bạn được ghi nhận vắng mặt không báo trước ở buổi học ${booking.subject || ''}. Theo chính sách, học phí ${lessonFee.toLocaleString('vi-VN')}đ không được hoàn vì gia sư đã giữ chỗ và có mặt (đã check-in). Nếu thông tin không đúng, bạn có 48 giờ để khiếu nại trong mục "Lịch học của tôi".`;
+            await safeNotifyUser(client, {
+              userId: booking.student_id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+              templateKey: 'generic', eventType: 'student_no_show_charged',
+              title: noShowTitle, body: noShowBody,
+              data: { title: noShowTitle, body: noShowBody },
+              icon: 'event_busy', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'high',
+              idempotencyKey: `refund_log:${logId}:student`,
+            });
+
+            // Phụ huynh liên kết: cần biết con vắng học không phép
+            const parentsRes = await client.query(
+              'SELECT parent_id FROM parent_children WHERE student_id=$1', [booking.student_id]
+            );
+            for (const p of parentsRes.rows) {
+              await safeNotifyUser(client, {
+                userId: p.parent_id, type: 'attendance', channels: ['IN_APP'],
+                templateKey: 'generic', eventType: 'child_no_show',
+                title: 'Con bạn vắng buổi học không phép',
+                body: `Học sinh vắng mặt không báo trước ở buổi học ${booking.subject || ''} ngày ${lessonDateStr(booking.lesson_date)}. Học phí ${lessonFee.toLocaleString('vi-VN')}đ không được hoàn theo chính sách. Nếu có nhầm lẫn, vui lòng khiếu nại trong vòng 48 giờ.`,
+                icon: 'family_restroom', refId: booking.id, refType: 'booking',
+                sourceType: 'booking', sourceId: booking.id, priority: 'high',
+                idempotencyKey: `refund_log:${logId}:parent:${p.parent_id}`,
+              });
+            }
+
+            // Gia sư: xác nhận bồi hoàn
+            await safeNotifyUser(client, {
+              userId: booking.tutor_id, type: 'attendance', channels: ['IN_APP'],
+              templateKey: 'generic', eventType: 'no_show_compensated',
+              title: 'Bồi hoàn buổi học vắng mặt',
+              body: completedCount < 2
+                ? `Học sinh vắng mặt không phép. ${tutorAmount.toLocaleString('vi-VN')}đ bồi hoàn đã vào ví (tạm giữ theo chính sách 2 buổi đầu).`
+                : `Học sinh vắng mặt không phép. ${tutorAmount.toLocaleString('vi-VN')}đ bồi hoàn đã được chuyển vào ví của bạn.`,
+              icon: 'account_balance_wallet', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+              idempotencyKey: `refund_log:${logId}:tutor`,
+            });
+          } else {
+            // Thiếu ví gia sư/admin: để cron auto-release xử lý sau (an toàn, không nuốt tiền)
+            await client.query(
+              `UPDATE bookings SET auto_release_at = NOW() WHERE id=$1 AND escrow_released_at IS NULL`,
+              [booking.id]
+            );
+          }
+        }
+      }
+    }
+
+    // ── INSTANT LEARNING: Handle money and status ──
+    if (booking.booking_type === 'Instant' && lessonFee > 0 && !booking.escrow_released_at) {
+      if (status === 'present') {
+        const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+        const tutorWalletId = tw.rows[0]?.id || null;
+        let adminWalletId = process.env.ADMIN_WALLET_ID;
+        if (!adminWalletId) {
+          const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
+          if (aw.rows.length) adminWalletId = aw.rows[0].id;
+        }
+        
+        if (tutorWalletId && adminWalletId) {
+          const tutorAmount = Math.floor(lessonFee * 0.9);
+          const adminAmount = lessonFee - tutorAmount;
+          
+          await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
+          
+          await client.query("UPDATE bookings SET status='Completed', escrow_released_at=NOW() WHERE id=$1", [booking.id]);
+        }
+      } else if (status === 'excused') {
+        // Gia sư châm chước → hoàn toàn bộ từ frozen_balance
+        await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1, balance=balance+$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+        await client.query("UPDATE bookings SET status='Completed', updated_at=NOW() WHERE id=$1", [booking.id]);
+      } else if (status === 'absent') {
+        // ATTENDANCE_SETTLEMENT_V1 cho Học Ngay: học sinh no-show → gia sư nhận 90%.
+        // Không yêu cầu check-in như booking thường vì với Instant, việc gia sư
+        // bấm chấp nhận yêu cầu ngay tại thời điểm đó đã là bằng chứng có mặt
+        // (guard "sau giờ bắt đầu + 15 phút" vẫn áp dụng ở đầu handler).
+        const tw2 = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+        const tutorWalletId2 = tw2.rows[0]?.id || null;
+        const adminWalletId2 = await getAdminWalletId(client);
+        if (tutorWalletId2 && adminWalletId2) {
+          const tutorAmount = Math.floor(lessonFee * 0.9);
+          const adminAmount = lessonFee - tutorAmount;
+          await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId2]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId2]);
+          await client.query("UPDATE bookings SET status='Completed', escrow_released_at=NOW() WHERE id=$1", [booking.id]);
+
+          await safeNotifyUser(client, {
+            userId: booking.student_id, type: 'attendance', channels: ['IN_APP'],
+            templateKey: 'generic', eventType: 'student_no_show_charged',
+            title: 'Buổi Học Ngay ghi nhận vắng mặt',
+            body: `Bạn được ghi nhận vắng mặt ở buổi Học Ngay ${booking.subject || ''}. Học phí ${lessonFee.toLocaleString('vi-VN')}đ không được hoàn theo chính sách. Nếu thông tin không đúng, bạn có 48 giờ để khiếu nại.`,
+            icon: 'event_busy', refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id, priority: 'high',
+            idempotencyKey: `booking:${booking.id}:instant_no_show:${booking.student_id}`,
+          });
+        } else {
+          // Thiếu ví: hoàn học sinh (an toàn hơn là treo tiền trong frozen_balance)
+          await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1, balance=balance+$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query("UPDATE bookings SET status='Completed', updated_at=NOW() WHERE id=$1", [booking.id]);
+        }
+      }
+      
+      // Tutor becomes Online again if they were Busy
+      await client.query("UPDATE tutor_profiles SET availability_status = 'Online' WHERE user_id = $1 AND availability_status = 'Busy'", [booking.tutor_id]);
     }
 
     await client.query('COMMIT');
@@ -12050,7 +13033,7 @@ app.get("/api/tutor/earnings", verifyToken, requireTutor, async (req, res) => {
          a.status AS "attendanceStatus",
          a.note AS "attendanceNote",
          a.marked_at AS "markedAt",
-         EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS "hasOpenDispute"
+         EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS "hasOpenDispute"
        FROM bookings b
        LEFT JOIN users s ON s.id = b.student_id
        LEFT JOIN attendance a ON a.booking_id = b.id
@@ -12225,6 +13208,20 @@ app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) =
       sourceType: 'withdrawal', sourceId: request.id,
       idempotencyKey: `withdrawal:${request.id}:created:${req.user.userId}`,
     });
+
+    // Báo admin có yêu cầu rút tiền mới cần xử lý (chuông + email)
+    const wdAdmins = await client.query(
+      `SELECT id FROM users WHERE role = 'admin' AND COALESCE(is_banned, FALSE) = FALSE`
+    );
+    for (const admin of wdAdmins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, type: 'admin_alert', channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'admin_new_withdrawal', eventType: 'admin_new_withdrawal',
+        refId: request.id, refType: 'withdrawal',
+        idempotencyKey: `admin_new_withdrawal:${request.id}:${admin.id}`,
+        data: { tutorName: req.user.name || '', amount },
+      });
+    }
 
     await client.query('COMMIT');
     return res.status(201).json({ success: true, request });
@@ -12503,11 +13500,11 @@ app.patch("/api/admin/withdrawal-requests/:id/mark-paid", verifyToken, requireAd
 // ==================== PAYMENT & ESCROW ROUTES ============================
 // =========================================================================
 
-// 1. Lấy th?�ng tin V?�
+// 1. Lấy thông tin ví
 app.get('/api/payment/wallet', verifyToken, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM wallets WHERE user_id = $1', [req.user.userId]);
-    if (rows.length === 0) return res.status(404).json({ message: 'V?� kh?�ng tồn tại' });
+    if (rows.length === 0) return res.status(404).json({ message: 'Ví không tồn tại.' });
     res.json({ wallet: rows[0] });
   } catch (err) {
     console.error(err);
@@ -12575,6 +13572,23 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
            return res.status(200).json({ RspCode: '02', Message: 'Order already confirmed' });
       }
 
+      // Email biên nhận nạp tiền (idempotent theo orderId — IPN có thể gọi lại)
+      try {
+        const owner = await pool.query('SELECT user_id FROM wallets WHERE id = $1', [walletId]);
+        if (owner.rows[0]?.user_id) {
+          await safeNotifyUser(pool, {
+            userId: owner.rows[0].user_id, type: 'wallet_topup',
+            channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'wallet_topup_success', eventType: 'wallet_topup_success',
+            refId: null, refType: 'wallet',
+            idempotencyKey: `wallet_topup:${orderId}`,
+            data: { amount, provider: 'VNPAY', txnRef: orderId },
+          });
+        }
+      } catch (notifyErr) {
+        console.error('[vnpay-ipn] notify error (non-fatal):', notifyErr.message);
+      }
+
       res.status(200).json({ RspCode: '00', Message: 'Confirm Success' });
   } catch (err) {
       console.error('IPN Error:', err);
@@ -12582,70 +13596,6 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
   }
 });
 
-// 4. Hold Money (Book Lesson)
-app.post('/api/escrow/hold', verifyToken, async (req, res) => {
-  const { amount, lessonId } = req.body;
-  try {
-      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
-      const payerWalletId = walletRes.rows[0].id;
-
-      const { rows } = await pool.query('SELECT hold_money_for_lesson($1, $2, $3) AS tx_id', [payerWalletId, amount, lessonId]);
-      
-      res.json({ success: true, transactionId: rows[0].tx_id });
-  } catch (err) {
-      // Trigger error from CHECK (balance >= amount)
-      res.status(400).json({ success: false, message: 'Số dư kh?�ng đủ để thanh to?�n hoặc lỗi hệ thống.' });
-  }
-});
-
-// 5. Release Escrow (Giải ng?�n cho Gia sư)
-app.post('/api/escrow/release', verifyToken, async (req, res) => {
-    const { transactionId, payerWalletId, tutorWalletId, amount } = req.body;
-    // Lấy admin_wallet_id từ m?�i trường hoặc truy vấn user admin đầu ti?�n
-    try {
-        let adminWalletId = process.env.ADMIN_WALLET_ID;
-        if (!adminWalletId) {
-            const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
-            if (rows.length > 0) adminWalletId = rows[0].id;
-            else return res.status(500).json({ success: false, message: 'Lỗi hệ thống: Chưa cấu h?�nh v?� Admin.' });
-        }
-
-        const commissionRate = 0.1; // 10%
-        const { error } = await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [
-            transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, commissionRate
-        ]);
-        res.json({ success: true, message: 'Đ?� giải ng?�n cho Gia sư' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 6. Resolve Dispute (Xử l?� khiếu nại - Admin)
-app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
-    
-    const { disputeId, transactionId, payerWalletId, tutorWalletId, amount, decision, adminNote } = req.body;
-    
-    try {
-        if (decision === 'REFUND_TO_STUDENT') {
-            await pool.query('SELECT refund_escrow($1, $2, $3)', [transactionId, payerWalletId, amount]);
-            await pool.query("UPDATE disputes SET status = 'RESOLVED_REFUND', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
-        } 
-        else if (decision === 'RELEASE_TO_TUTOR') {
-            let adminWalletId = process.env.ADMIN_WALLET_ID;
-            if (!adminWalletId) {
-                const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
-                adminWalletId = rows[0].id;
-            }
-            await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
-            await pool.query("UPDATE disputes SET status = 'RESOLVED_RELEASE', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
-        }
-        res.json({ success: true, message: 'Đ?� xử l?� khiếu nại th?�nh c?�ng' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  ESCROW EXTENDED — Report, Manual Release, Wallet History
@@ -12655,8 +13605,9 @@ app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
 app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const { reason, severity = 'medium', evidenceUrl = null } = req.body;
+    const { reason, severity = 'medium', evidenceUrls, requestedResolution } = req.body;
     if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do báo cáo.' });
+    if (!Array.isArray(evidenceUrls) || evidenceUrls.length === 0) return res.status(400).json({ message: 'Vui lòng đính kèm bằng chứng hình ảnh trước khi gửi báo cáo.' });
 
     let bookingQuery;
     let queryParams;
@@ -12678,20 +13629,30 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     const bookingRes = await client.query(bookingQuery, queryParams);
     if (!bookingRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy lịch học hoặc bạn không có quyền truy cập.' });
     const booking = bookingRes.rows[0];
-    
+
+    const sessionStart = lessonStartFrom(booking.lesson_date, booking.time_slot);
+    const sessionEnd = lessonEndFrom(booking.lesson_date, booking.time_slot);
+    const now = new Date();
+    if (sessionStart && now < sessionStart) {
+      return res.status(400).json({ message: 'Buổi học chưa diễn ra.' });
+    }
+    if (sessionEnd && (now - sessionEnd) > 48 * 3600000) {
+      return res.status(400).json({ message: 'Đã quá thời hạn báo cáo buổi học này (48 giờ sau khi kết thúc).' });
+    }
+
     if (!booking.escrow_tx_id) return res.status(400).json({ message: 'Lịch học này không có giao dịch escrow để khiếu nại.' });
 
     const existingDispute = await client.query(
-      "SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN'", [booking.id]
+      "SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN' AND withdrawn_at IS NULL", [booking.id]
     );
     if (existingDispute.rows.length) return res.status(409).json({ message: 'Bạn đã gửi khiếu nại cho buổi học này rồi.' });
 
     await client.query('BEGIN');
 
     const dispute = await client.query(`
-      INSERT INTO disputes (transaction_id, raised_by, reason, status, booking_id, target_type, tutor_id, severity, raised_by_parent, evidence_url)
-      VALUES ($1, $2, $3, 'OPEN', $4, 'booking', $5, $6, $7, $8) RETURNING id
-    `, [booking.escrow_tx_id, req.user.userId, reason.trim(), booking.id, booking.tutor_id, severity, isParent, evidenceUrl]);
+      INSERT INTO disputes (transaction_id, raised_by, reason, status, booking_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls, student_requested_resolution)
+      VALUES ($1, $2, $3, 'OPEN', $4, 'booking', $5, $6, $7, $8, $9) RETURNING id
+    `, [booking.escrow_tx_id, req.user.userId, reason.trim(), booking.id, booking.tutor_id, severity, isParent, evidenceUrls, requestedResolution?.trim() || null]);
 
     // Pause auto-release
     await client.query(`UPDATE bookings SET auto_release_at=NULL WHERE id=$1`, [booking.id]);
@@ -12700,7 +13661,7 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
       await safeNotifyUser(client, {
-        userId: admin.id, channels: ['IN_APP'],
+        userId: admin.id, channels: ['IN_APP', 'EMAIL'],
         templateKey: 'dispute_opened', eventType: 'dispute_opened',
         data: { forAdmin: true, reporterName, reason: `báo cáo vi phạm buổi học ID: ${booking.id}. Lý do: ${reason}` },
         refId: dispute.rows[0].id, refType: 'dispute',
@@ -12730,12 +13691,134 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
   }
 });
 
+// PATCH /api/bookings/disputes/:disputeId/tutor-response — gia sư giải trình cho 1 dispute liên quan tới mình
+app.patch('/api/bookings/disputes/:disputeId/tutor-response', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { response } = req.body;
+    if (!response?.trim()) return res.status(400).json({ message: 'Vui lòng nhập nội dung giải trình.' });
+
+    const dRes = await client.query('SELECT * FROM disputes WHERE id=$1', [req.params.disputeId]);
+    if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const dispute = dRes.rows[0];
+
+    if (dispute.tutor_id !== req.user.userId) {
+      return res.status(403).json({ message: 'Bạn không có quyền phản hồi khiếu nại này.' });
+    }
+    if (dispute.withdrawn_at) {
+      return res.status(409).json({ message: 'Khiếu nại này đã được học sinh rút, không thể xử lý/phản hồi.' });
+    }
+    if (dispute.status !== 'OPEN') {
+      return res.status(409).json({ message: 'Khiếu nại đã được xử lý, không thể phản hồi.' });
+    }
+
+    await client.query('BEGIN');
+    const updated = await client.query(
+      `UPDATE disputes SET tutor_response=$1, tutor_response_at=NOW() WHERE id=$2 RETURNING *`,
+      [response.trim(), req.params.disputeId]
+    );
+
+    const admins = await client.query("SELECT id FROM users WHERE role='admin'");
+    for (const admin of admins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_tutor_responded', eventType: 'dispute_tutor_responded',
+        data: { forAdmin: true, disputeId: req.params.disputeId },
+        refId: req.params.disputeId, refType: 'dispute',
+        sourceType: 'dispute', sourceId: req.params.disputeId,
+        idempotencyKey: `dispute:${req.params.disputeId}:tutor_responded:${admin.id}`,
+      });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, dispute: updated.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('PATCH tutor-response error:', e);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/bookings/disputes/:disputeId/withdraw — học sinh tự rút đơn khiếu nại (không sửa nội dung)
+app.patch('/api/bookings/disputes/:disputeId/withdraw', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const dRes = await client.query('SELECT * FROM disputes WHERE id=$1', [req.params.disputeId]);
+    if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const dispute = dRes.rows[0];
+
+    if (dispute.raised_by !== req.user.userId) {
+      return res.status(403).json({ message: 'Bạn không có quyền rút khiếu nại này.' });
+    }
+    if (dispute.status !== 'OPEN' || dispute.withdrawn_at) {
+      return res.status(409).json({ message: 'Khiếu nại đã được xử lý hoặc đã rút trước đó.' });
+    }
+
+    await client.query('BEGIN');
+    const updated = await client.query(
+      `UPDATE disputes SET withdrawn_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.disputeId]
+    );
+
+    // Booking dispute: khôi phục luồng tự động giải ngân bình thường (auto_release_at
+    // chỉ từng bị đặt về NOW() khi thiếu ví lúc điểm danh — không có mốc "lessonEnd + Nh"
+    // nào khác trong hệ thống — nên đặt lại NOW() để cron auto-release xử lý ở lượt kế tiếp).
+    if (dispute.booking_id) {
+      await client.query(
+        `UPDATE bookings SET auto_release_at=NOW() WHERE id=$1 AND escrow_released_at IS NULL`,
+        [dispute.booking_id]
+      );
+    }
+
+    const admins = await client.query("SELECT id FROM users WHERE role='admin'");
+    const reporterRes = await client.query('SELECT full_name FROM users WHERE id=$1', [dispute.raised_by]);
+    const reporterName = reporterRes.rows[0]?.full_name || 'Học sinh';
+    for (const admin of admins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_withdrawn', eventType: 'dispute_withdrawn',
+        data: { forAdmin: true, reporterName },
+        refId: req.params.disputeId, refType: 'dispute',
+        sourceType: 'dispute', sourceId: req.params.disputeId,
+        idempotencyKey: `dispute:${req.params.disputeId}:withdrawn:${admin.id}`,
+      });
+    }
+    if (dispute.tutor_id) {
+      await safeNotifyUser(client, {
+        userId: dispute.tutor_id, channels: ['IN_APP'],
+        templateKey: 'dispute_withdrawn', eventType: 'dispute_withdrawn',
+        data: { forAdmin: false },
+        refId: req.params.disputeId, refType: 'dispute',
+        sourceType: 'dispute', sourceId: req.params.disputeId,
+        idempotencyKey: `dispute:${req.params.disputeId}:withdrawn:${dispute.tutor_id}`,
+      });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, dispute: updated.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('PATCH withdraw dispute error:', e);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/courses/:id/report — Học sinh / Phụ huynh báo cáo khóa học
 app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const { reason, severity = 'medium', evidenceUrl = null } = req.body;
+    const { reason, severity = 'medium', requestedResolution } = req.body;
     if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do báo cáo.' });
+    // Tương thích ngược tạm thời: route này chưa có caller frontend nào tính tới thời điểm audit Bước 8a.0,
+    // nhưng vẫn chấp nhận cả evidenceUrl (string, dạng cũ) lẫn evidenceUrls (mảng, dạng mới) để không phá caller ngoài nếu có.
+    const evidenceUrls = Array.isArray(req.body.evidenceUrls)
+      ? req.body.evidenceUrls
+      : (req.body.evidenceUrl ? [req.body.evidenceUrl] : null);
+    const studentRequestedResolution = requestedResolution?.trim() || null;
 
     let enrollmentQuery;
     let queryParams;
@@ -12768,7 +13851,7 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
     if (enrollment.status === 'refunded') return res.status(400).json({ message: 'Khóa học này đã được hoàn tiền.' });
 
     const existingDispute = await client.query(
-      "SELECT id FROM disputes WHERE course_id=$1 AND raised_by=$2 AND status='OPEN'", [enrollment.course_id, req.user.userId]
+      "SELECT id FROM disputes WHERE course_id=$1 AND raised_by=$2 AND status='OPEN' AND withdrawn_at IS NULL", [enrollment.course_id, req.user.userId]
     );
     if (existingDispute.rows.length) return res.status(409).json({ message: 'Bạn đã gửi khiếu nại cho khóa học này rồi.' });
 
@@ -12841,10 +13924,11 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
         `, [sw.rows[0].id, refundAmount, enrollment.course_id, `Hoàn tiền khóa học ${Math.round(decision.refundRate * 100)}% — ${decision.reasonCode}`]);
 
         await client.query(`
-          INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url, admin_note, resolved_at)
-          VALUES (NULL, $1, $2, 'RESOLVED_REFUND', $3, 'course', $4, $5, $6, $7, $8, NOW())
-        `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
-            `Tự động hoàn ${Math.round(decision.refundRate * 100)}% theo ${REFUND_POLICY_VERSION} (tiến độ ${Math.round(progressPercent)}%, ${Math.round(hoursSincePurchase)}h).`]);
+          INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls, admin_note, resolved_at, student_requested_resolution)
+          VALUES (NULL, $1, $2, 'RESOLVED_REFUND', $3, 'course', $4, $5, $6, $7, $8, NOW(), $9)
+        `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrls,
+            `Tự động hoàn ${Math.round(decision.refundRate * 100)}% theo ${REFUND_POLICY_VERSION} (tiến độ ${Math.round(progressPercent)}%, ${Math.round(hoursSincePurchase)}h).`,
+            studentRequestedResolution]);
 
         await safeNotifyUser(client, {
           userId: enrollment.student_id, channels: ['IN_APP', 'EMAIL'],
@@ -12866,16 +13950,17 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
 
     // ── ADMIN_REVIEW (>80% progress, >48h, or auto-settle unsafe) → OPEN dispute
     const dispute = await client.query(`
-      INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url, admin_note)
-      VALUES (NULL, $1, $2, 'OPEN', $3, 'course', $4, $5, $6, $7, $8) RETURNING id
-    `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
-        `Chuyển admin xét duyệt theo ${REFUND_POLICY_VERSION}: ${decision.reasonCode}.`]);
+      INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls, admin_note, student_requested_resolution)
+      VALUES (NULL, $1, $2, 'OPEN', $3, 'course', $4, $5, $6, $7, $8, $9) RETURNING id
+    `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrls,
+        `Chuyển admin xét duyệt theo ${REFUND_POLICY_VERSION}: ${decision.reasonCode}.`,
+        studentRequestedResolution]);
 
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
       await safeNotifyUser(client, {
-        userId: admin.id, channels: ['IN_APP'],
+        userId: admin.id, channels: ['IN_APP', 'EMAIL'],
         templateKey: 'dispute_opened', eventType: 'dispute_opened',
         data: { forAdmin: true, reporterName, reason: `khiếu nại khóa học ID: ${enrollment.course_id}. Lý do: ${reason}` },
         refId: dispute.rows[0].id, refType: 'dispute',
@@ -13611,6 +14696,9 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
     if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
     const dispute = dRes.rows[0];
 
+    if (dispute.withdrawn_at) {
+      return res.status(409).json({ message: 'Khiếu nại này đã được học sinh rút, không thể xử lý/phản hồi.' });
+    }
     // Idempotency: only an OPEN dispute can be resolved (Batch 16)
     if (dispute.status !== 'OPEN') {
       return res.status(409).json({ message: 'Khiếu nại đã được xử lý.' });
@@ -13832,7 +14920,7 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
     const booking = bookingRes.rows[0];
     const lessonFee = Number(booking.lesson_fee || 0);
 
-    const openDispute = await client.query("SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN'", [booking.id]);
+    const openDispute = await client.query("SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN' AND withdrawn_at IS NULL", [booking.id]);
     if (openDispute.rows.length) return res.status(400).json({ message: 'Đang có khiếu nại mở, không thể xác nhận.' });
 
     const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
@@ -14689,7 +15777,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
           AND b.auto_release_at IS NOT NULL
           AND b.auto_release_at <= NOW()
           AND NOT EXISTS (
-            SELECT 1 FROM disputes d WHERE d.booking_id = b.id AND d.status = 'OPEN'
+            SELECT 1 FROM disputes d WHERE d.booking_id = b.id AND d.status = 'OPEN' AND d.withdrawn_at IS NULL
           )
       `);
 
@@ -14785,11 +15873,16 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
             : '';
         const missingLinkWarn = b.teaching_method === 'online' && !b.meeting_link;
 
-        const send = (userId, title, body) => pool.query(
-          `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
-           VALUES ($1, 'lesson_reminder', $2, $3, 'alarm', $4, 'booking')`,
-          [userId, title, body, b.id]
-        );
+        // In-app + email qua notifyUser; idempotency theo booking+mốc giờ+người
+        // nhận (claim UPDATE bên dưới vẫn là hàng rào chính chống gửi trùng)
+        const send = (userId, hoursLeft, forTutor, message, meetLink) => safeNotifyUser(pool, {
+          userId, type: 'lesson_reminder',
+          channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'lesson_reminder', eventType: 'lesson_reminder',
+          refId: b.id, refType: 'booking',
+          idempotencyKey: `lesson_reminder:${b.id}:${hoursLeft}h:${userId}`,
+          data: { hoursLeft, forTutor, message, meetLink: meetLink || null },
+        });
 
         // Claim TRƯỚC khi gửi (UPDATE có điều kiện) — chống gửi trùng khi có
         // 2 process cùng chạy (nodemon restart race / bind trùng cổng trên Windows)
@@ -14800,10 +15893,12 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
             [b.id]
           );
           if (!claim.rowCount) continue;
-          if (b.student_id) await send(b.student_id, 'Sắp đến giờ học (còn ~1 tiếng)',
-            `Buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'} lúc ${b.time_slot} ngày ${dateStr}. ${methodTxt}`.trim());
-          if (b.tutor_id) await send(b.tutor_id, 'Sắp đến giờ dạy (còn ~1 tiếng)',
-            `Buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''} lúc ${b.time_slot} ngày ${dateStr}.${missingLinkWarn ? ' ⚠️ Chưa gắn link phòng học — hãy vào Lịch trình gắn ngay!' : ''}`);
+          if (b.student_id) await send(b.student_id, 1, false,
+            `Buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'} lúc ${b.time_slot} ngày ${dateStr}. ${methodTxt}`.trim(),
+            b.teaching_method === 'online' ? b.meeting_link : null);
+          if (b.tutor_id) await send(b.tutor_id, 1, true,
+            `Buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''} lúc ${b.time_slot} ngày ${dateStr}.${missingLinkWarn ? ' ⚠️ Chưa gắn link phòng học — hãy vào Lịch trình gắn ngay!' : ''}`,
+            b.teaching_method === 'online' ? b.meeting_link : null);
           console.log(`🔔 Reminder 1h sent for booking ${b.id}`);
         } else if (!b.reminded_24h_at && msLeft <= 24 * 60 * 60 * 1000) {
           const claim = await pool.query(
@@ -14812,10 +15907,12 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
             [b.id]
           );
           if (!claim.rowCount) continue;
-          if (b.student_id) await send(b.student_id, 'Nhắc lịch: buổi học trong 24h tới',
-            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'}. ${methodTxt}`.trim());
-          if (b.tutor_id) await send(b.tutor_id, 'Nhắc lịch: buổi dạy trong 24h tới',
-            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''}.${missingLinkWarn ? ' Nhớ gắn link phòng học trong Lịch trình → bấm vào buổi học.' : ''}`);
+          if (b.student_id) await send(b.student_id, 24, false,
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'}. ${methodTxt}`.trim(),
+            b.teaching_method === 'online' ? b.meeting_link : null);
+          if (b.tutor_id) await send(b.tutor_id, 24, true,
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''}.${missingLinkWarn ? ' Nhớ gắn link phòng học trong Lịch trình → bấm vào buổi học.' : ''}`,
+            b.teaching_method === 'online' ? b.meeting_link : null);
           console.log(`🔔 Reminder 24h sent for booking ${b.id}`);
         }
       }
@@ -15405,10 +16502,107 @@ app.get('/api/tutor/session-eval-stats', verifyToken, requireTutor, async (req, 
 //  END SESSION EVALUATION APIs
 // ══════════════════════════════════════════════════════════════════════════════
 
-if (require.main === module) {
-  startServer();
-} else {
-  startServer().catch(() => {});
-  module.exports = app;
-}
+// Start a background job to check for upcoming lessons and notify tutors
+setInterval(async () => {
+  try {
+    const query = `
+      SELECT b.id, b.tutor_id, b.student_id, b.child_name, b.subject, b.lesson_date, b.time_slot, u.full_name as student_name
+      FROM bookings b
+      LEFT JOIN users u ON u.id = b.student_id
+      WHERE b.status = 'Approved'
+        AND b.notified_tutor_before_lesson = false
+        AND ((b.lesson_date + b.time_slot::time) AT TIME ZONE 'Asia/Ho_Chi_Minh') BETWEEN NOW() AND NOW() + INTERVAL '30 minutes'
+    `;
+    const result = await pool.query(query);
+    if (result.rows.length > 0) {
+      for (const booking of result.rows) {
+        const studentName = booking.child_name || booking.student_name || 'Học viên';
+        const subject = booking.subject || 'General';
+        const time = booking.time_slot;
+        
+        // Create notification
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, ref_id, ref_type)
+           VALUES ($1, 'upcoming_lesson', 'Sắp đến giờ dạy', $2, $3, 'booking')`,
+          [
+            booking.tutor_id,
+            `Bạn sắp có slot dạy vào lúc ${time}, dạy ${studentName}, môn ${subject}.`,
+            booking.id
+          ]
+        );
+        
+        // Mark as notified
+        await pool.query(
+          `UPDATE bookings SET notified_tutor_before_lesson = true WHERE id = $1`,
+          [booking.id]
+        );
+      }
+      console.log(`Sent ${result.rows.length} upcoming lesson notifications to tutors.`);
+    }
+  } catch (err) {
+    console.error("Cron check upcoming lessons error:", err);
+  }
+}, 60 * 1000); // Check every minute
 
+// Background job to timeout instant bookings
+setInterval(async () => {
+  try {
+    const result = await pool.query(`
+      SELECT id, student_id, tutor_id, lesson_fee, payer_wallet_id
+      FROM bookings
+      WHERE booking_type = 'Instant' AND status = 'Pending'
+        AND created_at < NOW() - INTERVAL '60 seconds'
+    `);
+
+    for (const b of result.rows) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Re-check status with lock
+        const bRes = await client.query(
+          'SELECT status, lesson_fee, payer_wallet_id, student_id FROM bookings WHERE id = $1 FOR UPDATE',
+          [b.id]
+        );
+        if (!bRes.rows.length || bRes.rows[0].status !== 'Pending') {
+          await client.query('COMMIT');
+          continue;
+        }
+
+        const { lesson_fee, student_id } = bRes.rows[0];
+        let { payer_wallet_id } = bRes.rows[0];
+
+        // Fallback: nếu payer_wallet_id NULL, tìm ví qua student_id
+        if (!payer_wallet_id) {
+          const wRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [student_id]);
+          if (wRes.rows.length) {
+            payer_wallet_id = wRes.rows[0].id;
+            await client.query('UPDATE bookings SET payer_wallet_id = $1 WHERE id = $2', [payer_wallet_id, b.id]);
+          }
+        }
+
+        await client.query("UPDATE bookings SET status = 'Timeout', updated_at = NOW() WHERE id = $1", [b.id]);
+
+        // Chỉ hoàn tiền nếu có ví hợp lệ
+        if (payer_wallet_id) {
+          await client.query(
+            'UPDATE wallets SET balance = balance + $1, frozen_balance = GREATEST(frozen_balance - $1, 0) WHERE id = $2',
+            [lesson_fee, payer_wallet_id]
+          );
+        }
+
+        await client.query('COMMIT');
+        console.log(`Timed out instant booking ${b.id}, refunded ${lesson_fee} to wallet ${payer_wallet_id}`);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Instant booking timeout transaction error:', err);
+      } finally {
+        client.release();
+      }
+    }
+  } catch (err) {
+    console.error('Cron check instant timeout error:', err);
+  }
+}, 5 * 1000); // Check every 5 seconds
+
+startServer();

@@ -9,9 +9,11 @@ import { useAuth } from './AuthContext'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
+import MessageIcon from './components/MessageIcon'
 import ParentTimeline from './components/MicroFeedback/ParentTimeline'
+import { API_BASE_URL } from './config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API_BASE = API_BASE_URL
 
 const NAV = [
   { key: 'overview',  icon: 'dashboard',       label: 'Tổng quan' },
@@ -195,6 +197,7 @@ export default function ParentDashboard() {
           </div>
 
           <WalletWidget token={token} />
+          <MessageIcon token={token} />
           <NotificationDropdown token={token} />
         </header>
 
@@ -1123,14 +1126,14 @@ function AddStudentModal({ token, onClose, onAdded }) {
               </div>
               <div>
                 <label className="block text-xs font-medium text-on-surface-variant mb-1">Mật khẩu <span className="text-error">*</span></label>
-                <input required type="password" minLength={6} value={form.password} onChange={e=>setForm({...form, password: e.target.value})} placeholder="Ít nhất 6 ký tự" className="w-full h-11 px-4 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary" />
+                <input required type="password" minLength={8} value={form.password} onChange={e=>setForm({...form, password: e.target.value})} placeholder="Ít nhất 8 ký tự" className="w-full h-11 px-4 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-on-surface-variant mb-1">Tên gọi ở nhà (không bắt buộc)</label>
                 <input value={form.nickname} onChange={e=>setForm({...form, nickname: e.target.value})} placeholder="VD: Tí, Tèo..." className="w-full h-11 px-4 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary" />
               </div>
 
-              <button disabled={creating || !form.full_name || !form.email || form.password.length < 6} type="submit" className="mt-2 h-12 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed">
+              <button disabled={creating || !form.full_name || !form.email || form.password.length < 8} type="submit" className="mt-2 h-12 w-full rounded-xl bg-primary text-on-primary font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed">
                 {creating ? 'Đang tạo...' : 'Tạo tài khoản & Liên kết'}
               </button>
             </form>

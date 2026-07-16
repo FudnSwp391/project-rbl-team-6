@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { methodSupport, methodLabel, METHOD_OPTIONS } from '../utils/teachingMethod';
+import { API_BASE_URL } from '../config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const API_BASE = API_BASE_URL;
 const TIME_SLOTS = ['08:00–10:00', '10:00–12:00', '14:00–16:00', '16:00–18:00', '18:00–20:00', '20:00–22:00'];
 
 export default function BookingModal({ tutor, onClose }) {

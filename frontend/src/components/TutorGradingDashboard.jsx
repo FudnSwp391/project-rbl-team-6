@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import TutorGradingReview from './TutorGradingReview'
 import SessionEvaluationModal from './SessionEvaluationModal'
+import { API_BASE_URL } from '../config';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API = API_BASE_URL
 
 // ── Toast mini-component ──────────────────────────────────────────────────────
 function Toast({ message, type, onClose }) {
@@ -159,7 +160,7 @@ export default function TutorGradingDashboard({ token }) {
 
 
   return (
-    <div className="flex flex-col gap-lg h-full">
+    <div className="flex flex-col gap-5 pb-8">
       {/* Toast */}
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
 
@@ -167,62 +168,63 @@ export default function TutorGradingDashboard({ token }) {
       <div>
         <h2 className="font-headline-lg text-headline-lg text-on-surface flex items-center gap-sm">
           <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>fact_check</span>
-          Review &amp; Grade
+          Chấm Điểm &amp; Đánh Giá
         </h2>
         <p className="font-body-md text-body-md text-on-surface-variant">
-          Review student submissions and provide manual feedback
+          Quản lý chấm điểm bài tập và đánh giá chi tiết chất lượng buổi học
         </p>
       </div>
 
       {/* Stat cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {/* Card 1 */}
-        <div style={{ background:'var(--surface-container-lowest,#fff)', border:'1px solid var(--outline-variant,#c4c5d7)', borderRadius:'0.75rem', padding:'1.5rem', display:'flex', alignItems:'center', justifyContent:'space-between', boxShadow:'0 1px 4px rgba(0,0,0,.06)' }}>
+        <div className="bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-6 flex items-center justify-between shadow-sm hover:shadow-md hover:-translate-y-1 transition-all duration-300 group">
           <div>
-            <p style={{ color:'var(--on-surface-variant)', fontSize:13, fontWeight:600, marginBottom:4 }}>Bài kiểm tra chờ chấm</p>
-            <h3 style={{ fontSize:36, fontWeight:700, color:'var(--primary)', lineHeight:1.1, margin:0 }}>
+            <p className="text-on-surface-variant text-[13px] font-semibold mb-1">Bài kiểm tra chờ chấm</p>
+            <h3 className="text-4xl font-bold text-primary leading-tight m-0 group-hover:scale-105 transition-transform origin-left">
               {loadingAssess ? '—' : pendingCount}
             </h3>
-            <p style={{ fontSize:12, color:'var(--on-surface-variant)', marginTop:6, display:'flex', alignItems:'center', gap:4 }}>
-              <span className="material-symbols-outlined" style={{ fontSize:14 }}>schedule</span>
+            <p className="text-xs text-on-surface-variant mt-2 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px]">schedule</span>
               {loadingAssess ? '...' : `${dueToday} nộp hôm nay`}
             </p>
           </div>
-          <div style={{ width:56, height:56, borderRadius:'50%', background:'rgba(0,56,176,.08)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--primary)' }}>
-            <span className="material-symbols-outlined" style={{ fontSize:32, fontVariationSettings:"'FILL' 1" }}>assignment</span>
+          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-colors">
+            <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings:"'FILL' 1" }}>assignment</span>
           </div>
         </div>
+        
         {/* Card 2 */}
-        <div style={{ background:'var(--surface-container-lowest,#fff)', border:'1px solid var(--outline-variant,#c4c5d7)', borderRadius:'0.75rem', padding:'1.5rem', display:'flex', alignItems:'center', justifyContent:'space-between', boxShadow:'0 1px 4px rgba(0,0,0,.06)' }}>
+        <div className="bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-6 flex items-center justify-between shadow-sm hover:shadow-md hover:-translate-y-1 transition-all duration-300 group">
           <div>
-            <p style={{ color:'var(--on-surface-variant)', fontSize:13, fontWeight:600, marginBottom:4 }}>Buổi học chờ đánh giá</p>
-            <h3 style={{ fontSize:36, fontWeight:700, color:'#36455b', lineHeight:1.1, margin:0 }}>
+            <p className="text-on-surface-variant text-[13px] font-semibold mb-1">Buổi học chờ đánh giá</p>
+            <h3 className="text-4xl font-bold text-[#36455b] leading-tight m-0 group-hover:scale-105 transition-transform origin-left">
               {evalStats.pending_count ?? '—'}
             </h3>
-            <p style={{ fontSize:12, color:'var(--on-surface-variant)', marginTop:6, display:'flex', alignItems:'center', gap:4 }}>
-              <span className="material-symbols-outlined" style={{ fontSize:14 }}>person_pin</span>
+            <p className="text-xs text-on-surface-variant mt-2 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px]">person_pin</span>
               {evalStats.evaluated_count ?? 0} buổi đã đánh giá
             </p>
           </div>
-          <div style={{ width:56, height:56, borderRadius:'50%', background:'rgba(54,69,91,.10)', display:'flex', alignItems:'center', justifyContent:'center', color:'#36455b' }}>
-            <span className="material-symbols-outlined" style={{ fontSize:32, fontVariationSettings:"'FILL' 1" }}>chat_bubble</span>
+          <div className="w-14 h-14 rounded-full bg-[#36455b]/10 flex items-center justify-center text-[#36455b] group-hover:bg-[#36455b] group-hover:text-white transition-colors">
+            <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings:"'FILL' 1" }}>chat_bubble</span>
           </div>
         </div>
       </div>
 
 
       {/* Tab navigation */}
-      <div style={{ borderBottom:'1px solid var(--outline-variant,#c4c5d7)', display:'flex', gap:'2rem', paddingTop:4 }}>
+      <div className="border-b border-outline-variant/50 flex gap-8 pt-2">
         {[
           { key: 'assessment', label: 'Chấm điểm bài kiểm tra' },
           { key: 'session',    label: 'Đánh giá buổi học'       },
         ].map(tab => (
-          <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
-            paddingBottom:14, fontWeight:600, fontSize:14, border:'none', background:'none', cursor:'pointer',
-            borderBottom: activeTab === tab.key ? '2px solid var(--primary)' : '2px solid transparent',
-            color: activeTab === tab.key ? 'var(--primary)' : 'var(--on-surface-variant)',
-            transition:'all .2s',
-          }}>{tab.label}</button>
+          <button key={tab.key} onClick={() => setActiveTab(tab.key)} className={`
+            pb-3 font-semibold text-sm border-b-2 transition-all duration-200 outline-none
+            ${activeTab === tab.key ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}
+          `}>
+            {tab.label}
+          </button>
         ))}
       </div>
 
@@ -251,65 +253,65 @@ export default function TutorGradingDashboard({ token }) {
             </div>
           ) : filteredAttempts.length === 0 ? (
             <div className="flex-1 bg-surface-container-lowest/50 border border-outline-variant/30 rounded-2xl flex flex-col items-center justify-center p-xl text-center">
-              <span className="material-symbols-outlined text-[64px] text-green-500 mb-4">task_alt</span>
+              <span className="material-symbols-outlined text-[64px] text-green-500 mb-4" style={{ fontVariationSettings: "'FILL' 1" }}>task_alt</span>
               <h3 className="font-headline-md text-headline-md text-on-surface mb-2">
-                {searchAssess ? 'Không tìm thấy kết quả' : 'All caught up!'}
+                {searchAssess ? 'Không tìm thấy kết quả' : 'Hoàn tất!'}
               </h3>
               <p className="font-body-md text-body-md text-on-surface-variant max-w-md">
-                {searchAssess ? 'Thử từ khoá khác.' : 'Không có bài nào chờ chấm. Take a break!'}
+                {searchAssess ? 'Thử từ khoá tìm kiếm khác.' : 'Bạn đã hoàn thành việc chấm điểm. Hãy nghỉ ngơi nhé!'}
               </p>
             </div>
           ) : (
-            <div className="bg-surface-container-lowest border border-outline-variant/30 rounded-2xl overflow-hidden shadow-sm">
+            <div className="bg-surface-container-lowest border border-outline-variant/50 rounded-2xl overflow-hidden shadow-sm">
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+                <table className="w-full text-left border-collapse whitespace-nowrap">
                   <thead>
-                    <tr className="bg-surface-container-low border-b border-outline-variant/30">
-                      <th className="p-4 font-label-md text-on-surface-variant">Student</th>
-                      <th className="p-4 font-label-md text-on-surface-variant">Assessment</th>
-                      <th className="p-4 font-label-md text-on-surface-variant">Submitted</th>
-                      <th className="p-4 font-label-md text-on-surface-variant">AI Score</th>
-                      <th className="p-4 font-label-md text-on-surface-variant">Tutor Score</th>
-                      <th className="p-4 font-label-md text-on-surface-variant" style={{ textAlign:'right' }}>Action</th>
+                    <tr className="bg-surface-container-low border-b border-outline-variant/50">
+                      <th className="p-4 font-label-md text-on-surface-variant">Học sinh</th>
+                      <th className="p-4 font-label-md text-on-surface-variant">Bài kiểm tra</th>
+                      <th className="p-4 font-label-md text-on-surface-variant">Ngày nộp</th>
+                      <th className="p-4 font-label-md text-on-surface-variant">Điểm AI</th>
+                      <th className="p-4 font-label-md text-on-surface-variant">Điểm của bạn</th>
+                      <th className="p-4 font-label-md text-on-surface-variant text-right">Thao tác</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-outline-variant/20">
                     {filteredAttempts.map(attempt => {
-                      const date = new Date(attempt.submitted_at).toLocaleDateString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
+                      const date = new Date(attempt.submitted_at).toLocaleDateString('vi-VN', { month:'2-digit', day:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
                       const isGraded = attempt.tutor_score != null
                       return (
-                        <tr key={`${attempt.type}-${attempt.attempt_id}`} className="hover:bg-surface-container-lowest/80 transition-colors">
+                        <tr key={`${attempt.type}-${attempt.attempt_id}`} className="hover:bg-blue-50/50 transition-colors">
                           <td className="p-4">
                             <div className="flex items-center gap-3">
-                              <img src={attempt.student_picture || 'https://via.placeholder.com/40'} alt="Avatar" className="w-10 h-10 rounded-full bg-surface-variant object-cover" />
-                              <span className="font-label-md text-on-surface">{attempt.student_name}</span>
+                              <img src={attempt.student_picture || 'https://via.placeholder.com/40'} alt="Avatar" className="w-10 h-10 rounded-full bg-surface-variant object-cover border border-outline-variant/30" />
+                              <span className="font-label-md text-on-surface font-semibold">{attempt.student_name}</span>
                             </div>
                           </td>
                           <td className="p-4">
                             <div className="flex flex-col">
-                              <span className="font-label-md text-on-surface">{attempt.paper_title}</span>
+                              <span className="font-label-md text-on-surface font-semibold">{attempt.paper_title}</span>
                               <span className="font-label-sm text-on-surface-variant">{attempt.subject} • {(attempt.type || '').toUpperCase()}</span>
                             </div>
                           </td>
                           <td className="p-4 font-body-sm text-on-surface-variant">{date}</td>
-                          <td className="p-4 font-body-md font-bold text-on-surface">{attempt.score != null ? `${attempt.score}%` : 'N/A'}</td>
+                          <td className="p-4 font-body-md font-bold text-on-surface">{attempt.score != null ? `${attempt.score}%` : '—'}</td>
                           <td className="p-4">
                             {isGraded
-                              ? <span style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 8px', borderRadius:6, background:'#f3e8ff', color:'#7e22ce', fontWeight:700, fontSize:13 }}>{attempt.tutor_score}%</span>
-                              : <span className="font-label-sm text-on-surface-variant italic">Pending</span>
+                              ? <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-100 text-purple-700 font-bold text-[13px]">{attempt.tutor_score}%</span>
+                              : <span className="font-label-sm text-on-surface-variant italic">Chờ chấm</span>
                             }
                           </td>
-                          <td className="p-4" style={{ textAlign:'right' }}>
+                          <td className="p-4 text-right">
                             {!isGraded && (
-                              <span style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 10px', borderRadius:20, background:'var(--error-container,#ffdad6)', color:'var(--on-error-container,#93000a)', fontSize:11, fontWeight:600, marginRight:8 }}>
-                                <span style={{ width:6, height:6, borderRadius:'50%', background:'#ba1a1a', display:'inline-block' }} />Waiting
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-800 text-[11px] font-bold mr-3">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-600 inline-block" />Cần xử lý
                               </span>
                             )}
                             <button
                               onClick={() => setSelectedAttempt(attempt)}
-                              className="h-9 px-4 bg-primary-container text-on-primary-container rounded-lg font-label-sm hover:bg-primary hover:text-on-primary transition-colors"
+                              className="h-9 px-4 bg-primary-container text-on-primary-container rounded-lg font-label-sm font-semibold hover:bg-primary hover:text-on-primary transition-colors focus:ring-2 focus:ring-primary/50 outline-none"
                             >
-                              {isGraded ? 'Edit Grade' : 'Chấm điểm'}
+                              {isGraded ? 'Sửa điểm' : 'Chấm điểm'}
                             </button>
                           </td>
                         </tr>
@@ -369,30 +371,30 @@ export default function TutorGradingDashboard({ token }) {
             </div>
           ) : sessions.length === 0 ? (
             <div className="flex-1 bg-surface-container-lowest/50 border border-outline-variant/30 rounded-2xl flex flex-col items-center justify-center p-xl text-center">
-              <span className="material-symbols-outlined text-[64px] text-green-500 mb-4">task_alt</span>
+              <span className="material-symbols-outlined text-[64px] text-green-500 mb-4" style={{ fontVariationSettings: "'FILL' 1" }}>task_alt</span>
               <h3 className="font-headline-md text-headline-md text-on-surface mb-2">
                 {filterStatus === 'pending' ? 'Không có buổi học nào chờ đánh giá' : 'Chưa có dữ liệu'}
               </h3>
               <p className="font-body-md text-body-md text-on-surface-variant max-w-md">
                 {filterStatus === 'pending'
                   ? 'Tất cả buổi học đã được đánh giá đầy đủ. Tuyệt vời!'
-                  : 'Chưa có buổi học nào được hoàn thành.'}
+                  : 'Chưa có buổi học nào được ghi nhận.'}
               </p>
             </div>
           ) : (
             <>
-              <div className="bg-surface-container-lowest border border-outline-variant/30 rounded-2xl overflow-hidden shadow-sm">
+              <div className="bg-surface-container-lowest border border-outline-variant/50 rounded-2xl overflow-hidden shadow-sm">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full text-left border-collapse whitespace-nowrap">
                     <thead>
-                      <tr className="bg-surface-container-low border-b border-outline-variant/30">
+                      <tr className="bg-surface-container-low border-b border-outline-variant/50">
                         <th className="p-4 font-label-md text-on-surface-variant">Học sinh</th>
                         <th className="p-4 font-label-md text-on-surface-variant">Môn học</th>
                         <th className="p-4 font-label-md text-on-surface-variant">Ngày học</th>
                         <th className="p-4 font-label-md text-on-surface-variant">Giờ học</th>
                         <th className="p-4 font-label-md text-on-surface-variant">Điểm TB</th>
                         <th className="p-4 font-label-md text-on-surface-variant">Trạng thái</th>
-                        <th className="p-4 font-label-md text-on-surface-variant" style={{ textAlign:'right' }}>Hành động</th>
+                        <th className="p-4 font-label-md text-on-surface-variant text-right">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-outline-variant/20">
@@ -409,14 +411,14 @@ export default function TutorGradingDashboard({ token }) {
                           ? new Date(session.lesson_date).toLocaleDateString('vi-VN', { day:'2-digit', month:'2-digit', year:'numeric' })
                           : '—'
                         return (
-                          <tr key={session.booking_id} className="hover:bg-surface-container-lowest/80 transition-colors">
+                          <tr key={session.booking_id} className="hover:bg-blue-50/50 transition-colors">
                             <td className="p-4">
                               <div className="flex items-center gap-3">
                                 {session.student_picture
-                                  ? <img src={session.student_picture} alt="Avatar" className="w-10 h-10 rounded-full object-cover" />
-                                  : <div style={{ width:40, height:40, borderRadius:'50%', background:'var(--surface-variant)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--on-surface-variant)' }}><span className="material-symbols-outlined" style={{ fontSize:20 }}>person</span></div>
+                                  ? <img src={session.student_picture} alt="Avatar" className="w-10 h-10 rounded-full object-cover border border-outline-variant/30" />
+                                  : <div className="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center text-on-surface-variant"><span className="material-symbols-outlined text-[20px]">person</span></div>
                                 }
-                                <span className="font-label-md text-on-surface">{session.student_name}</span>
+                                <span className="font-label-md text-on-surface font-semibold">{session.student_name}</span>
                               </div>
                             </td>
                             <td className="p-4 font-body-md text-on-surface">{session.subject || '—'}</td>
@@ -424,32 +426,32 @@ export default function TutorGradingDashboard({ token }) {
                             <td className="p-4 font-body-sm text-on-surface-variant">{session.time_slot || '—'}</td>
                             <td className="p-4">
                               {avgScore != null
-                                ? <div style={{ display:'flex', alignItems:'center', gap:4 }}>
-                                    <span className="material-symbols-outlined" style={{ fontSize:16, color:'#f59e0b', fontVariationSettings:"'FILL' 1" }}>star</span>
-                                    <span className="font-label-md text-on-surface">{avgScore}/5</span>
+                                ? <div className="flex items-center gap-1">
+                                    <span className="material-symbols-outlined text-[16px] text-amber-500" style={{ fontVariationSettings:"'FILL' 1" }}>star</span>
+                                    <span className="font-label-md text-on-surface font-bold">{avgScore}/5</span>
                                   </div>
                                 : <span className="font-label-sm text-on-surface-variant italic">Chưa có</span>
                               }
                             </td>
                             <td className="p-4">
                               {isPending
-                                ? <span style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 10px', borderRadius:20, background:'var(--error-container,#ffdad6)', color:'var(--on-error-container,#93000a)', fontSize:11, fontWeight:600 }}>
-                                    <span style={{ width:6, height:6, borderRadius:'50%', background:'#ba1a1a', display:'inline-block' }} />Chờ đánh giá
+                                ? <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-800 text-[11px] font-bold">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-red-600 inline-block" />Chờ đánh giá
                                   </span>
                                 : isLocked
-                                  ? <span style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 10px', borderRadius:20, background:'#f3e8ff', color:'#6b21a8', fontSize:11, fontWeight:600 }}>
-                                      <span style={{ width:6, height:6, borderRadius:'50%', background:'#7c3aed', display:'inline-block' }} />Đã khoá
+                                  ? <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-100 text-purple-700 text-[11px] font-bold">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-purple-600 inline-block" />Đã khoá
                                     </span>
-                                  : <span style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 10px', borderRadius:20, background:'var(--surface-container-highest,#dae2fd)', color:'var(--on-surface-variant)', fontSize:11, fontWeight:600 }}>
-                                      <span style={{ width:6, height:6, borderRadius:'50%', background:'var(--outline)', display:'inline-block' }} />Hoàn thành
+                                  : <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-[11px] font-bold">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block" />Hoàn thành
                                     </span>
                               }
                             </td>
-                            <td className="p-4" style={{ textAlign:'right' }}>
+                            <td className="p-4 text-right">
                               <button
                                 disabled={isLocked}
                                 onClick={() => { setSelectedSession(session); setEvalModalOpen(true) }}
-                                className="h-9 px-4 bg-primary-container text-on-primary-container rounded-lg font-label-sm hover:bg-primary hover:text-on-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="h-9 px-4 bg-primary-container text-on-primary-container rounded-lg font-label-sm font-semibold hover:bg-primary hover:text-on-primary transition-colors focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-40 disabled:cursor-not-allowed"
                               >
                                 {isPending ? 'Đánh giá' : isLocked ? 'Đã khoá' : 'Xem / Sửa'}
                               </button>
@@ -464,15 +466,25 @@ export default function TutorGradingDashboard({ token }) {
 
               {/* Pagination */}
               {totalPages > 1 && (
-                <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:8, marginTop:8 }}>
-                  <button disabled={pageSession <= 1} onClick={() => { setPageSession(p => p-1); fetchSessions(pageSession-1) }}
-                    style={{ padding:'6px 14px', borderRadius:8, border:'1px solid var(--outline-variant)', background:'var(--surface-container-lowest)', cursor:'pointer', fontSize:13, opacity: pageSession<=1 ? .4 : 1 }}>
-                    ← Trước
+                <div className="flex justify-center items-center gap-3 mt-4">
+                  <button 
+                    disabled={pageSession <= 1} 
+                    onClick={() => { setPageSession(p => p-1); fetchSessions(pageSession-1) }}
+                    className="flex items-center gap-1 px-4 py-2 rounded-lg border border-outline-variant/50 bg-surface-container-lowest text-sm font-semibold hover:bg-surface-variant transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                    Trước
                   </button>
-                  <span style={{ fontSize:13, color:'var(--on-surface-variant)' }}>{pageSession} / {totalPages}</span>
-                  <button disabled={pageSession >= totalPages} onClick={() => { setPageSession(p => p+1); fetchSessions(pageSession+1) }}
-                    style={{ padding:'6px 14px', borderRadius:8, border:'1px solid var(--outline-variant)', background:'var(--surface-container-lowest)', cursor:'pointer', fontSize:13, opacity: pageSession>=totalPages ? .4 : 1 }}>
-                    Tiếp →
+                  <span className="text-sm font-semibold text-on-surface-variant bg-surface-variant/30 px-3 py-1.5 rounded-md">
+                    {pageSession} / {totalPages}
+                  </span>
+                  <button 
+                    disabled={pageSession >= totalPages} 
+                    onClick={() => { setPageSession(p => p+1); fetchSessions(pageSession+1) }}
+                    className="flex items-center gap-1 px-4 py-2 rounded-lg border border-outline-variant/50 bg-surface-container-lowest text-sm font-semibold hover:bg-surface-variant transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Tiếp
+                    <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                   </button>
                 </div>
               )}

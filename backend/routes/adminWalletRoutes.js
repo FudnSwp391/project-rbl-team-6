@@ -30,14 +30,54 @@ router.get('/deposit-requests', adminAuthMiddleware, async (req, res) => {
 // --- GET All Withdraw Requests ---
 router.get('/withdraw-requests', adminAuthMiddleware, async (req, res) => {
   try {
+    const { status, page = 1, limit = 50 } = req.query;
+    const offset = (page - 1) * limit;
+
+    let whereClause = '';
+    let params = [];
+    if (status) {
+      whereClause = 'WHERE wr.status = $1';
+      params.push(status);
+    }
+
+    const countResult = await pool.query(`SELECT COUNT(*) FROM withdraw_requests wr ${whereClause}`, params);
+    const total = parseInt(countResult.rows[0].count, 10);
+
     const result = await pool.query(`
-      SELECT wr.*, u.email, u.full_name, u.role
+      SELECT 
+        wr.*, 
+        u.email as tutor_email, 
+        u.full_name as tutor_name, 
+        u.role,
+        w.balance as wallet_balance,
+        w.held_balance as wallet_held_balance,
+        COALESCE(wr.account_details->>'bankName', wr.method) as bank_name,
+        COALESCE(wr.account_details->>'accountNumber', wr.account_details->>'phone') as bank_account_no,
+        COALESCE(wr.account_details->>'accountHolder', wr.account_details->>'name') as bank_account_name
       FROM withdraw_requests wr
       JOIN wallets w ON wr.wallet_id = w.id
       JOIN users u ON w.user_id = u.id
+      ${whereClause}
       ORDER BY wr.created_at DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `, [...params, limit, offset]);
+
+    const summaryResult = await pool.query(`
+      SELECT 
+        SUM(CASE WHEN status = 'PENDING' THEN amount ELSE 0 END) as pending_amount,
+        COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_count,
+        SUM(CASE WHEN status = 'APPROVED' THEN amount ELSE 0 END) as approved_amount,
+        SUM(CASE WHEN status = 'PAID' THEN amount ELSE 0 END) as paid_amount,
+        SUM(CASE WHEN status = 'REJECTED' THEN amount ELSE 0 END) as rejected_amount,
+        SUM(CASE WHEN status = 'CANCELLED' THEN amount ELSE 0 END) as cancelled_amount
+      FROM withdraw_requests
     `);
-    res.json(result.rows);
+
+    res.json({
+      items: result.rows,
+      pagination: { total, page: Number(page), limit: Number(limit) },
+      summary: summaryResult.rows[0]
+    });
   } catch (error) {
     console.error("Error fetching withdraw requests:", error);
     res.status(500).json({ error: 'Server error' });

@@ -8,6 +8,7 @@ import {
 } from './services/api';
 import { uploadHomeworkFile } from './services/upload';
 import { useAuth } from './AuthContext';
+import { API_BASE_URL } from './config';
 
 const SUBJECT_ICONS = {
   Mathematics: 'calculate',
@@ -71,14 +72,11 @@ function QuizCardSkeleton() {
 
 export default function QuizList({ token }) {
   const { user } = useAuth();
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
-  
-  const [mainTab, setMainTab] = useState('tutor_exams'); // 'tutor_exams' | 'tutor_hw'
+  const apiBaseUrl = API_BASE_URL
   
   const [error, setError] = useState('')
 
   // Tutor Assessments State
-  const [tutorExams, setTutorExams] = useState([]);
   const [tutorHomeworks, setTutorHomeworks] = useState([]);
   const [loadingTutor, setLoadingTutor] = useState(false);
 
@@ -88,32 +86,21 @@ export default function QuizList({ token }) {
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    fetchTutorAssessments()
+    fetchHomework()
   }, [])
 
-  useEffect(() => {
-    if (mainTab === 'tutor_exams' || mainTab === 'tutor_hw') {
-      fetchTutorAssessments();
-    }
-  }, [mainTab]);
-
-  async function fetchTutorAssessments() {
+  async function fetchHomework() {
     try {
       setLoadingTutor(true);
-      if (mainTab === 'tutor_exams') {
-        const data = await getStudentExams();
-        setTutorExams(Array.isArray(data) ? data : []);
-      } else if (mainTab === 'tutor_hw') {
-        const data = await getStudentHomework();
-        setTutorHomeworks(Array.isArray(data) ? data : []);
-      }
+      const data = await getStudentHomework();
+      setTutorHomeworks(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error(err);
+      setError('Không thể tải bài tập')
     } finally {
       setLoadingTutor(false);
     }
   }
-
 
   // ---- Tutor Homework Handlers ----
   const handleOpenHomework = (hw) => {
@@ -134,7 +121,7 @@ export default function QuizList({ token }) {
       await submitStudentHomework(activeHomework.id, fileUrl);
       alert('Nộp bài tập thành công!');
       setActiveHomework(null);
-      fetchTutorAssessments();
+      fetchHomework();
     } catch (err) {
       console.error(err);
       alert('Lỗi tải file');
@@ -147,61 +134,13 @@ export default function QuizList({ token }) {
     <div className="flex flex-col gap-xl pb-xl">
       {/* Header & Main Tabs */}
       <div className="flex flex-col gap-4">
-        <div className="flex justify-between items-end flex-wrap gap-md">
-          <div>
-            <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs flex items-center gap-sm">
-              <span className="material-symbols-outlined text-primary text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>quiz</span>
-              Assessments
-            </h2>
-            <p className="font-body-lg text-body-lg text-on-surface-variant">
-              Đánh giá kiến thức của bạn qua các bài kiểm tra có cấu trúc từ hệ thống và gia sư.
-            </p>
-          </div>
+        <div className="flex justify-end items-end flex-wrap gap-md">
           <button
-            onClick={() => {
-              if (mainTab === 'system') fetchQuizzes();
-              else fetchTutorAssessments();
-            }}
+            onClick={fetchHomework}
             className="h-10 px-md bg-surface-container border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface flex items-center gap-sm hover:bg-surface-container-highest transition-colors"
           >
             <span className="material-symbols-outlined text-[18px]">refresh</span>
             Làm mới
-          </button>
-        </div>
-
-        <div className="flex gap-2 border-b border-outline-variant/30 overflow-x-auto pb-1">
-          <button
-            onClick={() => setMainTab('system')}
-            className={`px-4 py-2 font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-              mainTab === 'system'
-                ? 'text-primary border-b-2 border-primary'
-                : 'text-on-surface-variant hover:text-on-surface'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[20px]">psychology</span>
-            Hệ thống
-          </button>
-          <button
-            onClick={() => setMainTab('tutor_exams')}
-            className={`px-4 py-2 font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-              mainTab === 'tutor_exams'
-                ? 'text-primary border-b-2 border-primary'
-                : 'text-on-surface-variant hover:text-on-surface'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[20px]">assignment</span>
-            Đề thi (Gia sư)
-          </button>
-          <button
-            onClick={() => setMainTab('tutor_hw')}
-            className={`px-4 py-2 font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
-              mainTab === 'tutor_hw'
-                ? 'text-primary border-b-2 border-primary'
-                : 'text-on-surface-variant hover:text-on-surface'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[20px]">edit_document</span>
-            Bài tập (Gia sư)
           </button>
         </div>
       </div>
@@ -213,149 +152,14 @@ export default function QuizList({ token }) {
         </div>
       )}
 
-      {/* ── SYSTEM QUIZZES ── */}
-      {mainTab === 'system' && (
-        <>
-          <div className="flex bg-surface-container-low p-1 rounded-xl w-fit gap-1">
-            {[
-              { key: 'available', label: 'Có sẵn', count: available.length, icon: 'pending' },
-              { key: 'completed', label: 'Hoàn thành', count: completed.length, icon: 'check_circle' },
-            ].map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveSysTab(tab.key)}
-                className={`flex items-center gap-xs px-md py-sm rounded-lg font-label-md text-label-md transition-all duration-200 ${
-                  activeSysTab === tab.key
-                    ? 'bg-white shadow-sm text-primary'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                <span
-                  className="material-symbols-outlined text-[18px]"
-                  style={activeSysTab === tab.key ? { fontVariationSettings: "'FILL' 1" } : {}}
-                >
-                  {tab.icon}
-                </span>
-                {tab.label}
-                <span className={`ml-xs px-1.5 py-0.5 rounded-full text-[11px] font-bold ${
-                  activeSysTab === tab.key ? 'bg-primary text-on-primary' : 'bg-surface-container-high text-on-surface-variant'
-                }`}>
-                  {tab.count}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {loadingSystem ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
-              {[1, 2, 3].map(i => <QuizCardSkeleton key={i} />)}
-            </div>
-          ) : displayedQuizzes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-xl gap-md text-on-surface-variant">
-              <span className="material-symbols-outlined text-[64px] opacity-30">
-                {activeSysTab === 'available' ? 'quiz' : 'task_alt'}
-              </span>
-              <p className="font-headline-md text-headline-md">
-                {activeSysTab === 'available' ? 'Không có bài kiểm tra nào' : 'Chưa hoàn thành bài kiểm tra nào'}
-              </p>
-              <p className="font-body-md text-body-md text-center max-w-sm">
-                {activeSysTab === 'available'
-                  ? 'Quay lại sau — hệ thống sẽ tạo thêm bài kiểm tra.'
-                  : 'Hoàn thành một bài kiểm tra để xem kết quả tại đây.'}
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
-              {displayedQuizzes.map(quiz => (
-                <QuizCard key={quiz.id} quiz={quiz} />
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* ── TUTOR EXAMS ── */}
-      {mainTab === 'tutor_exams' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
-          {loadingTutor ? (
-            [1, 2, 3].map(i => <QuizCardSkeleton key={i} />)
-          ) : tutorExams.length === 0 ? (
-             <div className="col-span-full flex flex-col items-center justify-center py-xl gap-md text-on-surface-variant">
-              <span className="material-symbols-outlined text-[64px] opacity-30">quiz</span>
-              <p className="font-headline-md text-headline-md">Không có đề thi từ gia sư</p>
-            </div>
-          ) : (
-            tutorExams.map(exam => (
-              <div key={exam.id} className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md flex flex-col gap-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 group">
-                <div className="flex gap-md items-start">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-colors duration-300 ${
-                    exam.attempt_status === 'Submitted'
-                      ? 'bg-green-50 text-green-600 group-hover:bg-green-100'
-                      : 'bg-primary-container/30 text-on-primary-container group-hover:bg-primary-container/50'
-                  }`}>
-                    <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                      assignment
-                    </span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-sm">
-                      <h3 className="font-label-md text-label-md text-on-surface leading-snug line-clamp-2">
-                        {exam.title}
-                      </h3>
-                      {exam.attempt_status === 'Submitted' && <ScoreBadge score={exam.attempt_score} />}
-                    </div>
-                    <p className="font-label-sm text-label-sm text-primary mt-0.5">{exam.course || 'Chung'}</p>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-xs mt-2">
-                  <span className="inline-flex items-center gap-xs px-2 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">
-                    <span className="material-symbols-outlined text-[14px]">help</span>
-                    {exam.total_questions || 0} câu hỏi
-                  </span>
-                  <span className="inline-flex items-center gap-xs px-2 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">
-                    <span className="material-symbols-outlined text-[14px]">timer</span>
-                    {exam.duration_minutes} phút
-                  </span>
-                </div>
-
-                <div className="mt-auto pt-2 flex items-center justify-between border-t border-outline-variant/20">
-                  <span className="text-xs text-on-surface-variant flex items-center gap-1">
-                    <img src={exam.tutor_picture || 'https://via.placeholder.com/20'} className="w-5 h-5 rounded-full" alt="" />
-                    Gia sư: {exam.tutor_name}
-                  </span>
-                  <button
-                    onClick={() => {
-                      if (exam.attempt_status === 'Submitted') {
-                        window.location.hash = `/tutor-exam-result/${exam.id}`;
-                      } else {
-                        window.location.hash = `/tutor-exam/${exam.id}`;
-                      }
-                    }}
-                    className={`h-8 px-4 font-label-sm text-label-sm rounded-lg flex items-center justify-center gap-sm transition-all ${
-                      exam.attempt_status === 'Submitted'
-                        ? 'border border-outline-variant text-on-surface hover:bg-surface-container'
-                        : 'bg-primary text-on-primary hover:opacity-90 shadow-sm'
-                    }`}
-                  >
-                    {exam.attempt_status === 'Submitted' ? 'Đã nộp' : 'Làm bài'}
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
       {/* ── TUTOR HOMEWORK ── */}
-      {mainTab === 'tutor_hw' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
           {loadingTutor ? (
             [1, 2, 3].map(i => <QuizCardSkeleton key={i} />)
           ) : tutorHomeworks.length === 0 ? (
              <div className="col-span-full flex flex-col items-center justify-center py-xl gap-md text-on-surface-variant">
               <span className="material-symbols-outlined text-[64px] opacity-30">edit_document</span>
-              <p className="font-headline-md text-headline-md">Không có bài tập tự luận</p>
+              <p className="font-headline-md text-headline-md">Không có bài tập</p>
             </div>
           ) : (
             tutorHomeworks.map(hw => (
@@ -407,10 +211,6 @@ export default function QuizList({ token }) {
             ))
           )}
         </div>
-      )}
-
-
-
 
       {/* HOMEWORK UPLOAD MODAL */}
       {activeHomework && (

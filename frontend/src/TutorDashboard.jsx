@@ -4,7 +4,7 @@
  * Dashboard dÄ‚Â nh cho gia sĂ†Â° (role: tutor).
  * HiĂ¡Â»Æ’n thĂ¡Â»â€¹: thu nhĂ¡ÂºÂ­p, giĂ¡Â»Â  dĂ¡ÂºÂ¡y, hĂ¡Â»Â c sinh, yÄ‚Âªu cĂ¡ÂºÂ§u chĂ¡Â»Â  duyĂ¡Â»â€¡t, lĂ¡Â»â€¹ch hÄ‚Â´m nay.
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useAuth } from './AuthContext'
 import AIChatBox from './AIChatBox'
 import TutorFeedbackModal from './components/MicroFeedback/TutorFeedbackModal'
@@ -22,9 +22,14 @@ import TutorGradingDashboard from './components/TutorGradingDashboard'
 import WalletWidget from './components/WalletWidget'
 import TutorWithdrawalPanel from './components/TutorWithdrawalPanel'
 import NotificationDropdown from './components/NotificationDropdown'
+import MessageIcon from './components/MessageIcon'
 import WalletDashboard from './components/Wallet/WalletDashboard'
 import WalletDeposit from './components/Wallet/WalletDeposit'
 import WalletWithdraw from './components/Wallet/WalletWithdraw'
+import { supabase } from './services/supabase'
+import { API_BASE_URL } from './config';
+
+const API_BASE = API_BASE_URL
 
 const NAV_ITEMS = [
   { icon: 'dashboard', label: 'Tổng Quan' },
@@ -42,9 +47,72 @@ const NAV_ITEMS = [
 export default function TutorDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState('Tổng Quan')
+  const getInitialTab = () => {
+    try {
+      const searchParams = new URLSearchParams(window.location.hash.split('?')[1]);
+      if (searchParams.has('tab')) return searchParams.get('tab');
+    } catch (e) {}
+    return 'Tổng Quan';
+  }
+  const [activeTab, setActiveTab] = useState(getInitialTab)
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      try {
+        const searchParams = new URLSearchParams(window.location.hash.split('?')[1]);
+        if (searchParams.has('tab')) setActiveTab(searchParams.get('tab'));
+      } catch (e) {}
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const searchParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+  const editCourseId = searchParams.get('editCourseId');
+
   const [requests, setRequests] = useState([])
+  const [activeRequestTab, setActiveRequestTab] = useState('single')
   const [scheduleToday, setScheduleToday] = useState([])
+  
+  // Instant Learning Modal State
+  const [instantRequest, setInstantRequest] = useState(null);
+  const [instantCountdown, setInstantCountdown] = useState(60);
+  
+  const conflictingIds = useMemo(() => {
+    const conflicts = new Set();
+    const occupiedSlots = new Set();
+    
+    // Sort pending requests by createdAt ascending
+    const sortedRequests = [...requests].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+    sortedRequests.forEach(req => {
+      let hasConflict = false;
+      const reqSlots = [];
+      
+      if (req.isPackage) {
+        req.packageSessions.forEach(s => {
+          reqSlots.push(`${s.lessonDate || s.date}_${s.timeSlot || s.time}`);
+        });
+      } else {
+        reqSlots.push(`${req.lessonDate || req.date}_${req.timeSlot || req.time}`);
+      }
+
+      for (const slot of reqSlots) {
+        if (occupiedSlots.has(slot)) {
+          hasConflict = true;
+          break;
+        }
+      }
+
+      if (hasConflict) {
+        conflicts.add(req.id);
+      } else {
+        reqSlots.forEach(slot => occupiedSlots.add(slot));
+      }
+    });
+
+    return conflicts;
+  }, [requests]);
   const [overviewStats, setOverviewStats] = useState({
     thisMonthEarned: 0,
     completedLessons: 0,
@@ -69,6 +137,113 @@ export default function TutorDashboard() {
     }, 30000)
     return () => clearInterval(timer)
   }, [])
+
+  // ── Instant Booking: Nhận yêu cầu realtime + polling fallback ──
+  // Dùng polling mỗi 3 giây làm primary (đảm bảo luôn hoạt động kể cả khi
+  // Supabase Realtime chưa được cấu hình ở frontend).
+  // Supabase Realtime (khi có) dùng làm fast-path để popup nhanh hơn.
+  useEffect(() => {
+    if (!user?.id || !token) return;
+
+    let lastSeenId = null; // Tránh hiển thị popup trùng
+
+    // ── Hàm poll backend mỗi 3 giây ──
+    const pollPending = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/tutor/instant-pending`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const booking = data.booking;
+
+        if (booking && booking.id !== lastSeenId) {
+          // Có yêu cầu mới chưa thấy → hiển thị popup
+          lastSeenId = booking.id;
+          setInstantRequest(booking);
+          setInstantCountdown(booking.seconds_left ?? 60);
+          try { new Audio('/notification.mp3').play().catch(() => {}) } catch (e) {}
+        } else if (!booking && lastSeenId) {
+          // Yêu cầu đã hết hạn hoặc bị xử lý → ẩn popup
+          setInstantRequest(prev => {
+            if (prev?.id === lastSeenId) { lastSeenId = null; return null; }
+            return prev;
+          });
+        }
+      } catch (e) { /* bỏ qua lỗi mạng */ }
+    };
+
+    // Poll ngay lần đầu, sau đó mỗi 3 giây
+    pollPending();
+    const pollInterval = setInterval(pollPending, 3000);
+
+    // ── Supabase Realtime fast-path (chỉ khi supabase client có sẵn) ──
+    let channel = null;
+    if (supabase) {
+      channel = supabase
+        .channel(`tutor-instant-${user.id}`)
+        .on('postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'bookings', filter: `tutor_id=eq.${user.id}` },
+          (payload) => {
+            if (payload.new.booking_type === 'Instant' && payload.new.status === 'Pending') {
+              if (payload.new.id !== lastSeenId) {
+                lastSeenId = payload.new.id;
+                // Trigger poll để lấy đủ thông tin (tên học sinh, ảnh, seconds_left)
+                pollPending();
+              }
+            }
+          }
+        )
+        .on('postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'bookings', filter: `tutor_id=eq.${user.id}` },
+          (payload) => {
+            if (payload.new.booking_type === 'Instant' && payload.new.status !== 'Pending') {
+              setInstantRequest(prev => prev?.id === payload.new.id ? null : prev);
+              if (lastSeenId === payload.new.id) lastSeenId = null;
+            }
+          }
+        )
+        .subscribe();
+    }
+
+    return () => {
+      clearInterval(pollInterval);
+      if (channel && supabase) supabase.removeChannel(channel);
+    };
+  }, [user?.id, token]);
+
+  // Đếm ngược 60 giây khi có yêu cầu Học Ngay
+  useEffect(() => {
+    if (!instantRequest) { setInstantCountdown(60); return; }
+    // Không reset về 60 — giá trị đã được polling set từ server (seconds_left chính xác)
+    const interval = setInterval(() => {
+      setInstantCountdown(prev => {
+        if (prev <= 1) { clearInterval(interval); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [instantRequest?.id]);
+
+  const handleInstantAction = async (bookingId, action) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/tutor/bookings/${bookingId}/instant-${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Lỗi hệ thống');
+
+      setInstantRequest(null);
+
+      if (action === 'accept') {
+        window.location.hash = `/session/${bookingId}`;
+      }
+    } catch (e) {
+      alert(e.message);
+      setInstantRequest(null);
+    }
+  };
 
   useEffect(() => {
     async function loadTutorData() {
@@ -113,18 +288,74 @@ export default function TutorDashboard() {
         }
 
         const pendingBookings = bookingsList
-          .filter(b => b.status === 'Pending')
+          .filter(b => b.status === 'Pending' && b.booking_type !== 'Instant' && b.bookingType !== 'Instant')
           .map(b => ({
             id: b.id,
             initials: toInitials(toStudentName(b)),
             name: toStudentName(b),
             studentName: b.studentName,
             childName: b.childName,
-            subject: b.subject || 'General lesson',
+            subject: b.subject || 'General',
             date: toScheduleDate(b),
+            lessonDate: b.lesson_date || b.lessonDate || b.date || '',
+            timeSlot: b.time_slot || b.timeSlot || b.time || '',
             bookingType: b.bookingType || b.booking_type || 'regular',
-            note: b.notes || b.note || ''
+            teachingMethod: b.teaching_method || b.teachingMethod || '',
+            level: b.level || '',
+            sessionsRequested: b.sessions_requested || b.sessionsRequested || b.sessions || 1,
+            pricePerSession: b.price_per_session || b.pricePerSession || b.price || 0,
+            note: b.notes || b.note || b.student_note || b.studentNote || '',
+            studentAge: b.student_age || b.studentAge || '',
+            grade: b.grade || b.student_grade || '',
+            createdAt: b.created_at || b.createdAt || '',
+            avatarUrl: b.student_avatar || b.studentAvatar || b.avatar_url || '',
+            packageId: b.package_id || null,
           }))
+
+        // Group pending bookings by packageId
+        const groupedPendingBookings = [];
+        const packageGroups = {};
+
+        pendingBookings.forEach(b => {
+          if (b.packageId) {
+            if (!packageGroups[b.packageId]) {
+              packageGroups[b.packageId] = {
+                ...b,
+                isPackage: true,
+                packageBookingIds: [b.id],
+                packageSessions: [b]
+              };
+              groupedPendingBookings.push(packageGroups[b.packageId]);
+            } else {
+              packageGroups[b.packageId].packageBookingIds.push(b.id);
+              packageGroups[b.packageId].packageSessions.push(b);
+            }
+          } else {
+            groupedPendingBookings.push(b);
+          }
+        });
+
+        // Format summaries for packages
+        Object.values(packageGroups).forEach(g => {
+          g.date = `Gói tháng: ${g.packageSessions.length} buổi`;
+          g.sessionsRequested = g.packageSessions.length;
+          
+          const sortedSessions = [...g.packageSessions].sort((a, b) => new Date(a.lessonDate || a.date) - new Date(b.lessonDate || b.date));
+          if (sortedSessions.length > 0) {
+            g.startDate = sortedSessions[0].lessonDate || sortedSessions[0].date;
+            
+            const uniqueSchedules = new Set();
+            sortedSessions.forEach(s => {
+              try {
+                const d = new Date(s.lessonDate || s.date);
+                const weekday = d.toLocaleDateString('vi-VN', { weekday: 'short' });
+                uniqueSchedules.add(`Mỗi ${weekday} - ${s.timeSlot || s.timeSlot}`);
+              } catch (e) {}
+            });
+            g.scheduleSummary = Array.from(uniqueSchedules).join(', ');
+          }
+          g.timeSlot = 'Lịch học cố định';
+        });
 
         const approvedBookings = bookingsList
           .filter(b => b.status === 'Approved')
@@ -140,7 +371,7 @@ export default function TutorDashboard() {
             isNow: false
           }))
 
-        setRequests(pendingBookings)
+        setRequests(groupedPendingBookings)
         setScheduleToday(approvedBookings)
         const activeStudentKeys = new Set(
           bookingsList
@@ -164,35 +395,57 @@ export default function TutorDashboard() {
 
   const handleAccept = async (id) => {
     try {
-      await updateBookingStatus(id, 'Approved')
-      const accepted = requests.find(r => r.id === id)
-      if (accepted) {
+      const targetReq = requests.find(r => r.id === id);
+      if (!targetReq) return;
+
+      const idsToAccept = targetReq.isPackage ? targetReq.packageBookingIds : [id];
+
+      await Promise.all(idsToAccept.map(bookingId => updateBookingStatus(bookingId, 'Approved')));
+
+      if (targetReq.isPackage) {
+        // Add all sessions to schedule today (or just the first one if it's too much, but let's add them)
+        const newApproved = targetReq.packageSessions.map(s => ({
+          id: s.id,
+          initials: s.initials,
+          name: s.name,
+          subject: s.subject,
+          time: s.date,
+          isNow: false
+        }));
+        setScheduleToday(prev => [...newApproved, ...prev]);
+      } else {
         setScheduleToday(prev => [
           {
-            id: accepted.id,
-            initials: accepted.initials,
-            name: accepted.name,
-            subject: accepted.subject,
-            time: accepted.date,
+            id: targetReq.id,
+            initials: targetReq.initials,
+            name: targetReq.name,
+            subject: targetReq.subject,
+            time: targetReq.date,
             isNow: false
           },
           ...prev
-        ])
+        ]);
       }
-      setRequests((prev) => prev.filter((r) => r.id !== id))
+
+      setRequests((prev) => prev.filter((r) => r.id !== id));
     } catch (err) {
-      console.error("Failed to approve booking:", err)
-      alert(err.message || 'Failed to approve booking.')
+      console.error("Failed to approve booking:", err);
+      alert(err.message || 'Failed to approve booking.');
     }
   }
 
   const handleDecline = async (id) => {
     try {
-      await updateBookingStatus(id, 'Declined')
-      setRequests((prev) => prev.filter((r) => r.id !== id))
+      const targetReq = requests.find(r => r.id === id);
+      if (!targetReq) return;
+
+      const idsToDecline = targetReq.isPackage ? targetReq.packageBookingIds : [id];
+      await Promise.all(idsToDecline.map(bookingId => updateBookingStatus(bookingId, 'Declined')));
+
+      setRequests((prev) => prev.filter((r) => r.id !== id));
     } catch (err) {
-      console.error("Failed to decline booking:", err)
-      alert(err.message || 'Failed to decline booking.')
+      console.error("Failed to decline booking:", err);
+      alert(err.message || 'Failed to decline booking.');
     }
   }
 
@@ -213,7 +466,7 @@ export default function TutorDashboard() {
       Ă¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢ÂĂ¢â€¢Â */}
       <nav
         className={`
-          fixed left-0 top-0 h-full z-40 flex flex-col py-lg w-64
+          fixed left-0 top-0 h-full z-40 flex flex-col py-4 w-64
           bg-surface-container-low border-r border-surface-variant/50
           transition-transform duration-300
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
@@ -221,8 +474,8 @@ export default function TutorDashboard() {
         `}
       >
         {/* Logo */}
-        <div className="px-md mb-lg">
-          <a href="#/" className="flex items-center gap-sm hover:opacity-80 transition-opacity">
+        <div className="px-6 mb-4 flex-shrink-0">
+          <a href="#/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
             <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary">
               <span className="material-symbols-outlined text-[18px]">school</span>
             </div>
@@ -236,7 +489,7 @@ export default function TutorDashboard() {
         </div>
 
         {/* Nav items */}
-        <div className="flex flex-col gap-2 px-sm flex-1 mt-4">
+        <div className="flex flex-col gap-1 px-4 flex-1 mt-2 overflow-y-auto custom-scrollbar pb-2">
           {NAV_ITEMS.map((item) => {
             const isActive = item.label === activeTab
             const isMessages = item.label === 'Tin Nhắn'
@@ -250,21 +503,21 @@ export default function TutorDashboard() {
                   setSidebarOpen(false)
                 }}
                 className={`
-                  flex items-center gap-sm px-md py-sm rounded-lg
+                  flex items-center gap-3 px-4 py-2.5 rounded-lg
                   transition-all duration-200 active:scale-95
                   ${isActive
                     ? 'text-primary font-bold bg-secondary-container'
-                    : 'text-on-surface-variant hover:bg-surface-container-high'
+                    : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
                   }
                 `}
               >
                 <span
-                  className="material-symbols-outlined"
+                  className="material-symbols-outlined text-[20px]"
                   style={isActive ? { fontVariationSettings: "'FILL' 1" } : {}}
                 >
                   {item.icon}
                 </span>
-                <span className="font-label-md text-label-md flex-1">{item.label}</span>
+                <span className="font-label-md text-[14px] flex-1">{item.label}</span>
                 {isMessages && unreadCount > 0 && (
                   <span className="min-w-[18px] h-[18px] rounded-full bg-error text-on-error text-[10px] font-bold flex items-center justify-center px-1">
                     {unreadCount > 9 ? '9+' : unreadCount}
@@ -276,24 +529,24 @@ export default function TutorDashboard() {
         </div>
 
         {/* Bottom */}
-        <div className="px-md mt-auto pt-lg border-t border-surface-variant/50 flex flex-col gap-2">
+        <div className="px-6 pt-4 border-t border-surface-variant/50 flex flex-col gap-1 flex-shrink-0 mt-auto">
           <a
             href="#" onClick={(e) => e.preventDefault()}
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
+            className="text-on-surface-variant flex items-center gap-3 px-4 py-2 hover:bg-surface-container-high rounded-lg transition-all duration-200 hover:text-on-surface"
           >
-            <span className="material-symbols-outlined">settings</span>
-            <span className="font-label-md text-label-md">Cài đặt</span>
+            <span className="material-symbols-outlined text-[20px]">settings</span>
+            <span className="font-label-md text-[14px]">Cài đặt</span>
           </a>
           <a
             href="#"
             onClick={(e) => { e.preventDefault(); logout() }}
-            className="text-on-surface-variant flex items-center gap-sm px-md py-sm hover:bg-surface-container-high rounded-lg transition-all duration-200"
+            className="text-on-surface-variant flex items-center gap-3 px-4 py-2 hover:bg-surface-container-high hover:text-error rounded-lg transition-all duration-200"
           >
-            <span className="material-symbols-outlined">logout</span>
-            <span className="font-label-md text-label-md">Đăng xuất</span>
+            <span className="material-symbols-outlined text-[20px]">logout</span>
+            <span className="font-label-md text-[14px]">Đăng xuất</span>
           </a>
-          <button className="mt-2 w-full h-12 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
-            <span className="material-symbols-outlined">support_agent</span>
+          <button className="mt-2 w-full h-10 bg-primary text-on-primary font-label-md text-[14px] font-semibold rounded-lg hover:bg-primary/90 transition-colors flex items-center justify-center gap-2 shadow-sm">
+            <span className="material-symbols-outlined text-[18px]">support_agent</span>
             Nhận hỗ trợ
           </button>
         </div>
@@ -317,23 +570,13 @@ export default function TutorDashboard() {
               <span className="material-symbols-outlined">menu</span>
             </button>
 
-            {/* Search */}
-            <div className="flex-1 flex items-center">
-              <div className="relative w-full max-w-md hidden md:block">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">
-                  search
-                </span>
-                <input
-                  className="w-full h-10 pl-10 pr-4 rounded-lg border border-outline-variant bg-surface-container-lowest focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all font-body-md text-body-md outline-none"
-                  placeholder="Search students, classes, or subjects..."
-                  type="text"
-                />
-              </div>
-            </div>
+            {/* Search (Removed) */}
+            <div className="flex-1"></div>
 
             {/* Right actions */}
             <div className="flex items-center gap-md">
               {/* Notification bell */}
+              <MessageIcon token={token} />
               <NotificationDropdown token={token} />
 
               <WalletWidget token={token} />
@@ -465,30 +708,41 @@ export default function TutorDashboard() {
                 )}
               </div>
 
+              {/* Tabs for Pending Requests */}
+              <div className="flex bg-surface-container-low p-1 rounded-xl mb-4 w-fit">
+                <button
+                  onClick={() => setActiveRequestTab('single')}
+                  className={`px-6 py-2 rounded-lg font-bold text-[14px] transition-all ${activeRequestTab === 'single' ? 'bg-white shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+                >
+                  Lịch dạy lẻ ({requests.filter(r => !r.isPackage).length})
+                </button>
+                <button
+                  onClick={() => setActiveRequestTab('monthly')}
+                  className={`px-6 py-2 rounded-lg font-bold text-[14px] transition-all ${activeRequestTab === 'monthly' ? 'bg-white shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+                >
+                  Gói tháng ({requests.filter(r => r.isPackage).length})
+                </button>
+              </div>
+
               <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-[0_10px_15px_-3px_rgba(0,0,0,0.08)] rounded-[1rem] overflow-hidden">
-                {requests.length === 0 ? (
+                {requests.filter(r => activeRequestTab === 'monthly' ? r.isPackage : !r.isPackage).length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 gap-3 text-on-surface-variant">
                     <span className="material-symbols-outlined text-[48px]">task_alt</span>
-                    <p className="font-label-md text-label-md">No pending requests. All clear!</p>
+                    <p className="font-label-md text-label-md">Không có yêu cầu nào!</p>
                   </div>
                 ) : (
                   <div className="divide-y divide-surface-variant/50">
-                    {requests.map((req) => (
+                    {requests.filter(r => activeRequestTab === 'monthly' ? r.isPackage : !r.isPackage).map((req) => (
                       <RequestRow
                         key={req.id}
                         request={req}
+                        isConflicting={conflictingIds.has(req.id)}
                         onAccept={() => handleAccept(req.id)}
                         onDecline={() => handleDecline(req.id)}
                       />
                     ))}
                   </div>
                 )}
-
-                <div className="p-4 bg-surface-container-lowest/30 border-t border-surface-variant/50 text-center">
-                  <a href="#" onClick={(e) => e.preventDefault()} className="text-primary font-label-md hover:underline">
-                    View all requests ({requests.length})
-                  </a>
-                </div>
               </div>
             </div>
 
@@ -536,7 +790,7 @@ export default function TutorDashboard() {
           )}
 
           {profileStatus === 'approved' && activeTab === 'Khóa Học' && (
-            <TutorCoursesTab user={user} />
+            <TutorCoursesTab user={user} editCourseId={editCourseId} />
           )}
 
           {profileStatus === 'approved' && activeTab === 'Bài Kiểm Tra' && (
@@ -570,6 +824,46 @@ export default function TutorDashboard() {
             <WalletWithdraw onBack={() => setActiveTab('Wallet')} />
           )}
 
+          {/* Instant Request Modal */}
+          {instantRequest && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+                <div className="flex flex-col items-center text-center">
+                  <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-4">
+                    <span className="material-symbols-outlined text-[32px] text-amber-600">bolt</span>
+                  </div>
+                  <h3 className="font-headline-sm text-headline-sm text-on-surface mb-2">Yêu cầu Học Ngay!</h3>
+                  <p className="text-[14px] text-on-surface-variant mb-1">
+                    Học viên <span className="font-bold text-primary">{instantRequest.student_name || 'Học viên'}</span> muốn học ngay môn <span className="font-bold">{instantRequest.subject}</span>.
+                  </p>
+                  {instantRequest.lesson_fee > 0 && (
+                    <p className="text-[13px] text-green-600 font-semibold mb-3">
+                      Học phí: {Number(instantRequest.lesson_fee).toLocaleString('vi-VN')}đ
+                    </p>
+                  )}
+                  <div className={`px-4 py-3 rounded-xl w-full mb-6 text-[13px] border ${instantCountdown <= 10 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                    <p className="font-semibold flex items-center justify-center gap-1">
+                      <span className="material-symbols-outlined text-[16px]">timer</span>
+                      Tự hủy sau <span className="font-bold text-[16px] ml-1">{instantCountdown}s</span>
+                    </p>
+                  </div>
+                  <div className="flex gap-3 w-full">
+                    <button
+                      onClick={() => handleInstantAction(instantRequest.id, 'reject')}
+                      className="flex-1 h-11 border-2 border-red-200 text-red-600 font-label-lg rounded-xl hover:bg-red-50 transition-colors">
+                      Từ chối
+                    </button>
+                    <button
+                      onClick={() => handleInstantAction(instantRequest.id, 'accept')}
+                      className="flex-1 h-11 bg-primary text-on-primary font-label-lg rounded-xl shadow-md hover:bg-primary/90 hover:shadow-lg transition-all flex items-center justify-center gap-1">
+                      <span className="material-symbols-outlined text-[18px]">check</span> Chấp nhận
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
         </main>
       </div>
     </div>
@@ -577,56 +871,229 @@ export default function TutorDashboard() {
 }
 
 // Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬ Request Row Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
-function RequestRow({ request, onAccept, onDecline }) {
+function RequestRow({ request, isConflicting, onAccept, onDecline }) {
+  const [expanded, setExpanded] = useState(false)
+  const isTrial = request.bookingType === 'trial'
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return ''
+    try {
+      return new Date(dateStr).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })
+    } catch { return dateStr }
+  }
+
+  const timeAgo = (dateStr) => {
+    if (!dateStr) return ''
+    const diff = Math.floor((Date.now() - new Date(dateStr)) / 60000)
+    if (diff < 1) return 'Vừa xong'
+    if (diff < 60) return `${diff} phút trước`
+    if (diff < 1440) return `${Math.floor(diff / 60)} giờ trước`
+    return `${Math.floor(diff / 1440)} ngày trước`
+  }
+
+  const methodLabel = request.teachingMethod === 'online' ? 'Trực tuyến' : request.teachingMethod === 'offline' ? 'Trực tiếp' : request.teachingMethod || ''
+  const methodIcon = request.teachingMethod === 'online' ? 'videocam' : request.teachingMethod === 'offline' ? 'location_on' : 'school'
+  const displayDate = request.isPackage ? request.date : (request.lessonDate ? formatDate(request.lessonDate) : request.date || '')
+
   return (
-    <div className="p-4 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:bg-surface-container-lowest/50 transition-colors">
-      <div className="flex items-center gap-4">
-        {/* Avatar initials */}
-        <div className="w-12 h-12 rounded-full bg-secondary-container flex-shrink-0 flex items-center justify-center text-on-secondary-container font-label-md font-bold">
-          {request.initials}
-        </div>
-        <div>
-          <p className="font-label-md text-[16px] text-on-surface mb-0.5">{request.name}</p>
-          <p className="font-body-md text-[14px] text-on-surface-variant flex items-center gap-2 flex-wrap">
-            {request.bookingType === 'trial' && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold">
-                <span className="material-symbols-outlined text-[14px]">workspace_premium</span>
-                Trial
-              </span>
-            )}
-            <span className="inline-block px-2 py-0.5 rounded-full bg-tertiary-fixed-dim/20 text-primary font-label-sm">
-              {request.subject}
+    <div className={`border-b border-gray-100 last:border-0 transition-colors ${expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50/60'} ${isConflicting ? 'opacity-60 grayscale-[30%]' : ''}`}>
+      {/* ── Collapsed summary row (always visible) ── */}
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="w-full flex items-center gap-3 px-5 py-3.5 text-left"
+      >
+        {/* Avatar */}
+        <div className="relative shrink-0">
+          {request.avatarUrl ? (
+            <img src={request.avatarUrl} alt={request.name} className="w-10 h-10 rounded-full object-cover ring-2 ring-white shadow" />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow">
+              {request.initials}
+            </div>
+          )}
+          {isTrial && (
+            <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-amber-400 flex items-center justify-center shadow">
+              <span className="material-symbols-outlined text-white text-[10px]">star</span>
             </span>
-            <span>-</span>
-            <span className="flex items-center gap-1">
-              <span className="material-symbols-outlined text-[16px]">calendar_today</span>
-              {request.date}
-            </span>
-          </p>
-          {request.note && (
-            <p className="mt-1 text-[13px] text-on-surface-variant line-clamp-2">
-              Note: {request.note}
-            </p>
           )}
         </div>
-      </div>
-      <div className="flex items-center gap-2 w-full sm:w-auto">
-        <button
-          className="flex-1 sm:flex-none px-4 h-10 rounded-lg border border-outline-variant text-on-surface-variant font-label-md hover:bg-surface-container-high transition-colors"
-          onClick={onDecline}
-        >
-          Decline
-        </button>
-        <button
-          className="flex-1 sm:flex-none px-4 h-10 rounded-lg bg-primary text-on-primary font-label-md hover:bg-primary/90 transition-colors shadow-sm"
-          onClick={onAccept}
-        >
-          Accept
-        </button>
-      </div>
+
+        {/* Summary text */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`font-bold text-[14px] ${isConflicting ? 'text-gray-500 line-through' : 'text-gray-900'}`}>{request.name}</span>
+            {isConflicting && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold">
+                <span className="material-symbols-outlined text-[10px]">error</span>
+                Trùng lịch
+              </span>
+            )}
+            {isTrial && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
+                <span className="material-symbols-outlined text-[10px]">workspace_premium</span>
+                Buổi thử
+              </span>
+            )}
+          </div>
+          <p className="text-[12px] text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 font-semibold text-indigo-600">
+              <span className="material-symbols-outlined text-[13px]">menu_book</span>
+              {request.subject}
+            </span>
+            {displayDate && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[13px]">calendar_today</span>
+                  {displayDate}
+                </span>
+              </>
+            )}
+            {request.timeSlot && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[13px]">schedule</span>
+                  {request.timeSlot}
+                </span>
+              </>
+            )}
+            {request.createdAt && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="text-gray-400">{timeAgo(request.createdAt)}</span>
+              </>
+            )}
+          </p>
+        </div>
+
+        {/* Chevron */}
+        <span className={`material-symbols-outlined text-[20px] text-gray-400 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}>
+          expand_more
+        </span>
+      </button>
+
+      {/* ── Expanded detail panel ── */}
+      {expanded && (
+        <div className="px-5 pb-5">
+          {/* Divider */}
+          <div className="border-t border-blue-100 mb-4" />
+
+          {/* Info grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="flex items-center gap-1.5 bg-indigo-50 rounded-lg px-3 py-2">
+              <span className="material-symbols-outlined text-[16px] text-indigo-500">menu_book</span>
+              <div>
+                <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-wide">Môn học</p>
+                <p className="text-[13px] font-bold text-indigo-800">{request.subject}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-sky-50 rounded-lg px-3 py-2">
+              <span className="material-symbols-outlined text-[16px] text-sky-500">calendar_today</span>
+              <div>
+                <p className="text-[10px] text-sky-400 font-bold uppercase tracking-wide">
+                  {request.isPackage ? 'Bắt đầu từ' : 'Ngày học'}
+                </p>
+                <p className="text-[13px] font-bold text-sky-800">
+                  {request.isPackage && request.startDate ? formatDate(request.startDate) : (displayDate || 'Chưa xác định')}
+                </p>
+              </div>
+            </div>
+
+            {(request.timeSlot || request.scheduleSummary) && (
+              <div className={`flex items-center gap-1.5 bg-violet-50 rounded-lg px-3 py-2 ${request.isPackage ? 'col-span-2' : ''}`}>
+                <span className="material-symbols-outlined text-[16px] text-violet-500">schedule</span>
+                <div>
+                  <p className="text-[10px] text-violet-400 font-bold uppercase tracking-wide">
+                    {request.isPackage ? 'Lịch học hàng tuần' : 'Giờ học'}
+                  </p>
+                  <p className="text-[13px] font-bold text-violet-800">
+                    {request.isPackage && request.scheduleSummary ? request.scheduleSummary : request.timeSlot}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {methodLabel && (
+              <div className="flex items-center gap-1.5 bg-teal-50 rounded-lg px-3 py-2">
+                <span className="material-symbols-outlined text-[16px] text-teal-500">{methodIcon}</span>
+                <div>
+                  <p className="text-[10px] text-teal-400 font-bold uppercase tracking-wide">Hình thức</p>
+                  <p className="text-[13px] font-bold text-teal-800">{methodLabel}</p>
+                </div>
+              </div>
+            )}
+
+            {request.level && (
+              <div className="flex items-center gap-1.5 bg-orange-50 rounded-lg px-3 py-2">
+                <span className="material-symbols-outlined text-[16px] text-orange-500">signal_cellular_alt</span>
+                <div>
+                  <p className="text-[10px] text-orange-400 font-bold uppercase tracking-wide">Trình độ</p>
+                  <p className="text-[13px] font-bold text-orange-800">{request.level}</p>
+                </div>
+              </div>
+            )}
+
+            {Number(request.sessionsRequested) > 0 && (
+              <div className="flex items-center gap-1.5 bg-rose-50 rounded-lg px-3 py-2">
+                <span className="material-symbols-outlined text-[16px] text-rose-500">repeat</span>
+                <div>
+                  <p className="text-[10px] text-rose-400 font-bold uppercase tracking-wide">Số buổi</p>
+                  <p className="text-[13px] font-bold text-rose-800">{request.sessionsRequested} buổi</p>
+                </div>
+              </div>
+            )}
+
+            {(request.grade || request.studentAge) && (
+              <div className="flex items-center gap-1.5 bg-green-50 rounded-lg px-3 py-2">
+                <span className="material-symbols-outlined text-[16px] text-green-500">school</span>
+                <div>
+                  <p className="text-[10px] text-green-400 font-bold uppercase tracking-wide">Học sinh</p>
+                  <p className="text-[13px] font-bold text-green-800">{request.grade || `${request.studentAge} tuổi`}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Note */}
+          {request.note && (
+            <div className="mt-3 flex items-start gap-2 bg-white rounded-lg px-3 py-2.5 border border-gray-100 shadow-sm">
+              <span className="material-symbols-outlined text-[16px] text-gray-400 mt-0.5 shrink-0">chat_bubble</span>
+              <p className="text-[13px] text-gray-600 leading-relaxed">
+                <span className="font-bold text-gray-700">Yêu cầu: </span>{request.note}
+              </p>
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="mt-4 flex gap-2">
+            <button
+              className="flex-1 h-10 rounded-xl border-2 border-red-100 text-red-500 font-bold text-sm hover:bg-red-50 hover:border-red-200 transition-all flex items-center justify-center gap-1.5"
+              onClick={(e) => { e.stopPropagation(); onDecline() }}
+            >
+              <span className="material-symbols-outlined text-[18px]">close</span>
+              Từ chối
+            </button>
+            <button
+              className={`flex-1 h-10 rounded-xl font-bold text-sm transition-all shadow-sm flex items-center justify-center gap-1.5 ${
+                isConflicting 
+                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed border border-gray-400' 
+                  : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700'
+              }`}
+              disabled={isConflicting}
+              onClick={(e) => { e.stopPropagation(); onAccept() }}
+            >
+              <span className="material-symbols-outlined text-[18px]">{isConflicting ? 'block' : 'check'}</span>
+              {isConflicting ? 'Trùng lịch' : 'Chấp nhận'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
 
 // Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬ Schedule Item Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
 function ScheduleItem({ slot }) {
@@ -732,29 +1199,29 @@ function TutorEarningsTab() {
     <div className="space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">Earnings</h2>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Thu Nhập</h2>
           <p className="font-body-md text-body-md text-on-surface-variant">
-            Track real income from approved lessons and attendance records.
+            Theo dõi doanh thu thực tế từ các buổi học đã điểm danh và phê duyệt.
           </p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-4 py-2 text-primary font-label-md w-fit">
           <span className="material-symbols-outlined text-[18px]">payments</span>
-          Rate: {formatMoney(data?.hourlyRate || 0)}/hour
+          Mức lương: {formatMoney(data?.hourlyRate || 0)}/giờ
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-md">
-        <EarningStatCard icon="account_balance_wallet" label="This Month" value={formatMoney(summary.thisMonthEarned || 0)} tone="primary" />
-        <EarningStatCard icon="verified" label="Total Earned" value={formatMoney(summary.totalEarned || 0)} tone="success" />
-        <EarningStatCard icon="hourglass_top" label="Waiting Attendance" value={formatMoney(summary.pendingAmount || 0)} tone="warning" />
+        <EarningStatCard icon="account_balance_wallet" label="Tháng này" value={formatMoney(summary.thisMonthEarned || 0)} tone="primary" />
+        <EarningStatCard icon="verified" label="Tổng thu nhập" value={formatMoney(summary.totalEarned || 0)} tone="success" />
+        <EarningStatCard icon="hourglass_top" label="Chờ điểm danh" value={formatMoney(summary.pendingAttendanceAmount || 0)} tone="warning" />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-lg">
         <div className="xl:col-span-2 bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm">
           <div className="flex items-center justify-between mb-5">
             <div>
-              <h3 className="font-headline-md text-headline-md text-on-surface">Last 6 Months</h3>
-              <p className="text-[13px] text-on-surface-variant">Only lessons marked present are counted as earned.</p>
+              <h3 className="font-headline-md text-headline-md text-on-surface">6 Tháng Gần Nhất</h3>
+              <p className="text-[13px] text-on-surface-variant">Chỉ tính các buổi học đã được đánh dấu "Có mặt".</p>
             </div>
           </div>
           <div className="h-64 flex items-end gap-3 border-b border-outline-variant/20 pt-6">
@@ -773,12 +1240,16 @@ function TutorEarningsTab() {
         </div>
 
         <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm space-y-4">
-          <h3 className="font-headline-md text-headline-md text-on-surface">Lesson Status</h3>
-          <EarningMiniStat label="Paid lessons" value={summary.completedLessons || 0} color="text-[#16a34a]" />
-          <EarningMiniStat label="Need attendance" value={summary.pendingLessons || 0} color="text-amber-600" />
-          <EarningMiniStat label="No charge" value={summary.noChargeLessons || 0} color="text-red-600" />
+          <h3 className="font-headline-md text-headline-md text-on-surface">Thống Kê Buổi Học</h3>
+          <EarningMiniStat label="Đã nhận tiền" value={summary.completedLessons || 0} color="text-[#16a34a]" />
+          <EarningMiniStat label="Chờ giải ngân" value={summary.pendingReleaseLessons || 0} color="text-blue-600" />
+          <EarningMiniStat label="Cần điểm danh" value={summary.pendingAttendanceLessons || 0} color="text-amber-600" />
+          {summary.disputedLessons > 0 && (
+            <EarningMiniStat label="Đang khiếu nại" value={summary.disputedLessons || 0} color="text-orange-600" />
+          )}
+          <EarningMiniStat label="Không tính phí" value={summary.noChargeLessons || 0} color="text-red-600" />
           <div className="rounded-xl bg-surface-container-low p-3 text-[12px] text-on-surface-variant">
-            Tip: mark attendance in Students after each lesson. Present lessons become earned automatically.
+            Mẹo: Hãy điểm danh trong mục Học sinh sau mỗi buổi. Các buổi học có mặt sẽ tự động tính phí.
           </div>
         </div>
       </div>
@@ -786,13 +1257,13 @@ function TutorEarningsTab() {
       <div className="bg-white/80 border border-outline-variant/20 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-5 border-b border-outline-variant/20 flex items-center justify-between">
           <div>
-            <h3 className="font-headline-md text-headline-md text-on-surface">Transactions</h3>
-            <p className="text-[13px] text-on-surface-variant">Real lesson records from Supabase bookings.</p>
+            <h3 className="font-headline-md text-headline-md text-on-surface">Lịch Sử Giao Dịch</h3>
+            <p className="text-[13px] text-on-surface-variant">Các buổi học thực tế được ghi nhận trên hệ thống.</p>
           </div>
         </div>
         {transactions.length === 0 ? (
           <div className="p-10 text-center text-on-surface-variant">
-            No approved lessons yet.
+            Chưa có buổi học nào được phê duyệt.
           </div>
         ) : (
           <div className="divide-y divide-outline-variant/20">
@@ -837,6 +1308,10 @@ function EarningMiniStat({ label, value, color }) {
 
 function EarningTransactionRow({ item }) {
   const status = earningStatusConfig(item.paymentStatus)
+  const attendanceDisplay = item.attendanceStatus === 'present' ? 'Có mặt' 
+                          : item.attendanceStatus === 'absent' ? 'Vắng mặt' 
+                          : item.attendanceStatus === 'excused' ? 'Có phép' 
+                          : 'Chưa điểm danh';
   return (
     <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.2fr_1fr_auto] gap-3 items-center">
       <div className="flex items-center gap-3">
@@ -845,7 +1320,7 @@ function EarningTransactionRow({ item }) {
         </div>
         <div>
           <p className="font-label-md text-label-md text-on-surface">{item.studentName}</p>
-          <p className="text-[13px] text-on-surface-variant">{item.subject || 'General'} - {item.date} - {item.timeSlot}</p>
+          <p className="text-[13px] text-on-surface-variant">{item.subject || 'Chung'} - {item.date} - {item.timeSlot}</p>
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -853,7 +1328,7 @@ function EarningTransactionRow({ item }) {
           {status.label}
         </span>
         <span className="px-2 py-1 rounded-full border border-outline-variant/30 text-[11px] font-bold text-on-surface-variant">
-          Attendance: {item.attendanceStatus}
+          Điểm danh: {attendanceDisplay}
         </span>
       </div>
       <div className="text-left lg:text-right">
@@ -866,13 +1341,19 @@ function EarningTransactionRow({ item }) {
 }
 
 function earningStatusConfig(status) {
-  if (status === 'earned') {
-    return { label: 'Earned', classes: 'bg-[#dcfce7] text-[#16a34a] border-[#86efac]' }
+  if (status === 'released') {
+    return { label: 'Đã nhận tiền', classes: 'bg-[#dcfce7] text-[#16a34a] border-[#86efac]' }
+  }
+  if (status === 'pending_release') {
+    return { label: 'Chờ giải ngân', classes: 'bg-blue-50 text-blue-700 border-blue-200' }
   }
   if (status === 'pending_attendance') {
-    return { label: 'Waiting attendance', classes: 'bg-amber-50 text-amber-700 border-amber-200' }
+    return { label: 'Chờ điểm danh', classes: 'bg-amber-50 text-amber-700 border-amber-200' }
   }
-  return { label: 'No charge', classes: 'bg-red-50 text-red-600 border-red-200' }
+  if (status === 'disputed') {
+    return { label: 'Đang khiếu nại', classes: 'bg-orange-50 text-orange-700 border-orange-200' }
+  }
+  return { label: 'Không tính phí', classes: 'bg-red-50 text-red-600 border-red-200' }
 }
 
 function formatMoney(value) {
@@ -925,7 +1406,9 @@ function TutorStudentsTab() {
   const totalAbsent = students.reduce((sum, student) => sum + (student.absentCount || 0), 0)
   const markedLessons = students.reduce((sum, student) => sum + (student.markedLessons || 0), 0)
   const presentLessons = students.reduce((sum, student) => sum + (student.presentCount || 0), 0)
-  const attendanceRate = markedLessons ? Math.round((presentLessons / markedLessons) * 100) : 0
+  const excusedLessons = students.reduce((sum, student) => sum + (student.excusedCount || 0), 0)
+  const rateBase = markedLessons - excusedLessons
+  const attendanceRate = rateBase > 0 ? Math.round((presentLessons / rateBase) * 100) : 0
 
   const handleAttendance = async (lesson, status) => {
     setSavingId(lesson.bookingId)
@@ -979,37 +1462,37 @@ function TutorStudentsTab() {
     <div className="space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">Students</h2>
-          <p className="font-body-md text-body-md text-on-surface-variant">Manage students, approved lessons, attendance, absences, and class notes.</p>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Quản Lý Học Sinh</h2>
+          <p className="font-body-md text-body-md text-on-surface-variant">Quản lý danh sách học sinh, điểm danh, xin phép và ghi chú buổi học.</p>
         </div>
         <button onClick={loadStudents} className="h-10 px-4 border border-outline-variant rounded-xl text-on-surface-variant font-label-md hover:bg-surface-container transition-colors flex items-center gap-2">
-          <span className="material-symbols-outlined text-[18px]">refresh</span>Refresh
+          <span className="material-symbols-outlined text-[18px]">refresh</span>Làm mới
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StudentStatCard icon="groups" label="Students" value={totalStudents} />
-        <StudentStatCard icon="event_available" label="Lessons" value={totalLessons} />
-        <StudentStatCard icon="person_off" label="Absences" value={totalAbsent} />
-        <StudentStatCard icon="fact_check" label="Attendance" value={markedLessons ? `${attendanceRate}%` : '--'} />
+        <StudentStatCard icon="groups" label="Học sinh" value={totalStudents} />
+        <StudentStatCard icon="event_available" label="Buổi học" value={totalLessons} />
+        <StudentStatCard icon="person_off" label="Vắng mặt" value={totalAbsent} />
+        <StudentStatCard icon="fact_check" label="Chuyên cần" value={markedLessons ? `${attendanceRate}%` : '--'} />
       </div>
 
       {error && <p className="text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
 
       {loading ? (
-        <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-12 text-center text-on-surface-variant">Loading students...</div>
+        <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-12 text-center text-on-surface-variant">Đang tải dữ liệu học sinh...</div>
       ) : students.length === 0 ? (
         <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-12 text-center">
           <span className="material-symbols-outlined text-[48px] text-outline">group_off</span>
-          <h3 className="font-headline-md text-headline-md text-on-surface mt-2">No students yet</h3>
-          <p className="text-on-surface-variant mt-1">Students will appear here after you approve booking requests.</p>
+          <h3 className="font-headline-md text-headline-md text-on-surface mt-2">Chưa có học sinh nào</h3>
+          <p className="text-on-surface-variant mt-1">Học sinh sẽ hiển thị ở đây sau khi bạn chấp nhận yêu cầu học.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
           <div className="bg-white/80 border border-outline-variant/20 rounded-2xl shadow-sm overflow-hidden">
             <div className="p-4 border-b border-outline-variant/20">
-              <h3 className="font-headline-md text-headline-md text-on-surface">Student List</h3>
-              <p className="text-[12px] text-on-surface-variant">Select a student to view lesson records.</p>
+              <h3 className="font-headline-md text-headline-md text-on-surface">Danh sách học sinh</h3>
+              <p className="text-[12px] text-on-surface-variant">Chọn một học sinh để xem lịch sử buổi học.</p>
             </div>
             <div className="divide-y divide-outline-variant/10 max-h-[620px] overflow-auto">
               {students.map((student) => {
@@ -1020,9 +1503,9 @@ function TutorStudentsTab() {
                     {student.studentAvatar ? <img src={student.studentAvatar} alt={student.studentName} className="w-12 h-12 rounded-full object-cover" /> : <div className="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">{(student.childName || student.studentName || 'S').charAt(0)}</div>}
                     <div className="min-w-0 flex-1">
                       <p className="font-label-md text-label-md text-on-surface truncate">{student.childName || student.studentName}</p>
-                      {student.childName && <p className="text-[12px] text-on-surface-variant truncate">Parent: {student.studentName}</p>}
-                      <p className="text-[12px] text-primary truncate">{student.subjects.join(', ') || 'General'}</p>
-                      <div className="flex gap-2 mt-2 text-[11px]"><span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">{student.totalLessons} lessons</span><span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600">{student.absentCount} absent</span></div>
+                      {student.childName && <p className="text-[12px] text-on-surface-variant truncate">Phụ huynh: {student.studentName}</p>}
+                      <p className="text-[12px] text-primary truncate">{student.subjects.join(', ') || 'Chung'}</p>
+                      <div className="flex gap-2 mt-2 text-[11px]"><span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">{student.totalLessons} buổi</span><span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600">{student.absentCount} vắng</span></div>
                     </div>
                   </button>
                 )
@@ -1034,8 +1517,8 @@ function TutorStudentsTab() {
             <StudentDetailCard student={selectedStudent} />
             <div className="bg-white/80 border border-outline-variant/20 rounded-2xl shadow-sm overflow-hidden">
               <div className="p-4 border-b border-outline-variant/20 flex items-center justify-between gap-3">
-                <div><h3 className="font-headline-md text-headline-md text-on-surface">Lesson Attendance</h3><p className="text-[12px] text-on-surface-variant">Mark attendance for approved lessons. Pending requests cannot be marked yet.</p></div>
-                <span className="text-[12px] font-bold text-on-surface-variant">{selectedStudent?.lessons?.length || 0} records</span>
+                <div><h3 className="font-headline-md text-headline-md text-on-surface">Điểm danh & Ghi chú</h3><p className="text-[12px] text-on-surface-variant">Chỉ có thể điểm danh các buổi học đã được phê duyệt.</p></div>
+                <span className="text-[12px] font-bold text-on-surface-variant">{selectedStudent?.lessons?.length || 0} bản ghi</span>
               </div>
               <div className="divide-y divide-outline-variant/10">
                 {(selectedStudent?.lessons || []).map((lesson) => <AttendanceRow key={lesson.bookingId} lesson={lesson} saving={savingId === lesson.bookingId} note={attendanceNotes[lesson.bookingId] ?? lesson.attendanceNote ?? ''} onNoteChange={(value) => setAttendanceNotes((prev) => ({ ...prev, [lesson.bookingId]: value }))} onMark={(status) => handleAttendance(lesson, status)} onFeedback={() => setFeedbackLesson(lesson)} />)}
@@ -1064,13 +1547,119 @@ function StudentStatCard({ icon, label, value }) {
 
 function StudentDetailCard({ student }) {
   if (!student) return null
-  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Selected student</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'No email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Lessons</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Absent</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Rate</p></div></div></div>{student.nextLesson && <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Next lesson: <strong>{student.nextLesson.date}</strong> at <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div>}</div>
+  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Đang chọn</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'Chưa có email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Buổi</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Vắng</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Tỉ lệ</p></div></div></div>{student.nextLesson && <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Buổi tiếp theo: <strong>{student.nextLesson.date}</strong> lúc <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div>}</div>
 }
 
 function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback }) {
-  const approved = lesson.bookingStatus === 'Approved'
-  const statusConfig = { present: 'bg-[#dcfce7] text-[#16a34a] border-[#bbf7d0]', absent: 'bg-red-50 text-red-600 border-red-200', excused: 'bg-amber-50 text-amber-700 border-amber-200' }
-  return <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center"><div><p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'General'}</p><p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p><span className={`inline-flex mt-2 px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>{lesson.attendanceStatus || lesson.bookingStatus}</span></div><input value={note} onChange={(e) => onNoteChange(e.target.value)} placeholder="Attendance note..." disabled={!approved || saving} className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" /><div className="flex flex-wrap gap-2 justify-start lg:justify-end"><button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Present</button><button disabled={!approved || saving} onClick={() => onMark('absent')} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Absent</button><button disabled={!approved || saving} onClick={() => onMark('excused')} className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Excused</button><button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">edit_note</span>Feedback</button></div></div>
+  const approved = lesson.bookingStatus === 'Approved';
+  const statusConfig = { present: 'bg-[#dcfce7] text-[#16a34a] border-[#bbf7d0]', absent: 'bg-red-50 text-red-600 border-red-200', excused: 'bg-amber-50 text-amber-700 border-amber-200' };
+
+  const [checkingIn, setCheckingIn] = useState(false);
+  const [checkInTime, setCheckInTime] = useState(lesson.tutorCheckInAt);
+
+  const isWithinCheckInWindow = () => {
+    if (!lesson.date || !lesson.timeSlot) return false;
+    let [timeStr, modifier] = lesson.timeSlot.split(' ');
+    let [hours, minutes] = timeStr.split(':');
+    if (hours === '12') hours = '00';
+    if (modifier === 'PM') hours = parseInt(hours, 10) + 12;
+    const dateStr = `${lesson.date}T${String(hours).padStart(2, '0')}:${minutes}:00`;
+    const lessonTime = new Date(dateStr);
+    if (isNaN(lessonTime.getTime())) return false;
+    
+    const now = new Date();
+    const diffMs = lessonTime.getTime() - now.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    return diffMins <= 30 && diffMins >= -120; // within 30 min before, or up to 2 hours after
+  };
+
+  const handleCheckIn = async () => {
+    try {
+      setCheckingIn(true);
+      const token = localStorage.getItem('token');
+      const apiBase = API_BASE_URL;
+      const res = await fetch(`${apiBase}/api/tutor/bookings/${lesson.bookingId}/checkin`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCheckInTime(data.tutorCheckInAt);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCheckingIn(false);
+    }
+  };
+
+  const canCheckIn = approved && isWithinCheckInWindow() && !checkInTime;
+
+  // ATTENDANCE_SETTLEMENT_V1: đánh vắng/có phép ảnh hưởng trực tiếp tới tiền —
+  // bắt xác nhận và nêu rõ hệ quả trước khi gửi.
+  const confirmMark = (status) => {
+    if (status === 'absent') {
+      const moneyLine = checkInTime
+        ? 'Bạn đã check-in buổi học — theo chính sách, học phí sẽ KHÔNG hoàn cho học sinh và bạn nhận 90% bồi hoàn vào ví.'
+        : '⚠️ Bạn CHƯA check-in buổi học này. Không có bằng chứng có mặt, học phí sẽ được HOÀN LẠI cho học sinh và bạn không nhận được bồi hoàn.';
+      if (!window.confirm(`Xác nhận học sinh VẮNG MẶT KHÔNG PHÉP?\n\n${moneyLine}\n\nHọc sinh và phụ huynh sẽ được thông báo, và có 48 giờ để khiếu nại nếu thông tin không đúng.`)) return;
+    } else if (status === 'excused') {
+      if (!window.confirm('Xác nhận NGHỈ CÓ PHÉP?\n\nToàn bộ học phí sẽ được hoàn lại cho học sinh và bạn không nhận thù lao buổi này.')) return;
+    }
+    onMark(status);
+  };
+
+  return (
+    <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center">
+      <div>
+        <p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'Chung'}</p>
+        <p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p>
+        <div className="flex gap-2 items-center mt-2">
+          <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>
+            {lesson.attendanceStatus === 'present' ? 'Có mặt' 
+            : lesson.attendanceStatus === 'absent' ? 'Vắng mặt'
+            : lesson.attendanceStatus === 'excused' ? 'Có phép'
+            : lesson.bookingStatus === 'Approved' ? 'Chưa điểm danh'
+            : lesson.bookingStatus}
+          </span>
+          {checkInTime && (
+            <span className="inline-flex px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200 text-[11px] font-bold items-center gap-1">
+              <span className="material-symbols-outlined text-[12px]">check_circle</span>
+              Đã bắt đầu lúc {new Date(checkInTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+            </span>
+          )}
+        </div>
+      </div>
+      <input 
+        value={note} 
+        onChange={(e) => onNoteChange(e.target.value)} 
+        placeholder="Ghi chú buổi học..." 
+        disabled={!approved || saving} 
+        className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" 
+      />
+      <div className="flex flex-wrap gap-2 justify-start lg:justify-end">
+        {canCheckIn && (
+          <button 
+            disabled={checkingIn} 
+            onClick={handleCheckIn} 
+            className="h-9 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-bold disabled:opacity-40 flex items-center gap-1"
+          >
+            <span className="material-symbols-outlined text-[14px]">play_arrow</span>
+            Bắt đầu dạy
+          </button>
+        )}
+        <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Có mặt</button>
+        <button disabled={!approved || saving} onClick={() => confirmMark('absent')} title={checkInTime ? 'Học sinh vắng không phép — bạn nhận 90% bồi hoàn' : 'Chưa check-in: đánh vắng sẽ hoàn tiền cho học sinh'} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Vắng</button>
+        <button disabled={!approved || saving} onClick={() => confirmMark('excused')} title="Nghỉ có phép — hoàn 100% học phí cho học sinh" className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Có phép</button>
+        <button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1">
+          <span className="material-symbols-outlined text-[14px]">edit_note</span>Đánh giá
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function AbsenceTimeline({ lessons }) {
@@ -1210,23 +1799,30 @@ function MyScheduleTab() {
   const eventsForDate = (date) => {
     const dayName = getDayName(date)
     const dateKey = toDateKey(date)
-    const availableSlots = (availability[dayName] || []).map((time) => ({
-      id: `available-${dateKey}-${time}`,
-      type: 'available',
-      time,
-      title: 'Available for booking',
-      meta: dayName,
-    }))
+    
     const bookedSlots = approvedBookings
       .filter((booking) => normalizeBookingDate(booking.lesson_date || booking.date) === dateKey)
       .map((booking) => ({
         id: `booking-${booking.id}`,
         type: 'booking',
         time: booking.time_slot || booking.timeSlot || booking.time || 'Scheduled',
-        title: booking.subject || 'Class',
-        meta: booking.childName || booking.studentName || 'Student',
+        title: booking.subject || 'Lớp học',
+        meta: booking.childName || booking.studentName || 'Học sinh',
       }))
-    return [...bookedSlots, ...availableSlots].sort((a, b) => String(a.time).localeCompare(String(b.time)))
+      
+    const bookedTimesMins = bookedSlots.map(b => parseTimeToMinutes(b.time));
+
+    const availableSlots = (availability[dayName] || [])
+      .filter(time => !bookedTimesMins.includes(parseTimeToMinutes(time)))
+      .map((time) => ({
+        id: `available-${dateKey}-${time}`,
+        type: 'available',
+        time,
+        title: 'Trống',
+        meta: dayName,
+      }))
+      
+    return [...bookedSlots, ...availableSlots].sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time))
   }
 
   const goPrev = () => setCursor((current) => view === 'week' ? addDays(current, -7) : addMonths(current, -1))
@@ -1237,39 +1833,39 @@ function MyScheduleTab() {
     <div className="space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">My Schedule</h2>
-          <p className="font-body-md text-body-md text-on-surface-variant">View your availability and approved classes by week or month.</p>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Lịch giảng dạy</h2>
+          <p className="font-body-md text-body-md text-on-surface-variant">Xem thời gian rảnh và lịch dạy đã duyệt theo tuần hoặc tháng.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex p-1 bg-surface-container-low rounded-xl border border-outline-variant/30">
-            <button type="button" onClick={() => setView('week')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'week' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Week</button>
-            <button type="button" onClick={() => setView('month')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'month' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Month</button>
+            <button type="button" onClick={() => setView('week')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'week' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Tuần</button>
+            <button type="button" onClick={() => setView('month')} className={`h-9 px-4 rounded-lg font-label-md text-label-md transition-colors ${view === 'month' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'}`}>Tháng</button>
           </div>
-          <button onClick={goToday} className="h-10 px-4 border border-outline-variant rounded-xl text-on-surface-variant font-label-md hover:bg-surface-container transition-colors">Today</button>
+          <button onClick={goToday} className="h-10 px-4 border border-outline-variant rounded-xl text-on-surface-variant font-label-md hover:bg-surface-container transition-colors">Hôm nay</button>
           <button onClick={goPrev} className="w-10 h-10 border border-outline-variant rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"><span className="material-symbols-outlined text-[18px]">chevron_left</span></button>
           <button onClick={goNext} className="w-10 h-10 border border-outline-variant rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"><span className="material-symbols-outlined text-[18px]">chevron_right</span></button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ScheduleSummaryCard icon="event_available" label="Available Slots" value={totalAvailable} />
-        <ScheduleSummaryCard icon="school" label="Approved Classes" value={totalClasses} />
-        <ScheduleSummaryCard icon="calendar_month" label={view === 'week' ? 'Current Week' : 'Current Month'} value={view === 'week' ? `${formatShortDate(weekDates[0])} - ${formatShortDate(weekDates[6])}` : formatMonthTitle(cursor)} />
+        <ScheduleSummaryCard icon="event_available" label="LỊCH TRỐNG" value={totalAvailable} />
+        <ScheduleSummaryCard icon="school" label="LỚP ĐÃ DUYỆT" value={totalClasses} />
+        <ScheduleSummaryCard icon="calendar_month" label={view === 'week' ? 'TUẦN HIỆN TẠI' : 'THÁNG HIỆN TẠI'} value={view === 'week' ? `${formatShortDate(weekDates[0])} - ${formatShortDate(weekDates[6])}` : formatMonthTitle(cursor)} />
       </div>
 
       {error && <p className="text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
 
       <div className="bg-white/80 backdrop-blur-md border border-outline-variant/20 shadow-sm rounded-2xl overflow-hidden">
         {loading ? (
-          <div className="min-h-[320px] flex items-center justify-center text-on-surface-variant">Loading schedule...</div>
+          <div className="min-h-[320px] flex items-center justify-center text-on-surface-variant">Đang tải lịch trình...</div>
         ) : view === 'week' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-7 divide-y lg:divide-y-0 lg:divide-x divide-outline-variant/20">
-            {weekDates.map((date) => <ScheduleDayColumn key={toDateKey(date)} date={date} events={eventsForDate(date)} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />)}
+          <div className="border-t border-outline-variant/20 relative">
+            <TimeGridWeekView weekDates={weekDates} eventsForDate={eventsForDate} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />
           </div>
         ) : (
           <div>
             <div className="grid grid-cols-7 border-b border-outline-variant/20 bg-surface-container-lowest">
-              {DAY_ORDER.map((day) => <div key={day} className="px-3 py-2 text-[11px] font-bold uppercase text-outline">{day.slice(0, 3)}</div>)}
+              {DAY_ORDER.map((day) => <div key={day} className="px-3 py-2 text-[11px] font-bold uppercase text-outline text-center">{DAY_NAMES_VI[day]}</div>)}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-7">
               {monthGrid.map((date) => <ScheduleMonthCell key={toDateKey(date)} date={date} events={eventsForDate(date)} isCurrentMonth={date.getMonth() === cursor.getMonth()} onEventClick={setSessionModal} sessionInfoMap={sessionInfoMap} />)}
@@ -1309,20 +1905,151 @@ function ScheduleSummaryCard({ icon, label, value }) {
   )
 }
 
-function ScheduleDayColumn({ date, events, onEventClick, sessionInfoMap }) {
-  const isToday = toDateKey(date) === toDateKey(new Date())
+const parseTimeToMinutes = (timeStr) => {
+  if (!timeStr) return 0;
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?$/);
+  if (!match) return 0;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const modifier = match[3] ? match[3].toUpperCase() : null;
+
+  if (modifier === 'PM' && hours < 12) hours += 12;
+  if (modifier === 'AM' && hours === 12) hours = 0;
+
+  return hours * 60 + minutes;
+};
+
+const START_HOUR = 6;
+const END_HOUR = 23;
+const HOUR_HEIGHT = 84; // Increased from 64 to 84px for better text fit
+
+function TimeGridWeekView({ weekDates, eventsForDate, onEventClick, sessionInfoMap }) {
+  const hours = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const currentMins = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const currentTop = ((currentMins - START_HOUR * 60) / 60) * HOUR_HEIGHT;
+
   return (
-    <div className={`min-h-[420px] p-4 ${isToday ? 'bg-primary/5' : 'bg-white/50'}`}>
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <p className="text-[12px] font-bold uppercase text-outline">{getDayName(date)}</p>
-          <p className="font-headline-md text-headline-md text-on-surface">{formatShortDate(date)}</p>
-        </div>
-        {isToday && <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-primary text-on-primary">Today</span>}
+    <div className="flex bg-white overflow-hidden">
+      {/* Time Gutter */}
+      <div className="w-14 flex-shrink-0 bg-white border-r border-gray-100 pt-14 relative">
+        {hours.map((hour) => (
+          <div key={hour} className="absolute w-full pr-2 text-right" style={{ top: (hour - START_HOUR) * HOUR_HEIGHT + 56 }}>
+            <span className="text-[10px] font-medium text-gray-400 transform -translate-y-1/2 block">
+              {hour === 12 ? '12 PM' : hour > 12 ? `${hour - 12} PM` : `${hour} AM`}
+            </span>
+          </div>
+        ))}
       </div>
-      {events.length === 0 ? <p className="text-[12px] text-outline italic">No slots</p> : <div className="space-y-2">{events.map((event) => <ScheduleEventPill key={event.id} event={event} onClick={onEventClick} hasInfo={!!sessionInfoMap?.[event.id]} />)}</div>}
+
+      {/* Days Grid */}
+      <div className="flex-1 flex overflow-x-auto relative">
+        {/* Horizontal grid lines */}
+        <div className="absolute inset-0 pointer-events-none mt-14">
+          {hours.map((hour) => (
+            <div key={hour} className="absolute w-full border-t border-gray-100" style={{ top: (hour - START_HOUR) * HOUR_HEIGHT }} />
+          ))}
+        </div>
+
+        {weekDates.map((date) => {
+          const events = eventsForDate(date);
+          const isToday = toDateKey(date) === toDateKey(new Date());
+
+          return (
+            <div key={toDateKey(date)} className={`flex-1 min-w-[120px] relative border-r border-gray-100 last:border-r-0 ${isToday ? 'bg-blue-50/20' : ''}`}>
+              {/* Day Header */}
+              <div className="h-14 border-b border-gray-100 flex flex-col items-center justify-center bg-white sticky top-0 z-20">
+                <span className={`text-[11px] font-semibold uppercase ${isToday ? 'text-blue-600' : 'text-gray-500'}`}>{getDayName(date).slice(0, 3)}</span>
+                <div className={`mt-0.5 text-[18px] w-8 h-8 flex items-center justify-center rounded-full ${isToday ? 'bg-blue-600 text-white font-bold shadow-md' : 'text-gray-700'}`}>
+                  {date.getDate()}
+                </div>
+              </div>
+
+              {/* Events Container */}
+              <div className="relative w-full" style={{ height: (END_HOUR - START_HOUR) * HOUR_HEIGHT }}>
+                {/* Current Time Indicator */}
+                {isToday && currentMins >= START_HOUR * 60 && currentMins <= END_HOUR * 60 && (
+                  <div className="absolute left-0 right-0 z-30 pointer-events-none" style={{ top: `${currentTop}px` }}>
+                    <div className="h-0.5 bg-red-500 w-full relative">
+                      <div className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
+                    </div>
+                  </div>
+                )}
+
+                {(() => {
+                  const groupedEvents = {};
+                  events.forEach((event) => {
+                    const startMins = parseTimeToMinutes(event.time);
+                    if (startMins < START_HOUR * 60 || startMins >= END_HOUR * 60) return;
+                    if (!groupedEvents[startMins]) groupedEvents[startMins] = [];
+                    groupedEvents[startMins].push(event);
+                  });
+                  
+                  // Filter out "available" if there is a "booking" in the same time slot
+                  Object.keys(groupedEvents).forEach(startMins => {
+                    const hasBooking = groupedEvents[startMins].some(e => e.type === 'booking');
+                    if (hasBooking) {
+                       groupedEvents[startMins] = groupedEvents[startMins].filter(e => e.type === 'booking');
+                    }
+                  });
+
+                  return Object.entries(groupedEvents).map(([startMinsStr, timeEvents]) => {
+                    const startMins = parseInt(startMinsStr, 10);
+                    const top = ((startMins - (START_HOUR * 60)) / 60) * HOUR_HEIGHT;
+                    const durationMins = 60; // Default 1 hr
+                    const height = (durationMins / 60) * HOUR_HEIGHT;
+
+                    return (
+                      <div key={startMins} className="absolute left-1.5 right-1.5 flex gap-1" style={{ top: `${top + 2}px`, height: `${height - 4}px` }}>
+                        {timeEvents.map((event) => {
+                          const isBooking = event.type === 'booking';
+                          const hasInfo = !!sessionInfoMap?.[event.id];
+                          return (
+                            <div
+                              key={event.id}
+                              onClick={isBooking ? () => onEventClick?.(event) : undefined}
+                              className={`flex-1 rounded-[6px] p-1.5 px-2 overflow-hidden transition-all text-xs border shadow-sm group relative ${
+                                isBooking 
+                                  ? 'bg-blue-600 text-white border-blue-700 cursor-pointer hover:bg-blue-700 hover:shadow-md hover:z-30' 
+                                  : 'bg-indigo-50/80 text-indigo-700 border-indigo-200'
+                              }`}
+                            >
+                              <div className="font-bold flex items-center justify-between text-[10px] leading-tight opacity-90">
+                                <span>{event.time}</span>
+                                {isBooking && hasInfo && <span className="material-symbols-outlined text-[12px]">check_circle</span>}
+                              </div>
+                              <div className="font-semibold truncate text-[11px] leading-tight mt-0.5">
+                                {isBooking ? event.title : 'Trống'}
+                              </div>
+                              {isBooking && (
+                                <div className="truncate opacity-80 text-[10px] leading-tight mt-0.5">{event.meta}</div>
+                              )}
+                              
+                              {isBooking && (
+                                <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <span className="material-symbols-outlined text-[12px] bg-white/20 rounded-full p-0.5">{hasInfo ? 'edit' : 'add'}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
-  )
+  );
 }
 
 function ScheduleMonthCell({ date, events, isCurrentMonth, onEventClick, sessionInfoMap }) {
@@ -1350,47 +2077,13 @@ function ScheduleMonthCell({ date, events, isCurrentMonth, onEventClick, session
             )}
           </div>
         ))}
-        {events.length > 3 && <p className="text-[10px] text-outline">+{events.length - 3} more</p>}
+        {events.length > 3 && <p className="text-[10px] text-outline">+{events.length - 3} lớp khác</p>}
       </div>
     </div>
   )
 }
 
-function ScheduleEventPill({ event, onClick, hasInfo }) {
-  const isBooking = event.type === 'booking'
-  return (
-    <div
-      onClick={isBooking ? () => onClick?.(event) : undefined}
-      className={`rounded-xl border px-3 py-2 transition-all ${
-        isBooking
-          ? 'bg-primary text-on-primary border-primary cursor-pointer hover:bg-primary/80 active:scale-95'
-          : 'bg-primary/5 text-primary border-primary/20'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-1">
-        <div className="min-w-0">
-          <p className="text-[12px] font-bold">{event.time}</p>
-          <p className={`text-[12px] truncate ${isBooking ? 'text-on-primary' : 'text-on-surface'}`}>{event.title}</p>
-          <p className={`text-[11px] truncate ${isBooking ? 'text-on-primary/80' : 'text-on-surface-variant'}`}>{event.meta}</p>
-        </div>
-        {isBooking && (
-          <span
-            className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center mt-0.5 ${hasInfo ? 'bg-white/30' : 'bg-white/15'}`}
-            title={hasInfo ? 'Đã điền thông tin buổi học — nhấn để chỉnh sửa' : 'Nhấn để điền thông tin buổi học'}
-          >
-            <span className="material-symbols-outlined text-[11px] text-on-primary">{hasInfo ? 'edit' : 'add'}</span>
-          </span>
-        )}
-      </div>
-      {isBooking && hasInfo && (
-        <p className="text-[10px] text-on-primary/70 mt-1 flex items-center gap-0.5">
-          <span className="material-symbols-outlined text-[10px]">check_circle</span>
-          Đã điền thông tin
-        </p>
-      )}
-    </div>
-  )
-}
+
 
 // ─── Session Info Modal ─────────────────────────────────────────────────────
 function SessionInfoModal({ event, booking, onClose, onSaved }) {
@@ -1805,6 +2498,15 @@ function SessionInfoModal({ event, booking, onClose, onSaved }) {
 }
 
 const DAY_ORDER = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+const DAY_NAMES_VI = {
+  Monday: 'Thứ 2',
+  Tuesday: 'Thứ 3',
+  Wednesday: 'Thứ 4',
+  Thursday: 'Thứ 5',
+  Friday: 'Thứ 6',
+  Saturday: 'Thứ 7',
+  Sunday: 'Chủ Nhật'
+}
 const TIME_SLOTS = [
   '07:00 AM','08:00 AM','09:00 AM','10:00 AM','10:30 AM','11:00 AM',
   '12:00 PM','01:00 PM','01:30 PM','02:00 PM','03:00 PM','03:30 PM',
@@ -1839,22 +2541,22 @@ function isSlotBlocked(slot, selectedSlots, durationMins) {
 function StatusBadge({ status }) {
   if (status === 'approved') return (
     <span className="inline-flex items-center gap-1 bg-[#f0fdf4] text-[#16a34a] text-[11px] font-bold px-2 py-0.5 rounded-full border border-[#bbf7d0]">
-      <span className="material-symbols-outlined icon-fill text-[13px]">check_circle</span>Approved
+      <span className="material-symbols-outlined icon-fill text-[13px]">check_circle</span>Đã duyệt
     </span>
   )
   if (status === 'rejected') return (
     <span className="inline-flex items-center gap-1 bg-red-50 text-red-600 text-[11px] font-bold px-2 py-0.5 rounded-full border border-red-200">
-      <span className="material-symbols-outlined text-[13px]">cancel</span>Rejected
+      <span className="material-symbols-outlined text-[13px]">cancel</span>Từ chối
     </span>
   )
   if (status === 'draft') return (
     <span className="inline-flex items-center gap-1 bg-surface-container text-on-surface-variant text-[11px] font-bold px-2 py-0.5 rounded-full border border-outline-variant">
-      <span className="material-symbols-outlined text-[13px]">edit_note</span>Draft
+      <span className="material-symbols-outlined text-[13px]">edit_note</span>Bản nháp
     </span>
   )
   return (
     <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 text-[11px] font-bold px-2 py-0.5 rounded-full border border-amber-200">
-      <span className="material-symbols-outlined text-[13px]">pending</span>Pending review
+      <span className="material-symbols-outlined text-[13px]">pending</span>Chờ duyệt
     </span>
   )
 }
@@ -1906,8 +2608,61 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   // Availability edit
   const [availEdit, setAvailEdit]       = useState(false)
   const [availData, setAvailData]       = useState({})
+  const [monthlyAvailData, setMonthlyAvailData] = useState({})
   const [availSaving, setAvailSaving]   = useState(false)
   const [slotDuration, setSlotDuration] = useState(60) // 60 | 120 | 180 phút
+
+  // Instant Learning settings
+  const [instantEdit, setInstantEdit]   = useState(false)
+  const [instantForm, setInstantForm]   = useState({ price: '', duration: 30, online: false })
+  const [instantSaving, setInstantSaving] = useState(false)
+
+  const handleInstantSave = async () => {
+    try {
+      setInstantSaving(true)
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/api/tutor/instant-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          instant_price: instantForm.price,
+          instant_price_unit: 'VND',
+          instant_duration_mins: instantForm.duration,
+          availability_status: profile?.availability_status === 'Online' ? 'Online' : 'Offline'
+        })
+      })
+      if (!res.ok) throw new Error('Cập nhật thất bại')
+      setProfile(p => ({ ...p, instant_price: instantForm.price, instant_duration: instantForm.duration }))
+      setInstantEdit(false)
+      alert('Đã cập nhật cài đặt Học Ngay')
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setInstantSaving(false)
+    }
+  }
+
+
+  const handleToggleOnlineStatus = async (isOnline) => {
+    try {
+      const token = localStorage.getItem('token')
+      const newStatus = isOnline ? 'Online' : 'Offline'
+      const res = await fetch(`${API_BASE}/api/tutor/instant-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          instant_price: profile?.instant_price || '',
+          instant_price_unit: 'VND',
+          availability_status: newStatus
+        })
+      })
+      if (!res.ok) throw new Error('Cập nhật thất bại')
+      setProfile(p => ({ ...p, availability_status: newStatus }))
+      setInstantForm(f => ({ ...f, online: isOnline }))
+    } catch (e) {
+      alert(e.message)
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -1916,6 +2671,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         setProfile(data)
         setBioValue(data.bio_pending || data.bio || '')
         setAvailData(data.availability || {})
+        setMonthlyAvailData(data.monthly_availability || {})
         setSlotDuration(Number(data.slot_duration_mins) || 60)
         setAvatarUrl(data.picture || user?.picture || '')
         setCvForm({
@@ -1931,8 +2687,12 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
           demo_video_url: data.demo_video_url || '',
           teaching_methods: Array.isArray(data.teaching_methods) ? data.teaching_methods : [],
         })
+        setInstantForm({
+          price: data.instant_price || '',
+          online: data.availability_status === 'Online'
+        })
       } catch (e) {
-        setProfile({ bio: '', bio_status: 'approved', status: 'draft', credentials: [], availability: {} })
+        setProfile({ bio: '', bio_status: 'approved', status: 'draft', credentials: [], availability: {}, monthly_availability: {} })
       } finally {
         setProfileLoading(false)
       }
@@ -2042,11 +2802,20 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const toggleSlot = (day, slot) => {
     setAvailData(prev => {
       const current = prev[day] || []
-      // Nếu slot đang được chọn → bỏ chọn
       if (current.includes(slot)) {
         return { ...prev, [day]: current.filter(s => s !== slot) }
       }
-      // Kiểm tra xem slot có bị block không
+      if (isSlotBlocked(slot, current, slotDuration)) return prev
+      return { ...prev, [day]: [...current, slot].sort() }
+    })
+  }
+
+  const toggleMonthlySlot = (day, slot) => {
+    setMonthlyAvailData(prev => {
+      const current = prev[day] || []
+      if (current.includes(slot)) {
+        return { ...prev, [day]: current.filter(s => s !== slot) }
+      }
       if (isSlotBlocked(slot, current, slotDuration)) return prev
       return { ...prev, [day]: [...current, slot].sort() }
     })
@@ -2055,8 +2824,8 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const handleAvailSave = async () => {
     setAvailSaving(true)
     try {
-      await updateTutorAvailability(availData, slotDuration)
-      setProfile(p => ({ ...p, availability: availData, slot_duration_mins: slotDuration }))
+      await updateTutorAvailability(availData, monthlyAvailData, slotDuration)
+      setProfile(p => ({ ...p, availability: availData, monthly_availability: monthlyAvailData, slot_duration_mins: slotDuration }))
       setAvailEdit(false)
     } catch { /* ignore */ }
     finally { setAvailSaving(false) }
@@ -2088,25 +2857,25 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const isPending = profileStatus === 'pending'
   const isRejected = profileStatus === 'rejected'
   const statusConfig = isVerified
-    ? { icon: 'verified_user', title: 'Account Verified', box: 'bg-[#f0fdf4] border-[#bbf7d0]', iconColor: 'text-[#16a34a]', titleColor: 'text-[#16a34a]', textColor: 'text-[#166534]', text: 'Ho so da duoc admin duyet. Hoc sinh va phu huynh se thay tick xanh tren ten gia su.' }
+    ? { icon: 'verified_user', title: 'Tài Khoản Đã Xác Thực', box: 'bg-[#f0fdf4] border-[#bbf7d0]', iconColor: 'text-[#16a34a]', titleColor: 'text-[#16a34a]', textColor: 'text-[#166534]', text: 'Hồ sơ đã được admin duyệt. Học sinh và phụ huynh sẽ thấy tick xanh xác thực trên tên gia sư.' }
     : isRejected
-      ? { icon: 'cancel', title: 'Profile Rejected', box: 'bg-red-50 border-red-200', iconColor: 'text-red-600', titleColor: 'text-red-700', textColor: 'text-red-700', text: profile?.reject_reason ? `Ly do: ${profile.reject_reason}` : 'Ho so bi tu choi. Hay chinh sua thong tin va luu lai.' }
+      ? { icon: 'cancel', title: 'Hồ Sơ Bị Từ Chối', box: 'bg-red-50 border-red-200', iconColor: 'text-red-600', titleColor: 'text-red-700', textColor: 'text-red-700', text: profile?.reject_reason ? `Lý do: ${profile.reject_reason}` : 'Hồ sơ bị từ chối. Vui lòng chỉnh sửa thông tin và lưu lại.' }
       : isPending
-        ? { icon: 'pending', title: 'Verification Pending', box: 'bg-amber-50 border-amber-200', iconColor: 'text-amber-500', titleColor: 'text-amber-700', textColor: 'text-amber-700', text: 'Ho so dang cho admin duyet.' }
-        : { icon: 'edit_note', title: 'Draft Profile', box: 'bg-surface-container-low border-outline-variant/40', iconColor: 'text-on-surface-variant', titleColor: 'text-on-surface', textColor: 'text-on-surface-variant', text: 'Day la ban nhap. Hay dien du thong tin va luu lai.' }
+        ? { icon: 'pending', title: 'Đang Chờ Duyệt', box: 'bg-amber-50 border-amber-200', iconColor: 'text-amber-500', titleColor: 'text-amber-700', textColor: 'text-amber-700', text: 'Hồ sơ đang chờ admin duyệt.' }
+        : { icon: 'edit_note', title: 'Bản Nháp', box: 'bg-surface-container-low border-outline-variant/40', iconColor: 'text-on-surface-variant', titleColor: 'text-on-surface', textColor: 'text-on-surface-variant', text: 'Đây là bản nháp. Hãy điền đầy đủ thông tin và lưu lại để gửi yêu cầu xét duyệt.' }
 
   return (
     <div className="space-y-6 pb-10">
 
       <div className="flex justify-between items-center flex-wrap gap-3">
         <div>
-          <h2 className="font-headline-lg text-headline-lg text-on-surface">My Profile</h2>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">Hồ Sơ Gia Sư</h2>
           <p className="font-body-md text-body-md text-on-surface-variant">
-            Manage your public profile.
+            Quản lý thông tin hiển thị công khai của bạn.
           </p>
         </div>
-        <a href="#/" className="h-10 px-4 border border-outline-variant text-on-surface-variant font-label-md text-label-md rounded-xl hover:bg-surface-container-high transition-colors flex items-center gap-1.5">
-          <span className="material-symbols-outlined text-[18px]">open_in_new</span>View Public Profile
+        <a href="#/" className="h-10 px-4 border border-outline-variant text-on-surface-variant font-label-md text-label-md rounded-xl hover:bg-surface-container-high transition-colors flex items-center gap-1.5 bg-white shadow-sm">
+          <span className="material-symbols-outlined text-[18px]">open_in_new</span>Xem hồ sơ công khai
         </a>
       </div>
 
@@ -2121,12 +2890,12 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             </div>
           )}
           {isVerified && (
-            <span className="material-symbols-outlined icon-fill absolute -bottom-2 -right-2 text-[22px] bg-white rounded-full p-0.5 shadow" style={{ color: '#16a34a' }} title="Verified by EduX">verified</span>
+            <span className="material-symbols-outlined icon-fill absolute -bottom-2 -right-2 text-[22px] bg-white rounded-full p-0.5 shadow" style={{ color: '#16a34a' }} title="Đã xác thực bởi EduX">verified</span>
           )}
           <button
             onClick={() => setAvatarEdit(true)}
             className="absolute inset-0 rounded-2xl bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-            title="Change avatar"
+            title="Thay đổi ảnh đại diện"
           >
             <span className="material-symbols-outlined text-white text-[24px]">photo_camera</span>
           </button>
@@ -2137,11 +2906,11 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             <h3 className="font-headline-md text-headline-md text-on-surface font-bold">{displayName}</h3>
             {isNewTutor && (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-amber-700">
-                New
+                Mới
               </span>
             )}
             {isVerified
-              ? <span className="inline-flex items-center gap-1 bg-[#f0fdf4] text-[#16a34a] text-[11px] font-bold px-2.5 py-1 rounded-full border border-[#bbf7d0]"><span className="material-symbols-outlined icon-fill text-[13px]">verified</span>Verified by EduX</span>
+              ? <span className="inline-flex items-center gap-1 bg-[#f0fdf4] text-[#16a34a] text-[11px] font-bold px-2.5 py-1 rounded-full border border-[#bbf7d0]"><span className="material-symbols-outlined icon-fill text-[13px]">verified</span>Đã xác thực bởi EduX</span>
               : <StatusBadge status={profileStatus} />
             }
           </div>
@@ -2149,21 +2918,21 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         </div>
 
         <button onClick={() => setAvatarEdit(true)}
-          className="h-9 px-4 bg-white border border-outline-variant text-on-surface-variant font-label-sm text-label-sm rounded-xl hover:bg-surface-container-high transition-colors flex items-center gap-1.5 shadow-sm">
+          className="h-9 px-4 bg-white border border-outline-variant text-on-surface-variant font-label-sm text-[13px] font-bold rounded-xl hover:bg-surface-container-high transition-colors flex items-center gap-1.5 shadow-sm">
           <span className="material-symbols-outlined text-[16px]">photo_camera</span>
-          Change Photo
+          Đổi ảnh đại diện
         </button>
       </div>
 
       {avatarEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
-            <h3 className="font-headline-md text-headline-md text-on-surface">Change Profile Photo</h3>
-            <p className="text-[13px] text-on-surface-variant">Upload anh tu may len Supabase Storage.</p>
-            <label className="border-2 border-dashed border-outline-variant/60 rounded-xl p-5 flex flex-col items-center gap-2 cursor-pointer hover:border-primary/50 hover:bg-surface-container-low/40 transition-colors">
+            <h3 className="font-headline-md text-headline-md text-on-surface font-bold">Đổi Ảnh Đại Diện</h3>
+            <p className="text-[13px] text-on-surface-variant">Tải ảnh từ thiết bị của bạn lên hệ thống EduX.</p>
+            <label className="border-2 border-dashed border-outline-variant/60 rounded-xl p-5 flex flex-col items-center gap-2 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors">
               <span className="material-symbols-outlined text-[32px] text-primary">upload_file</span>
-              <span className="text-[13px] font-semibold text-on-surface">Chon anh avatar</span>
-              <span className="text-[11px] text-outline">JPG, PNG, WebP - toi da 5MB</span>
+              <span className="text-[14px] font-semibold text-primary">Nhấp để chọn ảnh</span>
+              <span className="text-[11px] text-outline">JPG, PNG, WebP - Tối đa 5MB</span>
               <input
                 type="file"
                 accept="image/jpeg,image/jpg,image/png,image/webp"
@@ -2174,7 +2943,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             </label>
             <div className="flex items-center gap-2">
               <div className="h-px bg-outline-variant/40 flex-1" />
-              <span className="text-[11px] text-outline">hoac dan URL</span>
+              <span className="text-[11px] text-outline font-semibold tracking-wider uppercase">hoặc dán URL</span>
               <div className="h-px bg-outline-variant/40 flex-1" />
             </div>
             <input
@@ -2185,16 +2954,16 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             />
             {avatarError && <p className="text-[12px] text-red-600">{avatarError}</p>}
             {avatarInput && (
-              <img src={avatarInput} alt="preview" className="w-20 h-20 rounded-xl object-cover border border-outline-variant mx-auto" onError={e => e.target.style.display='none'} />
+              <img src={avatarInput} alt="preview" className="w-20 h-20 rounded-xl object-cover border border-outline-variant mx-auto shadow-sm" onError={e => e.target.style.display='none'} />
             )}
             <div className="flex gap-2">
               <button onClick={() => { setAvatarEdit(false); setAvatarInput('') }}
-                className="flex-1 h-10 border border-outline-variant text-on-surface-variant rounded-xl font-label-md text-label-md hover:bg-surface-container transition-colors">
-                Cancel
+                className="flex-1 h-10 border border-outline-variant text-on-surface-variant rounded-xl font-label-md text-[14px] font-bold hover:bg-surface-container transition-colors">
+                Hủy
               </button>
               <button onClick={handleAvatarSave} disabled={avatarSaving || !avatarInput.trim()}
-                className="flex-1 h-10 bg-primary text-on-primary rounded-xl font-label-md text-label-md hover:bg-primary/90 transition-colors disabled:opacity-50">
-                {avatarSaving ? 'Saving...' : 'Save'}
+                className="flex-1 h-10 bg-primary text-on-primary rounded-xl font-label-md text-[14px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50">
+                {avatarSaving ? 'Đang lưu...' : 'Lưu lại'}
               </button>
             </div>
           </div>
@@ -2209,14 +2978,14 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
               <div>
                 <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary">badge</span>
-                  Tutor CV
+                  Thông Tin Chuyên Môn (CV)
                 </h4>
-                <p className="text-[12px] text-on-surface-variant mt-1">Gia su tu dien CV va upload video demo.</p>
+                <p className="text-[12px] text-on-surface-variant mt-1">Cập nhật thông tin lý lịch và tải lên video giới thiệu.</p>
               </div>
               {!cvEdit && (
                 <button onClick={() => setCvEdit(true)}
-                  className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[15px]">edit</span>Edit CV
+                  className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1 bg-white">
+                  <span className="material-symbols-outlined text-[15px]">edit</span>Chỉnh sửa CV
                 </button>
               )}
             </div>
@@ -2226,21 +2995,21 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             {cvEdit ? (
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <CvInput label="Ho ten" value={cvForm.full_name} onChange={v => setCvForm(f => ({ ...f, full_name: v }))} />
-                  <CvInput label="Tieu de nghe nghiep" value={cvForm.headline} onChange={v => setCvForm(f => ({ ...f, headline: v }))} placeholder="VD: Gia su Toan THPT" />
-                  <CvInput label="So dien thoai" value={cvForm.phone} onChange={v => setCvForm(f => ({ ...f, phone: v }))} />
-                  <CvInput label="Khu vuc" value={cvForm.location} onChange={v => setCvForm(f => ({ ...f, location: v }))} placeholder="Online / Ho Chi Minh" />
-                  <CvInput label="Mon day" value={cvForm.subjects} onChange={v => setCvForm(f => ({ ...f, subjects: v }))} placeholder="Mathematics, Physics" />
-                  <CvInput label="Hoc phi / gio" type="number" value={cvForm.hourly_rate} onChange={v => setCvForm(f => ({ ...f, hourly_rate: v }))} />
-                  <CvInput label="So nam kinh nghiem" type="number" value={cvForm.experience_years} onChange={v => setCvForm(f => ({ ...f, experience_years: v }))} />
+                  <CvInput label="Họ tên" value={cvForm.full_name} onChange={v => setCvForm(f => ({ ...f, full_name: v }))} />
+                  <CvInput label="Tiêu đề nghề nghiệp" value={cvForm.headline} onChange={v => setCvForm(f => ({ ...f, headline: v }))} placeholder="VD: Gia sư Toán THPT" />
+                  <CvInput label="Số điện thoại" value={cvForm.phone} onChange={v => setCvForm(f => ({ ...f, phone: v }))} />
+                  <CvInput label="Khu vực" value={cvForm.location} onChange={v => setCvForm(f => ({ ...f, location: v }))} placeholder="VD: Online / TP. Hồ Chí Minh" />
+                  <CvInput label="Môn dạy" value={cvForm.subjects} onChange={v => setCvForm(f => ({ ...f, subjects: v }))} placeholder="VD: Toán học, Vật lý" />
+                  <CvInput label="Học phí (VNĐ/giờ)" type="number" value={cvForm.hourly_rate} onChange={v => setCvForm(f => ({ ...f, hourly_rate: v }))} />
+                  <CvInput label="Số năm kinh nghiệm" type="number" value={cvForm.experience_years} onChange={v => setCvForm(f => ({ ...f, experience_years: v }))} />
                 </div>
                 <div>
-                  <label className="block text-[12px] font-semibold text-on-surface mb-1.5">Hinh thuc day</label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <label className="block text-[13px] font-bold text-on-surface mb-2">Hình thức dạy</label>
+                  <div className="grid grid-cols-3 gap-3">
                     {[
                       { v: 'online',  icon: 'videocam',    label: 'Online' },
                       { v: 'offline', icon: 'location_on', label: 'Offline' },
-                      { v: 'both',    icon: 'sync_alt',    label: 'Ca hai' },
+                      { v: 'both',    icon: 'sync_alt',    label: 'Cả hai' },
                     ].map(opt => {
                       const active = methodChoiceOf(cvForm.teaching_methods) === opt.v
                       return (
@@ -2253,39 +3022,39 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                       )
                     })}
                   </div>
-                  <p className="mt-1.5 text-[11px] text-outline">Hoc sinh chi dat lich duoc theo hinh thuc ban chon. Chon "Ca hai" de linh hoat nhat.</p>
+                  <p className="mt-2 text-[12px] text-outline">Học sinh chỉ đặt lịch được theo hình thức bạn chọn. Chọn "Cả hai" để linh hoạt nhất.</p>
                 </div>
-                <CvTextarea label="Gioi thieu ban than" rows={4} value={cvForm.bio} onChange={v => setCvForm(f => ({ ...f, bio: v }))} />
-                <CvTextarea label="Phong cach giang day" rows={3} value={cvForm.teaching_style} onChange={v => setCvForm(f => ({ ...f, teaching_style: v }))} />
+                <CvTextarea label="Giới thiệu bản thân" rows={4} value={cvForm.bio} onChange={v => setCvForm(f => ({ ...f, bio: v }))} />
+                <CvTextarea label="Phong cách giảng dạy" rows={3} value={cvForm.teaching_style} onChange={v => setCvForm(f => ({ ...f, teaching_style: v }))} />
                 <div>
-                  <label className="block text-[12px] font-semibold text-on-surface mb-1">Video demo giang day</label>
-                  <label className="border-2 border-dashed border-outline-variant/60 rounded-xl p-4 flex flex-col items-center gap-1.5 cursor-pointer hover:border-primary/50 hover:bg-surface-container-low/40 transition-colors">
-                    <span className="material-symbols-outlined text-[30px] text-primary">video_library</span>
-                    <span className="text-[13px] font-semibold text-on-surface">{videoUploading ? 'Dang upload video...' : 'Chon video demo tu may'}</span>
-                    <span className="text-[11px] text-outline">MP4, WebM, MOV - toi da 100MB</span>
+                  <label className="block text-[13px] font-bold text-on-surface mb-2">Video demo giảng dạy</label>
+                  <label className="border-2 border-dashed border-outline-variant/60 rounded-xl p-6 flex flex-col items-center gap-2 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors">
+                    <span className="material-symbols-outlined text-[36px] text-primary">video_library</span>
+                    <span className="text-[14px] font-semibold text-primary">{videoUploading ? 'Đang tải video lên...' : 'Nhấp để tải video lên'}</span>
+                    <span className="text-[12px] text-outline">MP4, WebM, MOV - Tối đa 100MB</span>
                     <input type="file" accept="video/mp4,video/webm,video/quicktime" className="hidden" disabled={videoUploading} onChange={e => handleVideoFile(e.target.files?.[0])} />
                   </label>
-                  <input className="mt-2 w-full h-10 px-3 border border-outline-variant rounded-xl text-[13px] outline-none focus:border-primary" placeholder="Hoac dan video URL" value={cvForm.demo_video_url} onChange={e => setCvForm(f => ({ ...f, demo_video_url: e.target.value }))} />
+                  <input className="mt-3 w-full h-11 px-3 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow" placeholder="Hoặc dán URL video có sẵn" value={cvForm.demo_video_url} onChange={e => setCvForm(f => ({ ...f, demo_video_url: e.target.value }))} />
                   {cvForm.demo_video_url && <video className="mt-3 w-full max-h-64 rounded-xl bg-black" src={cvForm.demo_video_url} controls />}
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setCvEdit(false)} className="h-10 px-4 border border-outline-variant text-on-surface-variant rounded-xl font-label-md text-label-md hover:bg-surface-container transition-colors">Cancel</button>
-                  <button onClick={handleCvSave} disabled={cvSaving || videoUploading} className="h-10 px-5 bg-primary text-on-primary rounded-xl font-label-md text-label-md hover:bg-primary/90 transition-colors disabled:opacity-50">
-                    {cvSaving ? 'Saving...' : 'Save'}
+                  <button onClick={() => setCvEdit(false)} className="h-10 px-5 border border-outline-variant text-on-surface-variant rounded-xl font-label-md text-[14px] font-bold hover:bg-surface-container transition-colors">Hủy</button>
+                  <button onClick={handleCvSave} disabled={cvSaving || videoUploading} className="h-10 px-6 bg-primary text-on-primary rounded-xl font-label-md text-[14px] font-bold hover:bg-primary/90 transition-colors disabled:opacity-50">
+                    {cvSaving ? 'Đang lưu...' : 'Lưu lại'}
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
-                <InfoItem label="Tieu de" value={profile?.headline} />
-                <InfoItem label="Khu vuc" value={profile?.location} />
-                <InfoItem label="Mon day" value={profile?.subjects} />
-                <InfoItem label="Hoc phi" value={profile?.hourly_rate ? `${profile.hourly_rate}/hr` : ''} />
-                <InfoItem label="Kinh nghiem" value={profile?.experience_years ? `${profile.experience_years} nam` : ''} />
-                <InfoItem label="Dien thoai" value={profile?.phone} />
-                <InfoItem label="Hinh thuc day" value={METHOD_LABELS[methodChoiceOf(profile?.teaching_methods)] || 'Chua chon'} />
-                <div className="md:col-span-2"><InfoItem label="Phong cach day" value={profile?.teaching_style} /></div>
-                {profile?.demo_video_url && <div className="md:col-span-2"><p className="font-semibold text-on-surface mb-2">Video demo</p><video className="w-full max-h-72 rounded-xl bg-black" src={profile.demo_video_url} controls /></div>}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <InfoItem icon="work" label="Tiêu đề nghề nghiệp" value={profile?.headline} />
+                <InfoItem icon="location_on" label="Khu vực" value={profile?.location} />
+                <InfoItem icon="menu_book" label="Môn dạy" value={profile?.subjects} />
+                <InfoItem icon="payments" label="Học phí" value={profile?.hourly_rate} isCurrency={true} />
+                <InfoItem icon="history" label="Kinh nghiệm" value={profile?.experience_years ? `${profile.experience_years} năm` : ''} />
+                <InfoItem icon="phone" label="Điện thoại" value={profile?.phone} />
+                <InfoItem icon="sync_alt" label="Hình thức dạy" value={METHOD_LABELS[methodChoiceOf(profile?.teaching_methods)] || 'Chưa chọn'} />
+                <div className="md:col-span-2"><InfoItem icon="lightbulb" label="Phong cách giảng dạy" value={profile?.teaching_style} /></div>
+                {profile?.demo_video_url && <div className="md:col-span-2 mt-2"><p className="font-bold text-on-surface mb-3 flex items-center gap-2"><span className="material-symbols-outlined text-primary">play_circle</span>Video Demo</p><video className="w-full max-h-80 rounded-2xl bg-black border border-outline-variant/30 shadow-md" src={profile.demo_video_url} controls /></div>}
               </div>
             )}
           </div>
@@ -2294,13 +3063,13 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
             <div className="flex items-center justify-between mb-3">
               <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary">person</span>
-                About Me
+                Giới Thiệu Bản Thân
               </h4>
               <div className="flex items-center gap-2">
                 {!bioEdit && (
                   <button onClick={() => { setBioEdit(true); setBioValue(profile?.bio || '') }}
-                    className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[15px]">edit</span>Edit
+                    className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1 bg-white">
+                    <span className="material-symbols-outlined text-[15px]">edit</span>Chỉnh sửa
                   </button>
                 )}
               </div>
@@ -2310,72 +3079,189 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
               <div className="space-y-3">
                 <textarea
                   rows={5}
-                  className="w-full px-3 py-2 border border-outline-variant rounded-xl text-[14px] text-on-surface outline-none focus:border-primary resize-y"
+                  className="w-full px-4 py-3 border border-outline-variant rounded-xl text-[14px] text-on-surface outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow resize-y leading-relaxed"
                   value={bioValue}
                   onChange={e => setBioValue(e.target.value)}
-                  placeholder="Tell students about yourself, your teaching style, and your experience..."
+                  placeholder="Hãy giới thiệu ngắn gọn về bản thân, kinh nghiệm giảng dạy và phương pháp sư phạm của bạn để thu hút học viên..."
                 />
                 <div className="flex gap-2">
                   <button onClick={() => setBioEdit(false)}
-                    className="h-9 px-4 border border-outline-variant text-on-surface-variant font-label-sm rounded-lg hover:bg-surface-container transition-colors">
-                    Cancel
+                    className="h-9 px-4 border border-outline-variant text-on-surface-variant font-label-sm rounded-lg hover:bg-surface-container transition-colors font-bold">
+                    Hủy
                   </button>
                   <button onClick={handleBioSave} disabled={bioSaving}
-                    className="h-9 px-4 bg-primary text-on-primary font-label-sm rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1">
-                    {bioSaving ? 'Saving...' : <><span className="material-symbols-outlined text-[15px]">check</span>Save</>}
+                    className="h-9 px-4 bg-primary text-on-primary font-label-sm rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1 font-bold">
+                    {bioSaving ? 'Đang lưu...' : <><span className="material-symbols-outlined text-[15px]">check</span>Lưu lại</>}
                   </button>
                 </div>
               </div>
             ) : (
               <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
-                {profile?.bio || <span className="italic text-outline">No bio yet. Click Edit to add one.</span>}
+                {profile?.bio || <span className="italic text-outline">Chưa có lời giới thiệu. Bấm Chỉnh sửa để cập nhật.</span>}
               </p>
             )}
           </div>
 
           <CredentialSection
-            title="Education & Degrees"
+            title="Học Vấn & Bằng Cấp"
             icon="school"
             items={education}
             type="education"
             onAdd={() => { setCredModal('education'); setCredForm({ title:'', description:'', proof_url:'' }) }}
             onDelete={handleDeleteCred}
-            proofLabel="Degree Certificate / Transcript image URL"
+            proofLabel="URL hình ảnh Bằng cấp / Bảng điểm"
           />
 
           <CredentialSection
-            title="Certificates & Qualifications"
+            title="Chứng Chỉ Chuyên Môn"
             icon="workspace_premium"
             items={certs}
             type="certificate"
             onAdd={() => { setCredModal('certificate'); setCredForm({ title:'', description:'', proof_url:'' }) }}
             onDelete={handleDeleteCred}
-            proofLabel="Certificate image URL"
+            proofLabel="URL hình ảnh Chứng chỉ"
           />
 
         </div>
 
         <div className="space-y-5">
+          {/* Instant Learning Settings */}
+          <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-sm rounded-2xl p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-5 gap-3">
+              <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-amber-500 text-[24px]">bolt</span>
+                Cài đặt Học Ngay (Instant Learning)
+              </h4>
+              {!instantEdit ? (
+                <button onClick={() => { setInstantEdit(true); setInstantForm({ ...instantForm, price: profile?.instant_price || '', duration: profile?.instant_duration || 30 }); }}
+                  className="h-9 px-4 border border-outline-variant text-on-surface-variant font-label-md text-[13px] rounded-xl hover:bg-surface-container transition-colors flex items-center gap-1.5 flex-shrink-0 bg-white shadow-sm font-bold">
+                  <span className="material-symbols-outlined text-[16px]">edit</span>Chỉnh sửa
+                </button>
+              ) : (
+                <div className="flex gap-2 flex-shrink-0">
+                  <button onClick={() => { setInstantEdit(false); setInstantForm({ ...instantForm, price: profile?.instant_price || '', duration: profile?.instant_duration || 30 }); }}
+                    className="h-9 px-4 border border-outline-variant text-on-surface-variant font-label-md text-[13px] rounded-xl hover:bg-surface-container transition-colors font-bold bg-white shadow-sm">
+                    Hủy
+                  </button>
+                  <button onClick={handleInstantSave} disabled={instantSaving}
+                    className="h-9 px-5 bg-primary text-on-primary font-label-md text-[13px] rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 font-bold shadow-sm">
+                    {instantSaving ? 'Đang lưu...' : 'Lưu lại'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {instantEdit ? (
+              <div className="space-y-5">
+                {/* Row: Mức phí + Đơn vị thời gian */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[13px] font-bold text-on-surface">Mức phí Học Ngay</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        className="h-11 pl-4 pr-12 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary w-full transition-shadow"
+                        value={instantForm.price}
+                        onChange={(e) => setInstantForm({ ...instantForm, price: e.target.value })}
+                        placeholder="VD: 200000"
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[13px] text-on-surface-variant font-bold select-none">VNĐ</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[13px] font-bold text-on-surface">Đơn vị thời gian</label>
+                    <select
+                      className="h-11 px-4 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-white transition-shadow cursor-pointer"
+                      value={instantForm.duration}
+                      onChange={(e) => setInstantForm({ ...instantForm, duration: parseInt(e.target.value) })}
+                    >
+                      <option value={30}>30 phút</option>
+                      <option value={45}>45 phút</option>
+                      <option value={60}>60 phút</option>
+                      <option value={90}>90 phút</option>
+                      <option value={120}>120 phút</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Preview */}
+                <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container/40 p-5 flex flex-col items-center">
+                  <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-2">Học sinh sẽ nhìn thấy</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="material-symbols-outlined text-amber-500 text-[24px]">bolt</span>
+                    <span className="text-[20px] font-black text-amber-600">
+                      {instantForm.price ? Number(instantForm.price).toLocaleString('vi-VN') : '—'} VNĐ
+                    </span>
+                    <span className="text-[15px] text-on-surface-variant font-bold">
+                      / {instantForm.duration} phút
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tips */}
+                <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+                  <p className="text-[13px] font-bold text-blue-700 flex items-center gap-1.5 mb-2">
+                    <span className="material-symbols-outlined text-[18px]">lightbulb</span>
+                    Lưu ý
+                  </p>
+                  <ul className="space-y-1.5 text-[13px] text-blue-800/80 leading-relaxed pl-1">
+                    <li>• Học viên chỉ có thể gửi yêu cầu khi bạn <strong>Online</strong>.</li>
+                    <li>• Bạn có <strong>60 giây</strong> để phản hồi yêu cầu.</li>
+                    <li>• Khi chấp nhận, trạng thái sẽ tự chuyển sang <strong>Đang Bận (Busy)</strong>.</li>
+                    <li>• Sau khi kết thúc, hệ thống tự chuyển về <strong>Online</strong>.</li>
+                  </ul>
+                </div>
+              </div>
+            ) : (
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                <div className="rounded-xl border border-outline-variant/40 bg-white/60 p-4 shadow-sm hover:bg-white transition-colors">
+                  <p className="text-[12px] font-bold text-on-surface-variant mb-2">Giá Học Ngay</p>
+                  <p className="font-bold text-amber-600 text-[16px] bg-amber-50 px-3 py-1.5 rounded-lg inline-block border border-amber-200 shadow-sm">
+                    {profile?.instant_price ? `${Number(profile.instant_price).toLocaleString('vi-VN')} VNĐ` : <span className="italic text-amber-600/70 font-medium text-[14px]">Chưa cấu hình</span>}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-outline-variant/40 bg-white/60 p-4 shadow-sm hover:bg-white transition-colors flex flex-col gap-2">
+                  <p className="text-[12px] font-bold text-on-surface-variant">Trạng thái Nhận Yêu Cầu</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <button
+                      onClick={() => handleToggleOnlineStatus(profile?.availability_status !== 'Online')}
+                      className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 shadow-inner ${profile?.availability_status === 'Online' ? 'bg-green-500' : 'bg-gray-300'}`}
+                    >
+                      <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${profile?.availability_status === 'Online' ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                    <span className={`font-bold text-[14px] flex items-center gap-1 ${profile?.availability_status === 'Online' ? 'text-green-600' : profile?.availability_status === 'Busy' ? 'text-amber-600' : 'text-outline'}`}>
+                      {profile?.availability_status === 'Online' ? 'Đang Online' : profile?.availability_status === 'Busy' ? 'Đang Bận (Dạy)' : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant leading-relaxed mt-1">
+                    Học viên có thể gửi yêu cầu học ngay cho bạn bất cứ lúc nào khi trạng thái này được bật.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-sm rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
               <h4 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary">calendar_month</span>
-                Weekly Schedule
+                Lịch Giảng Dạy (Hàng Tuần)
               </h4>
               {!availEdit ? (
-                <button onClick={() => { setAvailEdit(true); setAvailData(profile?.availability || {}) }}
-                  className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[15px]">edit</span>Edit
+                <button onClick={() => { setAvailEdit(true); setAvailData(profile?.availability || {}); setMonthlyAvailData(profile?.monthly_availability || {}); }}
+                  className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1 bg-white">
+                  <span className="material-symbols-outlined text-[15px]">edit</span>Chỉnh sửa
                 </button>
               ) : (
                 <div className="flex gap-1">
                   <button onClick={() => setAvailEdit(false)}
-                    className="h-8 px-2 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors">
-                    Cancel
+                    className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors font-bold">
+                    Hủy
                   </button>
                   <button onClick={handleAvailSave} disabled={availSaving}
-                    className="h-8 px-3 bg-primary text-on-primary font-label-sm text-[12px] rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50">
-                    {availSaving ? '...' : 'Save'}
+                    className="h-8 px-4 bg-primary text-on-primary font-label-sm text-[12px] rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 font-bold">
+                    {availSaving ? 'Đang lưu...' : 'Lưu lại'}
                   </button>
                 </div>
               )}
@@ -2383,7 +3269,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
 
             {availEdit ? (
               <div className="space-y-4">
-                <p className="text-[12px] text-on-surface-variant">Click slots to toggle availability. No admin approval needed.</p>
+                <p className="text-[12px] text-on-surface-variant">Bấm vào các khung giờ để mở lịch rảnh. Thay đổi sẽ có hiệu lực ngay lập tức.</p>
 
                 {/* ── Chọn thời lượng slot ── */}
                 <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
@@ -2413,30 +3299,65 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                   </p>
                 </div>
 
-                {DAY_ORDER.map(day => (
-                  <div key={day}>
-                    <p className="font-label-sm text-[12px] font-bold text-on-surface mb-1.5">{day}</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {TIME_SLOTS.map(slot => {
-                        const active  = (availData[day] || []).includes(slot)
-                        const blocked = !active && isSlotBlocked(slot, availData[day] || [], slotDuration)
-                        return (
-                          <button key={slot} type="button"
-                            onClick={() => toggleSlot(day, slot)}
-                            disabled={blocked}
-                            title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
-                            className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
-                              active   ? 'bg-primary text-on-primary border-primary' :
-                              blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
-                                         'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'
-                            }`}>
-                            {slot}
-                          </button>
-                        )
-                      })}
+                {/* Lịch dạy từng buổi */}
+                <div className="mt-6 border-t pt-4">
+                  <p className="font-label-md text-[13px] font-bold text-on-surface mb-2">1. Lịch Rảnh Dạy Lẻ Từng Buổi</p>
+                  <p className="text-[11px] text-on-surface-variant mb-3">Học sinh chọn từng ngày trên lịch để đặt buổi học.</p>
+                  {DAY_ORDER.map(day => (
+                    <div key={day} className="mb-2">
+                      <p className="font-label-sm text-[13px] font-bold text-on-surface mb-1.5">{DAY_NAMES_VI[day]}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {TIME_SLOTS.map(slot => {
+                          const active  = (availData[day] || []).includes(slot)
+                          const blocked = !active && isSlotBlocked(slot, availData[day] || [], slotDuration)
+                          return (
+                            <button key={slot} type="button"
+                              onClick={() => toggleSlot(day, slot)}
+                              disabled={blocked}
+                              title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
+                              className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
+                                active   ? 'bg-primary text-on-primary border-primary' :
+                                blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
+                                           'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'
+                              }`}>
+                              {slot}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+
+                {/* Lịch dạy theo tháng */}
+                <div className="mt-6 border-t pt-4">
+                  <p className="font-label-md text-[13px] font-bold text-on-surface mb-2">2. Lịch Dạy Cố Định Theo Tháng</p>
+                  <p className="text-[11px] text-on-surface-variant mb-3">Học sinh đăng ký theo gói tháng sẽ học cố định vào các khung giờ này hàng tuần.</p>
+                  {DAY_ORDER.map(day => (
+                    <div key={day} className="mb-2">
+                      <p className="font-label-sm text-[13px] font-bold text-on-surface mb-1.5">{DAY_NAMES_VI[day]}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {TIME_SLOTS.map(slot => {
+                          const active  = (monthlyAvailData[day] || []).includes(slot)
+                          const blocked = !active && isSlotBlocked(slot, monthlyAvailData[day] || [], slotDuration)
+                          return (
+                            <button key={slot} type="button"
+                              onClick={() => toggleMonthlySlot(day, slot)}
+                              disabled={blocked}
+                              title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
+                              className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
+                                active   ? 'bg-green-600 text-white border-green-600' :
+                                blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
+                                           'bg-white text-on-surface-variant border-outline-variant/40 hover:border-green-600/40'
+                              }`}>
+                              {slot}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : (
               <div className="space-y-2">
@@ -2452,21 +3373,47 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                     </span>
                   </div>
                 )}
-                {DAY_ORDER.map(day => {
-                  const slots = (profile?.availability || {})[day] || []
-                  return (
-                    <div key={day} className={`rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
-                      <p className={`font-label-md text-[12px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{day}</p>
-                      {slots.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {slots.map(s => (
-                            <span key={s} className="text-[10px] font-semibold px-2 py-0.5 rounded border text-primary border-primary/20" style={{ background: 'rgba(0,40,142,0.06)' }}>{s}</span>
-                          ))}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* View: Lẻ */}
+                  <div>
+                    <p className="font-label-md text-[13px] font-bold mb-3 border-b pb-2">Lịch dạy lẻ từng buổi</p>
+                    {DAY_ORDER.map(day => {
+                      const slots = (profile?.availability || {})[day] || []
+                      return (
+                        <div key={day} className={`mb-2 rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
+                          <p className={`font-label-md text-[13px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{DAY_NAMES_VI[day]}</p>
+                          {slots.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {slots.map(s => (
+                                <span key={s} className="text-[10px] font-semibold px-2 py-0.5 rounded border text-primary border-primary/20" style={{ background: 'rgba(0,40,142,0.06)' }}>{s}</span>
+                              ))}
+                            </div>
+                          ) : <span className="text-[11px] text-outline italic">Trống</span>}
                         </div>
-                      ) : <span className="text-[11px] text-outline italic">Unavailable</span>}
-                    </div>
-                  )
-                })}
+                      )
+                    })}
+                  </div>
+
+                  {/* View: Tháng */}
+                  <div>
+                    <p className="font-label-md text-[13px] font-bold mb-3 border-b pb-2">Lịch cố định theo gói tháng</p>
+                    {DAY_ORDER.map(day => {
+                      const slots = (profile?.monthly_availability || {})[day] || []
+                      return (
+                        <div key={day} className={`mb-2 rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
+                          <p className={`font-label-md text-[13px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{DAY_NAMES_VI[day]}</p>
+                          {slots.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {slots.map(s => (
+                                <span key={s} className="text-[10px] font-semibold px-2 py-0.5 rounded border text-green-700 border-green-700/20" style={{ background: 'rgba(21,128,61,0.06)' }}>{s}</span>
+                              ))}
+                            </div>
+                          ) : <span className="text-[11px] text-outline italic">Trống</span>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -2493,8 +3440,8 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
       {credModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl space-y-4">
-            <h3 className="font-headline-md text-headline-md text-on-surface capitalize">
-              Add {credModal}
+            <h3 className="font-headline-md text-headline-md text-on-surface font-bold">
+              Thêm Thông Tin
             </h3>
 
             {credError && (
@@ -2505,23 +3452,23 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
 
             <div className="space-y-3">
               <div>
-                <label className="block text-[12px] font-semibold text-on-surface mb-1">
-                  Title <span className="text-red-500">*</span>
+                <label className="block text-[13px] font-bold text-on-surface mb-1.5">
+                  Tiêu đề <span className="text-red-500">*</span>
                 </label>
                 <input
-                  className="w-full h-10 px-3 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary"
-                  placeholder={credModal === 'education' ? 'e.g. Ph.D. in Mathematics - Stanford University (2020)' : credModal === 'certificate' ? 'e.g. AWS Certified Solutions Architect' : 'e.g. Senior Math Teacher at ABC School (2019-2023)'}
+                  className="w-full h-11 px-4 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow"
+                  placeholder={credModal === 'education' ? 'VD: Cử nhân Toán học - Đại học Sư phạm (2020)' : credModal === 'certificate' ? 'VD: Chứng chỉ IELTS 8.0' : 'VD: Giáo viên dạy Toán tại trường ABC (2019-2023)'}
                   value={credForm.title}
                   onChange={e => setCredForm(f => ({ ...f, title: e.target.value }))}
                 />
               </div>
 
               <div>
-                <label className="block text-[12px] font-semibold text-on-surface mb-1">Description (optional)</label>
+                <label className="block text-[13px] font-bold text-on-surface mb-1.5">Mô tả thêm (Tùy chọn)</label>
                 <textarea
-                  rows={2}
-                  className="w-full px-3 py-2 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary resize-none"
-                  placeholder="Additional details..."
+                  rows={3}
+                  className="w-full px-4 py-3 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow resize-y"
+                  placeholder="Thêm thông tin chi tiết..."
                   value={credForm.description}
                   onChange={e => setCredForm(f => ({ ...f, description: e.target.value }))}
                 />
@@ -2529,8 +3476,8 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
 
               {credModal !== 'experience' && (
                 <div>
-                  <label className="block text-[12px] font-semibold text-on-surface mb-1">
-                    Anh / File minh chung <span className="text-red-500">*</span>
+                  <label className="block text-[13px] font-bold text-on-surface mb-1.5">
+                    Ảnh / File minh chứng <span className="text-red-500">*</span>
                   </label>
                   <ProofUploader
                     value={credForm.proof_url}
@@ -2538,22 +3485,22 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                     folder={credModal === 'education' ? 'education' : 'certificates'}
                     disabled={credSaving}
                   />
-                  <p className="mt-1 text-[11px] text-on-surface-variant flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[13px]">info</span>
-                    Admin se xem anh nay de xac minh thong tin cua ban.
+                  <p className="mt-2 text-[12px] text-on-surface-variant flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[15px] text-primary">info</span>
+                    Admin sẽ xem ảnh này để xác minh thông tin của bạn.
                   </p>
                 </div>
               )}
             </div>
 
-            <div className="flex gap-2 pt-1">
+            <div className="flex gap-2 pt-2">
               <button onClick={() => { setCredModal(null); setCredError('') }}
-                className="flex-1 h-10 border border-outline-variant text-on-surface-variant font-label-md rounded-xl hover:bg-surface-container transition-colors">
-                Cancel
+                className="flex-1 h-11 border border-outline-variant text-on-surface-variant font-label-md text-[14px] font-bold rounded-xl hover:bg-surface-container transition-colors">
+                Hủy
               </button>
               <button onClick={handleAddCredential} disabled={credSaving}
-                className="flex-1 h-10 bg-primary text-on-primary font-label-md rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
-                {credSaving ? 'Saving...' : <><span className="material-symbols-outlined text-[16px]">add_circle</span>Save to Profile</>}
+                className="flex-1 h-11 bg-primary text-on-primary font-label-md text-[14px] font-bold rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5">
+                {credSaving ? 'Đang lưu...' : <><span className="material-symbols-outlined text-[18px]">add_circle</span>Lưu lại</>}
               </button>
             </div>
           </div>
@@ -2593,11 +3540,21 @@ function CvTextarea({ label, value, onChange, placeholder = '', rows = 3 }) {
   )
 }
 
-function InfoItem({ label, value }) {
+function InfoItem({ label, value, icon, isCurrency }) {
+  const displayValue = value ? (isCurrency ? `${Number(value).toLocaleString('vi-VN')} VNĐ/giờ` : value) : 'Chưa cập nhật';
   return (
-    <div className="rounded-xl border border-outline-variant/20 bg-white/70 p-3">
-      <p className="text-[11px] font-bold uppercase text-outline mb-1">{label}</p>
-      <p className="text-[13px] text-on-surface-variant whitespace-pre-wrap">{value || 'Chua cap nhat'}</p>
+    <div className="rounded-xl border border-outline-variant/40 bg-white/60 p-3.5 hover:bg-white transition-colors flex gap-3 items-start shadow-sm group">
+      {icon && (
+        <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary flex-shrink-0 group-hover:scale-110 transition-transform">
+          <span className="material-symbols-outlined text-[18px]">{icon}</span>
+        </div>
+      )}
+      <div className="flex-1">
+        <p className="text-[12px] font-bold text-on-surface-variant mb-0.5">{label}</p>
+        <p className={`text-[14px] whitespace-pre-wrap leading-relaxed ${!value ? 'text-outline italic' : 'text-on-surface font-medium'}`}>
+          {displayValue}
+        </p>
+      </div>
     </div>
   )
 }
@@ -2617,13 +3574,13 @@ function CredentialSection({ title, icon, items, type, onAdd, onDelete, noProof 
           {title}
         </h4>
         <button onClick={onAdd}
-          className="h-8 px-3 bg-primary text-on-primary font-label-sm text-[12px] rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-1 shadow-sm">
-          <span className="material-symbols-outlined text-[15px]">add</span>Add
+          className="h-8 px-3 bg-primary text-on-primary font-label-sm text-[12px] rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-1 shadow-sm font-bold">
+          <span className="material-symbols-outlined text-[15px]">add</span>Thêm mới
         </button>
       </div>
 
       {items.length === 0 ? (
-        <p className="text-[13px] text-outline italic text-center py-4">No {type} added yet.</p>
+        <p className="text-[13px] text-outline italic text-center py-4">Chưa có thông tin nào được thêm.</p>
       ) : (
         <div className="space-y-3">
           {items.map(item => (
@@ -2643,8 +3600,8 @@ function CredentialSection({ title, icon, items, type, onAdd, onDelete, noProof 
                 )}
                 {item.proof_url && !noProof && (
                   <a href={item.proof_url} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline mt-1">
-                    <span className="material-symbols-outlined text-[13px]">attachment</span>View proof
+                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline mt-1 font-bold">
+                    <span className="material-symbols-outlined text-[13px]">attachment</span>Xem minh chứng
                   </a>
                 )}
               </div>

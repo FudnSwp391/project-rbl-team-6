@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { API_BASE_URL } from '../config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API_BASE = API_BASE_URL
 
 export default function MessagesSection({ token, user }) {
   const [conversations, setConversations] = useState([])
@@ -55,6 +56,13 @@ export default function MessagesSection({ token, user }) {
       .then(d => {
         setMessages(prev => {
           const newMsgs = d.messages || []
+          const tempMsgs = prev.filter(m => m.isTemp)
+          
+          if (tempMsgs.length > 0) {
+            // Giữ lại các tin nhắn tạm (đang upload) để không bị chớp màn hình khi polling
+            return [...newMsgs, ...tempMsgs]
+          }
+          
           // Chỉ cập nhật nếu có tin mới (tránh re-render vô nghĩa)
           if (prev.length !== newMsgs.length || (newMsgs.length > 0 && prev[prev.length-1]?.id !== newMsgs[newMsgs.length-1]?.id)) {
             return newMsgs

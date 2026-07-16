@@ -2,10 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import StudentSidebar from '../components/StudentSidebar';
 import { apiRequest } from '../services/api';
+import WalletWidget from '../components/WalletWidget';
+import NotificationDropdown from '../components/NotificationDropdown';
+import MessageIcon from '../components/MessageIcon';
 
 export default function MyCourses() {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const [filter, setFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [courses, setCourses] = useState([]);
@@ -71,36 +75,23 @@ export default function MyCourses() {
   };
 
   const filteredCourses = courses.filter(course => {
+    // Lọc theo search
+    if (searchQuery && !course.title?.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false;
+    }
+    // Lọc theo trạng thái
     if (filter === 'all') return true;
     if (filter === 'active') return (course.progress_percent || 0) < 100;
     if (filter === 'completed') return (course.progress_percent || 0) >= 100;
     return true;
   });
 
-  return (
-    <div className="bg-surface text-on-surface min-h-screen font-body-md">
-      {/* TopNavBar */}
-      <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-lg h-16 bg-surface border-b border-outline-variant shadow-sm">
-        <div className="flex items-center gap-md">
-          <a href="#/" className="text-headline-md font-bold text-primary no-underline">EduX</a>
-          <nav className="hidden md:flex gap-md ml-lg">
-          </nav>
-        </div>
-        <div className="flex items-center gap-md">
-          <button className="p-xs hover:bg-surface-container rounded-full transition-colors">
-            <span className="material-symbols-outlined text-on-surface-variant">notifications</span>
-          </button>
-          <div className="flex items-center gap-xs">
-            {user?.picture ? (
-               <img alt="Ảnh đại diện người dùng" className="w-8 h-8 rounded-full border border-outline-variant" src={user.picture} />
-            ) : (
-               <span className="material-symbols-outlined text-on-surface-variant text-[32px]">account_circle</span>
-            )}
-            <span className="hidden md:block text-label-md font-semibold">{user?.name || user?.email || 'Minh Phan'}</span>
-          </div>
-        </div>
-      </header>
+  const displayName = user?.name || user?.email?.split('@')[0] || 'Học viên';
+  const initials = displayName.charAt(0).toUpperCase();
 
+  return (
+    <div className="bg-background text-on-background font-body-md text-body-md antialiased flex h-screen overflow-hidden">
+      
       <StudentSidebar
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
@@ -108,9 +99,67 @@ export default function MyCourses() {
         logout={logout}
       />
 
-      {/* Main Content */}
-      <main className="ml-[240px] mt-16 p-lg bg-surface min-h-screen">
-        <div className="max-w-container-max mx-auto grid grid-cols-1 lg:grid-cols-12 gap-lg">
+      {/* ── Main content wrapper ── */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden lg:ml-64">
+
+        {/* ── Top Bar ── */}
+        <header className="w-full h-16 bg-surface/90 backdrop-blur-sm shadow-sm flex items-center z-30 shrink-0 sticky top-0 border-b border-surface-dim/30">
+          <div className="flex justify-between items-center px-gutter w-full max-w-container-max mx-auto gap-md">
+
+            {/* Mobile hamburger */}
+            <button
+              className="lg:hidden w-10 h-10 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high rounded-full transition-colors"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Mở menu"
+            >
+              <span className="material-symbols-outlined">menu</span>
+            </button>
+
+            {/* Spacer for desktop */}
+            <div className="flex-1 max-w-md relative group hidden sm:block">
+              {/* Optional: Search in top nav if needed */}
+            </div>
+
+            <div className="flex items-center gap-sm lg:gap-md">
+              {/* Messages & Notifications */}
+              <MessageIcon token={token} />
+              <NotificationDropdown token={token} />
+
+              <button
+                aria-label="Trợ giúp"
+                className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
+              >
+                <span className="material-symbols-outlined">help</span>
+              </button>
+
+              <div className="w-px h-8 bg-outline-variant/30 mx-xs" />
+
+              <WalletWidget token={token} />
+
+              {/* Avatar */}
+              <div className="flex items-center gap-xs rounded-full px-xs py-xs hover:bg-surface-container-high transition-colors cursor-pointer">
+                {user?.picture ? (
+                  <img
+                    src={user.picture}
+                    alt={displayName}
+                    className="w-8 h-8 rounded-full object-cover border border-outline-variant/30"
+                  />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary text-sm font-bold">
+                    {initials}
+                  </div>
+                )}
+                <span className="hidden sm:block text-label-md font-medium text-on-surface ml-xs max-w-[120px] truncate">
+                  {displayName}
+                </span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Main Content */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-lg bg-surface">
+          <div className="max-w-container-max mx-auto grid grid-cols-1 lg:grid-cols-12 gap-lg">
           {/* Left Column: Main List */}
           <div className="lg:col-span-8">
             {/* Breadcrumbs */}
@@ -125,7 +174,13 @@ export default function MyCourses() {
             <div className="flex flex-col md:flex-row gap-md mb-xl">
               <div className="relative flex-grow">
                 <span className="material-symbols-outlined absolute left-md top-1/2 -translate-y-1/2 text-outline">search</span>
-                <input className="w-full pl-xl pr-md py-md bg-surface-container-lowest border border-outline-variant rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all" placeholder="Tìm kiếm khóa học của bạn..." type="text" />
+                <input 
+                  className="w-full pl-xl pr-md py-md bg-surface-container-lowest border border-outline-variant rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all" 
+                  placeholder="Tìm kiếm khóa học của bạn..." 
+                  type="text" 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
               </div>
               <select 
                 className="px-md py-md bg-surface-container-lowest border border-outline-variant rounded-lg text-label-md font-label-md text-on-surface-variant min-w-[160px] focus:border-primary outline-none cursor-pointer"
@@ -158,7 +213,7 @@ export default function MyCourses() {
             {!loading && !error && filteredCourses.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-lg">
                 {filteredCourses.map(course => (
-                  <div key={course.enrollment_id} className="bg-surface-container-lowest rounded-xl border border-outline-variant overflow-hidden flex flex-col hover:shadow-md hover:-translate-y-1 transition-all cursor-pointer" onClick={() => window.location.hash = `/course/${course.course_id}`}>
+                  <div key={course.enrollment_id} className="bg-surface-container-lowest rounded-xl border border-outline-variant overflow-hidden flex flex-col hover:shadow-md hover:-translate-y-1 transition-all cursor-pointer" onClick={() => window.location.hash = `/course-player/${course.course_id}`}>
                     <div className="relative aspect-video overflow-hidden bg-surface-variant">
                       <img alt={course.title} className="w-full h-full object-cover" src={course.thumbnail_url || "https://images.unsplash.com/photo-1561070791-2526d30994b5?q=80&w=2000&auto=format&fit=crop"} />
                       <span className="absolute top-md left-md bg-primary text-white text-[10px] uppercase tracking-wider font-bold px-sm py-xs rounded-full">
@@ -181,13 +236,18 @@ export default function MyCourses() {
                         <div className="w-full bg-surface-container h-1.5 rounded-full mb-md overflow-hidden">
                           <div className={`${(course.progress_percent || 0) >= 100 ? 'bg-outline-variant' : 'bg-primary'} h-full rounded-full`} style={{ width: (course.progress_percent || 0) + '%' }}></div>
                         </div>
-                        {(course.progress_percent || 0) >= 100 ? (
+                        {course.total_lessons === 0 ? (
+                          <button className="w-full py-md bg-surface-container-high text-on-surface-variant font-label-md rounded-lg flex items-center justify-center gap-xs cursor-not-allowed">
+                            <span className="material-symbols-outlined text-[18px]">update</span>
+                            Bài học đang cập nhật
+                          </button>
+                        ) : (course.progress_percent || 0) >= 100 ? (
                           <button className="w-full py-md bg-secondary-container text-primary font-label-md rounded-lg hover:bg-surface-container-high transition-colors flex items-center justify-center gap-xs">
                             <span className="material-symbols-outlined text-[18px]">workspace_premium</span>
                             Xem chứng chỉ
                           </button>
                         ) : (
-                          <button className="w-full py-md bg-primary text-white font-label-md rounded-lg hover:bg-primary-container transition-colors flex items-center justify-center gap-xs" onClick={(e) => { e.stopPropagation(); window.location.hash = `/course/${course.course_id}`; }}>
+                          <button className="w-full py-md bg-primary text-white font-label-md rounded-lg hover:bg-primary-container transition-colors flex items-center justify-center gap-xs" onClick={(e) => { e.stopPropagation(); window.location.hash = `/course-player/${course.course_id}`; }}>
                             <span className="material-symbols-outlined text-[18px]">play_circle</span>
                             Tiếp tục học
                           </button>
@@ -270,6 +330,7 @@ export default function MyCourses() {
           </div>
         </div>
       </main>
+      </div>
     </div>
   );
 }

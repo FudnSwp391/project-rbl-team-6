@@ -6,8 +6,8 @@
  */
 
 import { tutors as mockTutors } from '../tutorsData';
+import { API_BASE_URL } from '../config';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 // Helper for requests
 async function request(url, options = {}) {
@@ -20,6 +20,7 @@ async function request(url, options = {}) {
 
   const response = await fetch(`${API_BASE_URL}${url}`, {
     ...options,
+    cache: options.cache || 'no-store',
     headers
   });
 
@@ -469,11 +470,11 @@ export async function deleteTutorCredential(id) {
  * Cáºp nháºt lá»‹ch dáº¡y (replace toĂ n bá»™).
  * Fallback: lÆ°u vĂ o localStorage.
  */
-export async function updateTutorAvailability(availability, slot_duration_mins = 60) {
+export async function updateTutorAvailability(availability, monthly_availability, slot_duration_mins = 60) {
   try {
     return await request('/api/tutor/availability', {
       method: 'PUT',
-      body: JSON.stringify({ availability, slot_duration_mins }),
+      body: JSON.stringify({ availability, monthly_availability, slot_duration_mins }),
     });
   } catch (error) {
     console.warn(`[API] updateTutorAvailability failed: ${error.message}. Saving locally.`);
@@ -614,6 +615,13 @@ export async function updateCourseProgress(courseId, lessonId, payload = {}) {
   return request(`/api/courses/${courseId}/lessons/${lessonId}/progress`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  })
+}
+
+export async function askCourseAI(message, lessonTitle) {
+  return request('/api/course-ai-chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, lessonTitle }),
   })
 }
 // ── Tutor Assessments APIs ───────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { apiRequest } from '../services/api';
 import { getCourseImageUrl } from '../utils/courseImage';
 import { useAuth } from '../AuthContext';
+import CartButton from '../components/CartButton';
 
 function formatMoney(value) {
   if (!value) return 'Miễn phí';
@@ -41,6 +42,58 @@ export default function CourseMarketplace() {
     setTimeout(() => {
       courseSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
+  };
+
+  // ── Giỏ hàng (localStorage edux_cart — cùng định dạng CartPage đọc) ──
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const readCartIds = () => {
+    try {
+      const arr = JSON.parse(localStorage.getItem('edux_cart') || '[]');
+      return Array.isArray(arr) ? arr.map(it => it.id) : [];
+    } catch { return []; }
+  };
+  const [cartIds, setCartIds] = useState(readCartIds);
+  const [cartToast, setCartToast] = useState('');
+  useEffect(() => {
+    const sync = () => setCartIds(readCartIds());
+    window.addEventListener('cartUpdated', sync);
+    window.addEventListener('storage', sync);
+    return () => { window.removeEventListener('cartUpdated', sync); window.removeEventListener('storage', sync); };
+  }, []);
+
+  const showCartToast = (msg) => {
+    setCartToast(msg);
+    setTimeout(() => setCartToast(''), 2200);
+  };
+
+  const addToCart = (course, e) => {
+    if (e) e.stopPropagation();
+    if (!UUID_RE.test(String(course.id))) {
+      showCartToast('Khóa học demo — không thể mua.');
+      return;
+    }
+    let cart = [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem('edux_cart') || '[]');
+      if (Array.isArray(parsed)) cart = parsed;
+    } catch {}
+    if (cart.some(it => it.id === course.id)) {
+      showCartToast('Khóa học đã có trong giỏ hàng.');
+      return;
+    }
+    cart.push({
+      id: course.id,
+      title: course.title,
+      price: Number(course.price || 0),
+      thumbnail_url: course.thumbnail_url || null,
+      tutor_name: course.tutor_name || course.tutorName || 'Gia sư EduX',
+      subject: course.subject || '',
+      quantity: 1,
+      addedAt: Date.now(),
+    });
+    localStorage.setItem('edux_cart', JSON.stringify(cart));
+    window.dispatchEvent(new Event('cartUpdated'));
+    showCartToast(`Đã thêm "${String(course.title).slice(0, 32)}${String(course.title).length > 32 ? '…' : ''}" vào giỏ`);
   };
 
   // Subjects for the filter
@@ -124,9 +177,10 @@ export default function CourseMarketplace() {
   const CourseCard = ({ course }) => {
     const imageUrl = getCourseImageUrl(course);
     const tutorName = course.tutor_name || course.tutorName || 'Gia sư EduX';
-    const rating = course.rating || course.averageRating || 0;
+    const rating = Number(course.avg_rating) || course.rating || course.averageRating || 0;
     const reviewCount = course.review_count || course.reviewCount || course.reviews || 0;
     const isVerified = course.verified || course.tutorVerified || rating >= 4.5;
+    const inCart = cartIds.includes(course.id);
 
     return (
       <div 
@@ -151,15 +205,15 @@ export default function CourseMarketplace() {
           </div>
         </div>
         <div className="p-5 flex flex-col flex-1">
-          <h4 className="text-title-lg text-primary text-base mb-2 line-clamp-1">{course.title}</h4>
-          <p className="text-body-md text-on-surface-variant text-xs line-clamp-2 mb-4">
+          <h4 className="text-primary font-bold text-[15px] leading-snug mb-2 line-clamp-2">{course.title}</h4>
+          <p className="text-on-surface-variant text-xs leading-relaxed line-clamp-2 mb-4">
             {course.short_description || course.description || 'Khóa học được thiết kế chuyên nghiệp giúp bạn đạt được mục tiêu học tập.'}
           </p>
           <div className="flex items-center gap-3 mb-4 mt-auto">
             {course.tutor_picture || course.tutorAvatar ? (
-              <img src={course.tutor_picture || course.tutorAvatar} alt={tutorName} className="w-8 h-8 rounded-full border border-outline-variant/30 object-cover" />
+              <img src={course.tutor_picture || course.tutorAvatar} alt={tutorName} className="w-8 h-8 rounded-full border border-outline-variant/30 object-cover shrink-0" />
             ) : (
-              <div className="w-8 h-8 rounded-full avatar-gradient text-primary flex items-center justify-center font-bold border border-outline-variant/30 text-xs">
+              <div className="w-8 h-8 rounded-full avatar-gradient text-primary flex items-center justify-center font-bold border border-outline-variant/30 text-xs shrink-0">
                 {getTutorInitials(tutorName)}
               </div>
             )}
@@ -175,11 +229,41 @@ export default function CourseMarketplace() {
               </div>
             </div>
           </div>
-          <div className="flex items-center justify-between pt-4 border-t border-outline-variant/30">
-            <div className="text-primary font-bold text-base">
-              {formatMoney(course.price || course.pricePerSession)}<span className="text-[10px] text-on-surface-variant font-normal">/buổi</span>
+
+          {/* Footer: giá trên — nút dưới, không bao giờ bị chật */}
+          <div className="pt-3 border-t border-outline-variant/30 space-y-2.5 mt-auto">
+            {/* Giá — chiếm cả hàng */}
+            <div className="text-primary font-bold text-[15px]">
+              {formatMoney(course.price || course.pricePerSession)}
+              <span className="text-[10px] text-on-surface-variant font-normal ml-1">/buổi</span>
             </div>
-            <button className="bg-primary text-on-primary px-3 py-1.5 rounded-lg text-[11px] font-bold hover:brightness-110 transition-all">Xem chi tiết</button>
+            {/* Nút hành động — chia đều chiều rộng */}
+            <div className="flex items-center gap-2">
+              {inCart ? (
+                <button
+                  onClick={(e) => { e.stopPropagation(); window.location.hash = '/cart'; }}
+                  className="flex-1 h-9 rounded-lg border border-[#16a34a]/50 bg-[#f0fdf4] text-[#16a34a] text-[11px] font-bold flex items-center justify-center gap-1.5 hover:bg-[#dcfce7] transition-all"
+                >
+                  <span className="material-symbols-outlined text-[15px]">check_circle</span>
+                  Trong giỏ
+                </button>
+              ) : (
+                <button
+                  onClick={(e) => addToCart(course, e)}
+                  className="h-9 w-9 shrink-0 rounded-lg border border-primary/40 text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-all"
+                  title="Thêm vào giỏ hàng"
+                  aria-label="Thêm vào giỏ hàng"
+                >
+                  <span className="material-symbols-outlined text-[18px]">add_shopping_cart</span>
+                </button>
+              )}
+              <button
+                className="flex-1 h-9 bg-primary text-white rounded-lg text-[11px] font-bold hover:brightness-110 active:scale-95 transition-all"
+                onClick={(e) => { e.stopPropagation(); window.location.hash = `/course/${course.id}`; }}
+              >
+                Xem chi tiết
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -188,6 +272,12 @@ export default function CourseMarketplace() {
 
   return (
     <div className="course-marketplace-container">
+      {cartToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-[#191c1e] text-white text-sm font-semibold px-5 py-3 rounded-xl shadow-2xl flex items-center gap-2">
+          <span className="material-symbols-outlined text-[18px] text-[#4ade80]">shopping_cart_checkout</span>
+          {cartToast}
+        </div>
+      )}
       <style>{`
         .course-marketplace-container { 
           font-family: 'Inter', sans-serif; 
@@ -243,9 +333,7 @@ export default function CourseMarketplace() {
             </nav>
             <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
-                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
-              </a>
+              <CartButton />
             )}
               {user ? (
                 <button
