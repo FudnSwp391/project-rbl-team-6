@@ -101,19 +101,24 @@ const SM_SUB_ITEMS = [
 const SM_VIEW_IDS = new Set(SM_SUB_ITEMS.map(i => i.id))
 
 const NAV_ITEMS = [
-  { id: 'dashboard',       label: 'Tổng quan',             icon: 'dashboard' },
-  { id: 'tutor-approval',  label: 'Duyệt gia sư',          icon: 'how_to_reg' },
-  { id: 'user-management', label: 'Quản lý người dùng',    icon: 'group' },
-  { id: 'subjects',        label: 'Môn học',               icon: 'subject' },
-  { id: 'lessons',         label: 'Khóa học',              icon: 'school' },
-  { id: 'transactions',    label: 'Giao dịch',             icon: 'payments', hasSubmenu: true },
-  { id: 'services',        label: 'Quản lý dịch vụ',       icon: 'support_agent', hasSubmenu: true },
-  { id: 'wallet-management', label: 'Duyệt giao dịch Ví',  icon: 'account_balance_wallet' },
-  { id: 'reports',         label: 'Báo cáo',               icon: 'assessment' },
-  { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology' },
-  { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu' },
-  { id: 'settings',        label: 'Cài đặt',               icon: 'settings' },
+  { id: 'dashboard',       label: 'Tổng quan',             icon: 'dashboard',            section: 'Tổng quan' },
+  { id: 'tutor-approval',  label: 'Duyệt gia sư',          icon: 'how_to_reg',           section: 'Quản lý' },
+  { id: 'user-management', label: 'Quản lý người dùng',    icon: 'group',                section: 'Quản lý' },
+  { id: 'subjects',        label: 'Môn học',               icon: 'subject',              section: 'Học tập' },
+  { id: 'lessons',         label: 'Khóa học',              icon: 'school',               section: 'Học tập' },
+  { id: 'transactions',    label: 'Giao dịch',             icon: 'payments', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
+  { id: 'services',        label: 'Quản lý dịch vụ',       icon: 'support_agent', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
+  { id: 'wallet-management', label: 'Duyệt giao dịch Ví',  icon: 'account_balance_wallet', section: 'Tài chính & Dịch vụ' },
+  { id: 'reports',         label: 'Báo cáo',               icon: 'assessment',           section: 'Hệ thống' },
+  { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology',           section: 'Hệ thống' },
+  { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu',          section: 'Hệ thống' },
+  { id: 'settings',        label: 'Cài đặt',               icon: 'settings',             section: 'Hệ thống' },
 ]
+
+// Bản đồ nhãn dùng cho breadcrumb ở thanh trên cùng
+const VIEW_LABELS = Object.fromEntries(
+  [...NAV_ITEMS, ...TX_SUB_ITEMS, ...SM_SUB_ITEMS].map(i => [i.id, i.label])
+)
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function AdminDashboard() {
@@ -291,22 +296,30 @@ export default function AdminDashboard() {
       )}
 
       {/* ══ SIDEBAR ══ */}
-      <aside className="w-64 h-screen fixed left-0 top-0 bg-white shadow-sm z-20 flex flex-col py-6 px-2">
-        <a href="#/" className="block px-3 pb-8 pt-1 no-underline cursor-pointer">
-          <h1 className="text-2xl font-bold text-primary">EduX</h1>
-          <p className="text-xs text-on-surface-variant mt-0.5">Bảng điều khiển Admin</p>
+      <aside className="w-64 h-screen fixed left-0 top-0 bg-white shadow-sm z-20 flex flex-col">
+        <a href="#/" className="block px-5 pt-6 pb-5 no-underline cursor-pointer border-b border-gray-100">
+          <h1 className="text-2xl font-bold text-primary tracking-tight">EduX</h1>
+          <p className="text-[10px] uppercase tracking-[0.15em] text-on-surface-variant mt-1">Bảng điều khiển Admin</p>
         </a>
 
-        <nav className="flex-1 overflow-y-auto space-y-0.5 pr-1">
-          {NAV_ITEMS.map(item => {
+        <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
+          {NAV_ITEMS.map((item, idx, arr) => {
             const isTxParent = item.id === 'transactions'
             const isSmParent = item.id === 'services'
             const hasSub = item.hasSubmenu
-            
+
             const isTxActive = TX_VIEW_IDS.has(activeView)
             const isSmActive = SM_VIEW_IDS.has(activeView)
-            
+
             const active = activeView === item.id || (isTxParent && isTxActive) || (isSmParent && isSmActive)
+            const showSection = item.section && item.section !== arr[idx - 1]?.section
+            const badge = item.id === 'tutor-approval' && kpiStats.pending_tutors > 0 ? kpiStats.pending_tutors : null
+
+            const sectionHeader = showSection && (
+              <p key={`${item.id}-sec`} className="px-3 pt-4 pb-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-on-surface-variant/60 select-none">
+                {item.section}
+              </p>
+            )
 
             if (hasSub) {
               const isOpen = isTxParent ? txMenuOpen : smMenuOpen
@@ -316,21 +329,22 @@ export default function AdminDashboard() {
 
               return (
                 <div key={item.id}>
+                  {sectionHeader}
                   <a
                     href="#"
                     onClick={e => { e.preventDefault(); setOpen() }}
-                    className={`flex items-center gap-3 px-3 py-3 rounded-lg transition-all cursor-pointer select-none active:scale-95 ${
+                    className={`relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all cursor-pointer select-none ${
                       isActiveGrp
                         ? 'text-primary font-bold bg-blue-50'
                         : 'text-on-surface-variant hover:text-primary hover:bg-gray-50'
                     }`}
                   >
                     <span className="material-symbols-outlined text-[20px]" style={isActiveGrp ? { fontVariationSettings: "'FILL' 1" } : {}}>{item.icon}</span>
-                    <span className="text-sm font-semibold flex-1">{item.label}</span>
+                    <span className="text-[13px] font-semibold flex-1">{item.label}</span>
                     <span className="material-symbols-outlined text-[18px] transition-transform" style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>expand_more</span>
                   </a>
                   {isOpen && (
-                    <div className="ml-3 mt-0.5 space-y-0.5 border-l-2 border-blue-100 pl-2">
+                    <div className="ml-4 mt-0.5 space-y-0.5 border-l-2 border-blue-100 pl-2">
                       {subItems.map(sub => {
                         const subActive = activeView === sub.id
                         return (
@@ -338,7 +352,7 @@ export default function AdminDashboard() {
                             key={sub.id}
                             href="#"
                             onClick={e => { e.preventDefault(); setActiveView(sub.id) }}
-                            className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all cursor-pointer text-xs ${
+                            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg transition-all cursor-pointer text-xs ${
                               subActive
                                 ? 'text-primary font-bold bg-blue-50'
                                 : 'text-on-surface-variant hover:text-primary hover:bg-gray-50'
@@ -356,42 +370,49 @@ export default function AdminDashboard() {
             }
 
             return (
-              <a
-                key={item.id}
-                href="#"
-                onClick={e => { e.preventDefault(); setActiveView(item.id) }}
-                className={`flex items-center gap-3 px-3 py-3 rounded-lg transition-all cursor-pointer select-none active:scale-95 ${
-                  active
-                    ? 'text-primary font-bold border-r-4 border-primary bg-blue-50'
-                    : 'text-on-surface-variant hover:text-primary hover:bg-gray-50'
-                }`}
-              >
-                <span
-                  className="material-symbols-outlined text-[20px]"
-                  style={active ? { fontVariationSettings: "'FILL' 1" } : {}}
+              <div key={item.id}>
+                {sectionHeader}
+                <a
+                  href="#"
+                  onClick={e => { e.preventDefault(); setActiveView(item.id) }}
+                  className={`relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all cursor-pointer select-none ${
+                    active
+                      ? 'text-primary font-bold border-r-4 border-primary bg-blue-50'
+                      : 'text-on-surface-variant hover:text-primary hover:bg-gray-50'
+                  }`}
                 >
-                  {item.icon}
-                </span>
-                <span className="text-sm font-semibold">{item.label}</span>
-              </a>
+                  <span
+                    className="material-symbols-outlined text-[20px]"
+                    style={active ? { fontVariationSettings: "'FILL' 1" } : {}}
+                  >
+                    {item.icon}
+                  </span>
+                  <span className="text-[13px] font-semibold flex-1">{item.label}</span>
+                  {badge && (
+                    <span className="min-w-[18px] h-[18px] px-1.5 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">
+                      {badge}
+                    </span>
+                  )}
+                </a>
+              </div>
             )
           })}
         </nav>
 
-        <div className="mt-auto pt-4 border-t border-gray-100 px-3">
-          <div className="flex items-center gap-3">
+        <div className="mt-auto p-3 border-t border-gray-100">
+          <div className="flex items-center gap-3 rounded-lg p-2 hover:bg-gray-50 transition-colors">
             {user?.picture ? (
-              <img src={user.picture} alt={displayName} className="w-8 h-8 rounded-full object-cover" />
+              <img src={user.picture} alt={displayName} className="w-9 h-9 rounded-full object-cover" />
             ) : (
-              <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white font-bold text-xs">
+              <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white font-bold text-xs shrink-0">
                 {initials}
               </div>
             )}
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-on-surface truncate">{displayName}</p>
-              <p className="text-xs text-on-surface-variant truncate">{user?.email}</p>
+              <p className="text-[13px] font-semibold text-on-surface truncate">{displayName}</p>
+              <p className="text-[11px] text-on-surface-variant truncate">{user?.email}</p>
             </div>
-            <button onClick={logout} title="Logout" className="p-1 text-on-surface-variant hover:text-error transition-colors rounded-full">
+            <button onClick={logout} title="Đăng xuất" className="p-1.5 text-on-surface-variant hover:text-error hover:bg-gray-100 transition-colors rounded-lg shrink-0">
               <span className="material-symbols-outlined text-[20px]">logout</span>
             </button>
           </div>
@@ -402,31 +423,41 @@ export default function AdminDashboard() {
       <main className="ml-64 w-[calc(100%-16rem)] max-w-[calc(100vw-16rem)] min-w-0 min-h-screen flex flex-col overflow-x-hidden">
 
         {/* Top bar */}
-        <header className="h-16 fixed top-0 right-0 left-64 z-10 bg-white shadow-sm flex justify-between items-center px-6 lg:px-10 min-w-0 overflow-hidden">
-          <div className="relative w-full max-w-md min-w-0">
+        <header className="h-16 fixed top-0 right-0 left-64 z-10 bg-white/80 backdrop-blur-xl border-b border-black/5 flex justify-between items-center gap-4 px-6 lg:px-8 min-w-0 overflow-hidden">
+          {/* Breadcrumb */}
+          <div className="hidden md:flex items-center gap-1.5 text-sm shrink-0 min-w-0">
+            <span className="text-on-surface-variant/70 font-medium">EduX Admin</span>
+            <span className="material-symbols-outlined text-[16px] text-on-surface-variant/40">chevron_right</span>
+            <span className="font-bold text-on-surface truncate">{VIEW_LABELS[activeView] || 'Tổng quan'}</span>
+          </div>
+          {/* Search */}
+          <div className="relative flex-1 max-w-sm min-w-0">
             <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span>
             <input
-              className="w-full pl-10 pr-4 py-2 rounded-lg border border-outline-variant bg-gray-50 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all"
-              placeholder="Tìm kiếm gia sư, môn học, người dùng..."
+              className="w-full pl-10 pr-4 py-2 rounded-xl border border-outline-variant bg-gray-50/80 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 focus:bg-white transition-all"
+              placeholder="Tìm kiếm nhanh..."
               type="text"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" onClick={() => { fetchData(); fetchKpiStats(); fetchChartData() }} title="Làm mới">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button className="w-10 h-10 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" onClick={() => { fetchData(); fetchKpiStats(); fetchChartData() }} title="Làm mới">
               <span className="material-symbols-outlined">refresh</span>
             </button>
             <NotificationDropdown token={token} />
-            <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors">
+            <button className="w-10 h-10 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" title="Trợ giúp">
               <span className="material-symbols-outlined">help</span>
             </button>
             <div className="h-6 w-px bg-outline-variant mx-1" />
-            {user?.picture ? (
-              <img src={user.picture} alt={displayName} className="w-8 h-8 rounded-full object-cover border-2 border-transparent hover:border-primary transition-colors" />
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white font-bold text-xs">
-                {initials}
-              </div>
-            )}
+            <div className="flex items-center gap-2 pl-1 pr-2.5 py-1 rounded-full border border-outline-variant hover:bg-gray-50 transition-colors cursor-pointer">
+              {user?.picture ? (
+                <img src={user.picture} alt={displayName} className="w-7 h-7 rounded-full object-cover" />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-white font-bold text-[10px]">
+                  {initials}
+                </div>
+              )}
+              <span className="text-sm font-semibold text-on-surface hidden lg:block max-w-[100px] truncate">{displayName}</span>
+            </div>
           </div>
         </header>
 
@@ -437,6 +468,7 @@ export default function AdminDashboard() {
               stats={stats}
               loading={loading}
               onNavigate={setActiveView}
+              displayName={displayName}
               kpiStats={kpiStats}
               kpiLoading={kpiLoading}
               kpiError={kpiError}
@@ -602,8 +634,27 @@ export default function AdminDashboard() {
 const fmtCount      = (n) => (n ?? 0).toLocaleString('vi-VN')
 const fmtKpiRevenue = (n) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(n ?? 0)
 
+// Lời chào theo thời điểm trong ngày
+const greetByHour = () => {
+  const h = new Date().getHours()
+  if (h < 11) return 'Chào buổi sáng'
+  if (h < 14) return 'Chào buổi trưa'
+  if (h < 18) return 'Chào buổi chiều'
+  return 'Chào buổi tối'
+}
+const todayLong = () => new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+
+// Rút gọn số lớn cho thẻ KPI (1.234.000 → 1,2 Tr)
+const fmtCompact = (n) => {
+  const v = n ?? 0
+  if (v >= 1_000_000_000) return (v / 1_000_000_000).toFixed(1).replace(/\.0$/, '') + ' Tỷ'
+  if (v >= 1_000_000)     return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + ' Tr'
+  if (v >= 1_000)         return (v / 1_000).toFixed(0) + 'K'
+  return fmtCount(v)
+}
+
 function DashboardView({
-  stats, loading, onNavigate,
+  stats, loading, onNavigate, displayName = 'Admin',
   kpiStats, kpiLoading, kpiError, onRefreshKpi,
   chartData, chartLoading, chartError, chartRange, onRangeChange, onRefreshChart,
 }) {
@@ -616,22 +667,26 @@ function DashboardView({
   // ── CAP-1.2: chart computations ──────────────────────────────────────────
   const series   = chartData.series || []
   const maxVal   = Math.max(...series.map(d => d.new_users), 1)
-  const bars     = series.map((d, i) => ({
-    label:    d.label,
-    h:        Math.round((d.new_users / maxVal) * 100),
-    animDelay: i * 50,
-  }))
   const yLabels = [maxVal, Math.round(maxVal * 0.75), Math.round(maxVal * 0.5), Math.round(maxVal * 0.25), 0]
     .map(n => n.toLocaleString('vi-VN'))
   const skeletonCount = chartRange === '30d' ? 30 : chartRange === '6m' ? 6 : new Date().getMonth() + 1
   const rangeLabel    = chartRange === '30d' ? '30 ngày gần đây' : chartRange === '6m' ? '6 tháng gần đây' : 'Năm nay'
+  const totalNew = series.reduce((s, d) => s + (d.new_users || 0), 0)
+  // Nhãn trục X: 30d hiển thị thưa để tránh chật, còn lại hiện tất cả
+  const xLabelEvery = chartRange === '30d' ? Math.ceil(series.length / 6) : 1
 
   return (
     <div className="p-6 lg:p-10 max-w-[1280px] mx-auto w-full min-w-0">
-      <div className="mb-8 flex items-start justify-between">
+      <div className="mb-6 flex items-start justify-between flex-wrap gap-4">
         <div>
-          <h2 className="text-3xl font-bold text-on-background">Tổng quan hệ thống</h2>
-          <p className="text-sm text-on-surface-variant mt-1">Phân tích và tóm tắt hoạt động nền tảng.</p>
+          <p className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">{greetByHour()}, {displayName} 👋</p>
+          <h2 className="text-[26px] leading-tight font-extrabold text-on-background tracking-tight">Tổng quan hệ thống</h2>
+          <p className="text-sm text-on-surface-variant mt-1 flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-[16px]">calendar_today</span>
+            <span className="capitalize">{todayLong()}</span>
+            <span className="text-on-surface-variant/40">·</span>
+            Tự động cập nhật mỗi 30 giây
+          </p>
         </div>
         {/* KPI refresh status row */}
         <div className="flex items-center gap-3 text-xs text-on-surface-variant mt-1">
@@ -665,97 +720,99 @@ function DashboardView({
       </div>
 
       {/* AI Platform Summary */}
-      <div className="bg-white rounded-xl p-6 border-l-4 border-primary shadow-sm mb-6 relative overflow-hidden">
+      <div className="bg-white rounded-2xl p-6 mb-6 border-l-4 border-primary shadow-sm relative overflow-hidden">
         <div className="absolute -right-10 -top-10 w-32 h-32 bg-primary/5 rounded-full blur-2xl pointer-events-none" />
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
-            <span className="material-symbols-outlined text-[28px]">psychology</span>
+        <div className="flex items-center gap-4 flex-wrap relative z-10">
+          <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+            <span className="material-symbols-outlined text-[26px]">psychology</span>
           </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-on-background mb-3">Tóm tắt AI nền tảng</h3>
-            <div className="flex flex-wrap gap-x-8 gap-y-3">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                <span className="text-sm text-on-surface-variant">
-                  <strong className="text-on-background">{kv(K.pending_tutors)}</strong> hồ sơ chờ duyệt
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-                <span className="text-sm text-on-surface-variant">
-                  <strong className="text-on-background">{kv(K.open_disputes)}</strong> tranh chấp đang mở
-                </span>
-              </div>
+          <div className="flex-1 min-w-[180px]">
+            <h3 className="text-lg font-bold text-on-background">Tóm tắt AI nền tảng</h3>
+            <p className="text-sm text-on-surface-variant mt-0.5">Những mục cần bạn chú ý xử lý hôm nay</p>
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="text-center">
+              <div className="text-2xl font-extrabold text-on-background">{kv(K.pending_tutors)}</div>
+              <div className="text-[11px] text-on-surface-variant font-medium">Hồ sơ chờ duyệt</div>
+            </div>
+            <div className="w-px h-10 bg-outline-variant" />
+            <div className="text-center">
+              <div className="text-2xl font-extrabold text-on-background">{kv(K.open_disputes)}</div>
+              <div className="text-[11px] text-on-surface-variant font-medium">Tranh chấp mở</div>
             </div>
           </div>
           <button
-            className="shrink-0 px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg hover:bg-primary/90 transition-colors"
+            className="shrink-0 px-5 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors flex items-center gap-1.5"
             onClick={() => onNavigate('tutor-approval')}
           >
             Xem hồ sơ
+            <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
           </button>
         </div>
       </div>
 
       {/* ── CAP-1.1: Live KPI Cards (3 × 2 grid) ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
-        <OverviewCard
-          icon="group"       iconBg="bg-gray-100"   iconColor="text-on-surface-variant"
-          label="Tổng người dùng"
-          value={kv(K.total_users)}
-          loading={kpiLoading}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5 mb-6">
+        <KpiCard
+          variant="blue"   icon="group"    label="Tổng người dùng"
+          value={kv(K.total_users)} loading={kpiLoading}
+          delta={chartData.today.new_users} deltaLabel="hôm nay"
         />
-        <OverviewCard
-          icon="school"      iconBg="bg-blue-50"    iconColor="text-blue-700"
-          label="Học sinh đang học"
-          value={kv(K.active_students)}
-          loading={kpiLoading}
+        <KpiCard
+          variant="violet" icon="school"   label="Học sinh đang học"
+          value={kv(K.active_students)} loading={kpiLoading}
         />
-        <OverviewCard
-          icon="workspace_premium" iconBg="bg-indigo-50" iconColor="text-indigo-700"
-          label="Gia sư đang hoạt động"
-          value={kv(K.active_tutors)}
-          loading={kpiLoading}
+        <KpiCard
+          variant="cyan"   icon="workspace_premium" label="Gia sư đang hoạt động"
+          value={kv(K.active_tutors)} loading={kpiLoading}
+          delta={chartData.today.new_tutors} deltaLabel="hồ sơ mới"
         />
-        <OverviewCard
-          icon="pending"     iconBg="bg-amber-50"   iconColor="text-amber-700"
-          label="Hồ sơ chờ duyệt"
-          value={kv(K.pending_tutors)}
-          loading={kpiLoading}
+        <KpiCard
+          variant="amber"  icon="pending"  label="Hồ sơ chờ duyệt"
+          value={kv(K.pending_tutors)} loading={kpiLoading}
+          hint={kpiLoading ? '' : (K.pending_tutors > 0 ? 'Cần xử lý' : 'Đã xử lý hết')}
         />
-        <OverviewCard
-          icon="payments"    iconBg="bg-emerald-50" iconColor="text-emerald-700"
-          label="Doanh thu tháng (VND)"
-          value={kv(K.monthly_revenue, true)}
-          loading={kpiLoading}
+        <KpiCard
+          variant="green"  icon="payments" label="Doanh thu tháng"
+          value={kpiLoading ? '…' : `${fmtCompact(K.monthly_revenue)} ₫`} loading={kpiLoading}
+          hint="Tháng này"
         />
-        <OverviewCard
-          icon="gavel"       iconBg="bg-red-50"     iconColor="text-red-700"
-          label="Tranh chấp đang mở"
-          value={kv(K.open_disputes)}
-          loading={kpiLoading}
+        <KpiCard
+          variant="rose"   icon="gavel"    label="Tranh chấp đang mở"
+          value={kv(K.open_disputes)} loading={kpiLoading}
+          hint={kpiLoading ? '' : (K.open_disputes > 0 ? 'Cần chú ý' : 'An toàn')}
         />
       </div>
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        {/* Bar Chart — CAP-1.2: live data, dynamic Y-axis, range selector */}
-        <div className="xl:col-span-8 bg-white rounded-xl p-6 shadow-sm flex flex-col h-[380px] overflow-hidden min-w-0">
-          <div className="flex justify-between items-center mb-6">
+        {/* Area/Bar Chart — CAP-1.2: live data, dynamic Y-axis, range selector */}
+        <div className="xl:col-span-8 bg-white rounded-2xl p-6 shadow-sm border border-black/5 flex flex-col h-[380px] overflow-hidden min-w-0">
+          <div className="flex justify-between items-start mb-5 gap-3 flex-wrap">
             <div>
-              <h3 className="text-lg font-semibold text-on-background">Xu hướng tăng trưởng người dùng</h3>
-              <p className="text-xs text-on-surface-variant mt-0.5">{rangeLabel}</p>
+              <h3 className="text-base font-bold text-on-background">Xu hướng tăng trưởng người dùng</h3>
+              <p className="text-xs text-on-surface-variant mt-0.5">{rangeLabel} · {fmtCount(totalNew)} người dùng mới</p>
             </div>
-            <select
-              value={chartRange}
-              onChange={e => onRangeChange(e.target.value)}
-              disabled={chartLoading}
-              className="bg-gray-50 border border-outline-variant rounded-lg text-xs text-on-surface-variant py-2 pl-3 pr-6 outline-none disabled:opacity-50"
-            >
-              <option value="30d">30 ngày gần đây</option>
-              <option value="6m">6 tháng gần đây</option>
-              <option value="ytd">Năm nay</option>
-            </select>
+            <div className="inline-flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
+              {[
+                { v: '30d', l: '30 ngày' },
+                { v: '6m',  l: '6 tháng' },
+                { v: 'ytd', l: 'Năm nay' },
+              ].map(opt => (
+                <button
+                  key={opt.v}
+                  onClick={() => onRangeChange(opt.v)}
+                  disabled={chartLoading}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all disabled:opacity-50 ${
+                    chartRange === opt.v
+                      ? 'bg-white text-primary shadow-sm'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  {opt.l}
+                </button>
+              ))}
+            </div>
           </div>
 
           {chartError ? (
@@ -792,117 +849,126 @@ function DashboardView({
               </div>
             </div>
           ) : (
-            /* Live bars */
-            <div className="flex-1 flex items-end gap-2 relative">
-              {/* Dynamic Y-axis */}
-              <div className="absolute left-0 top-0 bottom-6 w-10 flex flex-col justify-between text-xs text-on-surface-variant text-right pr-1">
-                {yLabels.map((lbl, i) => <span key={i}>{lbl}</span>)}
-              </div>
-              {/* Grid lines */}
-              <div className="absolute left-11 right-0 top-2 bottom-6 flex flex-col justify-between pointer-events-none">
-                {[0,1,2,3,4].map(i => <div key={i} className="w-full border-t border-dashed border-gray-100" />)}
-              </div>
-              {/* Bars */}
-              <div className="ml-12 flex-1 flex justify-around items-end h-full pb-6 z-10 gap-1">
-                {bars.map((b, i) => (
-                  <div key={i} className="flex flex-col items-center gap-1 flex-1">
-                    <div className="w-full flex items-end justify-center" style={{ height: '200px' }}>
-                      <div
-                        className="w-full bg-primary rounded-t-sm bar-grow"
-                        style={{ height: `${b.h}%`, animationDelay: `${b.animDelay}ms` }}
-                      />
-                    </div>
-                    <span className="text-[11px] text-on-surface-variant">{b.label}</span>
+            /* Live bar chart */
+            <div className="flex-1 flex flex-col min-h-0">
+              <div className="flex-1 flex gap-2 min-h-0">
+                {/* Y-axis */}
+                <div className="w-9 flex flex-col justify-between text-[10px] text-on-surface-variant text-right py-0.5 shrink-0">
+                  {yLabels.map((lbl, i) => <span key={i}>{lbl}</span>)}
+                </div>
+                {/* Plot area */}
+                <div className="relative flex-1 min-w-0">
+                  {/* Grid lines */}
+                  <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+                    {[0,1,2,3,4].map(i => <div key={i} className="w-full border-t border-dashed border-gray-100" />)}
                   </div>
-                ))}
+                  {/* Bars */}
+                  <div className="absolute inset-0 flex items-end justify-between gap-px">
+                    {series.map((d, i) => {
+                      const pct = (d.new_users / maxVal) * 100
+                      const h = d.new_users > 0 ? Math.max(pct, 1.5) : 0
+                      return (
+                        <div
+                          key={i}
+                          className="group flex-1 h-full flex items-end justify-center"
+                          title={`${d.label}: ${fmtCount(d.new_users)} người dùng mới`}
+                        >
+                          <div
+                            className="w-full max-w-[14px] rounded-t-sm bg-primary/80 group-hover:bg-primary transition-colors"
+                            style={{ height: `${h}%` }}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              {/* X-axis labels (hiện đầy đủ, không cắt) */}
+              <div className="flex gap-2 mt-1.5">
+                <div className="w-9 shrink-0" />
+                <div className="flex-1 flex min-w-0">
+                  {series.map((d, i) => (
+                    <span key={i} className="flex-1 text-center text-[10px] text-on-surface-variant whitespace-nowrap">
+                      {(i % xLabelEvery === 0 || i === series.length - 1) ? d.label : ''}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
           )}
 
-          <div className="flex items-center gap-4 mt-1">
+          <div className="flex items-center gap-4 mt-3 pt-3 border-t border-gray-100">
             <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 bg-primary rounded-sm" />
-              <span className="text-xs text-on-surface-variant">Người dùng mới</span>
+              <span className="w-3 h-3 rounded-full bg-primary" />
+              <span className="text-xs text-on-surface-variant font-medium">Người dùng mới</span>
+            </div>
+            <div className="ml-auto flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant">
+              <span className="material-symbols-outlined text-[16px]">today</span>
+              Hôm nay: <span className="text-primary">{fmtCount(chartData.today.new_users)}</span>
             </div>
           </div>
         </div>
 
         {/* Recent Activity — CAP-1.2: live data from chart endpoint + KPI stats */}
-        <div className="xl:col-span-4 bg-white rounded-xl p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-on-background mb-5">Hoạt động gần đây</h3>
-          <div className="space-y-4">
-            {/* Item 1: new tutor profiles today (chartData.today) */}
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 text-blue-600">
-                <span className="material-symbols-outlined text-[18px]">how_to_reg</span>
+        <div className="xl:col-span-4 bg-white rounded-2xl p-6 shadow-sm border border-black/5 flex flex-col">
+          <div className="flex items-center justify-between mb-5">
+            <h3 className="text-base font-bold text-on-background">Hoạt động gần đây</h3>
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Trực tiếp
+            </span>
+          </div>
+          <div className="relative">
+            {[
+              { icon: 'how_to_reg', avatar: 'bg-blue-50 text-blue-600',     loading: chartLoading, text: `${fmtCount(chartData.today.new_tutors)} hồ sơ gia sư mới`,     when: 'Hôm nay',  badge: 'Mới',   badgeCls: 'bg-blue-50 text-blue-700' },
+              { icon: 'group',      avatar: 'bg-indigo-50 text-indigo-600', loading: chartLoading, text: `${fmtCount(chartData.today.new_users)} người dùng mới đăng ký`, when: 'Hôm nay',  badge: `+${fmtCount(chartData.today.new_users)}`, badgeCls: 'bg-indigo-50 text-indigo-700' },
+              { icon: 'pending',    avatar: 'bg-amber-50 text-amber-600',   loading: kpiLoading,   text: `${fmtCount(K.pending_tutors)} hồ sơ chờ duyệt`,             when: 'Hiện tại', badge: K.pending_tutors > 0 ? 'Chờ' : 'Xong', badgeCls: K.pending_tutors > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700' },
+              { icon: 'gavel',      avatar: 'bg-red-50 text-red-600',       loading: kpiLoading,   text: `${fmtCount(K.open_disputes)} tranh chấp đang mở`,           when: 'Hiện tại', badge: K.open_disputes > 0 ? 'Chú ý' : 'OK',   badgeCls: K.open_disputes > 0 ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700' },
+            ].map((it, i, arr) => (
+              <div key={i} className="flex gap-3 relative pb-5 last:pb-0">
+                {i < arr.length - 1 && <span className="absolute left-[15px] top-8 bottom-0 w-px bg-gray-100" />}
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 z-10 ${it.avatar}`}>
+                  <span className="material-symbols-outlined text-[18px]">{it.icon}</span>
+                </div>
+                <div className="flex-1 min-w-0 pt-0.5">
+                  {it.loading
+                    ? <div className="h-4 bg-gray-200 rounded animate-pulse w-36 mb-1" />
+                    : <p className="text-[13px] font-semibold text-on-surface leading-snug">{it.text}</p>}
+                  <p className="text-xs text-on-surface-variant mt-0.5">{it.when}</p>
+                </div>
+                {!it.loading && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full h-fit shrink-0 ${it.badgeCls}`}>{it.badge}</span>}
               </div>
-              <div>
-                {chartLoading
-                  ? <div className="h-4 bg-gray-200 rounded animate-pulse w-40 mb-1" />
-                  : <p className="text-sm font-medium text-on-surface">{fmtCount(chartData.today.new_tutors)} hồ sơ gia sư mới hôm nay</p>}
-                <p className="text-xs text-on-surface-variant">Hôm nay</p>
-              </div>
-            </div>
-            {/* Item 2: new users today (chartData.today) */}
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0 text-indigo-600">
-                <span className="material-symbols-outlined text-[18px]">group</span>
-              </div>
-              <div>
-                {chartLoading
-                  ? <div className="h-4 bg-gray-200 rounded animate-pulse w-40 mb-1" />
-                  : <p className="text-sm font-medium text-on-surface">{fmtCount(chartData.today.new_users)} người dùng mới đăng ký hôm nay</p>}
-                <p className="text-xs text-on-surface-variant">Hôm nay</p>
-              </div>
-            </div>
-            {/* Item 3: pending tutors (kpiStats — no extra fetch) */}
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-amber-50 flex items-center justify-center flex-shrink-0 text-amber-600">
-                <span className="material-symbols-outlined text-[18px]">pending</span>
-              </div>
-              <div>
-                {kpiLoading
-                  ? <div className="h-4 bg-gray-200 rounded animate-pulse w-40 mb-1" />
-                  : <p className="text-sm font-medium text-on-surface">{fmtCount(K.pending_tutors)} hồ sơ chờ duyệt</p>}
-                <p className="text-xs text-on-surface-variant">Hiện tại</p>
-              </div>
-            </div>
-            {/* Item 4: open disputes (kpiStats — no extra fetch) */}
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0 text-red-600">
-                <span className="material-symbols-outlined text-[18px]">gavel</span>
-              </div>
-              <div>
-                {kpiLoading
-                  ? <div className="h-4 bg-gray-200 rounded animate-pulse w-40 mb-1" />
-                  : <p className="text-sm font-medium text-on-surface">{fmtCount(K.open_disputes)} tranh chấp đang mở</p>}
-                <p className="text-xs text-on-surface-variant">Hiện tại</p>
-              </div>
-            </div>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Quick access row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-6">
         {[
-          { id: 'tutor-approval',  icon: 'how_to_reg',  label: 'Duyệt gia sư',      desc: 'Xem xét hồ sơ chờ duyệt', count: null, accent: 'border-blue-500' },
-          { id: 'sm-complaints',   icon: 'report_problem', label: 'Khiếu nại',    desc: 'Xem và xử lý khiếu nại tranh chấp', count: null, accent: 'border-amber-500' },
-          { id: 'transactions',    icon: 'payments',    label: 'Giao dịch',        desc: 'Theo dõi hoạt động thanh toán', count: null, accent: 'border-emerald-500' },
+          { id: 'tutor-approval', icon: 'how_to_reg',     label: 'Duyệt gia sư', desc: 'Xem xét hồ sơ chờ duyệt',          tile: 'bg-blue-50 text-blue-600',       count: kpiLoading ? null : (K.pending_tutors || null) },
+          { id: 'sm-complaints',  icon: 'report_problem', label: 'Khiếu nại',    desc: 'Xem và xử lý khiếu nại tranh chấp', tile: 'bg-amber-50 text-amber-600',     count: null },
+          { id: 'transactions',   icon: 'payments',       label: 'Giao dịch',    desc: 'Theo dõi hoạt động thanh toán',     tile: 'bg-emerald-50 text-emerald-600', count: null },
         ].map(item => (
           <button
             key={item.id}
             onClick={() => onNavigate(item.id)}
-            className={`bg-white rounded-xl p-5 shadow-sm border-l-4 ${item.accent} text-left hover:shadow-md transition-shadow group`}
+            className="group bg-white rounded-2xl p-5 shadow-sm border border-black/5 text-left hover:border-primary/30 hover:shadow-lg hover:-translate-y-0.5 transition-all"
           >
-            <div className="flex items-start justify-between mb-3">
-              <span className="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors text-[28px]">{item.icon}</span>
-              {item.count !== null && (
-                <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">{item.count}</span>
+            <div className="flex items-start justify-between mb-4">
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${item.tile}`}>
+                <span className="material-symbols-outlined text-[24px]">{item.icon}</span>
+              </div>
+              {item.count != null && (
+                <span className="px-2.5 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">{fmtCount(item.count)}</span>
               )}
             </div>
-            <p className="text-sm font-bold text-on-surface">{item.label}</p>
-            <p className="text-xs text-on-surface-variant mt-0.5">{item.desc}</p>
+            <div className="flex items-end justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-on-surface">{item.label}</p>
+                <p className="text-xs text-on-surface-variant mt-0.5">{item.desc}</p>
+              </div>
+              <span className="material-symbols-outlined text-gray-300 group-hover:text-primary group-hover:translate-x-0.5 transition-all shrink-0">arrow_forward</span>
+            </div>
           </button>
         ))}
       </div>
@@ -910,27 +976,39 @@ function DashboardView({
   )
 }
 
-// ─── Overview Card ────────────────────────────────────────────────────────────
-// OverviewCard: supports optional `loading` prop for skeleton state.
-// The `trend` / `trendUp` props are still accepted for backwards compatibility
-// with any callers that pass them, but CAP-1.1 KPI cards omit them.
-function OverviewCard({ icon, iconBg, iconColor, label, value, trend, trendUp, loading = false }) {
+// ─── KPI Card ─────────────────────────────────────────────────────────────────
+// Thẻ trắng với icon tile màu nhạt (giữ bảng màu gốc). `delta` là số thực (vd
+// người dùng mới hôm nay) — chỉ hiển thị khi > 0; `hint` là nhãn ngữ cảnh tĩnh.
+const KPI_VARIANTS = {
+  blue:   'bg-blue-50 text-blue-700',
+  violet: 'bg-indigo-50 text-indigo-700',
+  cyan:   'bg-cyan-50 text-cyan-700',
+  amber:  'bg-amber-50 text-amber-700',
+  green:  'bg-emerald-50 text-emerald-700',
+  rose:   'bg-red-50 text-red-700',
+}
+
+function KpiCard({ variant = 'blue', icon, label, value, loading = false, delta, deltaLabel, hint }) {
+  const tile = KPI_VARIANTS[variant] || KPI_VARIANTS.blue
+  const hasDelta = delta != null && delta > 0
   return (
-    <div className="bg-white rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
-      <div className="flex justify-between items-start mb-4">
-        <div className={`w-10 h-10 rounded-lg ${iconBg} flex items-center justify-center ${iconColor}`}>
-          <span className="material-symbols-outlined">{icon}</span>
+    <div className="bg-white rounded-2xl p-5 shadow-sm border border-black/5 hover:shadow-md transition-shadow">
+      <div className="flex items-center justify-between mb-4">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tile}`}>
+          <span className="material-symbols-outlined text-[22px]">{icon}</span>
         </div>
-        {trend != null && (
-          <span className={`flex items-center text-xs font-semibold ${trendUp ? 'text-emerald-600' : 'text-red-600'}`}>
-            <span className="material-symbols-outlined text-[15px]">{trendUp ? 'trending_up' : 'trending_down'}</span>
-            {trend}
+        {hasDelta ? (
+          <span className="flex items-center gap-0.5 text-xs font-bold text-emerald-600">
+            <span className="material-symbols-outlined text-[15px]">trending_up</span>
+            {fmtCount(delta)} {deltaLabel || ''}
           </span>
-        )}
+        ) : hint ? (
+          <span className="text-[11px] font-semibold text-on-surface-variant">{hint}</span>
+        ) : null}
       </div>
       <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider mb-1">{label}</p>
       {loading ? (
-        <div className="h-8 bg-gray-200 rounded animate-pulse w-3/4" />
+        <div className="h-8 w-24 bg-gray-200 rounded animate-pulse" />
       ) : (
         <h4 className="text-2xl font-bold text-on-background">{value}</h4>
       )}
