@@ -327,11 +327,14 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
     : `Hß╗ô s╞í gia s╞░ cß╗ºa bß║ín tr├¬n EduX CH╞»A ─æ╞░ß╗úc chß║Ñp thuß║¡n.\n\nL├╜ do: ${reason || 'Kh├┤ng ─æ├íp ß╗⌐ng ─æß╗º ─æiß╗üu kiß╗çn'}\n${notes ? `\nGhi ch├║ tß╗½ Ban Quß║ún Trß╗ï:\n${notes}\n` : ''}\nBß║ín c├│ thß╗â chß╗ënh sß╗¡a v├á nß╗Öp lß║íi: ${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}#/tutor-profile\n\nEduX ΓÇö support@edux.com`;
 
   try {
+    // EMAIL_DEMO_REDIRECT: hộp thư chung cho demo — gia sư seed toàn email ảo
+    // nên mail gửi thẳng sẽ "biến mất"; redirect giúp team nhìn thấy mail thật
+    const demoRedirect = (process.env.EMAIL_DEMO_REDIRECT || '').trim();
     await emailTransporter.sendMail({
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to,
+      to: demoRedirect || to,
       replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
-      subject,
+      subject: demoRedirect ? `${subject} [gui cho: ${to}]` : subject,
       text: plainText,   // plain-text fallback helps avoid spam filters
       html,
       headers: {
@@ -340,9 +343,9 @@ async function sendTutorReviewEmail(to, status, reason, notes) {
         'Importance': 'high',
       },
     });
-    console.log(`[Email] Γ£à ─É├ú gß╗¡i email ${status} tß╗¢i ${to}`);
+    console.log(`[Email] Da gui email ${status} toi ${demoRedirect || to}${demoRedirect ? ` (nguoi nhan goc: ${to})` : ''}`);
   } catch (err) {
-    console.error(`[Email] Γ¥î Gß╗¡i email thß║Ñt bß║íi tß╗¢i ${to}:`, err.message);
+    console.error(`[Email] LOI gui email toi ${to}:`, err.message);
   }
 }
 
@@ -3684,21 +3687,28 @@ app.get("/api/admin/document-url", verifyToken, requireAdmin, async (req, res) =
   try {
     const { path } = req.query;
     if (!path) return res.status(400).json({ message: "Đường dẫn là bắt buộc." });
-    
-    // Extract filename if path is a full public URL
+
+    // URL public đầy đủ → lấy TOÀN BỘ đường dẫn sau tên bucket (giữ thư mục
+    // con như cccd-front/..., certificates/... — trước đây chỉ cắt tên file
+    // cuối nên ký sai đường dẫn → Supabase báo Object not found)
     let cleanPath = path;
     if (path.startsWith('http://') || path.startsWith('https://')) {
-      const parts = path.split('/');
-      cleanPath = parts[parts.length - 1];
+      const afterBucket = path.split('/tutor-documents/')[1];
+      cleanPath = afterBucket
+        ? decodeURIComponent(afterBucket.split('?')[0])
+        : path.split('/').pop();
     }
-    
+
     // Convert path to signed URL via Supabase Storage REST API
     const signedUrl = await createSignedUrl(cleanPath || path);
     if (!signedUrl) return res.status(500).json({ message: "Không thể tạo URL. Kiểm tra cấu hình Supabase." });
-    
+
     return res.json({ signedUrl });
   } catch (error) {
     console.error("Document URL error:", error);
+    if (/not.?found/i.test(error.message || '')) {
+      return res.status(404).json({ message: "Tài liệu không tồn tại trong kho lưu trữ (file có thể đã bị xóa hoặc upload lỗi)." });
+    }
     return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
