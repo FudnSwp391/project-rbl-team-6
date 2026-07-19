@@ -21,6 +21,10 @@ const SchedulePage = () => {
   // Day detail modal
   const [selectedDay, setSelectedDay] = useState(null);
   const [timeFrame, setTimeFrame] = useState('This Week');
+  // Số kỳ (ngày/tuần/tháng tùy timeFrame) lệch so với hiện tại — cho phép xem buổi học ở tháng khác.
+  const [periodOffset, setPeriodOffset] = useState(0);
+  // Đổi chế độ xem thì luôn quay về kỳ hiện tại (offset 0) cho khỏi lệch.
+  const changeTimeFrame = (tf) => { setTimeFrame(tf); setPeriodOffset(0); };
   const [detailSession, setDetailSession] = useState(null);
   const [sessionInfoMap, setSessionInfoMap] = useState({});
   const [reportSession, setReportSession] = useState(null);
@@ -103,24 +107,30 @@ const SchedulePage = () => {
   };
 
   // Create an array of 7 days for the week view (starting from Monday)
+  // periodOffset dịch ngày/tuần/tháng tùy chế độ để xem được các kỳ khác (vd buổi học tháng sau).
   const getDisplayDates = () => {
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    const dates = [];
+    const todayStr = new Date().toDateString();
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dates = [];
 
     if (timeFrame === 'Today') {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() + periodOffset);
       dates.push({
-        dayName: days[today.getDay()],
-        date: today.getDate(),
-        fullDate: today,
-        isToday: true
+        dayName: days[d.getDay()],
+        date: d.getDate(),
+        fullDate: d,
+        isToday: d.toDateString() === todayStr
       });
     } else if (timeFrame === 'This Week') {
-      const currentDay = today.getDay();
+      const base = new Date();
+      base.setHours(0, 0, 0, 0);
+      base.setDate(base.getDate() + periodOffset * 7);
+      const currentDay = base.getDay();
       const distanceToMonday = currentDay === 0 ? 6 : currentDay - 1;
-      const monday = new Date(today);
-      monday.setDate(today.getDate() - distanceToMonday);
+      const monday = new Date(base);
+      monday.setDate(base.getDate() - distanceToMonday);
 
       for (let i = 0; i < 7; i++) {
         const d = new Date(monday);
@@ -129,16 +139,17 @@ const SchedulePage = () => {
           dayName: days[d.getDay()],
           date: d.getDate(),
           fullDate: d,
-          isToday: d.toDateString() === new Date().toDateString()
+          isToday: d.toDateString() === todayStr
         });
       }
     } else if (timeFrame === 'This Month') {
-      const year = today.getFullYear();
-      const month = today.getMonth();
+      const anchor = new Date();
+      const year = anchor.getFullYear();
+      const month = anchor.getMonth() + periodOffset;
       const numDays = new Date(year, month + 1, 0).getDate();
       const firstDay = new Date(year, month, 1);
       const firstDayIndex = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1;
-      
+
       for (let i = 0; i < firstDayIndex; i++) {
         dates.push(null);
       }
@@ -148,7 +159,7 @@ const SchedulePage = () => {
           dayName: days[d.getDay()],
           date: d.getDate(),
           fullDate: d,
-          isToday: d.toDateString() === new Date().toDateString()
+          isToday: d.toDateString() === todayStr
         });
       }
     }
@@ -156,6 +167,22 @@ const SchedulePage = () => {
   };
 
   const displayDates = getDisplayDates();
+
+  // Nhãn kỳ đang xem (để người dùng biết đang ở tuần/tháng nào khi điều hướng).
+  const periodLabel = (() => {
+    const valid = displayDates.filter(Boolean);
+    if (!valid.length) return '';
+    if (timeFrame === 'Today') {
+      return valid[0].fullDate.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+    }
+    if (timeFrame === 'This Month') {
+      return valid[0].fullDate.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' });
+    }
+    // This Week: khoảng từ ngày đầu → ngày cuối
+    const start = valid[0].fullDate;
+    const end = valid[valid.length - 1].fullDate;
+    return `${start.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} – ${end.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}`;
+  })();
 
   // Helper: get status-based styling for a session card
   const getSessionStyle = (status) => {
@@ -211,10 +238,37 @@ const SchedulePage = () => {
           <p className="text-body-md font-body-md text-on-surface-variant mt-1">Theo dõi và quản lý tất cả các buổi học của bạn trong {timeFrame === 'Today' ? 'hôm nay' : timeFrame === 'This Week' ? 'tuần này' : 'tháng này'}</p>
         </div>
         <div className="flex items-center gap-4">
+          {/* Điều hướng sang kỳ trước/sau (để xem buổi học ở tuần/tháng khác) */}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPeriodOffset(o => o - 1)}
+              aria-label="Kỳ trước"
+              className="w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors"
+            >
+              <span className="material-symbols-outlined">chevron_left</span>
+            </button>
+            <div className="min-w-[150px] text-center">
+              <p className="text-label-md font-bold text-on-surface capitalize leading-tight">{periodLabel}</p>
+              {periodOffset !== 0 && (
+                <button type="button" onClick={() => setPeriodOffset(0)} className="text-[11px] text-primary hover:underline">
+                  Về hiện tại
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setPeriodOffset(o => o + 1)}
+              aria-label="Kỳ sau"
+              className="w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors"
+            >
+              <span className="material-symbols-outlined">chevron_right</span>
+            </button>
+          </div>
           <div className="flex bg-surface-container rounded-lg p-1 hidden sm:flex">
-            <button type="button" onClick={() => setTimeFrame('Today')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'Today' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>Today</button>
-            <button type="button" onClick={() => setTimeFrame('This Week')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Week' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>This Week</button>
-            <button type="button" onClick={() => setTimeFrame('This Month')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Month' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>This Month</button>
+            <button type="button" onClick={() => changeTimeFrame('Today')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'Today' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>Today</button>
+            <button type="button" onClick={() => changeTimeFrame('This Week')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Week' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>This Week</button>
+            <button type="button" onClick={() => changeTimeFrame('This Month')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Month' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>This Month</button>
           </div>
         </div>
       </section>
