@@ -89,7 +89,10 @@ export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRout
             <span className="font-label-md text-label-md">Đăng xuất</span>
           </a>
           <div className="mt-md px-xs">
-            <button className="w-full bg-surface-container border border-outline-variant text-on-surface font-label-md text-label-md h-12 rounded-lg flex items-center justify-center gap-sm hover:bg-surface-container-highest transition-colors duration-200">
+            <button
+              onClick={() => { window.location.hash = '#/dashboard/complaints'; setSidebarOpen && setSidebarOpen(false) }}
+              className="w-full bg-surface-container border border-outline-variant text-on-surface font-label-md text-label-md h-12 rounded-lg flex items-center justify-center gap-sm hover:bg-surface-container-highest transition-colors duration-200"
+            >
               <span className="material-symbols-outlined text-[18px]">help_center</span>
               Nhận hỗ trợ
             </button>
