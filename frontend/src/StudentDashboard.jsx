@@ -147,8 +147,15 @@ export default function StudentDashboard() {
               </span>
               <input
                 className="w-full h-10 pl-10 pr-sm bg-surface-container-low border border-outline-variant/50 rounded-lg font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant/70 focus:border-primary focus:ring-2 focus:ring-on-tertiary-container/30 focus:outline-none transition-all duration-200"
-                placeholder="Tìm kiếm khóa học, tài nguyên..."
+                placeholder="Tìm kiếm khóa học... (nhấn Enter)"
                 type="text"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const q = e.currentTarget.value.trim()
+                    // CourseMarketplace tự đọc từ khóa qua ?q= trên hash và lọc sẵn.
+                    window.location.hash = q ? `#/courses?q=${encodeURIComponent(q)}` : '#/courses'
+                  }
+                }}
               />
             </div>
 
@@ -156,13 +163,6 @@ export default function StudentDashboard() {
               {/* Messages & Notifications */}
               <MessageIcon token={token} />
               <NotificationDropdown token={token} />
-
-              <button
-                aria-label="Trợ giúp"
-                className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
-              >
-                <span className="material-symbols-outlined">help</span>
-              </button>
 
               <div className="w-px h-8 bg-outline-variant/30 mx-xs" />
 

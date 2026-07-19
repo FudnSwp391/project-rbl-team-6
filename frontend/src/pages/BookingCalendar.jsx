@@ -99,6 +99,23 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
 
   const CHILDREN = [{ id: 1, name: 'Alex Davis' }, { id: 2, name: 'Mia Davis' }];
 
+  // Khôi phục lựa chọn đặt lịch sau khi người dùng đăng nhập xong quay lại (đúng gia sư này).
+  useEffect(() => {
+    if (!user) return;
+    let pending;
+    try { pending = JSON.parse(sessionStorage.getItem('edux_pending_booking') || 'null'); } catch { pending = null; }
+    if (!pending || String(pending.tutorId) !== String(tutorId)) return;
+    sessionStorage.removeItem('edux_pending_booking');
+    if (pending.bookingMode) setBookingMode(pending.bookingMode);
+    if (pending.selectedBookings) setSelectedBookings(pending.selectedBookings);
+    if (pending.subject) setSubject(pending.subject);
+    if (pending.teachingMethod) setTeachingMethod(pending.teachingMethod);
+    if (pending.notes) setNotes(pending.notes);
+    if (typeof pending.currentYear === 'number') setCurrentYear(pending.currentYear);
+    if (typeof pending.currentMonth === 'number') setCurrentMonth(pending.currentMonth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, tutorId]);
+
   useEffect(() => {
     let active = true;
     async function load() {
@@ -261,7 +278,24 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   /* Booking */
   const handleOpenConfirm = (e) => {
     e.preventDefault();
-    if (!user) { window.location.hash = '/signin'; return; }
+    if (!user) {
+      // Chưa đăng nhập: lưu lại đúng trang đặt lịch + các lựa chọn để đăng nhập xong quay lại y như cũ.
+      try {
+        sessionStorage.setItem('redirectAfterLogin', `#/booking/${tutorId}`);
+        sessionStorage.setItem('edux_pending_booking', JSON.stringify({
+          tutorId,
+          bookingMode,
+          selectedBookings,
+          subject,
+          teachingMethod,
+          notes,
+          currentYear,
+          currentMonth,
+        }));
+      } catch { /* sessionStorage không khả dụng */ }
+      window.location.hash = '/signin';
+      return;
+    }
     if (getSelectedBookingItems().length === 0) { alert('Please select at least one date and time slot.'); return; }
     setIsConfirmModalOpen(true);
   };

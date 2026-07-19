@@ -123,6 +123,8 @@ export default function CoursePlayer({ courseId, onGoHome }) {
 
   const handleEnroll = async () => {
     if (!user) {
+      // Lưu đúng trang khóa học này để đăng nhập xong quay lại, không đá về trang chủ.
+      try { sessionStorage.setItem('redirectAfterLogin', window.location.hash) } catch { /* noop */ }
       window.location.hash = '/signin'
       return
     }
