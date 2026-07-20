@@ -1058,6 +1058,14 @@ function App() {
     return <PaymentResult />
   }
   if (routeName === 'cart') {
+    if (user && user.role === 'tutor') {
+      return (
+        <div style={{ padding: 40, textAlign: 'center' }}>
+          <h2>Gia sư không được phép truy cập Giỏ Hàng</h2>
+          <a href="#/">Quay lại Trang chủ</a>
+        </div>
+      );
+    }
     return <CartPage onGoSignIn={() => navigateTo('signin')} user={user} />
   }
   if (routeName === 'find-tutors') {

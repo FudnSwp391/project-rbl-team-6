@@ -1436,7 +1436,7 @@ function TutorStudentsTab() {
         tutor_note: data.tutorNote
       };
 
-      const res = await fetch('/api/feedbacks', {
+      const res = await fetch(`${API_BASE}/api/feedbacks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

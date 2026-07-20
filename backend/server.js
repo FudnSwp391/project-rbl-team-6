@@ -6781,6 +6781,7 @@ app.get('/api/exam-papers', verifyToken, async (req, res) => {
   try {
     const { grade, subject, year } = req.query;
     const studentId = req.user.userId;
+    // Use jsonb_array_element cast instead of ? operator (which conflicts with pg's $placeholder)
     let q = `
       SELECT ep.*, epa.id AS attempt_id, epa.status AS attempt_status, epa.score AS attempt_score 
       FROM exam_papers ep 
@@ -6788,7 +6789,11 @@ app.get('/api/exam-papers', verifyToken, async (req, res) => {
       WHERE ep.is_published=true 
         AND (
           ep.uploaded_by IS NULL
-          OR (ep.assigned_students IS NOT NULL AND jsonb_array_length(ep.assigned_students) > 0 AND ep.assigned_students ? $1)
+          OR (
+            ep.assigned_students IS NOT NULL 
+            AND jsonb_array_length(ep.assigned_students) > 0 
+            AND ep.assigned_students @> to_jsonb($1::text)
+          )
           OR (
             (ep.assigned_students IS NULL OR jsonb_array_length(ep.assigned_students) = 0)
             AND ep.uploaded_by IN (
@@ -6804,7 +6809,10 @@ app.get('/api/exam-papers', verifyToken, async (req, res) => {
     q += ' ORDER BY ep.created_at DESC';
     const r = await pool.query(q, params);
     return res.json({ papers: r.rows });
-  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+  } catch (e) { 
+    console.error('GET /api/exam-papers error:', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' }); 
+  }
 });
 
 
@@ -8000,7 +8008,11 @@ app.get('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =>
       );
       qRes.rows.forEach(r => { counts[r.exam_paper_id] = parseInt(r.c); });
     }
-    const result = exams.rows.map(e => ({ ...e, question_count: counts[e.id] || 0 }));
+    const result = exams.rows.map(e => ({ 
+      ...e, 
+      question_count: counts[e.id] || 0,
+      status: e.is_published ? 'Published' : 'Draft' 
+    }));
     res.json(result);
   } catch (e) {
     console.error('Tutor GET assessments error:', e);
@@ -8014,13 +8026,14 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { title, subject, grade, duration_minutes, description, questions, assigned_students } = req.body;
+    const { title, subject, grade, duration_minutes, description, questions, assigned_students, status } = req.body;
+    const isPublished = status === 'Published';
     
     // Create exam_paper
     const insertPaperRes = await client.query(
-      `INSERT INTO exam_papers (title, subject, grade, duration_minutes, description, uploaded_by, total_questions, assigned_students)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING *`,
-      [title, subject, grade, duration_minutes, description, req.user.userId, questions.length, JSON.stringify(assigned_students || [])]
+      `INSERT INTO exam_papers (title, subject, grade, duration_minutes, description, uploaded_by, total_questions, assigned_students, is_published)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9) RETURNING *`,
+      [title, subject, grade, duration_minutes, description, req.user.userId, questions.length, JSON.stringify(assigned_students || []), isPublished]
     );
     const paper = insertPaperRes.rows[0];
 
@@ -8054,6 +8067,273 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
     res.status(500).json({ message: 'Server error' });
   } finally {
     client.release();
+  }
+});
+
+// PUT /api/tutor/assessments/:id
+app.put('/api/tutor/assessments/:id', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { title, subject, grade, duration_minutes, description, questions, assigned_students, status } = req.body;
+    const isPublished = status === 'Published';
+    
+    // Update exam_paper
+    const updateRes = await client.query(
+      `UPDATE exam_papers 
+       SET title = $1, subject = $2, grade = $3, duration_minutes = $4, description = $5, total_questions = $6, assigned_students = $7::jsonb, is_published = $8
+       WHERE id = $9 AND uploaded_by = $10 RETURNING *`,
+      [title, subject, grade, duration_minutes, description, questions.length, JSON.stringify(assigned_students || []), isPublished, req.params.id, req.user.userId]
+    );
+    if (updateRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Exam not found or you are not authorized' });
+    }
+    
+    // Delete old questions
+    await client.query('DELETE FROM exam_paper_questions WHERE exam_paper_id = $1', [req.params.id]);
+    
+    // Create new questions
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      await client.query(
+        `INSERT INTO exam_paper_questions (exam_paper_id, question_text, option_a, option_b, option_c, option_d, correct_answer, explanation, question_order, question_type, suggested_answer)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          req.params.id,
+          q.question_text,
+          q.option_a || '',
+          q.option_b || '',
+          q.option_c || '',
+          q.option_d || '',
+          q.correct_answer || 'A',
+          q.explanation || '',
+          i + 1,
+          q.question_type || 'multiple_choice',
+          q.suggested_answer || null
+        ]
+      );
+    }
+    
+    await client.query('COMMIT');
+    res.json({ message: 'Assessment updated successfully', paper: updateRes.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('Tutor PUT assessments error:', e);
+    res.status(500).json({ message: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/tutor/assessments/:id/status
+app.patch('/api/tutor/assessments/:id/status', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const isPublished = status === 'Published';
+    await pool.query(`UPDATE exam_papers SET is_published = $1 WHERE id = $2 AND uploaded_by = $3`, [isPublished, req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE /api/tutor/assessments/:id
+app.delete('/api/tutor/assessments/:id', verifyToken, requireTutor, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM exam_papers WHERE id=$1 AND uploaded_by=$2`, [req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST /api/tutor/assessments/:id/duplicate
+app.post('/api/tutor/assessments/:id/duplicate', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const paperRes = await client.query(`SELECT * FROM exam_papers WHERE id = $1 AND uploaded_by = $2`, [req.params.id, req.user.userId]);
+    if (paperRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Not found' });
+    }
+    const paper = paperRes.rows[0];
+    
+    const insertPaperRes = await client.query(
+      `INSERT INTO exam_papers (title, subject, grade, duration_minutes, description, uploaded_by, total_questions, assigned_students, is_published)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9) RETURNING id`,
+      [paper.title + ' (Copy)', paper.subject, paper.grade, paper.duration_minutes, paper.description, req.user.userId, paper.total_questions, JSON.stringify(paper.assigned_students || []), false]
+    );
+    const newPaperId = insertPaperRes.rows[0].id;
+    
+    const questionsRes = await client.query(`SELECT * FROM exam_paper_questions WHERE exam_paper_id = $1`, [paper.id]);
+    for (let q of questionsRes.rows) {
+      await client.query(
+        `INSERT INTO exam_paper_questions (exam_paper_id, question_text, option_a, option_b, option_c, option_d, correct_answer, explanation, question_order, question_type, suggested_answer)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [newPaperId, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_answer, q.explanation, q.question_order, q.question_type, q.suggested_answer]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ message: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// ── Student Assessments APIs ──
+// GET /api/student/assessments/exams — đề thi gia sư giao cho học sinh
+app.get('/api/student/assessments/exams', verifyToken, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    const r = await pool.query(
+      `SELECT ep.*, epa.id AS attempt_id, epa.status AS attempt_status, epa.score AS attempt_score
+       FROM exam_papers ep
+       LEFT JOIN exam_paper_attempts epa ON ep.id = epa.exam_paper_id AND epa.student_id = $1
+       WHERE ep.is_published = true
+         AND (
+           ep.assigned_students @> to_jsonb($1::text)
+           OR (
+             (ep.assigned_students IS NULL OR jsonb_array_length(ep.assigned_students) = 0)
+             AND ep.uploaded_by IN (
+               SELECT tutor_id FROM bookings WHERE student_id = $1 AND status = 'Approved'
+             )
+           )
+         )
+       ORDER BY ep.created_at DESC`,
+      [studentId]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error('GET /api/student/assessments/exams error:', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/student/assessments/exams/:id — chi tiết đề thi
+app.get('/api/student/assessments/exams/:id', verifyToken, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    const paperRes = await pool.query(`SELECT * FROM exam_papers WHERE id=$1 AND is_published=true`, [req.params.id]);
+    if (paperRes.rowCount === 0) return res.status(404).json({ message: 'Không tìm thấy đề thi' });
+    const questionsRes = await pool.query(
+      `SELECT * FROM exam_paper_questions WHERE exam_paper_id=$1 ORDER BY question_order ASC`,
+      [req.params.id]
+    );
+    const attemptRes = await pool.query(
+      `SELECT * FROM exam_paper_attempts WHERE exam_paper_id=$1 AND student_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id, studentId]
+    );
+    res.json({ ...paperRes.rows[0], questions: questionsRes.rows, attempt: attemptRes.rows[0] || null });
+  } catch (e) {
+    console.error('GET /api/student/assessments/exams/:id error:', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/student/assessments/exams/:id/submit — nộp bài
+app.post('/api/student/assessments/exams/:id/submit', verifyToken, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    const { answers } = req.body;
+    const questionsRes = await pool.query(
+      `SELECT id, correct_answer, question_type FROM exam_paper_questions WHERE exam_paper_id=$1`,
+      [req.params.id]
+    );
+    const questions = questionsRes.rows;
+    let correct = 0;
+    questions.forEach(q => {
+      if (q.question_type === 'multiple_choice' && answers && answers[q.id] === q.correct_answer) correct++;
+    });
+    const mcqCount = questions.filter(q => q.question_type === 'multiple_choice').length;
+    const score = mcqCount > 0 ? Math.round((correct / mcqCount) * 100) : null;
+    
+    // Manual upsert: check existing attempt then update or insert
+    const existingAttempt = await pool.query(
+      `SELECT id FROM exam_paper_attempts WHERE exam_paper_id=$1 AND student_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id, studentId]
+    );
+    if (existingAttempt.rowCount > 0) {
+      await pool.query(
+        `UPDATE exam_paper_attempts SET status='submitted', score=$1, submitted_at=NOW() WHERE id=$2`,
+        [score, existingAttempt.rows[0].id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO exam_paper_attempts (exam_paper_id, student_id, status, score, submitted_at) VALUES ($1, $2, 'submitted', $3, NOW())`,
+        [req.params.id, studentId, score]
+      );
+    }
+    res.json({ score, correct, total: mcqCount });
+  } catch (e) {
+    console.error('POST /api/student/assessments/exams/:id/submit error:', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/student/assessments/homework — bài tập gia sư giao cho học sinh
+app.get('/api/student/assessments/homework', verifyToken, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    console.log('[DEBUG] Student homework - studentId:', studentId);
+    
+    // Debug: show all homeworks for this student's tutors
+    const debugAll = await pool.query(`SELECT id, title, status, assigned_students, tutor_id FROM tutor_homeworks ORDER BY created_at DESC LIMIT 10`);
+    console.log('[DEBUG] All recent homeworks:', JSON.stringify(debugAll.rows, null, 2));
+    
+    // Debug: show student's bookings  
+    const debugBookings = await pool.query(`SELECT tutor_id, status FROM bookings WHERE student_id = $1`, [studentId]);
+    console.log('[DEBUG] Student bookings:', JSON.stringify(debugBookings.rows));
+    
+    const r = await pool.query(
+      `SELECT th.*,
+              ths.id AS submission_id,
+              ths.status AS submission_status,
+              ths.file_url AS submission_file_url
+       FROM tutor_homeworks th
+       LEFT JOIN tutor_homework_submissions ths ON th.id = ths.homework_id AND ths.student_id = $1
+       WHERE th.status = 'Open'
+         AND (
+           th.assigned_students @> to_jsonb($1::text)
+           OR (
+             (th.assigned_students IS NULL OR jsonb_array_length(th.assigned_students) = 0)
+             AND th.tutor_id IN (
+               SELECT tutor_id FROM bookings WHERE student_id = $1 AND status = 'Approved'
+             )
+           )
+         )
+       ORDER BY th.created_at DESC`,
+      [studentId]
+    );
+    console.log('[DEBUG] Homework result count:', r.rows.length);
+    res.json(r.rows);
+  } catch (e) {
+    console.error('GET /api/student/assessments/homework error:', e.message, e.stack);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/student/assessments/homework/:id/submit — nộp bài tập
+app.post('/api/student/assessments/homework/:id/submit', verifyToken, async (req, res) => {
+  try {
+    const studentId = req.user.userId;
+    const { file_url } = req.body;
+    await pool.query(
+      `INSERT INTO tutor_homework_submissions (homework_id, student_id, file_url, status, submitted_at)
+       VALUES ($1, $2, $3, 'Submitted', NOW())
+       ON CONFLICT (homework_id, student_id) DO UPDATE SET file_url=$3, status='Submitted', submitted_at=NOW()`,
+      [req.params.id, studentId, file_url]
+    );
+    // Increment submission_count
+    await pool.query(`UPDATE tutor_homeworks SET submission_count = COALESCE(submission_count, 0) + 1 WHERE id=$1`, [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('POST /api/student/assessments/homework/:id/submit error:', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 });
 
@@ -8122,6 +8402,24 @@ app.post('/api/tutor/assessments/homework', verifyToken, requireTutor, async (re
     res.status(201).json(result.rows[0]);
   } catch (e) {
     console.error('POST homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PUT /api/tutor/assessments/homework/:id
+app.put('/api/tutor/assessments/homework/:id', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { title, course, deadline, max_score, allow_late, status, file_url, file_type, assigned_students } = req.body;
+    const result = await pool.query(
+      `UPDATE tutor_homeworks 
+       SET title=$1, course=$2, deadline=$3, max_score=$4, allow_late=$5, status=$6, file_url=$7, file_type=$8, assigned_students=$9::jsonb 
+       WHERE id=$10 AND tutor_id=$11 RETURNING *`,
+      [title, course, deadline || null, max_score || 100, allow_late || false, status || 'Draft', file_url, file_type, JSON.stringify(assigned_students || []), req.params.id, req.user.userId]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ message: 'Homework not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('PUT homework error:', e);
     res.status(500).json({ message: 'Server error' });
   }
 });

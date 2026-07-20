@@ -77,6 +77,10 @@ export default function CourseMarketplace() {
       const parsed = JSON.parse(localStorage.getItem('edux_cart') || '[]');
       if (Array.isArray(parsed)) cart = parsed;
     } catch {}
+    if (user && user.role === 'tutor') {
+      showCartToast('Gia sư không được mua khóa học.');
+      return;
+    }
     if (cart.some(it => it.id === course.id)) {
       showCartToast('Khóa học đã có trong giỏ hàng.');
       return;

@@ -72,6 +72,11 @@ export default function CourseDetail({ courseId }) {
       const parsed = JSON.parse(localStorage.getItem('edux_cart') || '[]');
       if (Array.isArray(parsed)) cart = parsed;
     } catch {}
+    if (user && user.role === 'tutor') {
+      setToast('Gia sư không được mua khóa học.');
+      setTimeout(() => setToast(''), 2200);
+      return;
+    }
     if (!cart.some(it => it.id === c.id)) {
       cart.push({
         id: c.id, title: c.title, price: Number(c.price || 0),
@@ -117,7 +122,8 @@ export default function CourseDetail({ courseId }) {
 
   const handleEnroll = async () => {
     if (!user) {
-      window.location.hash = '#/signin';
+      try { sessionStorage.setItem('redirectAfterLogin', window.location.hash); } catch (e) {}
+      window.location.hash = '/signin';
       return;
     }
     
