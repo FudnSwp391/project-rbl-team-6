@@ -78,6 +78,7 @@ export default function QuizList({ token }) {
 
   // Tutor Assessments State
   const [tutorHomeworks, setTutorHomeworks] = useState([]);
+  const [tutorExams, setTutorExams] = useState([]);
   const [loadingTutor, setLoadingTutor] = useState(false);
 
   // Homework upload state
@@ -86,20 +87,28 @@ export default function QuizList({ token }) {
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    fetchHomework()
+    fetchAll()
   }, [])
 
-  async function fetchHomework() {
+  async function fetchAll() {
     try {
       setLoadingTutor(true);
-      const data = await getStudentHomework();
-      setTutorHomeworks(Array.isArray(data) ? data : []);
+      const [hwData, examData] = await Promise.all([
+        getStudentHomework(),
+        getStudentExams()
+      ]);
+      setTutorHomeworks(Array.isArray(hwData) ? hwData : []);
+      setTutorExams(Array.isArray(examData) ? examData : []);
     } catch (err) {
       console.error(err);
       setError('Không thể tải bài tập')
     } finally {
       setLoadingTutor(false);
     }
+  }
+
+  async function fetchHomework() {
+    return fetchAll();
   }
 
   // ---- Tutor Homework Handlers ----
@@ -136,7 +145,7 @@ export default function QuizList({ token }) {
       <div className="flex flex-col gap-4">
         <div className="flex justify-end items-end flex-wrap gap-md">
           <button
-            onClick={fetchHomework}
+            onClick={fetchAll}
             className="h-10 px-md bg-surface-container border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface flex items-center gap-sm hover:bg-surface-container-highest transition-colors"
           >
             <span className="material-symbols-outlined text-[18px]">refresh</span>
@@ -152,8 +161,78 @@ export default function QuizList({ token }) {
         </div>
       )}
 
+      {/* ── TUTOR EXAMS ── */}
+      {(loadingTutor || tutorExams.length > 0) && (
+        <div>
+          <h3 className="font-label-md text-label-md text-on-surface-variant mb-md flex items-center gap-2">
+            <span className="material-symbols-outlined text-[18px] text-primary">quiz</span>
+            Đề thi được giao
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
+            {loadingTutor ? (
+              [1, 2].map(i => <QuizCardSkeleton key={`exam-skel-${i}`} />)
+            ) : (
+              tutorExams.map(exam => (
+                <div key={exam.id} className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-md flex flex-col gap-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 group">
+                  <div className="flex gap-md items-start">
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-colors duration-300 ${
+                      exam.attempt_status === 'submitted'
+                        ? 'bg-green-50 text-green-600 group-hover:bg-green-100'
+                        : 'bg-primary-container/30 text-on-primary-container group-hover:bg-primary-container/50'
+                    }`}>
+                      <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>description</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-sm">
+                        <h3 className="font-label-md text-label-md text-on-surface leading-snug line-clamp-2">{exam.title}</h3>
+                        {exam.attempt_status === 'submitted' && <ScoreBadge score={exam.attempt_score} />}
+                      </div>
+                      <p className="font-label-sm text-label-sm text-primary mt-0.5">{exam.subject || 'Chung'}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-xs">
+                    <span className="inline-flex items-center gap-xs px-2 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">
+                      <span className="material-symbols-outlined text-[14px]">help</span>
+                      {exam.total_questions || 0} câu hỏi
+                    </span>
+                    <span className="inline-flex items-center gap-xs px-2 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">
+                      <span className="material-symbols-outlined text-[14px]">timer</span>
+                      {exam.duration_minutes} phút
+                    </span>
+                  </div>
+                  <div className="mt-auto">
+                    {exam.attempt_status === 'submitted' ? (
+                      <button
+                        onClick={() => { window.location.hash = `/quiz-result/${exam.attempt_id}` }}
+                        className="w-full h-10 border border-outline-variant text-on-surface font-label-md text-label-md rounded-lg hover:bg-surface-container hover:text-primary transition-colors flex items-center justify-center gap-sm"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">bar_chart</span>
+                        Xem Kết Quả
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => { window.location.hash = `/quiz/${exam.id}` }}
+                        className="w-full h-10 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 hover:shadow-md transition-all flex items-center justify-center gap-sm"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">play_arrow</span>
+                        Bắt Đầu Kiểm Tra
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── TUTOR HOMEWORK ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
+      <div>
+        <h3 className="font-label-md text-label-md text-on-surface-variant mb-md flex items-center gap-2">
+          <span className="material-symbols-outlined text-[18px] text-primary">edit_document</span>
+          Bài tập về nhà
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-md">
           {loadingTutor ? (
             [1, 2, 3].map(i => <QuizCardSkeleton key={i} />)
           ) : tutorHomeworks.length === 0 ? (
@@ -211,6 +290,7 @@ export default function QuizList({ token }) {
             ))
           )}
         </div>
+      </div>
 
       {/* HOMEWORK UPLOAD MODAL */}
       {activeHomework && (
