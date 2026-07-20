@@ -1017,9 +1017,34 @@ function generateAdminCopilotReport(entityType, context) {
   const risk_level = copilotRiskLevelFromScore(score);
   limitations.push('Phân tích dựa trên quy tắc, chỉ mang tính tham khảo. Quyết định cuối cùng thuộc về admin.');
 
-  // Confidence grows with data volume; rule-based capped at 92.
-  const dataPoints = evidence.length + findings.length;
-  const confidence = Math.max(40, Math.min(92, 55 + dataPoints * 5));
+  // Confidence = how much real behavioral data exists, not how many risk signals.
+  // For TUTOR/STUDENT: base off actual activity history (bookings, reviews, disputes).
+  // A brand-new profile with zero history gets LOW confidence (~30%) because there
+  // is simply not enough data to make a reliable assessment.
+  let confidence;
+  if (entityType === 'TUTOR') {
+    const hasHistory =
+      (m.completed_lessons > 0 ? 1 : 0) +
+      (m.review_count       > 0 ? 1 : 0) +
+      (m.bookings_90d       > 0 ? 1 : 0) +
+      (m.disputes_30d       > 0 ? 1 : 0) +
+      (m.reputation_score   != null ? 1 : 0);
+    // 0 signals → 30%, each signal adds ~12%, cap at 92%
+    confidence = Math.min(92, 30 + hasHistory * 12 + evidence.length * 4);
+    if (hasHistory === 0) limitations.push('Gia sư chưa có lịch sử hoạt động — độ tin cậy phân tích thấp.');
+  } else if (entityType === 'STUDENT') {
+    const hasHistory =
+      (m.bookings_90d       > 0 ? 1 : 0) +
+      (m.disputes_raised_30d > 0 ? 1 : 0) +
+      (m.refunds_90d        > 0 ? 1 : 0) +
+      (m.absences_90d       > 0 ? 1 : 0);
+    confidence = Math.min(92, 30 + hasHistory * 12 + evidence.length * 4);
+    if (hasHistory === 0) limitations.push('Học sinh chưa có lịch sử hoạt động — độ tin cậy phân tích thấp.');
+  } else {
+    // For DISPUTE/TRANSACTION/BOOKING/PAGE: original evidence-based formula
+    const dataPoints = evidence.length + (findings.filter(f => !f.includes('Không phát hiện')).length);
+    confidence = Math.max(40, Math.min(92, 50 + dataPoints * 6));
+  }
 
   const name = context.identity?.name || context.identity?.tutor_name || context.identity?.student_name || '';
   const head = {
@@ -2732,7 +2757,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 
 const { createClient } = require('@supabase/supabase-js');
-const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  : null;
 
 async function uploadFileToStorage(file, path) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -3296,6 +3323,7 @@ app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
     const { filename, bucket, folder } = req.body;
     if (!filename) return res.status(400).json({ message: "Tên file là bắt buộc." });
     
+    if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
     const targetBucket = bucket || 'tutor-documents';
     const ext = filename.split('.').pop();
     const safePath = folder ? `${folder}/${req.user.userId}_${Date.now()}.${ext}` : `${req.user.userId}_${Date.now()}.${ext}`;
@@ -7872,6 +7900,7 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
     else if (mimetype.startsWith('video/')) msgType = 'video';
 
     // Upload lên Supabase Storage
+    if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
     const { data: uploadData, error: uploadError } = await supabaseAdmin
       .storage.from(BUCKET)
       .upload(storagePath, buffer, { contentType: mimetype, upsert: false });
@@ -9821,6 +9850,7 @@ app.post('/api/complaints/upload', verifyToken, (req, res, next) => {
 }, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'Không có file được gửi.' });
+    if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
     const { originalname, mimetype, size, buffer } = req.file;
     const ext = originalname.includes('.') ? '.' + originalname.split('.').pop() : '';
     const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;

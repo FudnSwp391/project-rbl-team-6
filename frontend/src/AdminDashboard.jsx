@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from './AuthContext'
-import NotificationDropdown from './components/NotificationDropdown'
+import AdminNotificationBell from './components/AdminNotificationBell'
 
 // ─── Transaction Management Modules ──────────────────────────────────────────
 import FinancialOverview     from './admin/transactions/FinancialOverview'
@@ -127,6 +127,8 @@ export default function AdminDashboard() {
   const [activeView, setActiveView]   = useState('dashboard')
   const [txMenuOpen, setTxMenuOpen]   = useState(false)
   const [smMenuOpen, setSmMenuOpen]   = useState(false)
+  const [topbarSearch, setTopbarSearch] = useState('')
+  const [userMgmtSearch, setUserMgmtSearch] = useState('')
 
   // ── Tutor data ──
   const [stats,   setStats]   = useState({ pending: 0, approved: 0, rejected: 0, total: 0 })
@@ -423,7 +425,7 @@ export default function AdminDashboard() {
       <main className="ml-64 w-[calc(100%-16rem)] max-w-[calc(100vw-16rem)] min-w-0 min-h-screen flex flex-col overflow-x-hidden">
 
         {/* Top bar */}
-        <header className="h-16 fixed top-0 right-0 left-64 z-10 bg-white/80 backdrop-blur-xl border-b border-black/5 flex justify-between items-center gap-4 px-6 lg:px-8 min-w-0 overflow-hidden">
+        <header className="h-16 fixed top-0 right-0 left-64 z-10 bg-white/80 backdrop-blur-xl border-b border-black/5 flex justify-between items-center gap-4 px-6 lg:px-8 min-w-0">
           {/* Breadcrumb */}
           <div className="hidden md:flex items-center gap-1.5 text-sm shrink-0 min-w-0">
             <span className="text-on-surface-variant/70 font-medium">EduX Admin</span>
@@ -435,15 +437,24 @@ export default function AdminDashboard() {
             <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span>
             <input
               className="w-full pl-10 pr-4 py-2 rounded-xl border border-outline-variant bg-gray-50/80 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 focus:bg-white transition-all"
-              placeholder="Tìm kiếm nhanh..."
+              placeholder="Tìm kiếm người dùng..."
               type="text"
+              value={topbarSearch}
+              onChange={e => setTopbarSearch(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && topbarSearch.trim()) {
+                  setUserMgmtSearch(topbarSearch.trim())
+                  setActiveView('user-management')
+                  setTopbarSearch('')
+                }
+              }}
             />
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <button className="w-10 h-10 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" onClick={() => { fetchData(); fetchKpiStats(); fetchChartData() }} title="Làm mới">
               <span className="material-symbols-outlined">refresh</span>
             </button>
-            <NotificationDropdown token={token} />
+            <AdminNotificationBell token={token} onNavigate={setActiveView} />
             <button className="w-10 h-10 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-gray-100 hover:text-primary transition-colors" title="Trợ giúp">
               <span className="material-symbols-outlined">help</span>
             </button>
@@ -500,7 +511,7 @@ export default function AdminDashboard() {
               setReviewNotes={setReviewNotes}
             />
           )}
-          {activeView === 'user-management' && <UserManagementView />}
+          {activeView === 'user-management' && <UserManagementView initialSearch={userMgmtSearch} onSearchConsumed={() => setUserMgmtSearch('')} />}
           {activeView === 'subjects'         && <SubjectsView token={token} />}
           {activeView === 'lessons'          && <CourseManagementView token={token} />}
           {activeView === 'transactions'     && <TransactionsView token={token} />}
@@ -1094,6 +1105,7 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
                   <thead className="bg-surface-container border-b border-surface-variant">
                     <tr>
                       <th className="py-3 px-6 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide">Ứng viên</th>
+                      <th className="py-3 px-4 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide">User ID</th>
                       <th className="py-3 px-6 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide">Môn học</th>
                       <th className="py-3 px-6 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide">Kinh nghiệm</th>
                       <th className="py-3 px-6 text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wide text-right">Thao tác</th>
@@ -1119,6 +1131,21 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
                               <p className="text-label-md font-label-md text-on-surface truncate max-w-[200px]">{tutor.full_name}</p>
                               <p className="text-label-sm font-label-sm text-on-surface-variant truncate max-w-[200px]">{tutor.email}</p>
                             </div>
+                          </div>
+                        </td>
+                        {/* User ID + copy */}
+                        <td className="py-4 px-4" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center gap-1">
+                            <code className="text-[11px] text-on-surface-variant bg-gray-100 px-1.5 py-0.5 rounded font-mono truncate max-w-[90px]" title={tutor.user_id}>
+                              {tutor.user_id ? tutor.user_id.slice(0, 8) + '…' : '—'}
+                            </code>
+                            <button
+                              title="Copy user ID"
+                              className="p-0.5 text-on-surface-variant hover:text-primary transition-colors"
+                              onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(tutor.user_id || '') }}
+                            >
+                              <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                            </button>
                           </div>
                         </td>
                         <td className="py-4 px-6">
@@ -1152,6 +1179,18 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
                               disabled={!tutor.cccd_url}
                             >
                               <span className="material-symbols-outlined text-[20px]">badge</span>
+                            </button>
+                            <button
+                              title="Phân tích AI Copilot"
+                              className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
+                              onClick={e => {
+                                e.stopPropagation()
+                                window.dispatchEvent(new CustomEvent('admin-copilot:analyze', {
+                                  detail: { entityType: 'TUTOR', entityId: tutor.user_id }
+                                }))
+                              }}
+                            >
+                              <span className="material-symbols-outlined text-[20px]">psychology</span>
                             </button>
                             <button
                               className="px-sm py-xs rounded-lg text-label-sm font-label-sm border border-primary text-primary hover:bg-primary-fixed transition-colors"
@@ -1204,11 +1243,34 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
                     <p className="text-body-lg font-body-lg text-primary mt-xs font-medium line-clamp-2 break-all">
                       {selectedTutor.bio ? selectedTutor.bio.slice(0, 90) + (selectedTutor.bio.length > 90 ? '…' : '') : 'Chưa có thông tin học vị'}
                     </p>
+                    {/* User ID row */}
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="text-[11px] text-on-surface-variant font-medium">User ID:</span>
+                      <code className="text-[11px] font-mono bg-gray-100 px-2 py-0.5 rounded text-on-surface select-all">{selectedTutor.user_id || '—'}</code>
+                      <button
+                        title="Copy"
+                        className="text-on-surface-variant hover:text-primary transition-colors"
+                        onClick={() => navigator.clipboard.writeText(selectedTutor.user_id || '')}
+                      >
+                        <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                      </button>
+                    </div>
                   </div>
-                  <span className="inline-flex items-center gap-1 px-3 py-1 bg-surface-container-low text-on-surface-variant rounded-full text-label-sm font-label-sm border border-outline-variant shrink-0">
-                    <span className="material-symbols-outlined text-[16px]">pending_actions</span>
-                    Chờ duyệt
-                  </span>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-surface-container-low text-on-surface-variant rounded-full text-label-sm font-label-sm border border-outline-variant">
+                      <span className="material-symbols-outlined text-[16px]">pending_actions</span>
+                      Chờ duyệt
+                    </span>
+                    <button
+                      onClick={() => window.dispatchEvent(new CustomEvent('admin-copilot:analyze', {
+                        detail: { entityType: 'TUTOR', entityId: selectedTutor.user_id }
+                      }))}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-label-sm font-label-sm hover:bg-indigo-100 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">psychology</span>
+                      Phân tích AI Copilot
+                    </button>
+                  </div>
                 </div>
                 <div className="flex gap-2 mt-md flex-wrap">
                   {(selectedTutor.subjects || 'N/A').split(',').slice(0, 5).map((s, i) => (
@@ -1714,14 +1776,14 @@ function InfoRow({ icon, label, value }) {
 }
 
 // ─── User Management View ─────────────────────────────────────────────────────
-function UserManagementView() {
+function UserManagementView({ initialSearch = '', onSearchConsumed }) {
   const { token } = useAuth()
 
   const [users,         setUsers]         = useState([])
   const [total,         setTotal]         = useState(0)
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
-  const [search,        setSearch]        = useState('')
+  const [search,        setSearch]        = useState(initialSearch)
   const [roleFilter,    setRoleFilter]    = useState('all')
   const [page,          setPage]          = useState(1)
   const [actionId,      setActionId]      = useState(null)
@@ -1732,6 +1794,11 @@ function UserManagementView() {
 
   const LIMIT = 20
   const totalPages = Math.max(1, Math.ceil(total / LIMIT))
+
+  // Nhận search từ topbar
+  useEffect(() => {
+    if (initialSearch) { setSearch(initialSearch); onSearchConsumed?.() }
+  }, [initialSearch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounce search — fetch after 350ms idle
   useEffect(() => {
