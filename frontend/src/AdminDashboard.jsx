@@ -31,6 +31,7 @@ import Moderation from './admin/services/Moderation'
 import SemanticModeration from './admin/semantic/SemanticModeration'
 import FraudIntel from './admin/fraud/FraudIntel'
 import SafeAnalytics from './admin/analytics/SafeAnalytics'
+import { SubjectsView } from './admin/subjects'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -2091,130 +2092,6 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
           />
         </div>
       </div>
-    </div>
-  )
-}
-
-// ─── Subjects View ────────────────────────────────────────────────────────────
-// Canonical Vietnamese tutoring subjects for Grade 1–12.
-// Icons and colors keyed to exact canonical names returned by the backend.
-const SUBJECT_META_MAP = {
-  'Toán':       { icon: 'calculate',    color: 'bg-blue-100 text-blue-700'     },
-  'Tiếng Việt': { icon: 'menu_book',    color: 'bg-rose-100 text-rose-700'     },
-  'Ngữ văn':    { icon: 'auto_stories', color: 'bg-pink-100 text-pink-700'     },
-  'Tiếng Anh':  { icon: 'translate',    color: 'bg-green-100 text-green-700'   },
-  'Vật lý':     { icon: 'bolt',         color: 'bg-cyan-100 text-cyan-700'     },
-  'Hóa học':    { icon: 'biotech',      color: 'bg-purple-100 text-purple-700' },
-  'Sinh học':   { icon: 'grass',        color: 'bg-emerald-100 text-emerald-700'},
-  'Lịch sử':    { icon: 'history_edu',  color: 'bg-amber-100 text-amber-700'   },
-  'Địa lý':     { icon: 'public',       color: 'bg-teal-100 text-teal-700'     },
-  'Tin học':    { icon: 'code',         color: 'bg-indigo-100 text-indigo-700' },
-}
-const SUBJECT_DEFAULT = { icon: 'school', color: 'bg-gray-100 text-gray-600' }
-
-function SubjectsView({ token }) {
-  const [subjects, setSubjects] = useState([])
-  const [loading,  setLoading]  = useState(true)
-  const [error,    setError]    = useState(null)
-  const [search,   setSearch]   = useState('')
-  const [tick,     setTick]     = useState(0)
-
-  useEffect(() => {
-    setLoading(true)
-    setError(null)
-    authFetch(`${API}/api/admin/subjects`, token)
-      .then(data => { setSubjects(data.subjects || []); setLoading(false) })
-      .catch(err  => { setError(err.message); setLoading(false) })
-  }, [token, tick])
-
-  const filtered = subjects.filter(s =>
-    s.name.toLowerCase().includes(search.toLowerCase())
-  )
-
-  return (
-    <div className="p-10 max-w-[1280px] mx-auto">
-      <div className="flex justify-between items-end mb-8">
-        <div>
-          <h2 className="text-3xl font-bold text-on-background">Môn học</h2>
-          <p className="text-sm text-on-surface-variant mt-1">Quản lý các môn học phổ biến từ cấp 1 đến cấp 3.</p>
-        </div>
-        <button
-          disabled
-          className="px-4 py-2 bg-gray-200 text-gray-400 rounded-lg text-sm font-semibold flex items-center gap-2 cursor-not-allowed"
-          title="Thêm môn học — chưa khả dụng"
-        >
-          <span className="material-symbols-outlined text-[18px]">add</span> Thêm môn học
-        </button>
-      </div>
-
-      <div className="mb-6">
-        <div className="relative max-w-sm">
-          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
-          <input
-            className="w-full pl-9 pr-4 py-2 bg-white border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 shadow-sm"
-            placeholder="Tìm kiếm môn học..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {loading && (
-        <div className="flex items-center justify-center h-48 text-on-surface-variant">
-          <span className="material-symbols-outlined text-[32px] mr-3" style={{ animation: 'spin 1s linear infinite' }}>progress_activity</span>
-          Đang tải...
-        </div>
-      )}
-      {error && !loading && (
-        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
-          <span className="material-symbols-outlined">error</span>
-          {error}
-          <button onClick={() => setTick(t => t + 1)} className="ml-auto text-xs underline">Thử lại</button>
-        </div>
-      )}
-      {!loading && !error && filtered.length === 0 && (
-        <div className="text-center py-16 text-on-surface-variant">
-          <span className="material-symbols-outlined text-[48px] mb-3 block">school</span>
-          Chưa có môn học phù hợp
-        </div>
-      )}
-      {!loading && !error && filtered.length > 0 && (
-        <div className="grid grid-cols-3 gap-6">
-          {filtered.map(s => {
-            const meta = SUBJECT_META_MAP[s.name] || SUBJECT_DEFAULT
-            return (
-              <div key={s.name} className="bg-white rounded-xl p-6 shadow-sm border border-outline-variant hover:shadow-md transition-shadow">
-                <div className="flex items-start mb-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${meta.color}`}>
-                    <span className="material-symbols-outlined text-[24px]">{meta.icon}</span>
-                  </div>
-                </div>
-                <h3 className="text-base font-bold text-on-surface mb-3">{s.name}</h3>
-                <div className="flex gap-4">
-                  <div>
-                    <p className="text-2xl font-bold text-primary">{s.tutor_count}</p>
-                    <p className="text-xs text-on-surface-variant">Gia sư</p>
-                  </div>
-                  <div className="w-px bg-outline-variant" />
-                  <div>
-                    <p className="text-2xl font-bold text-on-surface">{s.quiz_count}</p>
-                    <p className="text-xs text-on-surface-variant">Bài kiểm tra</p>
-                  </div>
-                  {s.course_count > 0 && (
-                    <>
-                      <div className="w-px bg-outline-variant" />
-                      <div>
-                        <p className="text-2xl font-bold text-on-surface">{s.course_count}</p>
-                        <p className="text-xs text-on-surface-variant">Khóa học</p>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
     </div>
   )
 }

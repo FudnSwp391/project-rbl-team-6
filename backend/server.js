@@ -4582,16 +4582,40 @@ function normaliseSubject(raw) {
 
 app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const [quizRes, tutorRes, courseRes] = await Promise.all([
+    const [quizRes, tutorRes, courseRes, enrolRes, rowsRes] = await Promise.all([
       pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
       pool.query(`SELECT subjects FROM tutor_profiles WHERE subjects IS NOT NULL AND subjects <> '' AND status = 'approved'`),
-      pool.query(`SELECT subject FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`SELECT subject, status FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`
+        SELECT c.subject, e.student_id
+        FROM course_enrollments e
+        JOIN courses c ON c.id = e.course_id
+        WHERE e.status = 'active' AND c.subject IS NOT NULL AND c.subject <> ''
+      `),
+      // Batch 32: subjects are real rows now. Fall back to the canonical array
+      // if the migration has not run yet so the admin UI never renders empty.
+      pool.query(`
+        SELECT id, name, slug, description, icon, color, levels, status, sort_order, updated_at
+        FROM subjects ORDER BY sort_order, name
+      `).catch(() => ({ rows: [] })),
     ]);
 
-    // Initialise counters for every canonical subject
-    const quizCount   = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
-    const tutorCount  = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
-    const courseCount = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
+    const subjectRows = rowsRes.rows.length
+      ? rowsRes.rows
+      : CANONICAL_SUBJECTS.map((name, i) => ({
+          id: null, name, slug: null, description: null,
+          icon: 'school', color: 'bg-gray-100 text-gray-600',
+          levels: [], status: 'active', sort_order: i + 1, updated_at: null,
+        }));
+
+    // Counters are keyed by the rows we will actually return, not by the
+    // hardcoded list, so admin-created subjects get counted too.
+    const names       = subjectRows.map(r => r.name);
+    const quizCount   = Object.fromEntries(names.map(s => [s, 0]));
+    const tutorCount  = Object.fromEntries(names.map(s => [s, 0]));
+    const courseCount = Object.fromEntries(names.map(s => [s, 0]));
+    const pendingCount = Object.fromEntries(names.map(s => [s, 0]));
+    const studentSets  = Object.fromEntries(names.map(s => [s, new Set()]));
 
     // Aggregate quiz counts
     for (const row of quizRes.rows) {
@@ -4619,17 +4643,36 @@ app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
       }
     }
 
-    // Aggregate course counts
+    // Aggregate course counts; pending_review courses are the admin's work queue.
     for (const row of courseRes.rows) {
       const canon = normaliseSubject(row.subject);
-      if (canon) courseCount[canon] = (courseCount[canon] || 0) + 1;
+      if (!canon || !(canon in courseCount)) continue;
+      courseCount[canon] += 1;
+      if (row.status === 'pending_review') pendingCount[canon] += 1;
     }
 
-    const subjects = CANONICAL_SUBJECTS.map(name => ({
-      name,
-      quiz_count:   quizCount[name]   || 0,
-      tutor_count:  tutorCount[name]  || 0,
-      course_count: courseCount[name] || 0,
+    // Distinct active learners per subject, via course enrolments.
+    for (const row of enrolRes.rows) {
+      const canon = normaliseSubject(row.subject);
+      if (canon && studentSets[canon]) studentSets[canon].add(row.student_id);
+    }
+
+    const subjects = subjectRows.map(r => ({
+      id:            r.id,
+      name:          r.name,
+      slug:          r.slug,
+      description:   r.description,
+      icon:          r.icon,
+      color:         r.color,
+      levels:        r.levels || [],
+      status:        r.status,
+      sort_order:    r.sort_order,
+      updated_at:    r.updated_at,
+      quiz_count:    quizCount[r.name]    || 0,
+      tutor_count:   tutorCount[r.name]   || 0,
+      course_count:  courseCount[r.name]  || 0,
+      pending_count: pendingCount[r.name] || 0,
+      student_count: studentSets[r.name] ? studentSets[r.name].size : 0,
     }));
 
     return res.json({ subjects });
@@ -15783,6 +15826,58 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: admin_analytics_queries ready (Batch 29A)');
   } catch (err) {
     console.error('⚠️  DB migration (admin_analytics_queries Batch 29A) warning:', err.message);
+  }
+
+  // ── Auto-migrate: subjects as first-class entities (Batch 32) ───────────────
+  // Until now subjects existed only as the hardcoded CANONICAL_SUBJECTS array
+  // plus free-text strings on courses/quizzes/tutor_profiles. That left admins
+  // with no row to edit, so create/edit/archive were impossible. This table
+  // gives each subject an identity; the free-text columns stay authoritative
+  // for counts and are still reconciled through normaliseSubject().
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS subjects (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name        TEXT NOT NULL UNIQUE,
+        slug        TEXT NOT NULL UNIQUE,
+        description TEXT,
+        icon        TEXT NOT NULL DEFAULT 'school',
+        color       TEXT NOT NULL DEFAULT 'bg-gray-100 text-gray-600',
+        levels      TEXT[] NOT NULL DEFAULT '{}',
+        status      TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active','draft','archived','disabled')),
+        sort_order  INT NOT NULL DEFAULT 0,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW(),
+        archived_at TIMESTAMPTZ,
+        created_by  UUID REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_subjects_status ON subjects(status);
+      CREATE INDEX IF NOT EXISTS idx_subjects_slug   ON subjects(slug);
+      CREATE INDEX IF NOT EXISTS idx_subjects_order  ON subjects(sort_order, name);
+    `);
+
+    // Seed the canonical ten, preserving the icons/colors the admin UI already
+    // shows so the redesign does not visually re-theme existing subjects.
+    // ON CONFLICT DO NOTHING keeps this safe to re-run and never clobbers an
+    // admin's later edits to icon/color/status.
+    await pool.query(`
+      INSERT INTO subjects (name, slug, icon, color, levels, sort_order) VALUES
+        ('Toán',       'toan',       'calculate',    'bg-blue-100 text-blue-700',       ARRAY['Tiểu học','THCS','THPT'], 1),
+        ('Tiếng Việt', 'tieng-viet', 'menu_book',    'bg-rose-100 text-rose-700',       ARRAY['Tiểu học'],               2),
+        ('Ngữ văn',    'ngu-van',    'auto_stories', 'bg-pink-100 text-pink-700',       ARRAY['THCS','THPT'],            3),
+        ('Tiếng Anh',  'tieng-anh',  'translate',    'bg-green-100 text-green-700',     ARRAY['Tiểu học','THCS','THPT'], 4),
+        ('Vật lý',     'vat-ly',     'bolt',         'bg-cyan-100 text-cyan-700',       ARRAY['THCS','THPT'],            5),
+        ('Hóa học',    'hoa-hoc',    'biotech',      'bg-purple-100 text-purple-700',   ARRAY['THCS','THPT'],            6),
+        ('Sinh học',   'sinh-hoc',   'grass',        'bg-emerald-100 text-emerald-700', ARRAY['THCS','THPT'],            7),
+        ('Lịch sử',    'lich-su',    'history_edu',  'bg-amber-100 text-amber-700',     ARRAY['THCS','THPT'],            8),
+        ('Địa lý',     'dia-ly',     'public',       'bg-teal-100 text-teal-700',       ARRAY['THCS','THPT'],            9),
+        ('Tin học',    'tin-hoc',    'code',         'bg-indigo-100 text-indigo-700',   ARRAY['Tiểu học','THCS','THPT'], 10)
+      ON CONFLICT (name) DO NOTHING
+    `);
+    console.log('✅ DB migration: subjects table + canonical seed ready (Batch 32)');
+  } catch (err) {
+    console.error('⚠️  DB migration (subjects Batch 32) warning:', err.message);
   }
 
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
