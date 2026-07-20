@@ -4886,7 +4886,7 @@ app.patch("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res)
 // GET /api/admin/subjects/:id — detail: KPIs, monthly series, tutors, courses, sessions
 //
 // Aggregation happens in JS rather than SQL because the link between a subject
-// row and the free-text `subject` columns on courses/sessions/invoices runs
+// row and the free-text `subject` columns on courses/bookings/reviews runs
 // through normaliseSubject(), which is not expressible in SQL. Volumes are
 // small at this scale; if these tables grow, add a subject_id FK and move the
 // grouping into the query.
@@ -4902,7 +4902,7 @@ app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) =
     const name = subject.name;
     const mine = raw => normaliseSubject(raw) === name;
 
-    const [courseRes, quizRes, tutorRes, enrolRes, sessionRes, invoiceRes, reviewRes] = await Promise.all([
+    const [courseRes, quizRes, tutorRes, enrolRes, bookingRes, reviewRes] = await Promise.all([
       pool.query(`SELECT c.id, c.title, c.subject, c.status, c.price, c.created_at,
                          COALESCE(u.full_name, '—') AS tutor_name
                   FROM courses c LEFT JOIN users u ON u.id = c.tutor_id
@@ -4915,21 +4915,23 @@ app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) =
       pool.query(`SELECT c.subject, e.student_id FROM course_enrollments e
                   JOIN courses c ON c.id = e.course_id
                   WHERE e.status = 'active' AND c.subject IS NOT NULL AND c.subject <> ''`),
-      pool.query(`SELECT s.id, s.subject, s.status, s.scheduled_at, s.duration_mins,
-                         s.tutor_id, s.student_id,
-                         COALESCE(t.full_name, '—') AS tutor_name,
-                         COALESCE(st.full_name, '—') AS student_name
-                  FROM tutor_sessions s
-                  LEFT JOIN users t  ON t.id  = s.tutor_id
-                  LEFT JOIN users st ON st.id = s.student_id`).catch(() => ({ rows: [] })),
-      pool.query(`SELECT subject, amount, status, paid_at, created_at FROM invoices`)
-        .catch(() => ({ rows: [] })),
+      // bookings is the live lesson table (78 read sites, written by the booking
+      // flow). tutor_sessions and invoices both carry a `subject` column but
+      // nothing in the app ever inserts into them, so reading those would make
+      // every session and revenue figure permanently empty.
+      pool.query(`SELECT b.id, b.subject, b.status, b.lesson_date, b.time_slot,
+                         b.lesson_fee, b.escrow_released_at, b.tutor_id, b.student_id,
+                         COALESCE(t.full_name,  b.tutor_name,   '—') AS tutor_name,
+                         COALESCE(st.full_name, b.student_name, '—') AS student_name
+                  FROM bookings b
+                  LEFT JOIN users t  ON t.id  = b.tutor_id
+                  LEFT JOIN users st ON st.id = b.student_id
+                  WHERE b.subject IS NOT NULL AND b.subject <> ''`).catch(() => ({ rows: [] })),
       pool.query(`SELECT subject, rating FROM tutor_reviews`).catch(() => ({ rows: [] })),
     ]);
 
     const courses  = courseRes.rows.filter(c => mine(c.subject));
-    const sessions = sessionRes.rows.filter(s => mine(s.subject));
-    const invoices = invoiceRes.rows.filter(i => mine(i.subject));
+    const sessions = bookingRes.rows.filter(b => mine(b.subject));
     const reviews  = reviewRes.rows.filter(r => mine(r.subject));
     const quizzes  = quizRes.rows.filter(q => mine(q.subject)).length;
 
@@ -4945,10 +4947,18 @@ app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) =
       return parts.some(p => mine(p));
     });
 
-    const completed = sessions.filter(s => s.status === 'completed').length;
-    const cancelled = sessions.filter(s => s.status === 'cancelled' || s.status === 'absent').length;
-    const paid      = invoices.filter(i => i.status === 'paid');
-    const revenue   = paid.reduce((n, i) => n + Number(i.amount || 0), 0);
+    // bookings.status is capitalised: Pending / Approved / InProgress /
+    // Completed / Cancelled / Declined / Timeout.
+    const DONE      = 'Completed';
+    const LOST      = new Set(['Cancelled', 'Declined', 'Timeout']);
+    const completed = sessions.filter(s => s.status === DONE).length;
+    const cancelled = sessions.filter(s => LOST.has(s.status)).length;
+
+    // Revenue is recognised on escrow release, matching how the rest of the
+    // platform reports it (see the tutor payout query using escrow_released_at).
+    // Booking a lesson is not revenue until the money actually moves.
+    const earned    = sessions.filter(s => s.escrow_released_at);
+    const revenue   = earned.reduce((n, s) => n + Number(s.lesson_fee || 0), 0);
     const ratingSum = reviews.reduce((n, r) => n + Number(r.rating || 0), 0);
 
     // Last 6 calendar months, oldest first. Buckets always exist so the chart
@@ -4965,10 +4975,12 @@ app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) =
       };
       monthly.push({
         month: key,
-        sessions:  sessions.filter(s => inMonth(s.scheduled_at)).length,
-        completed: sessions.filter(s => s.status === 'completed' && inMonth(s.scheduled_at)).length,
-        revenue:   paid.filter(i => inMonth(i.paid_at || i.created_at))
-                       .reduce((n, i) => n + Number(i.amount || 0), 0),
+        sessions:  sessions.filter(s => inMonth(s.lesson_date)).length,
+        completed: sessions.filter(s => s.status === DONE && inMonth(s.lesson_date)).length,
+        // Bucketed by release date, not lesson date, so the revenue bars line
+        // up with when the platform actually recognised the money.
+        revenue:   earned.filter(s => inMonth(s.escrow_released_at))
+                         .reduce((n, s) => n + Number(s.lesson_fee || 0), 0),
       });
     }
 
@@ -4978,7 +4990,7 @@ app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) =
       if (!s.tutor_id) continue;
       const cur = perTutor.get(s.tutor_id) || { id: s.tutor_id, name: s.tutor_name, sessions: 0, completed: 0 };
       cur.sessions += 1;
-      if (s.status === 'completed') cur.completed += 1;
+      if (s.status === DONE) cur.completed += 1;
       perTutor.set(s.tutor_id, cur);
     }
     const top_tutors = [...perTutor.values()].sort((a, b) => b.sessions - a.sessions).slice(0, 8);
@@ -4996,7 +5008,7 @@ app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) =
         sessions_cancelled: cancelled,
         completion_rate: sessions.length ? Math.round((completed / sessions.length) * 100) : null,
         revenue,
-        invoice_count: paid.length,
+        paid_bookings: earned.length,
         avg_rating: reviews.length ? Number((ratingSum / reviews.length).toFixed(2)) : null,
         review_count: reviews.length,
       },
@@ -5010,11 +5022,13 @@ app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) =
         status: c.status, price: Number(c.price || 0), created_at: c.created_at,
       })),
       sessions: sessions
-        .sort((a, b) => new Date(b.scheduled_at) - new Date(a.scheduled_at))
+        .sort((a, b) => new Date(b.lesson_date) - new Date(a.lesson_date))
         .slice(0, 50)
         .map(s => ({
           id: s.id, tutor_name: s.tutor_name, student_name: s.student_name,
-          scheduled_at: s.scheduled_at, status: s.status, duration_mins: s.duration_mins,
+          lesson_date: s.lesson_date, time_slot: s.time_slot, status: s.status,
+          lesson_fee: Number(s.lesson_fee || 0),
+          settled: Boolean(s.escrow_released_at),
         })),
     });
   } catch (err) {

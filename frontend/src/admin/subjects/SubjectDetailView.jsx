@@ -16,10 +16,12 @@ const fmtCompactVND = n => {
   if (n >= 1e3) return Math.round(n / 1e3) + 'K'
   return n + 'đ'
 }
-const fmtDateTime = iso => {
+// bookings.lesson_date is a date; the clock time lives in time_slot, so this
+// deliberately does not render an hour that would be meaningless.
+const fmtDate = iso => {
   if (!iso) return '—'
   const d = new Date(iso), p = x => String(x).padStart(2, '0')
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`
 }
 const monthLabel = key => {
   const [y, m] = key.split('-')
@@ -41,12 +43,15 @@ const COURSE_STATUS = {
   rejected:       { label: 'Bị từ chối', cls: 'bg-red-50 text-red-700 ring-red-200' },
   archived:       { label: 'Lưu trữ',    cls: 'bg-slate-50 text-slate-600 ring-slate-200' },
 }
+// bookings.status vocabulary — capitalised, unlike the course statuses above.
 const SESSION_STATUS = {
-  completed: { label: 'Hoàn thành', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
-  scheduled: { label: 'Đã lên lịch', cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
-  cancelled: { label: 'Đã hủy',     cls: 'bg-red-50 text-red-700 ring-red-200' },
-  absent:    { label: 'Vắng',       cls: 'bg-red-50 text-red-700 ring-red-200' },
-  late:      { label: 'Đi muộn',    cls: 'bg-amber-50 text-amber-700 ring-amber-200' },
+  Completed:  { label: 'Hoàn thành',   cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  InProgress: { label: 'Đang diễn ra', cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
+  Approved:   { label: 'Đã duyệt',     cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
+  Pending:    { label: 'Chờ xác nhận', cls: 'bg-amber-50 text-amber-700 ring-amber-200' },
+  Cancelled:  { label: 'Đã hủy',       cls: 'bg-red-50 text-red-700 ring-red-200' },
+  Declined:   { label: 'Bị từ chối',   cls: 'bg-red-50 text-red-700 ring-red-200' },
+  Timeout:    { label: 'Hết hạn',      cls: 'bg-slate-50 text-slate-600 ring-slate-200' },
 }
 const Pill = ({ map, value }) => {
   const m = map[value] || { label: value || '—', cls: 'bg-slate-50 text-slate-600 ring-slate-200' }
@@ -166,8 +171,8 @@ export default function SubjectDetailView({ subjectId, token, onBack, onAction }
             <KpiCard icon="group"      label="Học viên"        value={fmtInt(kpis.students)} />
             <KpiCard icon="quiz"       label="Đề kiểm tra"     value={fmtInt(kpis.quizzes)} />
             <KpiCard icon="payments"   label="Doanh thu"
-              value={kpis.invoice_count ? fmtCompactVND(kpis.revenue) : null}
-              hint={kpis.invoice_count ? `${fmtInt(kpis.invoice_count)} hóa đơn đã thanh toán` : null} />
+              value={kpis.paid_bookings ? fmtCompactVND(kpis.revenue) : null}
+              hint={kpis.paid_bookings ? `${fmtInt(kpis.paid_bookings)} buổi đã giải ngân` : null} />
             <KpiCard icon="event"      label="Buổi học"
               value={kpis.sessions_total || null}
               hint={kpis.sessions_total ? `${fmtInt(kpis.sessions_completed)} hoàn thành` : null} />
@@ -195,9 +200,10 @@ export default function SubjectDetailView({ subjectId, token, onBack, onAction }
               <BarChart data={monthlySessions} format={fmtInt} barClass="fill-primary"
                 emptyText="Chưa có buổi học nào được ghi nhận cho môn này" />
             </Panel>
-            <Panel title="Doanh thu 6 tháng gần nhất" icon="payments">
+            <Panel title="Doanh thu 6 tháng gần nhất" icon="payments"
+                   note="Ghi nhận khi escrow giải ngân">
               <BarChart data={monthlyRevenue} format={fmtCompactVND} barClass="fill-emerald-500"
-                emptyText="Chưa có hóa đơn đã thanh toán cho môn này" />
+                emptyText="Chưa có buổi học nào được giải ngân cho môn này" />
             </Panel>
           </div>
 
@@ -263,12 +269,22 @@ export default function SubjectDetailView({ subjectId, token, onBack, onAction }
           empty="Chưa có buổi học nào cho môn này"
           rows={sessions}
           columns={[
-            { key: 'scheduled_at', label: 'Thời gian', render: r => fmtDateTime(r.scheduled_at) },
+            { key: 'lesson_date', label: 'Buổi học', render: r => (
+              <span className="whitespace-nowrap">
+                {fmtDate(r.lesson_date)}
+                {r.time_slot && <span className="text-on-surface-variant"> · {r.time_slot}</span>}
+              </span>) },
             { key: 'tutor_name', label: 'Gia sư' },
             { key: 'student_name', label: 'Học viên' },
             { key: 'status', label: 'Trạng thái', render: r => <Pill map={SESSION_STATUS} value={r.status} /> },
-            { key: 'duration_mins', label: 'Thời lượng', align: 'right',
-              render: r => `${r.duration_mins || 0} phút` },
+            { key: 'lesson_fee', label: 'Học phí', align: 'right', render: r => (
+              <span className="whitespace-nowrap">
+                {r.lesson_fee ? fmtVND(r.lesson_fee) : '—'}
+                {r.settled && (
+                  <span className="material-symbols-outlined text-[14px] text-emerald-600 align-middle ml-1"
+                        title="Đã giải ngân">check_circle</span>
+                )}
+              </span>) },
           ]}
         />
       )}
@@ -331,11 +347,12 @@ const BackLink = ({ onBack, name }) => (
   </button>
 )
 
-const Panel = ({ title, icon, children }) => (
+const Panel = ({ title, icon, note, children }) => (
   <section className="bg-white rounded-xl border border-outline-variant p-4">
-    <div className="flex items-center gap-1.5 mb-4">
+    <div className="flex items-center gap-1.5 mb-4 flex-wrap">
       <span className="material-symbols-outlined text-[17px] text-on-surface-variant">{icon}</span>
       <h3 className="text-sm font-semibold text-on-surface">{title}</h3>
+      {note && <span className="text-[11px] text-on-surface-variant ml-auto">{note}</span>}
     </div>
     {children}
   </section>
