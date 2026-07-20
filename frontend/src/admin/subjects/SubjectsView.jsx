@@ -9,6 +9,7 @@ import ExceptionStrip from './components/ExceptionStrip'
 import EmptyState from './components/EmptyState'
 import SubjectFormModal from './components/SubjectFormModal'
 import DeleteSubjectModal from './components/DeleteSubjectModal'
+import SubjectDetailView from './SubjectDetailView'
 
 const SORTERS = {
   order:    (a, b) => (a.sort_order || 0) - (b.sort_order || 0) || a.name.localeCompare(b.name, 'vi'),
@@ -38,6 +39,9 @@ export default function SubjectsView({ token }) {
   const [selected, setSelected] = useState(() => new Set())
   const [formModal,   setFormModal]   = useState(null)   // { subject } | { } for create
   const [deleteModal, setDeleteModal] = useState(null)
+  // Admin nav is activeView state, not a router, so the detail page is a mode
+  // of this view rather than its own route.
+  const [openId, setOpenId] = useState(null)
 
   // `loading` starts true and the retry handler re-arms it, so the effect body
   // never has to setState synchronously on the way in.
@@ -143,9 +147,16 @@ export default function SubjectsView({ token }) {
       case 'disable':    return changeStatus(subject, 'disabled', 'vô hiệu hóa')
       case 'delete':     return setDeleteModal(subject)
       case 'manage':
-      case 'analytics':  return toast('Trang chi tiết môn học đang được xây dựng.', { icon: 'ℹ️' })
+      case 'analytics':  return setOpenId(subject.id)
       default:           return
     }
+  }
+
+  // Deleting from inside the detail page must return to the grid, since the
+  // record it was showing no longer exists.
+  const deleteAndExit = async subject => {
+    await deleteSubject(subject)
+    setOpenId(null)
   }
 
   const exportCsv = () => {
@@ -170,6 +181,43 @@ export default function SubjectsView({ token }) {
 
   const emptyVariant = search ? 'no-search' : filter !== 'all' ? 'no-filter' : 'no-data'
   const resetEmpty   = () => { if (search) setSearch(''); else if (filter !== 'all') setFilter('all') }
+
+  // Rendered from both the grid and the detail page, so editing or deleting
+  // from either place opens the same dialogs.
+  const dialogs = (
+    <>
+      {formModal && (
+        <SubjectFormModal
+          subject={formModal.subject}
+          onClose={() => setFormModal(null)}
+          onSubmit={saveSubject}
+        />
+      )}
+      {deleteModal && (
+        <DeleteSubjectModal
+          subject={deleteModal}
+          token={token}
+          onClose={() => setDeleteModal(null)}
+          onConfirm={() => (openId ? deleteAndExit(deleteModal) : deleteSubject(deleteModal))}
+          onArchive={() => changeStatus(deleteModal, 'archived', 'lưu trữ')}
+        />
+      )}
+    </>
+  )
+
+  if (openId) {
+    return (
+      <>
+        <SubjectDetailView
+          subjectId={openId}
+          token={token}
+          onBack={() => setOpenId(null)}
+          onAction={handleAction}
+        />
+        {dialogs}
+      </>
+    )
+  }
 
   return (
     <div className="p-10 max-w-[1280px] mx-auto">
@@ -301,23 +349,7 @@ export default function SubjectsView({ token }) {
         </div>
       )}
 
-      {formModal && (
-        <SubjectFormModal
-          subject={formModal.subject}
-          onClose={() => setFormModal(null)}
-          onSubmit={saveSubject}
-        />
-      )}
-
-      {deleteModal && (
-        <DeleteSubjectModal
-          subject={deleteModal}
-          token={token}
-          onClose={() => setDeleteModal(null)}
-          onConfirm={() => deleteSubject(deleteModal)}
-          onArchive={() => changeStatus(deleteModal, 'archived', 'lưu trữ')}
-        />
-      )}
+      {dialogs}
     </div>
   )
 }

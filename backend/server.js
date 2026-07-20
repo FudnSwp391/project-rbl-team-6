@@ -4883,6 +4883,146 @@ app.patch("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res)
   }
 });
 
+// GET /api/admin/subjects/:id — detail: KPIs, monthly series, tutors, courses, sessions
+//
+// Aggregation happens in JS rather than SQL because the link between a subject
+// row and the free-text `subject` columns on courses/sessions/invoices runs
+// through normaliseSubject(), which is not expressible in SQL. Volumes are
+// small at this scale; if these tables grow, add a subject_id FK and move the
+// grouping into the query.
+app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows: subjRows } = await pool.query(
+      `SELECT id, name, slug, description, icon, color, levels, status, sort_order,
+              created_at, updated_at, archived_at
+       FROM subjects WHERE id = $1`, [req.params.id]
+    );
+    if (!subjRows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+    const subject = subjRows[0];
+    const name = subject.name;
+    const mine = raw => normaliseSubject(raw) === name;
+
+    const [courseRes, quizRes, tutorRes, enrolRes, sessionRes, invoiceRes, reviewRes] = await Promise.all([
+      pool.query(`SELECT c.id, c.title, c.subject, c.status, c.price, c.created_at,
+                         COALESCE(u.full_name, '—') AS tutor_name
+                  FROM courses c LEFT JOIN users u ON u.id = c.tutor_id
+                  WHERE c.subject IS NOT NULL AND c.subject <> ''`),
+      pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`SELECT tp.user_id, tp.subjects, tp.hourly_rate,
+                         COALESCE(u.full_name, '—') AS full_name, u.picture
+                  FROM tutor_profiles tp LEFT JOIN users u ON u.id = tp.user_id
+                  WHERE tp.subjects IS NOT NULL AND tp.subjects <> '' AND tp.status = 'approved'`),
+      pool.query(`SELECT c.subject, e.student_id FROM course_enrollments e
+                  JOIN courses c ON c.id = e.course_id
+                  WHERE e.status = 'active' AND c.subject IS NOT NULL AND c.subject <> ''`),
+      pool.query(`SELECT s.id, s.subject, s.status, s.scheduled_at, s.duration_mins,
+                         s.tutor_id, s.student_id,
+                         COALESCE(t.full_name, '—') AS tutor_name,
+                         COALESCE(st.full_name, '—') AS student_name
+                  FROM tutor_sessions s
+                  LEFT JOIN users t  ON t.id  = s.tutor_id
+                  LEFT JOIN users st ON st.id = s.student_id`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT subject, amount, status, paid_at, created_at FROM invoices`)
+        .catch(() => ({ rows: [] })),
+      pool.query(`SELECT subject, rating FROM tutor_reviews`).catch(() => ({ rows: [] })),
+    ]);
+
+    const courses  = courseRes.rows.filter(c => mine(c.subject));
+    const sessions = sessionRes.rows.filter(s => mine(s.subject));
+    const invoices = invoiceRes.rows.filter(i => mine(i.subject));
+    const reviews  = reviewRes.rows.filter(r => mine(r.subject));
+    const quizzes  = quizRes.rows.filter(q => mine(q.subject)).length;
+
+    const students = new Set(enrolRes.rows.filter(e => mine(e.subject)).map(e => e.student_id));
+
+    // Tutors: subjects column is CSV or a JSON array depending on how it was written.
+    const tutors = tutorRes.rows.filter(t => {
+      let parts = [];
+      try {
+        const parsed = JSON.parse(t.subjects);
+        parts = Array.isArray(parsed) ? parsed : [t.subjects];
+      } catch { parts = t.subjects.split(/[,;|]+/); }
+      return parts.some(p => mine(p));
+    });
+
+    const completed = sessions.filter(s => s.status === 'completed').length;
+    const cancelled = sessions.filter(s => s.status === 'cancelled' || s.status === 'absent').length;
+    const paid      = invoices.filter(i => i.status === 'paid');
+    const revenue   = paid.reduce((n, i) => n + Number(i.amount || 0), 0);
+    const ratingSum = reviews.reduce((n, r) => n + Number(r.rating || 0), 0);
+
+    // Last 6 calendar months, oldest first. Buckets always exist so the chart
+    // shows real gaps instead of silently collapsing empty months.
+    const monthly = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const inMonth = iso => {
+        if (!iso) return false;
+        const x = new Date(iso);
+        return x.getFullYear() === d.getFullYear() && x.getMonth() === d.getMonth();
+      };
+      monthly.push({
+        month: key,
+        sessions:  sessions.filter(s => inMonth(s.scheduled_at)).length,
+        completed: sessions.filter(s => s.status === 'completed' && inMonth(s.scheduled_at)).length,
+        revenue:   paid.filter(i => inMonth(i.paid_at || i.created_at))
+                       .reduce((n, i) => n + Number(i.amount || 0), 0),
+      });
+    }
+
+    // Tutor leaderboard by session volume for this subject only.
+    const perTutor = new Map();
+    for (const s of sessions) {
+      if (!s.tutor_id) continue;
+      const cur = perTutor.get(s.tutor_id) || { id: s.tutor_id, name: s.tutor_name, sessions: 0, completed: 0 };
+      cur.sessions += 1;
+      if (s.status === 'completed') cur.completed += 1;
+      perTutor.set(s.tutor_id, cur);
+    }
+    const top_tutors = [...perTutor.values()].sort((a, b) => b.sessions - a.sessions).slice(0, 8);
+
+    return res.json({
+      subject,
+      kpis: {
+        tutors:  tutors.length,
+        courses: courses.length,
+        students: students.size,
+        quizzes,
+        pending_courses: courses.filter(c => c.status === 'pending_review').length,
+        sessions_total: sessions.length,
+        sessions_completed: completed,
+        sessions_cancelled: cancelled,
+        completion_rate: sessions.length ? Math.round((completed / sessions.length) * 100) : null,
+        revenue,
+        invoice_count: paid.length,
+        avg_rating: reviews.length ? Number((ratingSum / reviews.length).toFixed(2)) : null,
+        review_count: reviews.length,
+      },
+      monthly,
+      top_tutors,
+      tutors: tutors.slice(0, 100).map(t => ({
+        id: t.user_id, name: t.full_name, picture: t.picture, hourly_rate: t.hourly_rate,
+      })),
+      courses: courses.slice(0, 100).map(c => ({
+        id: c.id, title: c.title, tutor_name: c.tutor_name,
+        status: c.status, price: Number(c.price || 0), created_at: c.created_at,
+      })),
+      sessions: sessions
+        .sort((a, b) => new Date(b.scheduled_at) - new Date(a.scheduled_at))
+        .slice(0, 50)
+        .map(s => ({
+          id: s.id, tutor_name: s.tutor_name, student_name: s.student_name,
+          scheduled_at: s.scheduled_at, status: s.status, duration_mins: s.duration_mins,
+        })),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/subjects/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi tải chi tiết môn học." });
+  }
+});
+
 // GET /api/admin/subjects/:id/dependencies — delete preflight
 app.get("/api/admin/subjects/:id/dependencies", verifyToken, requireAdmin, async (req, res) => {
   try {
