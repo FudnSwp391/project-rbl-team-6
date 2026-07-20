@@ -7,6 +7,8 @@ import SubjectCardSkeleton from './components/SubjectCardSkeleton'
 import SubjectsToolbar from './components/SubjectsToolbar'
 import ExceptionStrip from './components/ExceptionStrip'
 import EmptyState from './components/EmptyState'
+import SubjectFormModal from './components/SubjectFormModal'
+import DeleteSubjectModal from './components/DeleteSubjectModal'
 
 const SORTERS = {
   order:    (a, b) => (a.sort_order || 0) - (b.sort_order || 0) || a.name.localeCompare(b.name, 'vi'),
@@ -34,6 +36,8 @@ export default function SubjectsView({ token }) {
   const [filter, setFilter]   = useState('all')
   const [sort,   setSort]     = useState('order')
   const [selected, setSelected] = useState(() => new Set())
+  const [formModal,   setFormModal]   = useState(null)   // { subject } | { } for create
+  const [deleteModal, setDeleteModal] = useState(null)
 
   // `loading` starts true and the retry handler re-arms it, so the effect body
   // never has to setState synchronously on the way in.
@@ -68,15 +72,80 @@ export default function SubjectsView({ token }) {
     return next
   })
 
-  // Mutations land in the next batch; the endpoints do not exist yet. Say so
-  // plainly rather than failing silently or faking a success animation.
-  const handleAction = (action, subject) => {
-    if (action === 'manage' || action === 'analytics') {
-      toast('Trang chi tiết môn học đang được xây dựng.', { icon: 'ℹ️' })
-      return
+  const patchLocal = (id, patch) =>
+    setSubjects(prev => prev.map(s => (s.id === id ? { ...s, ...patch } : s)))
+
+  // Reversible status changes apply immediately and offer Undo instead of
+  // interrupting with a confirm dialog. On failure the local row is rolled back
+  // to whatever it was before the click.
+  const changeStatus = async (subject, status, verb) => {
+    const previous = subject.status
+    patchLocal(subject.id, { status })
+    try {
+      await authFetch(`${API}/api/admin/subjects/${subject.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      })
+      toast.success(
+        t => (
+          <span className="flex items-center gap-3">
+            Đã {verb} “{subject.name}”
+            <button
+              onClick={() => { toast.dismiss(t.id); changeStatus({ ...subject, status }, previous, 'hoàn tác') }}
+              className="font-semibold underline shrink-0"
+            >
+              Hoàn tác
+            </button>
+          </span>
+        ),
+        { duration: 8000 }
+      )
+    } catch (err) {
+      patchLocal(subject.id, { status: previous })
+      toast.error(`Không thể ${verb} “${subject.name}” — ${err.message}`)
     }
-    toast(`“${subject.name}” — thao tác ${LABELS[action] || action} sẽ khả dụng ở bản cập nhật tới.`,
-      { icon: '🛠️' })
+  }
+
+  const saveSubject = async form => {
+    const editing = Boolean(formModal?.subject?.id)
+    const url = editing
+      ? `${API}/api/admin/subjects/${formModal.subject.id}`
+      : `${API}/api/admin/subjects`
+    const data = await authFetch(url, token, {
+      method: editing ? 'PATCH' : 'POST',
+      body: JSON.stringify(form),
+    })
+    if (editing) {
+      patchLocal(formModal.subject.id, data.subject)
+      toast.success(`Đã cập nhật “${data.subject.name}”`)
+    } else {
+      // Counts come from the aggregation endpoint, so refetch rather than
+      // guessing them; a new subject legitimately starts at zero.
+      setSubjects(prev => [...prev, { ...data.subject, tutor_count: 0, course_count: 0, student_count: 0, quiz_count: 0, pending_count: 0 }])
+      toast.success(`Đã tạo môn học “${data.subject.name}”`)
+    }
+  }
+
+  const deleteSubject = async subject => {
+    await authFetch(`${API}/api/admin/subjects/${subject.id}`, token, { method: 'DELETE' })
+    setSubjects(prev => prev.filter(s => s.id !== subject.id))
+    setSelected(prev => { const n = new Set(prev); n.delete(subject.id); return n })
+    toast.success(`Đã xóa “${subject.name}”`)
+  }
+
+  const handleAction = (action, subject) => {
+    switch (action) {
+      case 'create':     return setFormModal({ subject: null })
+      case 'edit':
+      case 'appearance': return setFormModal({ subject })
+      case 'archive':    return changeStatus(subject, 'archived', 'lưu trữ')
+      case 'restore':    return changeStatus(subject, 'active',   'khôi phục')
+      case 'disable':    return changeStatus(subject, 'disabled', 'vô hiệu hóa')
+      case 'delete':     return setDeleteModal(subject)
+      case 'manage':
+      case 'analytics':  return toast('Trang chi tiết môn học đang được xây dựng.', { icon: 'ℹ️' })
+      default:           return
+    }
   }
 
   const exportCsv = () => {
@@ -231,11 +300,24 @@ export default function SubjectsView({ token }) {
           </button>
         </div>
       )}
+
+      {formModal && (
+        <SubjectFormModal
+          subject={formModal.subject}
+          onClose={() => setFormModal(null)}
+          onSubmit={saveSubject}
+        />
+      )}
+
+      {deleteModal && (
+        <DeleteSubjectModal
+          subject={deleteModal}
+          token={token}
+          onClose={() => setDeleteModal(null)}
+          onConfirm={() => deleteSubject(deleteModal)}
+          onArchive={() => changeStatus(deleteModal, 'archived', 'lưu trữ')}
+        />
+      )}
     </div>
   )
-}
-
-const LABELS = {
-  create: 'tạo mới', edit: 'chỉnh sửa', appearance: 'đổi icon & màu',
-  archive: 'lưu trữ', restore: 'khôi phục', disable: 'vô hiệu hóa', delete: 'xóa',
 }

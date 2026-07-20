@@ -4574,10 +4574,38 @@ const SUBJECT_NORM_MAP = {
   "lập trình": "Tin học", "lap trinh": "Tin học",
 };
 
+// Strips Vietnamese diacritics so "toan"/"Toán" and "dia ly"/"Địa lý" compare equal.
+function deaccentVi(s) {
+  return (s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D')
+    .toLowerCase()
+    .trim();
+}
+
+// Index of subject names that live in the `subjects` table but are absent from
+// the hardcoded SUBJECT_NORM_MAP — i.e. subjects an admin created. Without it a
+// newly created subject would report zero counts forever, because
+// normaliseSubject() could never resolve a course's free-text subject onto it.
+let dynamicSubjectIndex = new Map();   // deaccented name -> canonical name
+
+async function refreshSubjectIndex() {
+  try {
+    const { rows } = await pool.query(`SELECT name FROM subjects`);
+    const idx = new Map();
+    for (const r of rows) idx.set(deaccentVi(r.name), r.name);
+    dynamicSubjectIndex = idx;
+  } catch {
+    // Table may not exist yet (migration pending); the hardcoded map still applies.
+  }
+}
+
 function normaliseSubject(raw) {
   if (!raw) return null;
   const key = raw.trim().toLowerCase();
-  return SUBJECT_NORM_MAP[key] || null;
+  if (SUBJECT_NORM_MAP[key]) return SUBJECT_NORM_MAP[key];
+  return dynamicSubjectIndex.get(deaccentVi(raw)) || null;
 }
 
 app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
@@ -4679,6 +4707,214 @@ app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("GET /api/admin/subjects error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy danh sách môn học." });
+  }
+});
+
+// ── Subject mutations (Batch 33) ──────────────────────────────────────────────
+const SUBJECT_STATUSES = ['active', 'draft', 'archived', 'disabled'];
+const SUBJECT_LEVELS   = ['Tiểu học', 'THCS', 'THPT'];
+
+function slugifySubject(name) {
+  return deaccentVi(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mon-hoc';
+}
+
+// Returns a slug not already taken, appending -2, -3, … when needed.
+async function uniqueSubjectSlug(name, excludeId) {
+  const base = slugifySubject(name);
+  for (let n = 1; n < 50; n++) {
+    const candidate = n === 1 ? base : `${base}-${n}`;
+    const { rows } = await pool.query(
+      `SELECT 1 FROM subjects WHERE slug = $1 AND ($2::uuid IS NULL OR id <> $2)`,
+      [candidate, excludeId || null]
+    );
+    if (!rows.length) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+// Shared field validation for create and edit. Returns { error } or { value }.
+function validateSubjectPayload(body, { partial = false } = {}) {
+  const out = {};
+
+  if (body.name !== undefined || !partial) {
+    const name = String(body.name ?? '').trim();
+    if (!name)             return { error: 'Tên môn học là bắt buộc.' };
+    if (name.length > 100) return { error: 'Tên môn học tối đa 100 ký tự.' };
+    out.name = name;
+  }
+  if (body.description !== undefined) {
+    const d = String(body.description ?? '').trim();
+    if (d.length > 500) return { error: 'Mô tả tối đa 500 ký tự.' };
+    out.description = d || null;
+  }
+  if (body.icon !== undefined) {
+    const icon = String(body.icon ?? '').trim();
+    if (!/^[a-z0-9_]{1,40}$/.test(icon)) return { error: 'Icon không hợp lệ.' };
+    out.icon = icon;
+  }
+  if (body.color !== undefined) {
+    const color = String(body.color ?? '').trim();
+    // Tailwind utility pair, e.g. "bg-blue-100 text-blue-700".
+    if (!/^bg-[a-z]+-\d{2,3} text-[a-z]+-\d{2,3}$/.test(color)) {
+      return { error: 'Bảng màu không hợp lệ.' };
+    }
+    out.color = color;
+  }
+  if (body.levels !== undefined) {
+    const levels = Array.isArray(body.levels) ? body.levels : [];
+    if (levels.some(l => !SUBJECT_LEVELS.includes(l))) {
+      return { error: 'Cấp học không hợp lệ.' };
+    }
+    out.levels = levels;
+  }
+  if (body.status !== undefined) {
+    if (!SUBJECT_STATUSES.includes(body.status)) return { error: 'Trạng thái không hợp lệ.' };
+    out.status = body.status;
+  }
+  return { value: out };
+}
+
+// Counts every row that still points at this subject's name. Used both as the
+// delete preflight and by the DELETE handler itself, so the check the admin was
+// shown is the same one actually enforced.
+async function subjectDependencies(name) {
+  const [courseRes, quizRes, tutorRes] = await Promise.all([
+    pool.query(`SELECT subject FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+    pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
+    pool.query(`SELECT subjects FROM tutor_profiles WHERE subjects IS NOT NULL AND subjects <> ''`),
+  ]);
+  const hits = rows => rows.filter(r => normaliseSubject(r.subject) === name).length;
+
+  let tutors = 0;
+  for (const row of tutorRes.rows) {
+    let parts = [];
+    try {
+      const parsed = JSON.parse(row.subjects);
+      parts = Array.isArray(parsed) ? parsed : [row.subjects];
+    } catch { parts = row.subjects.split(/[,;|]+/); }
+    if (parts.some(p => normaliseSubject(p) === name)) tutors++;
+  }
+
+  const courses = hits(courseRes.rows);
+  const quizzes = hits(quizRes.rows);
+  return { courses, quizzes, tutors, total: courses + quizzes + tutors };
+}
+
+// POST /api/admin/subjects — create
+app.post("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { error, value } = validateSubjectPayload(req.body);
+    if (error) return res.status(400).json({ message: error });
+
+    // Reject names that only differ by diacritics or case — "Toan" vs "Toán"
+    // would otherwise create a second subject that silently steals counts.
+    const { rows: clash } = await pool.query(`SELECT name FROM subjects`);
+    const wanted = deaccentVi(value.name);
+    const dup = clash.find(r => deaccentVi(r.name) === wanted);
+    if (dup) return res.status(409).json({ message: `Môn học “${dup.name}” đã tồn tại.` });
+
+    const slug = await uniqueSubjectSlug(value.name);
+    const { rows: maxRows } = await pool.query(`SELECT COALESCE(MAX(sort_order), 0) AS m FROM subjects`);
+
+    const { rows } = await pool.query(
+      `INSERT INTO subjects (name, slug, description, icon, color, levels, status, sort_order, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, name, slug, description, icon, color, levels, status, sort_order, updated_at`,
+      [
+        value.name, slug, value.description ?? null,
+        value.icon  ?? 'school',
+        value.color ?? 'bg-gray-100 text-gray-600',
+        value.levels ?? [],
+        value.status ?? 'active',
+        Number(maxRows[0].m) + 1,
+        req.user?.userId ?? null,
+      ]
+    );
+    await refreshSubjectIndex();
+    return res.status(201).json({ subject: rows[0] });
+  } catch (err) {
+    console.error("POST /api/admin/subjects error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo môn học." });
+  }
+});
+
+// PATCH /api/admin/subjects/:id — edit identity / appearance / status
+app.patch("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { error, value } = validateSubjectPayload(req.body, { partial: true });
+    if (error) return res.status(400).json({ message: error });
+    if (!Object.keys(value).length) {
+      return res.status(400).json({ message: "Không có thay đổi nào." });
+    }
+
+    const { rows: current } = await pool.query(`SELECT * FROM subjects WHERE id = $1`, [req.params.id]);
+    if (!current.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+
+    if (value.name && deaccentVi(value.name) !== deaccentVi(current[0].name)) {
+      const { rows: clash } = await pool.query(`SELECT name FROM subjects WHERE id <> $1`, [req.params.id]);
+      const wanted = deaccentVi(value.name);
+      const dup = clash.find(r => deaccentVi(r.name) === wanted);
+      if (dup) return res.status(409).json({ message: `Môn học “${dup.name}” đã tồn tại.` });
+      value.slug = await uniqueSubjectSlug(value.name, req.params.id);
+    }
+
+    // archived_at tracks when the subject left circulation, for restore ordering.
+    const sets = [], params = [];
+    for (const [k, v] of Object.entries(value)) {
+      params.push(v);
+      sets.push(`${k} = $${params.length}`);
+    }
+    if (value.status) {
+      sets.push(value.status === 'archived' ? `archived_at = NOW()` : `archived_at = NULL`);
+    }
+    sets.push(`updated_at = NOW()`);
+    params.push(req.params.id);
+
+    const { rows } = await pool.query(
+      `UPDATE subjects SET ${sets.join(', ')} WHERE id = $${params.length}
+       RETURNING id, name, slug, description, icon, color, levels, status, sort_order, updated_at`,
+      params
+    );
+    await refreshSubjectIndex();
+    return res.json({ subject: rows[0] });
+  } catch (err) {
+    console.error("PATCH /api/admin/subjects/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật môn học." });
+  }
+});
+
+// GET /api/admin/subjects/:id/dependencies — delete preflight
+app.get("/api/admin/subjects/:id/dependencies", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT name FROM subjects WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+    const deps = await subjectDependencies(rows[0].name);
+    return res.json({ name: rows[0].name, ...deps, deletable: deps.total === 0 });
+  } catch (err) {
+    console.error("GET /api/admin/subjects/:id/dependencies error:", err);
+    return res.status(500).json({ message: "Lỗi khi kiểm tra ràng buộc môn học." });
+  }
+});
+
+// DELETE /api/admin/subjects/:id — refuses while anything still references it
+app.delete("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT name FROM subjects WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+
+    const deps = await subjectDependencies(rows[0].name);
+    if (deps.total > 0) {
+      return res.status(409).json({
+        message: `Không thể xóa “${rows[0].name}” vì vẫn còn dữ liệu liên kết. Hãy lưu trữ thay vì xóa.`,
+        dependencies: deps,
+      });
+    }
+    await pool.query(`DELETE FROM subjects WHERE id = $1`, [req.params.id]);
+    await refreshSubjectIndex();
+    return res.json({ ok: true, name: rows[0].name });
+  } catch (err) {
+    console.error("DELETE /api/admin/subjects/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi xóa môn học." });
   }
 });
 
@@ -15879,6 +16115,10 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
   } catch (err) {
     console.error('⚠️  DB migration (subjects Batch 32) warning:', err.message);
   }
+
+  // Prime the dynamic subject index so admin-created subjects resolve from the
+  // first request onward, not only after the next mutation (Batch 33).
+  await refreshSubjectIndex();
 
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
   // Runs every minute; processNotificationOutbox() guards against overlap and
