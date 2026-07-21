@@ -32,6 +32,9 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const [isAiLoading, setIsAiLoading] = useState(false)
   const chatScrollRef = useRef(null)
 
+  // Playback state
+  const [playbackRate, setPlaybackRate] = useState(1)
+
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
@@ -89,8 +92,26 @@ export default function CoursePlayer({ courseId, onGoHome }) {
       if (savedTime && Number(savedTime) > 2) {
          videoRef.current.currentTime = Number(savedTime);
       }
+      videoRef.current.playbackRate = playbackRate;
     }
-  }, [selectedId, user])
+  }, [selectedId, user, playbackRate])
+
+  const handleVideoEnded = async () => {
+    // Tự động hoàn thành bài học hiện tại nếu chưa hoàn thành
+    if (selectedLesson && !selectedLesson.isCompleted) {
+      await handleComplete();
+    }
+    // Tự động nhảy sang bài tiếp theo
+    if (course && course.lessons) {
+      const currentIndex = course.lessons.findIndex(l => l.id === selectedId);
+      if (currentIndex !== -1 && currentIndex < course.lessons.length - 1) {
+        const nextLesson = course.lessons[currentIndex + 1];
+        if (!nextLesson.isLocked) {
+          setSelectedId(nextLesson.id);
+        }
+      }
+    }
+  }
 
   const loadCourse = async () => {
     setLoading(true)
@@ -286,7 +307,7 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                     );
                   }
 
-                  return <video ref={videoRef} onTimeUpdate={handleTimeUpdate} key={selectedLesson.id} src={url} controls controlsList="nodownload" onContextMenu={(e) => e.preventDefault()} preload="metadata" style={S.video} />;
+                  return <video ref={videoRef} onTimeUpdate={handleTimeUpdate} onEnded={handleVideoEnded} key={selectedLesson.id} src={url} controls controlsList="nodownload" onContextMenu={(e) => e.preventDefault()} preload="metadata" style={S.video} />;
                 })()
               ) : (
                 <div style={S.locked}>
@@ -319,6 +340,19 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                       <p style={S.lessonDesc}>{selectedLesson?.description || course.description || 'Chưa có mô tả chi tiết.'}</p>
                     </div>
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', flexDirection: 'column', alignItems: 'flex-end' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f1f5f9', padding: '6px 12px', borderRadius: '8px', marginBottom: '8px' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#64748b' }}>speed</span>
+                        <select 
+                          value={playbackRate} 
+                          onChange={(e) => setPlaybackRate(Number(e.target.value))}
+                          style={{ border: 'none', background: 'transparent', outline: 'none', fontWeight: '500', color: '#334155', cursor: 'pointer' }}
+                        >
+                          <option value={1}>1.0x (Chuẩn)</option>
+                          <option value={1.25}>1.25x</option>
+                          <option value={1.5}>1.5x</option>
+                          <option value={2}>2.0x</option>
+                        </select>
+                      </div>
                       {course.isEnrolled && !selectedLesson?.isLocked && (
                         <button style={selectedLesson?.isCompleted ? S.doneBtn : S.primaryBtn} onClick={handleComplete} disabled={savingProgress}>
                           <span className="material-symbols-outlined">{selectedLesson?.isCompleted ? 'check_circle' : 'task_alt'}</span>

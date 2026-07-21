@@ -8772,7 +8772,7 @@ app.post('/api/student/assessments/homework/:id/submit', verifyToken, async (req
 
     // Verify homework actually exists and get info for notifications
     const hwCheck = await pool.query(
-      `SELECT id, title, course, status, tutor_id FROM tutor_homeworks WHERE id = $1`,
+      `SELECT id, title, course, status, tutor_id, assigned_students FROM tutor_homeworks WHERE id = $1`,
       [homeworkId]
     );
     if (hwCheck.rows.length === 0) {
@@ -8781,6 +8781,14 @@ app.post('/api/student/assessments/homework/:id/submit', verifyToken, async (req
     }
     const hwData = hwCheck.rows[0];
     console.log('[SUBMIT HW] Found homework:', hwData.title);
+
+    // --- IDOR Protection ---
+    // Ensure the student is actually assigned to this homework
+    const assigned = hwData.assigned_students || [];
+    if (!assigned.includes(studentId)) {
+      console.warn(`[SECURITY] IDOR Attempt: Student ${studentId} tried to submit to homework ${homeworkId} without being assigned.`);
+      return res.status(403).json({ message: 'Bạn không có quyền nộp bài cho bài tập này vì bạn không nằm trong danh sách được giao.' });
+    }
 
     // Check if this is a first-time submission or re-submission
     const existing = await pool.query(
@@ -10566,6 +10574,31 @@ app.patch("/api/courses/:id/lessons/:lessonId/progress", verifyToken, async (req
       return res.status(404).json({ message: "Không tìm thấy bài học." });
     }
 
+    const oldProg = await pool.query(
+      `SELECT watched_seconds, updated_at FROM course_progress WHERE enrollment_id = $1 AND lesson_id = $2`,
+      [enrollmentId, lessonId]
+    );
+
+    let newWatchedSeconds = Math.max(0, Number(watchedSeconds) || 0);
+    
+    // --- Anti-cheat logic ---
+    if (oldProg.rows.length > 0) {
+      const old = oldProg.rows[0];
+      const elapsedSec = (Date.now() - new Date(old.updated_at).getTime()) / 1000;
+      const claimedProgress = newWatchedSeconds - Number(old.watched_seconds || 0);
+      
+      // Cho phép tối đa tua x2 tốc độ + 5s buffer
+      if (claimedProgress > (elapsedSec * 2) + 5) {
+        newWatchedSeconds = Number(old.watched_seconds || 0) + (elapsedSec * 2);
+        console.warn(`[ANTI-CHEAT] Course Progress: User ${studentId} claimed +${claimedProgress}s in ${elapsedSec}s. Capped to ${newWatchedSeconds}s.`);
+      }
+    }
+
+    // Yêu cầu học sinh phải xem ít nhất 10 giây mới được bấm hoàn thành
+    if (isCompleted && newWatchedSeconds < 10) {
+      return res.status(400).json({ message: "Bạn phải xem ít nhất 10 giây để đánh dấu hoàn thành." });
+    }
+
     const result = await pool.query(
       `INSERT INTO course_progress (enrollment_id, lesson_id, watched_seconds, is_completed, completed_at)
        VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
@@ -10575,7 +10608,7 @@ app.patch("/api/courses/:id/lessons/:lessonId/progress", verifyToken, async (req
          completed_at = EXCLUDED.completed_at,
          updated_at = NOW()
        RETURNING *`,
-      [enrollmentId, lessonId, Math.max(0, Number(watchedSeconds) || 0), !!isCompleted]
+      [enrollmentId, lessonId, newWatchedSeconds, !!isCompleted]
     );
 
     return res.json({ success: true, progress: result.rows[0] });
@@ -14346,6 +14379,21 @@ app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) =
     }
 
     const idemKey = clientKey ? `withdrawal:tutor:${req.user.userId}:${clientKey}` : null;
+
+    // --- Rate Limit / Cooldown chống spam rút tiền (2 phút) ---
+    const recentWd = await pool.query(
+      `SELECT created_at FROM withdrawal_requests WHERE tutor_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [req.user.userId]
+    );
+    if (recentWd.rows.length > 0) {
+      const lastReqTime = new Date(recentWd.rows[0].created_at).getTime();
+      const elapsedMs = Date.now() - lastReqTime;
+      const cooldownMs = 2 * 60 * 1000;
+      if (elapsedMs < cooldownMs) {
+        const waitSec = Math.ceil((cooldownMs - elapsedMs) / 1000);
+        return res.status(429).json({ message: `Vui lòng đợi thêm ${waitSec} giây trước khi tạo yêu cầu rút tiền mới.` });
+      }
+    }
 
     await client.query('BEGIN');
 
