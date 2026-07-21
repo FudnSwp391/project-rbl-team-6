@@ -136,9 +136,13 @@ export async function getSignedStorageUrl(storageUrl) {
   return data.signedUrl || storageUrl
 }
 
-export async function uploadHomeworkFile(file, tutorId = 'anonymous') {
-  const uploaded = await uploadViaBackend(file, `homeworks/${tutorId}`)
-  return uploaded.storageUrl || uploaded.url
+export async function uploadHomeworkFile(file, userId = 'anonymous') {
+  // Accept all file types for homework (PDF, Word, images, zip, etc.)
+  const uploaded = await uploadViaBackend(file, `homeworks/${userId}`)
+  // Return real HTTPS URL (previewUrl/publicUrl), NOT the internal storage:// path
+  const url = uploaded.previewUrl || uploaded.url || uploaded.storageUrl
+  if (!url) throw new Error('Upload thành công nhưng không lấy được URL. Vui lòng thử lại.')
+  return url
 }
 
 export async function uploadEvidenceFile(file, userId = 'anonymous') {

@@ -8698,22 +8698,32 @@ app.post('/api/student/assessments/exams/:id/submit', verifyToken, async (req, r
 app.get('/api/student/assessments/homework', verifyToken, async (req, res) => {
   try {
     const studentId = req.user.userId;
-    console.log('[DEBUG] Student homework - studentId:', studentId);
-    
-    // Debug: show all homeworks for this student's tutors
-    const debugAll = await pool.query(`SELECT id, title, status, assigned_students, tutor_id FROM tutor_homeworks ORDER BY created_at DESC LIMIT 10`);
-    console.log('[DEBUG] All recent homeworks:', JSON.stringify(debugAll.rows, null, 2));
-    
-    // Debug: show student's bookings  
-    const debugBookings = await pool.query(`SELECT tutor_id, status FROM bookings WHERE student_id = $1`, [studentId]);
-    console.log('[DEBUG] Student bookings:', JSON.stringify(debugBookings.rows));
-    
+
     const r = await pool.query(
-      `SELECT th.*,
-              ths.id AS submission_id,
-              ths.status AS submission_status,
-              ths.file_url AS submission_file_url
+      `SELECT
+              th.id,
+              th.title,
+              th.course,
+              th.deadline,
+              th.max_score,
+              th.allow_late,
+              th.status,
+              th.file_url,
+              th.file_type,
+              th.tutor_id,
+              th.assigned_students,
+              th.submission_count,
+              th.created_at,
+              u.full_name  AS tutor_name,
+              u.picture    AS tutor_picture,
+              ths.id       AS submission_id,
+              ths.status   AS submission_status,
+              ths.file_url AS submission_file_url,
+              ths.submitted_at AS submission_submitted_at,
+              ths.score    AS submission_score,
+              ths.feedback AS submission_feedback
        FROM tutor_homeworks th
+       LEFT JOIN users u ON u.id = th.tutor_id
        LEFT JOIN tutor_homework_submissions ths ON th.id = ths.homework_id AND ths.student_id = $1
        WHERE th.status = 'Open'
          AND (
@@ -8728,7 +8738,12 @@ app.get('/api/student/assessments/homework', verifyToken, async (req, res) => {
        ORDER BY th.created_at DESC`,
       [studentId]
     );
-    console.log('[DEBUG] Homework result count:', r.rows.length);
+
+    console.log('[GET HW] Returning', r.rows.length, 'homeworks for student', studentId);
+    if (r.rows.length > 0) {
+      console.log('[GET HW] First homework id:', r.rows[0].id, 'title:', r.rows[0].title);
+    }
+
     res.json(r.rows);
   } catch (e) {
     console.error('GET /api/student/assessments/homework error:', e.message, e.stack);
@@ -8736,23 +8751,112 @@ app.get('/api/student/assessments/homework', verifyToken, async (req, res) => {
   }
 });
 
+
 // POST /api/student/assessments/homework/:id/submit — nộp bài tập
 app.post('/api/student/assessments/homework/:id/submit', verifyToken, async (req, res) => {
   try {
     const studentId = req.user.userId;
+    const homeworkId = req.params.id;
     const { file_url } = req.body;
+
+    // Detailed logging for debugging
+    console.log('[SUBMIT HW] homeworkId:', homeworkId, '| studentId:', studentId, '| file_url length:', file_url?.length);
+
+    // Validate inputs
+    if (!file_url || typeof file_url !== 'string' || file_url.trim() === '') {
+      return res.status(400).json({ message: 'file_url không hợp lệ hoặc bị thiếu.' });
+    }
+    if (!homeworkId) {
+      return res.status(400).json({ message: 'homework id không hợp lệ.' });
+    }
+
+    // Verify homework actually exists and get info for notifications
+    const hwCheck = await pool.query(
+      `SELECT id, title, course, status, tutor_id FROM tutor_homeworks WHERE id = $1`,
+      [homeworkId]
+    );
+    if (hwCheck.rows.length === 0) {
+      console.error('[SUBMIT HW] Homework not found in DB! ID:', homeworkId);
+      return res.status(404).json({ message: `Bài tập không tồn tại (id: ${homeworkId}).` });
+    }
+    const hwData = hwCheck.rows[0];
+    console.log('[SUBMIT HW] Found homework:', hwData.title);
+
+    // Check if this is a first-time submission or re-submission
+    const existing = await pool.query(
+      `SELECT id FROM tutor_homework_submissions WHERE homework_id=$1 AND student_id=$2`,
+      [homeworkId, studentId]
+    );
+    const isFirstSubmission = existing.rows.length === 0;
+
     await pool.query(
       `INSERT INTO tutor_homework_submissions (homework_id, student_id, file_url, status, submitted_at)
        VALUES ($1, $2, $3, 'Submitted', NOW())
        ON CONFLICT (homework_id, student_id) DO UPDATE SET file_url=$3, status='Submitted', submitted_at=NOW()`,
-      [req.params.id, studentId, file_url]
+      [homeworkId, studentId, file_url.trim()]
     );
-    // Increment submission_count
-    await pool.query(`UPDATE tutor_homeworks SET submission_count = COALESCE(submission_count, 0) + 1 WHERE id=$1`, [req.params.id]);
-    res.json({ success: true });
+
+    // Only increment submission_count on FIRST submission (not re-submissions)
+    if (isFirstSubmission) {
+      await pool.query(
+        `UPDATE tutor_homeworks SET submission_count = COALESCE(submission_count, 0) + 1 WHERE id=$1`,
+        [homeworkId]
+      );
+    }
+
+    // --- Notifications ---
+    try {
+      const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [studentId]);
+      const studentName = studentRes.rows[0]?.full_name || 'Một học sinh';
+      const tutorRes = await pool.query('SELECT full_name, email FROM users WHERE id=$1', [hwData.tutor_id]);
+      const tutorName = tutorRes.rows[0]?.full_name || 'Gia sư';
+      const tutorEmail = tutorRes.rows[0]?.email;
+
+      // 1. Notify Student (In-app)
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'homework_submitted', 'Nộp bài thành công', $2, 'check_circle', $3, 'homework')`,
+        [studentId, `Bạn đã nộp bài tập "${hwData.title}" thành công.`, homeworkId]
+      );
+
+      // 2. Notify Tutor (In-app)
+      const actionText = isFirstSubmission ? 'đã nộp' : 'đã cập nhật bài nộp cho';
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'homework_submission', 'Học sinh nộp bài', $2, 'assignment_turned_in', $3, 'homework')`,
+        [hwData.tutor_id, `${studentName} ${actionText} bài tập "${hwData.title}".`, homeworkId]
+      );
+
+      // 3. Notify Tutor (Email)
+      if (tutorEmail && typeof emailTransporter !== 'undefined' && emailTransporter) {
+        await emailTransporter.sendMail({
+          from: `"EduX Học Tập" <${process.env.SMTP_USER}>`,
+          to: tutorEmail,
+          subject: `Học sinh nộp bài: ${hwData.title}`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+              <div style="background-color: #004d40; padding: 24px; text-align: center;">
+                <h2 style="color: #ffffff; margin: 0; font-size: 24px;">Học sinh đã nộp bài</h2>
+              </div>
+              <div style="padding: 32px; background-color: #ffffff;">
+                <p style="color: #334155; font-size: 16px;">Chào <strong>${tutorName}</strong>,</p>
+                <p style="color: #334155; font-size: 16px; margin-bottom: 24px;">Học sinh <strong>${studentName}</strong> ${actionText} bài tập <strong>${hwData.title}</strong>.</p>
+                <div style="text-align: center;">
+                  <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/dashboard" style="display: inline-block; background-color: #004d40; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold;">Chấm bài ngay</a>
+                </div>
+              </div>
+            </div>
+          `
+        });
+      }
+    } catch (notifErr) {
+      console.error('[SUBMIT HW] Error sending notifications:', notifErr.message);
+    }
+
+    res.json({ success: true, resubmitted: !isFirstSubmission });
   } catch (e) {
-    console.error('POST /api/student/assessments/homework/:id/submit error:', e.message);
-    res.status(500).json({ message: 'Lỗi máy chủ.' });
+    console.error('POST /api/student/assessments/homework/:id/submit error:', e.message, e.stack);
+    res.status(500).json({ message: 'Lỗi máy chủ: ' + e.message });
   }
 });
 
@@ -8789,11 +8893,62 @@ app.post('/api/student/assessments/homework/:id/submit', verifyToken, async (req
         UNIQUE(homework_id, student_id)
       )
     `);
+
+    // Migration: ensure UNIQUE constraint exists on existing tables
+    // (CREATE TABLE IF NOT EXISTS won't add constraints to pre-existing tables)
+    const existingUnique = await pool.query(`
+      SELECT constraint_name FROM information_schema.table_constraints
+      WHERE table_name = 'tutor_homework_submissions' AND constraint_type = 'UNIQUE'
+    `);
+    if (existingUnique.rows.length === 0) {
+      await pool.query(`
+        ALTER TABLE tutor_homework_submissions
+        ADD CONSTRAINT unique_homework_student UNIQUE (homework_id, student_id)
+      `);
+      console.log('[DB] Added UNIQUE constraint to tutor_homework_submissions');
+    }
+
+    // Migration: fix broken FK that pointed to wrong table 'tutor_homework' (missing 's')
+    const fkCheck = await pool.query(`
+      SELECT tc.constraint_name, ccu.table_name AS foreign_table
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.constraint_column_usage ccu
+        ON tc.constraint_name = ccu.constraint_name
+      WHERE tc.table_name = 'tutor_homework_submissions'
+        AND tc.constraint_type = 'FOREIGN KEY'
+        AND kcu.column_name = 'homework_id'
+      JOIN information_schema.key_column_usage kcu
+        ON kcu.constraint_name = tc.constraint_name
+    `).catch(() => ({ rows: [] }));
+
+    // Simpler check: just try to find the FK referencing wrong table
+    const badFk = await pool.query(`
+      SELECT tc.constraint_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.constraint_column_usage ccu
+        ON tc.constraint_name = ccu.constraint_name
+      WHERE tc.table_name = 'tutor_homework_submissions'
+        AND tc.constraint_type = 'FOREIGN KEY'
+        AND ccu.table_name = 'tutor_homework'
+    `).catch(() => ({ rows: [] }));
+
+    if (badFk.rows.length > 0) {
+      const constraintName = badFk.rows[0].constraint_name;
+      await pool.query(`ALTER TABLE tutor_homework_submissions DROP CONSTRAINT "${constraintName}"`);
+      await pool.query(`
+        ALTER TABLE tutor_homework_submissions
+        ADD CONSTRAINT tutor_homework_submissions_homework_id_fkey
+        FOREIGN KEY (homework_id) REFERENCES tutor_homeworks(id) ON DELETE CASCADE
+      `);
+      console.log('[DB] Fixed broken FK constraint: now points to tutor_homeworks');
+    }
+
     console.log('[DB] tutor_homeworks and tutor_homework_submissions tables ready');
   } catch (err) {
     console.error('Error creating tutor_homeworks:', err);
   }
 })();
+
 
 // GET /api/tutor/assessments/homework
 app.get('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
@@ -8809,6 +8964,104 @@ app.get('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req
   }
 });
 
+// GET /api/tutor/assessments/homework/:id/submissions — xem bài nộp của học sinh
+app.get('/api/tutor/assessments/homework/:id/submissions', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const hwId = req.params.id;
+
+    // Verify homework belongs to this tutor
+    const ownerCheck = await pool.query(
+      `SELECT id FROM tutor_homeworks WHERE id=$1 AND tutor_id=$2`,
+      [hwId, tutorId]
+    );
+    if (ownerCheck.rows.length === 0) {
+      return res.status(403).json({ message: 'Không có quyền xem bài nộp này.' });
+    }
+
+    const result = await pool.query(
+      `SELECT
+         ths.id,
+         ths.homework_id,
+         ths.student_id,
+         ths.file_url,
+         ths.status,
+         ths.score,
+         ths.feedback,
+         ths.submitted_at,
+         u.full_name  AS student_name,
+         u.picture    AS student_picture,
+         u.email      AS student_email
+       FROM tutor_homework_submissions ths
+       LEFT JOIN users u ON u.id = ths.student_id
+       WHERE ths.homework_id = $1
+       ORDER BY ths.submitted_at DESC`,
+      [hwId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET homework submissions error:', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+
+// Helper function to send notifications when homework is published
+async function sendHomeworkPublishNotifications(tutorId, title, course, deadline, assigned_students, homeworkId) {
+  if (!Array.isArray(assigned_students) || assigned_students.length === 0) return;
+  try {
+    const tutorRes = await pool.query(`SELECT full_name FROM users WHERE id=$1`, [tutorId]);
+    const tutorName = tutorRes.rows[0]?.full_name || 'Gia sư của bạn';
+    
+    const studentsRes = await pool.query(`SELECT id, email, full_name FROM users WHERE id = ANY($1::uuid[])`, [assigned_students]);
+    
+    for (const student of studentsRes.rows) {
+      // 1. Email notification
+      if (student.email && typeof emailTransporter !== 'undefined' && emailTransporter) {
+        await emailTransporter.sendMail({
+          from: `"EduX Học Tập" <${process.env.SMTP_USER}>`,
+          to: student.email,
+          subject: `Bài tập mới: ${title}`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+              <div style="background-color: #004d40; padding: 24px; text-align: center;">
+                <h2 style="color: #ffffff; margin: 0; font-size: 24px;">Thông báo bài tập mới</h2>
+              </div>
+              <div style="padding: 32px; background-color: #ffffff;">
+                <p style="color: #334155; font-size: 16px; margin-bottom: 20px;">Chào <strong>${student.full_name}</strong>,</p>
+                <p style="color: #334155; font-size: 16px; margin-bottom: 24px; line-height: 1.6;">Gia sư <strong>${tutorName}</strong> vừa giao cho bạn một bài tập mới thuộc môn <strong>${course || 'Chung'}</strong>.</p>
+                
+                <div style="background-color: #f8fafc; border-left: 4px solid #004d40; padding: 16px; margin-bottom: 24px;">
+                  <p style="margin: 0 0 8px 0; color: #0f172a; font-size: 16px;"><strong>Tiêu đề:</strong> ${title}</p>
+                  ${deadline ? `<p style="margin: 0; color: #b45309; font-size: 15px;"><strong>Hạn nộp:</strong> ${new Date(deadline).toLocaleString('vi-VN')}</p>` : ''}
+                </div>
+
+                <p style="color: #334155; font-size: 16px; margin-bottom: 32px;">Vui lòng đăng nhập vào hệ thống EduX để xem chi tiết và hoàn thành bài tập đúng hạn nhé!</p>
+                
+                <div style="text-align: center;">
+                  <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/dashboard" style="display: inline-block; background-color: #004d40; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 16px; transition: background-color 0.3s;">Tới trang Bài tập</a>
+                </div>
+              </div>
+              <div style="background-color: #f1f5f9; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
+                <p style="margin: 0; color: #64748b; font-size: 13px;">Đây là email tự động từ hệ thống EduX, vui lòng không phản hồi lại email này.</p>
+              </div>
+            </div>
+          `
+        });
+      }
+      
+      // 2. In-app notification
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'homework_assigned', 'Bài tập mới', $2, 'assignment', $3, 'homework')`,
+        [student.id, `Gia sư ${tutorName} đã giao bài tập "${title}".`, homeworkId]
+      );
+    }
+  } catch (err) {
+    console.error('Error sending homework notification emails/in-app:', err);
+  }
+}
+
 // POST /api/tutor/assessments/homework
 app.post('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
   try {
@@ -8818,6 +9071,12 @@ app.post('/api/tutor/assessments/homework', verifyToken, requireTutor, async (re
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb) RETURNING *`,
       [title, course, deadline || null, max_score || 100, allow_late || false, status || 'Draft', file_url, file_type, req.user.userId, JSON.stringify(assigned_students || [])]
     );
+
+    // Gửi email thông báo nếu trạng thái là Published
+    if (status === 'Published') {
+      await sendHomeworkPublishNotifications(req.user.userId, title, course, deadline, assigned_students, result.rows[0].id);
+    }
+
     res.status(201).json(result.rows[0]);
   } catch (e) {
     console.error('POST homework error:', e);
@@ -8829,13 +9088,24 @@ app.post('/api/tutor/assessments/homework', verifyToken, requireTutor, async (re
 app.put('/api/tutor/assessments/homework/:id', verifyToken, requireTutor, async (req, res) => {
   try {
     const { title, course, deadline, max_score, allow_late, status, file_url, file_type, assigned_students } = req.body;
+    
+    // Check old status to see if it transitioned to Published
+    const oldRes = await pool.query(`SELECT status FROM tutor_homeworks WHERE id=$1 AND tutor_id=$2`, [req.params.id, req.user.userId]);
+    if (oldRes.rows.length === 0) return res.status(404).json({ message: 'Homework not found' });
+    const oldStatus = oldRes.rows[0].status;
+
     const result = await pool.query(
       `UPDATE tutor_homeworks 
        SET title=$1, course=$2, deadline=$3, max_score=$4, allow_late=$5, status=$6, file_url=$7, file_type=$8, assigned_students=$9::jsonb 
        WHERE id=$10 AND tutor_id=$11 RETURNING *`,
       [title, course, deadline || null, max_score || 100, allow_late || false, status || 'Draft', file_url, file_type, JSON.stringify(assigned_students || []), req.params.id, req.user.userId]
     );
-    if (result.rowCount === 0) return res.status(404).json({ message: 'Homework not found' });
+
+    // If it just transitioned to Published, notify students
+    if (status === 'Published' && oldStatus !== 'Published') {
+      await sendHomeworkPublishNotifications(req.user.userId, title, course, deadline, assigned_students, req.params.id);
+    }
+
     res.json(result.rows[0]);
   } catch (e) {
     console.error('PUT homework error:', e);
@@ -8847,7 +9117,26 @@ app.put('/api/tutor/assessments/homework/:id', verifyToken, requireTutor, async 
 app.patch('/api/tutor/assessments/homework/:id/status', verifyToken, requireTutor, async (req, res) => {
   try {
     const { status } = req.body;
+    
+    // Check old status and get homework details for notifications
+    const oldRes = await pool.query(`SELECT status, title, course, deadline, assigned_students FROM tutor_homeworks WHERE id=$1 AND tutor_id=$2`, [req.params.id, req.user.userId]);
+    if (oldRes.rows.length === 0) return res.status(404).json({ message: 'Homework not found' });
+    const hwData = oldRes.rows[0];
+
     await pool.query(`UPDATE tutor_homeworks SET status=$1 WHERE id=$2 AND tutor_id=$3`, [status, req.params.id, req.user.userId]);
+    
+    // If transitioning to published, notify students
+    if (status === 'Published' && hwData.status !== 'Published') {
+      await sendHomeworkPublishNotifications(
+        req.user.userId, 
+        hwData.title, 
+        hwData.course, 
+        hwData.deadline, 
+        hwData.assigned_students, 
+        req.params.id
+      );
+    }
+
     res.json({ success: true });
   } catch (e) {
     console.error('PATCH homework status error:', e);

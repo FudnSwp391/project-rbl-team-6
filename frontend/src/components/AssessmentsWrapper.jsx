@@ -24,7 +24,7 @@ export default function AssessmentsWrapper({ token }) {
       </div>
 
       {/* Tabs */}
-      <div className="flex bg-surface-container-high/60 rounded-xl p-1 gap-1 max-w-md w-full">
+      <div className="flex bg-surface-container-high/60 rounded-xl p-1 gap-1 max-w-xl w-full">
         <button
           onClick={() => setActiveTab('quiz')}
           className={`flex-1 h-10 rounded-lg font-label-md transition-all flex items-center justify-center gap-2 ${
@@ -33,8 +33,8 @@ export default function AssessmentsWrapper({ token }) {
               : 'text-on-surface-variant hover:text-on-surface hover:bg-surface/50'
           }`}
         >
-          <span className="material-symbols-outlined text-[18px]">quiz</span>
-          Bài tập (Quiz)
+          <span className="material-symbols-outlined text-[18px]">assignment</span>
+          Được giao (Bài tập & Đề thi)
         </button>
         <button
           onClick={() => setActiveTab('exam')}
@@ -44,8 +44,8 @@ export default function AssessmentsWrapper({ token }) {
               : 'text-on-surface-variant hover:text-on-surface hover:bg-surface/50'
           }`}
         >
-          <span className="material-symbols-outlined text-[18px]">description</span>
-          Đề thi (Exams)
+          <span className="material-symbols-outlined text-[18px]">library_books</span>
+          Kho đề thi (Tự luyện)
         </button>
       </div>
 
