@@ -23,6 +23,9 @@ const {
 const { computeReconciliation } = require("./services/reconciliation/computeReconciliation");
 const { buildFindingKey, resolveFinding } = require("./services/reconciliation/findingKey");
 const { computeSeverity } = require("./services/reconciliation/severity");
+const { gatherEvidence, gatherSystemLogs } = require("./services/reconciliation/evidenceService");
+const { buildAnalysis } = require("./services/reconciliation/aiExplanationService");
+const { buildTimeline: buildReconciliationTimeline } = require("./services/reconciliation/timelineService");
 
 dotenv.config();
 
@@ -5959,6 +5962,185 @@ app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async 
   } catch (err) {
     console.error("GET /api/admin/financial/reconciliation error:", err);
     return res.status(500).json({ message: "Lỗi khi thực hiện đối soát." });
+  }
+});
+
+// ── Reconciliation Investigation Center (Batch 37/38) ─────────────────────────
+// All routes below are read-only against the 5 advisory tables added in Batch
+// 37 plus the existing ledger/log tables — none ever call process_deposit/
+// release_escrow/refund_escrow or write to wallets/transactions.
+
+// GET /api/admin/financial/reconciliation/findings/:key — upserts the
+// investigation anchor row (severity/difference only) and logs DRAWER_OPENED
+// on first view, VIEWED_AGAIN afterwards (created_at === updated_at on the
+// very first insert since both DEFAULT NOW() evaluate to the same statement
+// timestamp; a later conflict-update only bumps updated_at).
+app.get("/api/admin/financial/reconciliation/findings/:key", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+
+    const upsertRes = await pool.query(
+      `INSERT INTO reconciliation_investigations (finding_key, finding_type, severity, last_difference)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (finding_key) DO UPDATE SET
+         severity = EXCLUDED.severity, last_difference = EXCLUDED.last_difference, updated_at = NOW()
+       RETURNING *`,
+      [resolved.findingKey, resolved.findingType, resolved.severity, resolved.difference]
+    );
+    const investigation = upsertRes.rows[0];
+    const isFirstView = new Date(investigation.created_at).getTime() === new Date(investigation.updated_at).getTime();
+
+    await pool.query(
+      `INSERT INTO reconciliation_audit_logs (finding_key, action, admin_id, ip_address) VALUES ($1,$2,$3,$4)`,
+      [resolved.findingKey, isFirstView ? 'DRAWER_OPENED' : 'VIEWED_AGAIN', req.user.userId, req.ip]
+    );
+
+    return res.json({
+      finding_key: resolved.findingKey,
+      finding_type: resolved.findingType,
+      finding: resolved.finding,
+      difference: resolved.difference,
+      severity: resolved.severity,
+      investigation,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/financial/reconciliation/findings/:key error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy chi tiết đối soát." });
+  }
+});
+
+// GET .../findings/:key/evidence — Module 4
+app.get("/api/admin/financial/reconciliation/findings/:key/evidence", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    return res.json(bundle);
+  } catch (err) {
+    console.error("GET .../findings/:key/evidence error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy bằng chứng." });
+  }
+});
+
+// GET .../findings/:key/analysis — Modules 2, 3, 5. Upserts the anchor row's
+// cached root_cause/confidence/ai_summary/ai_model_used regardless of whether
+// GET .../findings/:key has already been called (parallel-fetch safe).
+app.get("/api/admin/financial/reconciliation/findings/:key/analysis", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    const result = await buildAnalysis(resolved, bundle);
+
+    await pool.query(
+      `INSERT INTO reconciliation_investigations (finding_key, finding_type, severity, last_difference, root_cause, confidence, ai_summary, ai_model_used)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (finding_key) DO UPDATE SET
+         severity = EXCLUDED.severity, last_difference = EXCLUDED.last_difference,
+         root_cause = EXCLUDED.root_cause, confidence = EXCLUDED.confidence,
+         ai_summary = EXCLUDED.ai_summary, ai_model_used = EXCLUDED.ai_model_used,
+         updated_at = NOW()`,
+      [resolved.findingKey, resolved.findingType, resolved.severity, resolved.difference,
+       result.analysis.root_cause, result.analysis.confidence, result.ai_summary, result.ai_model_used]
+    );
+
+    return res.json(result);
+  } catch (err) {
+    console.error("GET .../findings/:key/analysis error:", err);
+    return res.status(500).json({ message: "Lỗi khi phân tích chênh lệch." });
+  }
+});
+
+// GET .../findings/:key/transactions — Module 6 transaction trace table
+app.get("/api/admin/financial/reconciliation/findings/:key/transactions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    const transactions = bundle.transactions || [];
+    if (transactions.length === 0) return res.json({ transactions: [] });
+
+    const ledgerByTx = {};
+    for (const l of bundle.walletLedger || []) {
+      if (l.transaction_id) (ledgerByTx[l.transaction_id] ||= []).push(l);
+    }
+    const bookingByRef = {};
+    for (const b of bundle.bookings || []) bookingByRef[b.id] = b;
+
+    const walletIds = [...new Set(transactions.map(t => t.wallet_id).filter(Boolean))];
+    const walletOwners = walletIds.length
+      ? (await pool.query(
+          `SELECT w.id AS wallet_id, u.id AS user_id FROM wallets w JOIN users u ON u.id = w.user_id WHERE w.id = ANY($1::uuid[])`,
+          [walletIds]
+        )).rows
+      : [];
+    const walletOwnerByWalletId = Object.fromEntries(walletOwners.map(w => [w.wallet_id, w.user_id]));
+
+    const userIdsNeeded = new Set(walletOwners.map(w => w.user_id));
+    for (const b of Object.values(bookingByRef)) {
+      if (b.student_id) userIdsNeeded.add(b.student_id);
+      if (b.tutor_id) userIdsNeeded.add(b.tutor_id);
+    }
+    const userRows = userIdsNeeded.size
+      ? (await pool.query(`SELECT id, full_name, email FROM users WHERE id = ANY($1::uuid[])`, [[...userIdsNeeded]])).rows
+      : [];
+    const userById = Object.fromEntries(userRows.map(u => [u.id, u]));
+    const nameOf = (id) => (id && userById[id]) ? (userById[id].full_name || userById[id].email) : null;
+
+    const rows = transactions.map(t => {
+      const booking = t.reference_id ? bookingByRef[t.reference_id] : null;
+      const ledgerRows = (ledgerByTx[t.id] || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      const first = ledgerRows[0];
+      const last = ledgerRows[ledgerRows.length - 1];
+      const walletOwnerId = walletOwnerByWalletId[t.wallet_id];
+      return {
+        transaction_id: t.id,
+        booking_id: booking?.id || null,
+        user: booking ? nameOf(booking.student_id) : nameOf(walletOwnerId),
+        tutor: booking ? nameOf(booking.tutor_id) : null,
+        type: t.type,
+        amount: Number(t.amount),
+        wallet_before: first ? Number(first.balance_before) : null,
+        wallet_after: last ? Number(last.balance_after) : null,
+        status: t.status,
+        created_at: t.created_at,
+        updated_at: t.updated_at,
+      };
+    });
+    return res.json({ transactions: rows });
+  } catch (err) {
+    console.error("GET .../findings/:key/transactions error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dấu vết giao dịch." });
+  }
+});
+
+// GET .../findings/:key/timeline — Module 7
+app.get("/api/admin/financial/reconciliation/findings/:key/timeline", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    const timeline = await buildReconciliationTimeline(pool, resolved, bundle);
+    return res.json(timeline);
+  } catch (err) {
+    console.error("GET .../findings/:key/timeline error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dòng thời gian." });
+  }
+});
+
+// GET .../findings/:key/logs — Module 12 (ledger/commission/refund logs only —
+// no generic app-log aggregator exists in this repo)
+app.get("/api/admin/financial/reconciliation/findings/:key/logs", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    const logs = await gatherSystemLogs(pool, resolved, bundle);
+    return res.json(logs);
+  } catch (err) {
+    console.error("GET .../findings/:key/logs error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nhật ký hệ thống." });
   }
 });
 
