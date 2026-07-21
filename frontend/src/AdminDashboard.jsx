@@ -31,6 +31,7 @@ import Moderation from './admin/services/Moderation'
 import SemanticModeration from './admin/semantic/SemanticModeration'
 import FraudIntel from './admin/fraud/FraudIntel'
 import SafeAnalytics from './admin/analytics/SafeAnalytics'
+import DataEntryView from './admin/DataEntryView'
 
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
@@ -102,6 +103,7 @@ const SM_VIEW_IDS = new Set(SM_SUB_ITEMS.map(i => i.id))
 
 const NAV_ITEMS = [
   { id: 'dashboard',       label: 'Tổng quan',             icon: 'dashboard' },
+  { id: 'data-entry',      label: 'Nhập liệu',             icon: 'add_circle' },
   { id: 'tutor-approval',  label: 'Duyệt gia sư',          icon: 'how_to_reg' },
   { id: 'user-management', label: 'Quản lý người dùng',    icon: 'group' },
   { id: 'subjects',        label: 'Môn học',               icon: 'subject' },
@@ -468,6 +470,7 @@ export default function AdminDashboard() {
               setReviewNotes={setReviewNotes}
             />
           )}
+          {activeView === 'data-entry'      && <DataEntryView />}
           {activeView === 'user-management' && <UserManagementView />}
           {activeView === 'subjects'         && <SubjectsView token={token} />}
           {activeView === 'lessons'          && <CourseManagementView token={token} />}

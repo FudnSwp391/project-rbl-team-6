@@ -173,11 +173,14 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
 
   const [searchInput, setSearchInput] = useState(initialParams.get('search') || '');
   const [search, setSearch]           = useState(initialParams.get('search') || '');
-  const [selectedSubjects, setSelectedSubjects] = useState([]);
+  // Nhận sẵn bộ lọc từ URL (trang Môn Học điều hướng sang kèm ?subjects=&level=)
+  const [selectedSubjects, setSelectedSubjects] = useState(
+    initialParams.get('subjects') ? [initialParams.get('subjects')] : []
+  );
   const [maxPrice, setMaxPrice]       = useState(200);
   const [sort, setSort]               = useState('rating');
   const [method, setMethod]           = useState(initialParams.get('method') || '');
-  const [level, setLevel]             = useState('');
+  const [level, setLevel]             = useState(initialParams.get('level') || '');
   const [favMsg, setFavMsg]           = useState('');
 
   const addFav = (t) => {
