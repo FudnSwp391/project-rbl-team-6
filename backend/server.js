@@ -18339,3 +18339,5 @@ setInterval(async () => {
 }, 5 * 1000); // Check every 5 seconds
 
 startServer();
+
+module.exports = app;

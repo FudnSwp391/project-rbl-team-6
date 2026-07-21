@@ -11,8 +11,7 @@
     "demo:seed:dry": "node scripts/demo-data.js --seed --dry-run",
     "demo:seed": "node scripts/demo-data.js --seed --apply",
     "demo:cleanup:dry": "node scripts/demo-data.js --cleanup --dry-run",
-    "demo:cleanup": "node scripts/demo-data.js --cleanup --apply",
-    "test": "node --test"
+    "demo:cleanup": "node scripts/demo-data.js --cleanup --apply"
   },
   "keywords": [],
   "author": "",
