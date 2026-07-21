@@ -758,6 +758,8 @@ const ADMIN_COPILOT_MAX_CONTEXT_CHARS = Number(process.env.ADMIN_COPILOT_MAX_CON
 const COPILOT_ALLOWED_ACTIONS = new Set([
   'WATCHLIST', 'MANUAL_REVIEW', 'SEND_WARNING_DRAFT', 'REQUEST_MORE_EVIDENCE',
   'REVIEW_TUTOR_QUALITY', 'REVIEW_REFUND_PATTERN', 'NO_ACTION',
+  // Batch 38: Fraud Investigation Center recommendations
+  'FREEZE_WALLET', 'REQUEST_VERIFICATION', 'MONITOR_7_DAYS',
 ]);
 
 // ── Privacy masking (never store/return raw email / phone / IP) ──────────────
@@ -923,6 +925,35 @@ async function collectTransactionCopilotContext(transactionId) {
   return ctx;
 }
 
+// Batch 38: reuses the same alert_id resolution + signal derivation as
+// GET /api/admin/fraud-alerts/:id so the Copilot's numbers always match the
+// drawer the admin is looking at.
+async function collectFraudAlertCopilotContext(alertId) {
+  const ctx = { entity_type: 'FRAUD_ALERT', entity_id: alertId, identity: {}, metrics: {}, notes: [] };
+  const subject = await resolveFraudAlertSubject(alertId);
+  if (!subject) { ctx.notes.push('NOT_FOUND'); return ctx; }
+  const { kind, subjectUserId } = subject;
+
+  const userRows = await copilotSafeRows(`SELECT full_name, email, role, COALESCE(is_banned, false) AS is_banned FROM users WHERE id = $1`, [subjectUserId]);
+  const user = userRows[0] || {};
+  ctx.identity = { user_name: user.full_name || '—', role: user.role || '—' };
+  ctx.metrics.is_banned = !!user.is_banned;
+
+  if (kind === 'DISPUTE') {
+    const dRows = await copilotSafeRows(
+      `SELECT COUNT(d.id)::int AS dispute_count, SUM(CASE WHEN d.status='RESOLVED_REFUND' THEN 1 ELSE 0 END)::int AS refund_count
+       FROM disputes d WHERE d.raised_by = $1`, [subjectUserId]);
+    ctx.metrics.dispute_count = dRows[0]?.dispute_count || 0;
+    ctx.metrics.refund_count  = dRows[0]?.refund_count || 0;
+    ctx.metrics.alert_kind = 'DISPUTE';
+  } else {
+    ctx.metrics.alert_kind = 'DEPOSIT';
+  }
+  ctx.metrics.withdrawals_pending = await copilotSafeCount(
+    `SELECT COUNT(*)::int AS n FROM withdraw_requests wr JOIN wallets w ON w.id = wr.wallet_id WHERE w.user_id = $1 AND wr.status = 'PENDING'`, [subjectUserId]);
+  return ctx;
+}
+
 async function collectPageCopilotContext(pageKey, pageContext) {
   const ctx = { entity_type: 'PAGE', entity_id: null, page_key: pageKey || null, identity: {}, metrics: {}, notes: [] };
   ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN' AND withdrawn_at IS NULL`);
@@ -1023,6 +1054,20 @@ function generateAdminCopilotReport(entityType, context) {
     if (m.session_events === 0) limitations.push('Không có sự kiện phiên học (JOIN/HEARTBEAT) cho buổi này.');
     actions.push(copilotAction('MANUAL_REVIEW', 'Chuyển xem xét thủ công', 'Xác minh buổi học'));
 
+  } else if (entityType === 'FRAUD_ALERT') {
+    if (m.is_banned) limitations.push('Tài khoản đã bị khóa trước đó.');
+    if (m.dispute_count >= 2) { score += 2; findings.push(`Người dùng có ${m.dispute_count} tranh chấp trong lịch sử.`); evidence.push({ label: 'Tổng tranh chấp', value: m.dispute_count }); }
+    if (m.refund_count >= 1) { score += 2; findings.push(`Có ${m.refund_count} lần hoàn tiền được duyệt — dấu hiệu lạm dụng hoàn tiền.`); evidence.push({ label: 'Hoàn tiền đã duyệt', value: m.refund_count }); }
+    if (m.withdrawals_pending >= 1) { score += 1; findings.push(`Đang có ${m.withdrawals_pending} yêu cầu rút tiền chờ xử lý.`); evidence.push({ label: 'Rút tiền chờ xử lý', value: m.withdrawals_pending }); }
+    if (m.alert_kind === 'DEPOSIT') findings.push('Cảnh báo phát sinh từ một giao dịch nạp tiền giá trị lớn.');
+    recommendations.push('Theo dõi tài khoản này trong 7 ngày tới để xác nhận mô hình hành vi.');
+    actions.push(copilotAction('MONITOR_7_DAYS', 'Theo dõi trong 7 ngày', 'Xác nhận thêm trước khi kết luận'));
+    if (score >= 3) {
+      recommendations.push('Cân nhắc tạm giữ ví và yêu cầu xác minh danh tính trước khi cho phép giao dịch tiếp theo.');
+      actions.push(copilotAction('FREEZE_WALLET', 'Tạm giữ ví', 'Điểm rủi ro cao'));
+      actions.push(copilotAction('REQUEST_VERIFICATION', 'Yêu cầu xác minh danh tính', 'Điểm rủi ro cao'));
+    }
+
   } else { // PAGE
     if (m.open_disputes > 0) { findings.push(`${m.open_disputes} khiếu nại đang mở.`); evidence.push({ label: 'Khiếu nại mở', value: m.open_disputes }); if (m.open_disputes >= 5) score += 1; }
     if (m.appealed_ai_cases > 0) { findings.push(`${m.appealed_ai_cases} kháng cáo AI chờ xem xét.`); evidence.push({ label: 'Kháng cáo AI', value: m.appealed_ai_cases }); score += 1; }
@@ -1072,6 +1117,7 @@ function generateAdminCopilotReport(entityType, context) {
     DISPUTE: 'Khiếu nại này',
     TRANSACTION: 'Giao dịch này',
     BOOKING: 'Buổi học này',
+    FRAUD_ALERT: 'Cảnh báo gian lận này',
     PAGE: 'Trang hiện tại',
   }[entityType] || 'Ngữ cảnh này';
   const riskVi = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' }[risk_level];
@@ -6982,6 +7028,116 @@ app.patch("/api/admin/fraud-alerts/:id/note/:noteId", verifyToken, requireAdmin,
   } catch (err) {
     console.error("PATCH /api/admin/fraud-alerts/:id/note/:noteId error:", err);
     return res.status(500).json({ message: "Lỗi khi cập nhật ghi chú." });
+  }
+});
+
+// ── Fraud Investigation Center: status workflow + actions (Batch 38) ─────────
+const FRAUD_STATUSES = new Set([
+  'OPEN', 'INVESTIGATING', 'NEED_MORE_EVIDENCE', 'RESOLVED', 'CONFIRMED_FRAUD', 'FALSE_POSITIVE',
+]);
+// Actions that only log to the audit trail this batch — they do not move money
+// or flip enforcement elsewhere, since that would touch financial transaction
+// logic / the wallet_ledger trigger (out of scope; see Batch 35/38 notes).
+const FRAUD_ADVISORY_ACTIONS = new Set(['REQUEST_VERIFICATION', 'FREEZE_WALLET', 'HOLD_PAYMENT', 'RELEASE_PAYMENT']);
+
+async function writeFraudAuditLog(alertId, action, adminId, previousStatus, newStatus, reason) {
+  await pool.query(
+    `INSERT INTO fraud_audit_logs (alert_id, action, admin_id, previous_status, new_status, reason)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [alertId, action, adminId, previousStatus || null, newStatus || null, reason || null]
+  );
+}
+
+// ── PATCH /api/admin/fraud-alerts/:id/status ──────────────────────────────────
+app.patch("/api/admin/fraud-alerts/:id/status", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const status = String(req.body?.status || '').toUpperCase();
+    const reason = (req.body?.reason || '').trim();
+    if (!FRAUD_STATUSES.has(status)) return res.status(400).json({ message: "Trạng thái không hợp lệ." });
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+
+    await pool.query(
+      `INSERT INTO fraud_investigations (alert_id, subject_user_id) VALUES ($1, $2) ON CONFLICT (alert_id) DO NOTHING`,
+      [alertId, subject.subjectUserId]
+    );
+    const prevRes = await pool.query(`SELECT status FROM fraud_investigations WHERE alert_id = $1`, [alertId]);
+    const previousStatus = prevRes.rows[0]?.status || 'OPEN';
+
+    const updRes = await pool.query(
+      `UPDATE fraud_investigations SET status = $1, updated_at = NOW() WHERE alert_id = $2
+       RETURNING alert_id, status, assigned_to, updated_at`,
+      [status, alertId]
+    );
+    await writeFraudAuditLog(alertId, 'STATUS_CHANGE', req.user.userId, previousStatus, status, reason);
+    return res.json({ investigation: updRes.rows[0] });
+  } catch (err) {
+    console.error("PATCH /api/admin/fraud-alerts/:id/status error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật trạng thái." });
+  }
+});
+
+// ── POST /api/admin/fraud-alerts/:id/actions ──────────────────────────────────
+// Assign / suspend are enforced for real (reuse existing users.is_banned +
+// fraud_investigations.assigned_to). Wallet/payment actions are advisory-only
+// this batch — see FRAUD_ADVISORY_ACTIONS comment above.
+app.post("/api/admin/fraud-alerts/:id/actions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const action = String(req.body?.action || '').toUpperCase();
+    const reason = (req.body?.reason || '').trim();
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const uid = subject.subjectUserId;
+
+    await pool.query(
+      `INSERT INTO fraud_investigations (alert_id, subject_user_id) VALUES ($1, $2) ON CONFLICT (alert_id) DO NOTHING`,
+      [alertId, uid]
+    );
+    const prevRes = await pool.query(`SELECT status FROM fraud_investigations WHERE alert_id = $1`, [alertId]);
+    const previousStatus = prevRes.rows[0]?.status || 'OPEN';
+    let newStatus = null;
+
+    if (action === 'ASSIGN_INVESTIGATOR') {
+      await pool.query(`UPDATE fraud_investigations SET assigned_to = $1, updated_at = NOW() WHERE alert_id = $2`, [req.user.userId, alertId]);
+      if (previousStatus === 'OPEN') { newStatus = 'INVESTIGATING'; await pool.query(`UPDATE fraud_investigations SET status = $1 WHERE alert_id = $2`, [newStatus, alertId]); }
+    } else if (action === 'SUSPEND_USER') {
+      await pool.query(`UPDATE users SET is_banned = true WHERE id = $1`, [uid]);
+    } else if (action === 'MARK_FALSE_POSITIVE') {
+      newStatus = 'FALSE_POSITIVE';
+      await pool.query(`UPDATE fraud_investigations SET status = $1, updated_at = NOW() WHERE alert_id = $2`, [newStatus, alertId]);
+    } else if (action === 'RESOLVE') {
+      newStatus = 'RESOLVED';
+      await pool.query(`UPDATE fraud_investigations SET status = $1, updated_at = NOW() WHERE alert_id = $2`, [newStatus, alertId]);
+    } else if (!FRAUD_ADVISORY_ACTIONS.has(action)) {
+      return res.status(400).json({ message: "Hành động không hợp lệ." });
+    }
+    // Advisory actions (REQUEST_VERIFICATION / FREEZE_WALLET / HOLD_PAYMENT /
+    // RELEASE_PAYMENT) fall through here with no status or table mutation
+    // beyond the audit log entry below.
+
+    await writeFraudAuditLog(alertId, action, req.user.userId, previousStatus, newStatus, reason);
+    return res.json({ ok: true, action, new_status: newStatus });
+  } catch (err) {
+    console.error("POST /api/admin/fraud-alerts/:id/actions error:", err);
+    return res.status(500).json({ message: "Lỗi khi thực hiện hành động." });
+  }
+});
+
+// ── GET /api/admin/fraud-alerts/:id/audit-log ─────────────────────────────────
+app.get("/api/admin/fraud-alerts/:id/audit-log", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT l.id, l.action, l.admin_id, u.full_name AS admin_name, l.previous_status, l.new_status, l.reason, l.created_at
+       FROM fraud_audit_logs l LEFT JOIN users u ON u.id = l.admin_id
+       WHERE l.alert_id = $1 ORDER BY l.created_at DESC`,
+      [req.params.id]
+    );
+    return res.json({ logs: rows });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id/audit-log error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nhật ký kiểm toán." });
   }
 });
 
@@ -14865,7 +15021,7 @@ app.post('/api/admin/copilot/analyze', verifyToken, requireAdmin, async (req, re
   try {
     const { entityType, entityId, pageKey, pageContext } = req.body || {};
     const type = String(entityType || 'PAGE').toUpperCase();
-    const allowed = ['TUTOR', 'STUDENT', 'DISPUTE', 'TRANSACTION', 'BOOKING', 'PAGE'];
+    const allowed = ['TUTOR', 'STUDENT', 'DISPUTE', 'TRANSACTION', 'BOOKING', 'FRAUD_ALERT', 'PAGE'];
     if (!allowed.includes(type)) return res.status(400).json({ message: 'entityType không hợp lệ.' });
     if (type !== 'PAGE' && !entityId) return res.status(400).json({ message: 'Thiếu entityId cho loại đối tượng này.' });
 
@@ -14875,6 +15031,7 @@ app.post('/api/admin/copilot/analyze', verifyToken, requireAdmin, async (req, re
     else if (type === 'DISPUTE')     context = await collectDisputeCopilotContext(entityId);
     else if (type === 'BOOKING')     context = await collectBookingCopilotContext(entityId);
     else if (type === 'TRANSACTION') context = await collectTransactionCopilotContext(entityId);
+    else if (type === 'FRAUD_ALERT') context = await collectFraudAlertCopilotContext(entityId);
     else                             context = await collectPageCopilotContext(pageKey, pageContext);
 
     const report = generateAdminCopilotReport(type, context);

@@ -16,12 +16,14 @@ const ENTITY_TYPES = [
   { value: 'DISPUTE',     label: 'Khiếu nại' },
   { value: 'BOOKING',     label: 'Buổi học' },
   { value: 'TRANSACTION', label: 'Giao dịch' },
+  { value: 'FRAUD_ALERT', label: 'Cảnh báo gian lận' },
 ]
 
 const ACTION_ICON = {
   WATCHLIST: 'visibility', MANUAL_REVIEW: 'gavel', SEND_WARNING_DRAFT: 'edit_note',
   REQUEST_MORE_EVIDENCE: 'attach_file', REVIEW_TUTOR_QUALITY: 'workspace_premium',
   REVIEW_REFUND_PATTERN: 'account_balance_wallet', NO_ACTION: 'check_circle',
+  FREEZE_WALLET: 'account_balance_wallet', REQUEST_VERIFICATION: 'verified_user', MONITOR_7_DAYS: 'visibility',
 }
 
 const asArray = v => Array.isArray(v) ? v : (v ? [v] : [])
