@@ -6,6 +6,7 @@
  * service sẽ log warning và trả null (không crash server).
  */
 const { createClient } = require("@supabase/supabase-js");
+const WebSocketImpl = require("ws");
 const path = require("path");
 const dotenv = require("dotenv");
 
@@ -38,7 +39,9 @@ function getSupabase() {
     return null;
   }
 
-  supabase = createClient(url, key);
+  // Only .storage calls below, no realtime channels — pass ws explicitly
+  // so client construction doesn't depend on native WebSocket detection.
+  supabase = createClient(url, key, { realtime: { transport: WebSocketImpl } });
   console.log("[Storage] ✅ Supabase client initialized");
   return supabase;
 }

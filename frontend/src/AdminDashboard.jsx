@@ -24,6 +24,7 @@ const CommissionLogs        = lazy(() => import('./admin/transactions/Commission
 const NotificationOutbox     = lazy(() => import('./admin/transactions/NotificationOutbox'))
 const WithdrawalRequests     = lazy(() => import('./admin/transactions/WithdrawalRequests'))
 const AICaseResolutions      = lazy(() => import('./admin/transactions/AICaseResolutions'))
+const DataEntryView          = lazy(() => import('./admin/DataEntryView'))
 
 const CourseComplaintsAdminView = lazy(() => import('./admin/services/CourseComplaints'))
 const Violations = lazy(() => import('./admin/services/Violations'))
@@ -105,6 +106,7 @@ const SM_VIEW_IDS = new Set(SM_SUB_ITEMS.map(i => i.id))
 
 const NAV_ITEMS = [
   { id: 'dashboard',       label: 'Tổng quan',             icon: 'dashboard',            section: 'Tổng quan' },
+  { id: 'data-entry',      label: 'Nhập liệu',             icon: 'add_circle',           section: 'Tổng quan' },
   { id: 'tutor-approval',  label: 'Duyệt gia sư',          icon: 'how_to_reg',           section: 'Quản lý' },
   { id: 'user-management', label: 'Quản lý người dùng',    icon: 'group',                section: 'Quản lý' },
   { id: 'subjects',        label: 'Môn học',               icon: 'subject',              section: 'Học tập' },
@@ -520,6 +522,7 @@ export default function AdminDashboard() {
               setReviewNotes={setReviewNotes}
             />
           )}
+          {activeView === 'data-entry'      && <DataEntryView />}
           {activeView === 'user-management' && <UserManagementView initialSearch={userMgmtSearch} onSearchConsumed={() => setUserMgmtSearch('')} />}
           {activeView === 'subjects'         && <SubjectsView token={token} />}
           {activeView === 'lessons'          && <CourseManagementView token={token} />}

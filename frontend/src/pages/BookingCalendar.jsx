@@ -107,7 +107,36 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   const [monthlySkippedCount, setMonthlySkippedCount] = useState(0);
   const [futureBookedSlots, setFutureBookedSlots]   = useState({}); // To hold multi-month bookings
 
-  const CHILDREN = [{ id: 1, name: 'Alex Davis' }, { id: 2, name: 'Mia Davis' }];
+  const [children, setChildren]                   = useState([]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (user && user.role === 'parent' && token) {
+      fetch(`${API_BASE_URL}/api/parent/children`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => {
+          setChildren(data);
+          if (data.length > 0) setSelectedChild(data[0].id);
+        })
+        .catch(() => setChildren([]));
+    }
+  }, [user]);
+  // Khôi phục lựa chọn đặt lịch sau khi người dùng đăng nhập xong quay lại (đúng gia sư này).
+  useEffect(() => {
+    if (!user) return;
+    let pending;
+    try { pending = JSON.parse(sessionStorage.getItem('edux_pending_booking') || 'null'); } catch { pending = null; }
+    if (!pending || String(pending.tutorId) !== String(tutorId)) return;
+    sessionStorage.removeItem('edux_pending_booking');
+    if (pending.bookingMode) setBookingMode(pending.bookingMode);
+    if (pending.selectedBookings) setSelectedBookings(pending.selectedBookings);
+    if (pending.subject) setSubject(pending.subject);
+    if (pending.teachingMethod) setTeachingMethod(pending.teachingMethod);
+    if (pending.notes) setNotes(pending.notes);
+    if (typeof pending.currentYear === 'number') setCurrentYear(pending.currentYear);
+    if (typeof pending.currentMonth === 'number') setCurrentMonth(pending.currentMonth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, tutorId]);
 
   useEffect(() => {
     let active = true;
@@ -150,7 +179,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
           setMonthlyAvailability(monthlyAvailData);
           setBookedSlots(bookedData);
           if (tutorData.subjects?.length > 0) setSubject(tutorData.subjects[0]);
-          if (user?.role === 'parent') setSelectedChild(CHILDREN[0].name);
+          // if (user?.role === 'parent') setSelectedChild(children[0]?.id || '');
           // Gia sư chỉ dạy 1 hình thức → tự chọn luôn hình thức đó
           const ms = methodSupport(tutorData.teaching_methods);
           if (ms.online && !ms.offline) setTeachingMethod('online');
@@ -362,7 +391,24 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   /* Booking */
   const handleOpenConfirm = (e) => {
     e.preventDefault();
-    if (!user) { window.location.hash = '/signin'; return; }
+    if (!user) {
+      // Chưa đăng nhập: lưu lại đúng trang đặt lịch + các lựa chọn để đăng nhập xong quay lại y như cũ.
+      try {
+        sessionStorage.setItem('redirectAfterLogin', `#/booking/${tutorId}`);
+        sessionStorage.setItem('edux_pending_booking', JSON.stringify({
+          tutorId,
+          bookingMode,
+          selectedBookings,
+          subject,
+          teachingMethod,
+          notes,
+          currentYear,
+          currentMonth,
+        }));
+      } catch { /* sessionStorage không khả dụng */ }
+      window.location.hash = '/signin';
+      return;
+    }
     if (getSelectedBookingItems().length === 0) { alert('Please select at least one date and time slot.'); return; }
     setIsConfirmModalOpen(true);
   };
@@ -414,6 +460,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       subject:   subject || (tutor.subjects?.[0] ?? null),
       notes:     notes || null,
       teachingMethod: teachingMethod || null,
+      targetStudentId: user?.role === 'parent' ? selectedChild : undefined,
     };
 
     console.log('[BookingCalendar] handleConfirmBooking payload:', JSON.stringify(bookingPayload, null, 2));
@@ -813,10 +860,16 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                 <div style={S.formGroup}>
                   <label htmlFor="child-select" style={S.label}>Select Student (Child)</label>
                   <div style={{ position: 'relative' }}>
-                    <select id="child-select" value={selectedChild}
-                      onChange={e => setSelectedChild(e.target.value)} style={S.select}>
-                      {CHILDREN.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    {children.length === 0 ? (
+                    <div className="text-xs text-[#ba1a1a] bg-[#ffdad6] px-3 py-2 rounded-lg">
+                      Bạn chưa liên kết tài khoản con.
+                    </div>
+                  ) : (
+                    <select value={selectedChild} onChange={e => setSelectedChild(e.target.value)}
+                      className="w-full bg-[#f8f9fb] border-none rounded-lg px-4 py-2.5 text-[#191c1e] text-sm focus:ring-1 focus:ring-[#00288e]">
+                      {children.map(c => <option key={c.id} value={c.id}>{c.nickname || c.full_name || 'Học viên'} (ID: {c.id.substring(0,8)})</option>)}
                     </select>
+                  )}
                     <span className="material-symbols-outlined" style={S.selectArrow}>expand_more</span>
                   </div>
                 </div>

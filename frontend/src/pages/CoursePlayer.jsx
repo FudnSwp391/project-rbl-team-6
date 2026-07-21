@@ -118,11 +118,13 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const completed = course?.lessons?.filter((lesson) => lesson.isCompleted).length || 0
   const totalLessons = course?.lessons?.length || 0
   const progress = totalLessons ? Math.round((completed / totalLessons) * 100) : 0
-  const canBuyCourse = user && ['student', 'parent'].includes(user.role)
+  const canBuyCourse = !user || ['student', 'parent'].includes(user.role)
   const isStaffView = user?.role === 'tutor' || user?.role === 'admin'
 
   const handleEnroll = async () => {
     if (!user) {
+      // Lưu đúng trang khóa học này để đăng nhập xong quay lại, không đá về trang chủ.
+      try { sessionStorage.setItem('redirectAfterLogin', window.location.hash) } catch { /* noop */ }
       window.location.hash = '/signin'
       return
     }

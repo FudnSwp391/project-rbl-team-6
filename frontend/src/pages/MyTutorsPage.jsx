@@ -49,7 +49,10 @@ export default function MyTutorsPage() {
         <div className="text-center">
           <span className="material-symbols-outlined text-gray-300 mb-3 block" style={{ fontSize: 48 }}>lock</span>
           <p className="text-gray-500">Vui lòng đăng nhập để xem danh sách gia sư.</p>
-          <button onClick={() => window.location.hash = '/signin'}
+          <button onClick={() => {
+            try { sessionStorage.setItem('redirectAfterLogin', window.location.hash); } catch(e) {}
+            window.location.hash = '/signin';
+          }}
             className="mt-4 px-6 py-2 bg-[#00288e] text-white rounded-lg text-sm font-semibold hover:bg-[#1e40af] transition-colors">
             Đăng nhập
           </button>
