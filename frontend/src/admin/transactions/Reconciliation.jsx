@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { PageHeader, EmptyState } from './components'
+import { PageHeader, EmptyState, ExportButton, SearchFilterBar, FilterTabs } from './components'
 import InvestigationDrawer from './investigation/InvestigationDrawer'
+import { exportReconciliationExcel, exportReconciliationCSV, exportReconciliationPDF } from './exportUtils'
 
 import { API_BASE_URL as API } from '../../config'
 
@@ -39,6 +40,9 @@ export default function Reconciliation({ token }) {
   const [runs, setRuns]         = useState(null)
   const [showHistory, setShowHistory] = useState(false)
   const [running, setRunning]   = useState(false)
+  const [itemSearch, setItemSearch]     = useState('')
+  const [itemTypeFilter, setItemTypeFilter]         = useState('ALL')
+  const [itemSeverityFilter, setItemSeverityFilter] = useState('ALL')
 
   const loadDashSummary = () => {
     if (!token) return
@@ -104,9 +108,31 @@ export default function Reconciliation({ token }) {
 
   const { summary, checks, items } = data
 
+  const filteredItems = items.filter(it => {
+    if (itemTypeFilter !== 'ALL' && it.type !== itemTypeFilter) return false
+    if (itemSeverityFilter !== 'ALL' && it.severity !== itemSeverityFilter) return false
+    if (itemSearch.trim()) {
+      const q = itemSearch.trim().toLowerCase()
+      const haystack = `${it.title} ${it.description} ${it.tutor_name || ''}`.toLowerCase()
+      if (!haystack.includes(q)) return false
+    }
+    return true
+  })
+
+  const handleExport = async (format) => {
+    try {
+      if (format.startsWith('Excel')) await exportReconciliationExcel({ summary, checks, items: filteredItems })
+      else if (format.startsWith('CSV')) exportReconciliationCSV({ items: filteredItems })
+      else if (format.startsWith('PDF')) await exportReconciliationPDF({ checks, items: filteredItems })
+    } catch {
+      window.alert('Không thể xuất báo cáo.')
+    }
+  }
+
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
       <PageHeader title="Đối Soát" subtitle="Kiểm tra đối soát tài chính — chỉ đọc, không điều chỉnh dữ liệu">
+        <ExportButton onExport={handleExport} label="Xuất Báo Cáo" />
         <button
           onClick={runAgain}
           disabled={running}
@@ -229,13 +255,26 @@ export default function Reconciliation({ token }) {
       {/* Review items */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100">
-          <h3 className="text-sm font-bold text-gray-700 uppercase">
-            Mục Cần Xem Xét ({items.length})
+          <h3 className="text-sm font-bold text-gray-700 uppercase mb-3">
+            Mục Cần Xem Xét ({filteredItems.length}/{items.length})
             <span className="ml-2 text-xs font-normal text-gray-400 normal-case">— giao dịch giá trị lớn, chỉ để xem</span>
           </h3>
+          {/* Module 14: filters (client-side — data volume is small) */}
+          <SearchFilterBar search={itemSearch} onSearch={setItemSearch} placeholder="Tìm theo tiêu đề, mô tả, gia sư...">
+            <FilterTabs
+              tabs={[{ value: 'ALL', label: 'Tất cả loại' }, { value: 'transaction', label: 'Giao dịch' }, { value: 'withdrawal', label: 'Rút tiền' }]}
+              active={itemTypeFilter}
+              onChange={setItemTypeFilter}
+            />
+            <FilterTabs
+              tabs={[{ value: 'ALL', label: 'Mọi mức độ' }, { value: 'low', label: 'Thấp' }, { value: 'medium', label: 'Trung bình' }, { value: 'high', label: 'Cao' }]}
+              active={itemSeverityFilter}
+              onChange={setItemSeverityFilter}
+            />
+          </SearchFilterBar>
         </div>
-        {items.length === 0 ? (
-          <div className="p-8"><EmptyState title="Không có mục cần xem xét" description="Không phát hiện giao dịch bất thường." /></div>
+        {filteredItems.length === 0 ? (
+          <div className="p-8"><EmptyState title="Không có mục cần xem xét" description="Không có mục nào khớp với bộ lọc hiện tại." /></div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -247,7 +286,7 @@ export default function Reconciliation({ token }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {items.map(it => (
+                {filteredItems.map(it => (
                   <tr key={it.id} className="hover:bg-gray-50 transition-colors">
                     <td className="py-3 px-4 text-sm font-medium text-gray-900">{it.title}</td>
                     <td className="py-3 px-4 text-sm text-gray-500">{it.type}</td>

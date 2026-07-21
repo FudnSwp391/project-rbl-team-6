@@ -9,6 +9,7 @@ import SystemLogs from './SystemLogs'
 import RecommendationCard from './RecommendationCard'
 import IncidentPanel from './IncidentPanel'
 import AuditHistory from './AuditHistory'
+import { exportInvestigationReportPDF } from '../exportUtils'
 
 import { API_BASE_URL as API } from '../../../config'
 
@@ -94,6 +95,13 @@ export default function InvestigationDrawer({ token, findingKey, open, onClose }
           <SectionCard title="Tổng Quan" icon="summarize"
             action={
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => exportInvestigationReportPDF({ findingData, analysis, timeline }).catch(() => window.alert('Không thể xuất báo cáo.'))}
+                  title="Xuất Báo Cáo Điều Tra (PDF)"
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[18px]">download</span>
+                </button>
                 <SeverityBadge severity={findingData.severity} />
                 <StatusBadge status={status} />
               </div>
