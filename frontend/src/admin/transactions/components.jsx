@@ -19,9 +19,11 @@ const STATUS_CONFIG = {
   RESOLVED_REFUND: { label: 'Hoàn tiền',       cls: 'bg-blue-100 text-blue-700 border border-blue-200' },
   RESOLVED_RELEASE:{ label: 'Giải ngân',       cls: 'bg-emerald-100 text-emerald-700 border border-emerald-200' },
   // Risk levels
+  CRITICAL:        { label: 'Nghiêm trọng',    cls: 'bg-red-200 text-red-800 border border-red-300' },
   HIGH:            { label: 'Cao',             cls: 'bg-red-100 text-red-700 border border-red-200' },
   MEDIUM:          { label: 'Trung bình',      cls: 'bg-amber-100 text-amber-700 border border-amber-200' },
   LOW:             { label: 'Thấp',            cls: 'bg-green-100 text-green-700 border border-green-200' },
+  INFO:            { label: 'Thông tin',       cls: 'bg-sky-100 text-sky-700 border border-sky-200' },
   // Alert statuses
   INVESTIGATING:   { label: 'Đang điều tra',   cls: 'bg-purple-100 text-purple-700 border border-purple-200' },
   RESOLVED:        { label: 'Đã giải quyết',  cls: 'bg-gray-100 text-gray-600 border border-gray-200' },

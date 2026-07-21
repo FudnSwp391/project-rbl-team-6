@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../config'
 
 const POLL_MS = 60_000 // 1 phút
 

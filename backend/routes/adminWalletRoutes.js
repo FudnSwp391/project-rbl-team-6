@@ -1,13 +1,22 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const jwt = require('jsonwebtoken');
 
-// Basic auth middleware (mocking admin check)
-const adminAuthMiddleware = async (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
+const jwtSecret = process.env.JWT_SECRET || 'dev_jwt_secret_change_me';
+
+const adminAuthMiddleware = (req, res, next) => {
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  // In a real app, verify token and check if role is ADMIN.
-  next();
+  try {
+    const decoded = jwt.verify(token, jwtSecret);
+    if (decoded.role !== 'admin') return res.status(403).json({ error: 'Forbidden: admin only' });
+    req.user = decoded;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Token không hợp lệ hoặc đã hết hạn' });
+  }
 };
 
 // --- GET All Deposit Requests ---

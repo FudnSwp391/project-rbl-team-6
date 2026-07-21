@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const RISK_CFG = {
   LOW:      { label: 'Thấp',        cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },

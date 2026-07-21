@@ -1,40 +1,42 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import { useAuth } from './AuthContext'
 import AdminNotificationBell from './components/AdminNotificationBell'
-
-// ─── Transaction Management Modules ──────────────────────────────────────────
-import FinancialOverview     from './admin/transactions/FinancialOverview'
-import LessonPayments        from './admin/transactions/LessonPayments'
-import CourseTransactions    from './admin/transactions/CourseTransactions'
-import RefundManagement      from './admin/transactions/RefundManagement'
-import FailedTransactions    from './admin/transactions/FailedTransactions'
-import PaymentGateways       from './admin/transactions/PaymentGateways'
-import CommissionManagement  from './admin/transactions/CommissionManagement'
-import PlatformRevenue       from './admin/transactions/PlatformRevenue'
-import SystemWallet          from './admin/transactions/SystemWallet'
-import PromotionTransactions from './admin/transactions/PromotionTransactions'
-import FinancialReports      from './admin/transactions/FinancialReports'
-import Reconciliation        from './admin/transactions/Reconciliation'
-import FraudAlerts           from './admin/transactions/FraudAlerts'
-import NotificationCenter    from './admin/transactions/NotificationCenter'
-import AuditLogs             from './admin/transactions/AuditLogs'
-import WalletLedger          from './admin/transactions/WalletLedger'
-import CommissionLogs        from './admin/transactions/CommissionLogs'
-import NotificationOutbox     from './admin/transactions/NotificationOutbox'
-import WithdrawalRequests     from './admin/transactions/WithdrawalRequests'
-import AICaseResolutions      from './admin/transactions/AICaseResolutions'
 import AdminCopilot           from './admin/copilot/AdminCopilot'
 
-import CourseComplaintsAdminView from './admin/services/CourseComplaints'
-import Violations from './admin/services/Violations'
-import Moderation from './admin/services/Moderation'
-import SemanticModeration from './admin/semantic/SemanticModeration'
-import FraudIntel from './admin/fraud/FraudIntel'
-import SafeAnalytics from './admin/analytics/SafeAnalytics'
-import DataEntryView from './admin/DataEntryView'
-import { SubjectsView } from './admin/subjects'
+// ─── Transaction Management Modules (lazy-loaded: only the active tab's code is fetched) ──
+const FinancialOverview     = lazy(() => import('./admin/transactions/FinancialOverview'))
+const LessonPayments        = lazy(() => import('./admin/transactions/LessonPayments'))
+const CourseTransactions    = lazy(() => import('./admin/transactions/CourseTransactions'))
+const RefundManagement      = lazy(() => import('./admin/transactions/RefundManagement'))
+const FailedTransactions    = lazy(() => import('./admin/transactions/FailedTransactions'))
+const PaymentGateways       = lazy(() => import('./admin/transactions/PaymentGateways'))
+const CommissionManagement  = lazy(() => import('./admin/transactions/CommissionManagement'))
+const PlatformRevenue       = lazy(() => import('./admin/transactions/PlatformRevenue'))
+const SystemWallet          = lazy(() => import('./admin/transactions/SystemWallet'))
+const PromotionTransactions = lazy(() => import('./admin/transactions/PromotionTransactions'))
+const FinancialReports      = lazy(() => import('./admin/transactions/FinancialReports'))
+const Reconciliation        = lazy(() => import('./admin/transactions/Reconciliation'))
+const FraudAlerts           = lazy(() => import('./admin/transactions/FraudAlerts'))
+const NotificationCenter    = lazy(() => import('./admin/transactions/NotificationCenter'))
+const AuditLogs             = lazy(() => import('./admin/transactions/AuditLogs'))
+const WalletLedger          = lazy(() => import('./admin/transactions/WalletLedger'))
+const CommissionLogs        = lazy(() => import('./admin/transactions/CommissionLogs'))
+const NotificationOutbox     = lazy(() => import('./admin/transactions/NotificationOutbox'))
+const WithdrawalRequests     = lazy(() => import('./admin/transactions/WithdrawalRequests'))
+const AICaseResolutions      = lazy(() => import('./admin/transactions/AICaseResolutions'))
+const DataEntryView          = lazy(() => import('./admin/DataEntryView'))
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const CourseComplaintsAdminView = lazy(() => import('./admin/services/CourseComplaints'))
+const Violations = lazy(() => import('./admin/services/Violations'))
+const Moderation = lazy(() => import('./admin/services/Moderation'))
+const SemanticModeration = lazy(() => import('./admin/semantic/SemanticModeration'))
+const FraudIntel = lazy(() => import('./admin/fraud/FraudIntel'))
+const SafeAnalytics = lazy(() => import('./admin/analytics/SafeAnalytics'))
+const SubjectsView = lazy(() => import('./admin/subjects/SubjectsView'))
+import { subjectMeta as sharedSubjectMeta } from './admin/subjects/subjectMeta'
+const ReportsView = lazy(() => import('./admin/reports/ReportsView'))
+
+import { API_BASE_URL as API } from './config'
 
 async function authFetch(url, token, options = {}) {
   const res = await fetch(url, {
@@ -63,7 +65,7 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('vi-VN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-import AdminWalletDashboard from './components/AdminWalletDashboard'
+const AdminWalletDashboard = lazy(() => import('./components/AdminWalletDashboard'))
 
 const TX_SUB_ITEMS = [
   { id: 'tx-overview',     label: 'Tổng Quan Tài Chính',    icon: 'bar_chart' },
@@ -477,6 +479,12 @@ export default function AdminDashboard() {
 
         {/* Page content */}
         <div className="pt-16">
+        <Suspense fallback={(
+          <div className="flex items-center justify-center py-24 text-gray-400">
+            <span className="material-symbols-outlined animate-spin mr-2">progress_activity</span>
+            Đang tải...
+          </div>
+        )}>
           {activeView === 'dashboard' && (
             <DashboardView
               stats={stats}
@@ -551,10 +559,11 @@ export default function AdminDashboard() {
           {activeView === 'sm-fraud'         && <FraudIntel token={token} />}
           {activeView === 'sm-analytics'     && <SafeAnalytics token={token} />}
 
-          {activeView === 'reports'          && <FinancialReports token={token} />}
+          {activeView === 'reports'          && <ReportsView token={token} />}
           {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
           {activeView === 'audit-logs'       && <AuditLogs token={token} />}
           {activeView === 'settings'         && <SettingsView />}
+        </Suspense>
         </div>
       </main>
 
@@ -2100,17 +2109,13 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
 }
 
 // ─── Course Management View ───────────────────────────────────────────────────
-const SUBJECT_META = {
-  'Toán học':   { tag: 'bg-blue-50 text-blue-700',     grad: 'from-blue-500 to-indigo-700',   icon: 'functions' },
-  'Lập trình':  { tag: 'bg-violet-50 text-violet-700', grad: 'from-violet-500 to-indigo-700',  icon: 'code' },
-  'Tiếng Anh':  { tag: 'bg-rose-50 text-rose-700',     grad: 'from-rose-500 to-pink-700',     icon: 'translate' },
-  'Vật lý':     { tag: 'bg-cyan-50 text-cyan-700',     grad: 'from-cyan-500 to-sky-700',      icon: 'rocket_launch' },
-  'Hóa học':    { tag: 'bg-emerald-50 text-emerald-700', grad: 'from-emerald-500 to-teal-700', icon: 'science' },
-  'Văn học':    { tag: 'bg-amber-50 text-amber-700',   grad: 'from-amber-500 to-orange-600',  icon: 'menu_book' },
-  'Lịch sử':    { tag: 'bg-orange-50 text-orange-700', grad: 'from-orange-500 to-red-600',    icon: 'history_edu' },
-  'Sinh học':   { tag: 'bg-teal-50 text-teal-700',     grad: 'from-teal-500 to-emerald-700',  icon: 'biotech' },
+// Icon/colour/gradient now come from admin/subjects/subjectMeta.js (single
+// source of truth) instead of a second local table that had drifted out of
+// sync with it (same subject, different colours in each view).
+const subjMeta = s => {
+  const m = sharedSubjectMeta(s)
+  return { tag: m.color, grad: m.grad, icon: m.icon }
 }
-const subjMeta = s => SUBJECT_META[s] || { tag: 'bg-gray-100 text-gray-600', grad: 'from-gray-400 to-gray-600', icon: 'school' }
 
 const C_STATUS_META = {
   'Hoạt động':  { badge: 'bg-green-100 text-green-700',  dot: 'bg-green-500',  icon: 'check_circle' },
@@ -2798,7 +2803,7 @@ function TransactionsView({ token }) {
 
   const fetchTransactions = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/admin/transactions`, {
+      const res = await fetch(`${API}/api/admin/transactions`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -2928,7 +2933,7 @@ function TransactionsView({ token }) {
 }
 
 function ComplaintsView({ token }) {
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+  const API_BASE = API
   const [disputes, setDisputes] = useState([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
