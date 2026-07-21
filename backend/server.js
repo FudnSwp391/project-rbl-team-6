@@ -1020,9 +1020,34 @@ function generateAdminCopilotReport(entityType, context) {
   const risk_level = copilotRiskLevelFromScore(score);
   limitations.push('Phân tích dựa trên quy tắc, chỉ mang tính tham khảo. Quyết định cuối cùng thuộc về admin.');
 
-  // Confidence grows with data volume; rule-based capped at 92.
-  const dataPoints = evidence.length + findings.length;
-  const confidence = Math.max(40, Math.min(92, 55 + dataPoints * 5));
+  // Confidence = how much real behavioral data exists, not how many risk signals.
+  // For TUTOR/STUDENT: base off actual activity history (bookings, reviews, disputes).
+  // A brand-new profile with zero history gets LOW confidence (~30%) because there
+  // is simply not enough data to make a reliable assessment.
+  let confidence;
+  if (entityType === 'TUTOR') {
+    const hasHistory =
+      (m.completed_lessons > 0 ? 1 : 0) +
+      (m.review_count       > 0 ? 1 : 0) +
+      (m.bookings_90d       > 0 ? 1 : 0) +
+      (m.disputes_30d       > 0 ? 1 : 0) +
+      (m.reputation_score   != null ? 1 : 0);
+    // 0 signals → 30%, each signal adds ~12%, cap at 92%
+    confidence = Math.min(92, 30 + hasHistory * 12 + evidence.length * 4);
+    if (hasHistory === 0) limitations.push('Gia sư chưa có lịch sử hoạt động — độ tin cậy phân tích thấp.');
+  } else if (entityType === 'STUDENT') {
+    const hasHistory =
+      (m.bookings_90d       > 0 ? 1 : 0) +
+      (m.disputes_raised_30d > 0 ? 1 : 0) +
+      (m.refunds_90d        > 0 ? 1 : 0) +
+      (m.absences_90d       > 0 ? 1 : 0);
+    confidence = Math.min(92, 30 + hasHistory * 12 + evidence.length * 4);
+    if (hasHistory === 0) limitations.push('Học sinh chưa có lịch sử hoạt động — độ tin cậy phân tích thấp.');
+  } else {
+    // For DISPUTE/TRANSACTION/BOOKING/PAGE: original evidence-based formula
+    const dataPoints = evidence.length + (findings.filter(f => !f.includes('Không phát hiện')).length);
+    confidence = Math.max(40, Math.min(92, 50 + dataPoints * 6));
+  }
 
   const name = context.identity?.name || context.identity?.tutor_name || context.identity?.student_name || '';
   const head = {
@@ -2735,7 +2760,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 
 const { createClient } = require('@supabase/supabase-js');
-const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  : null;
 
 async function uploadFileToStorage(file, path) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -3299,6 +3326,7 @@ app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
     const { filename, bucket, folder } = req.body;
     if (!filename) return res.status(400).json({ message: "Tên file là bắt buộc." });
     
+    if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
     const targetBucket = bucket || 'tutor-documents';
     const ext = filename.split('.').pop();
     const safePath = folder ? `${folder}/${req.user.userId}_${Date.now()}.${ext}` : `${req.user.userId}_${Date.now()}.${ext}`;
@@ -4965,24 +4993,76 @@ const SUBJECT_NORM_MAP = {
   "lập trình": "Tin học", "lap trinh": "Tin học",
 };
 
+// Strips Vietnamese diacritics so "toan"/"Toán" and "dia ly"/"Địa lý" compare equal.
+function deaccentVi(s) {
+  return (s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D')
+    .toLowerCase()
+    .trim();
+}
+
+// Index of subject names that live in the `subjects` table but are absent from
+// the hardcoded SUBJECT_NORM_MAP — i.e. subjects an admin created. Without it a
+// newly created subject would report zero counts forever, because
+// normaliseSubject() could never resolve a course's free-text subject onto it.
+let dynamicSubjectIndex = new Map();   // deaccented name -> canonical name
+
+async function refreshSubjectIndex() {
+  try {
+    const { rows } = await pool.query(`SELECT name FROM subjects`);
+    const idx = new Map();
+    for (const r of rows) idx.set(deaccentVi(r.name), r.name);
+    dynamicSubjectIndex = idx;
+  } catch {
+    // Table may not exist yet (migration pending); the hardcoded map still applies.
+  }
+}
+
 function normaliseSubject(raw) {
   if (!raw) return null;
   const key = raw.trim().toLowerCase();
-  return SUBJECT_NORM_MAP[key] || null;
+  if (SUBJECT_NORM_MAP[key]) return SUBJECT_NORM_MAP[key];
+  return dynamicSubjectIndex.get(deaccentVi(raw)) || null;
 }
 
 app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const [quizRes, tutorRes, courseRes] = await Promise.all([
+    const [quizRes, tutorRes, courseRes, enrolRes, rowsRes] = await Promise.all([
       pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
       pool.query(`SELECT subjects FROM tutor_profiles WHERE subjects IS NOT NULL AND subjects <> '' AND status = 'approved'`),
-      pool.query(`SELECT subject FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`SELECT subject, status FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`
+        SELECT c.subject, e.student_id
+        FROM course_enrollments e
+        JOIN courses c ON c.id = e.course_id
+        WHERE e.status = 'active' AND c.subject IS NOT NULL AND c.subject <> ''
+      `),
+      // Batch 32: subjects are real rows now. Fall back to the canonical array
+      // if the migration has not run yet so the admin UI never renders empty.
+      pool.query(`
+        SELECT id, name, slug, description, icon, color, levels, status, sort_order, updated_at
+        FROM subjects ORDER BY sort_order, name
+      `).catch(() => ({ rows: [] })),
     ]);
 
-    // Initialise counters for every canonical subject
-    const quizCount   = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
-    const tutorCount  = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
-    const courseCount = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
+    const subjectRows = rowsRes.rows.length
+      ? rowsRes.rows
+      : CANONICAL_SUBJECTS.map((name, i) => ({
+          id: null, name, slug: null, description: null,
+          icon: 'school', color: 'bg-gray-100 text-gray-600',
+          levels: [], status: 'active', sort_order: i + 1, updated_at: null,
+        }));
+
+    // Counters are keyed by the rows we will actually return, not by the
+    // hardcoded list, so admin-created subjects get counted too.
+    const names       = subjectRows.map(r => r.name);
+    const quizCount   = Object.fromEntries(names.map(s => [s, 0]));
+    const tutorCount  = Object.fromEntries(names.map(s => [s, 0]));
+    const courseCount = Object.fromEntries(names.map(s => [s, 0]));
+    const pendingCount = Object.fromEntries(names.map(s => [s, 0]));
+    const studentSets  = Object.fromEntries(names.map(s => [s, new Set()]));
 
     // Aggregate quiz counts
     for (const row of quizRes.rows) {
@@ -5010,23 +5090,404 @@ app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
       }
     }
 
-    // Aggregate course counts
+    // Aggregate course counts; pending_review courses are the admin's work queue.
     for (const row of courseRes.rows) {
       const canon = normaliseSubject(row.subject);
-      if (canon) courseCount[canon] = (courseCount[canon] || 0) + 1;
+      if (!canon || !(canon in courseCount)) continue;
+      courseCount[canon] += 1;
+      if (row.status === 'pending_review') pendingCount[canon] += 1;
     }
 
-    const subjects = CANONICAL_SUBJECTS.map(name => ({
-      name,
-      quiz_count:   quizCount[name]   || 0,
-      tutor_count:  tutorCount[name]  || 0,
-      course_count: courseCount[name] || 0,
+    // Distinct active learners per subject, via course enrolments.
+    for (const row of enrolRes.rows) {
+      const canon = normaliseSubject(row.subject);
+      if (canon && studentSets[canon]) studentSets[canon].add(row.student_id);
+    }
+
+    const subjects = subjectRows.map(r => ({
+      id:            r.id,
+      name:          r.name,
+      slug:          r.slug,
+      description:   r.description,
+      icon:          r.icon,
+      color:         r.color,
+      levels:        r.levels || [],
+      status:        r.status,
+      sort_order:    r.sort_order,
+      updated_at:    r.updated_at,
+      quiz_count:    quizCount[r.name]    || 0,
+      tutor_count:   tutorCount[r.name]   || 0,
+      course_count:  courseCount[r.name]  || 0,
+      pending_count: pendingCount[r.name] || 0,
+      student_count: studentSets[r.name] ? studentSets[r.name].size : 0,
     }));
 
     return res.json({ subjects });
   } catch (err) {
     console.error("GET /api/admin/subjects error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy danh sách môn học." });
+  }
+});
+
+// ── Subject mutations (Batch 33) ──────────────────────────────────────────────
+const SUBJECT_STATUSES = ['active', 'draft', 'archived', 'disabled'];
+const SUBJECT_LEVELS   = ['Tiểu học', 'THCS', 'THPT'];
+
+function slugifySubject(name) {
+  return deaccentVi(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mon-hoc';
+}
+
+// Returns a slug not already taken, appending -2, -3, … when needed.
+async function uniqueSubjectSlug(name, excludeId) {
+  const base = slugifySubject(name);
+  for (let n = 1; n < 50; n++) {
+    const candidate = n === 1 ? base : `${base}-${n}`;
+    const { rows } = await pool.query(
+      `SELECT 1 FROM subjects WHERE slug = $1 AND ($2::uuid IS NULL OR id <> $2)`,
+      [candidate, excludeId || null]
+    );
+    if (!rows.length) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+// Shared field validation for create and edit. Returns { error } or { value }.
+function validateSubjectPayload(body, { partial = false } = {}) {
+  const out = {};
+
+  if (body.name !== undefined || !partial) {
+    const name = String(body.name ?? '').trim();
+    if (!name)             return { error: 'Tên môn học là bắt buộc.' };
+    if (name.length > 100) return { error: 'Tên môn học tối đa 100 ký tự.' };
+    out.name = name;
+  }
+  if (body.description !== undefined) {
+    const d = String(body.description ?? '').trim();
+    if (d.length > 500) return { error: 'Mô tả tối đa 500 ký tự.' };
+    out.description = d || null;
+  }
+  if (body.icon !== undefined) {
+    const icon = String(body.icon ?? '').trim();
+    if (!/^[a-z0-9_]{1,40}$/.test(icon)) return { error: 'Icon không hợp lệ.' };
+    out.icon = icon;
+  }
+  if (body.color !== undefined) {
+    const color = String(body.color ?? '').trim();
+    // Tailwind utility pair, e.g. "bg-blue-100 text-blue-700".
+    if (!/^bg-[a-z]+-\d{2,3} text-[a-z]+-\d{2,3}$/.test(color)) {
+      return { error: 'Bảng màu không hợp lệ.' };
+    }
+    out.color = color;
+  }
+  if (body.levels !== undefined) {
+    const levels = Array.isArray(body.levels) ? body.levels : [];
+    if (levels.some(l => !SUBJECT_LEVELS.includes(l))) {
+      return { error: 'Cấp học không hợp lệ.' };
+    }
+    out.levels = levels;
+  }
+  if (body.status !== undefined) {
+    if (!SUBJECT_STATUSES.includes(body.status)) return { error: 'Trạng thái không hợp lệ.' };
+    out.status = body.status;
+  }
+  return { value: out };
+}
+
+// Counts every row that still points at this subject's name. Used both as the
+// delete preflight and by the DELETE handler itself, so the check the admin was
+// shown is the same one actually enforced.
+async function subjectDependencies(name) {
+  const [courseRes, quizRes, tutorRes] = await Promise.all([
+    pool.query(`SELECT subject FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+    pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
+    pool.query(`SELECT subjects FROM tutor_profiles WHERE subjects IS NOT NULL AND subjects <> ''`),
+  ]);
+  const hits = rows => rows.filter(r => normaliseSubject(r.subject) === name).length;
+
+  let tutors = 0;
+  for (const row of tutorRes.rows) {
+    let parts = [];
+    try {
+      const parsed = JSON.parse(row.subjects);
+      parts = Array.isArray(parsed) ? parsed : [row.subjects];
+    } catch { parts = row.subjects.split(/[,;|]+/); }
+    if (parts.some(p => normaliseSubject(p) === name)) tutors++;
+  }
+
+  const courses = hits(courseRes.rows);
+  const quizzes = hits(quizRes.rows);
+  return { courses, quizzes, tutors, total: courses + quizzes + tutors };
+}
+
+// POST /api/admin/subjects — create
+app.post("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { error, value } = validateSubjectPayload(req.body);
+    if (error) return res.status(400).json({ message: error });
+
+    // Reject names that only differ by diacritics or case — "Toan" vs "Toán"
+    // would otherwise create a second subject that silently steals counts.
+    const { rows: clash } = await pool.query(`SELECT name FROM subjects`);
+    const wanted = deaccentVi(value.name);
+    const dup = clash.find(r => deaccentVi(r.name) === wanted);
+    if (dup) return res.status(409).json({ message: `Môn học “${dup.name}” đã tồn tại.` });
+
+    const slug = await uniqueSubjectSlug(value.name);
+    const { rows: maxRows } = await pool.query(`SELECT COALESCE(MAX(sort_order), 0) AS m FROM subjects`);
+
+    const { rows } = await pool.query(
+      `INSERT INTO subjects (name, slug, description, icon, color, levels, status, sort_order, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, name, slug, description, icon, color, levels, status, sort_order, updated_at`,
+      [
+        value.name, slug, value.description ?? null,
+        value.icon  ?? 'school',
+        value.color ?? 'bg-gray-100 text-gray-600',
+        value.levels ?? [],
+        value.status ?? 'active',
+        Number(maxRows[0].m) + 1,
+        req.user?.userId ?? null,
+      ]
+    );
+    await refreshSubjectIndex();
+    return res.status(201).json({ subject: rows[0] });
+  } catch (err) {
+    console.error("POST /api/admin/subjects error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo môn học." });
+  }
+});
+
+// PATCH /api/admin/subjects/:id — edit identity / appearance / status
+app.patch("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { error, value } = validateSubjectPayload(req.body, { partial: true });
+    if (error) return res.status(400).json({ message: error });
+    if (!Object.keys(value).length) {
+      return res.status(400).json({ message: "Không có thay đổi nào." });
+    }
+
+    const { rows: current } = await pool.query(`SELECT * FROM subjects WHERE id = $1`, [req.params.id]);
+    if (!current.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+
+    if (value.name && deaccentVi(value.name) !== deaccentVi(current[0].name)) {
+      const { rows: clash } = await pool.query(`SELECT name FROM subjects WHERE id <> $1`, [req.params.id]);
+      const wanted = deaccentVi(value.name);
+      const dup = clash.find(r => deaccentVi(r.name) === wanted);
+      if (dup) return res.status(409).json({ message: `Môn học “${dup.name}” đã tồn tại.` });
+      value.slug = await uniqueSubjectSlug(value.name, req.params.id);
+    }
+
+    // archived_at tracks when the subject left circulation, for restore ordering.
+    const sets = [], params = [];
+    for (const [k, v] of Object.entries(value)) {
+      params.push(v);
+      sets.push(`${k} = $${params.length}`);
+    }
+    if (value.status) {
+      sets.push(value.status === 'archived' ? `archived_at = NOW()` : `archived_at = NULL`);
+    }
+    sets.push(`updated_at = NOW()`);
+    params.push(req.params.id);
+
+    const { rows } = await pool.query(
+      `UPDATE subjects SET ${sets.join(', ')} WHERE id = $${params.length}
+       RETURNING id, name, slug, description, icon, color, levels, status, sort_order, updated_at`,
+      params
+    );
+    await refreshSubjectIndex();
+    return res.json({ subject: rows[0] });
+  } catch (err) {
+    console.error("PATCH /api/admin/subjects/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật môn học." });
+  }
+});
+
+// GET /api/admin/subjects/:id — detail: KPIs, monthly series, tutors, courses, sessions
+//
+// Aggregation happens in JS rather than SQL because the link between a subject
+// row and the free-text `subject` columns on courses/bookings/reviews runs
+// through normaliseSubject(), which is not expressible in SQL. Volumes are
+// small at this scale; if these tables grow, add a subject_id FK and move the
+// grouping into the query.
+app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows: subjRows } = await pool.query(
+      `SELECT id, name, slug, description, icon, color, levels, status, sort_order,
+              created_at, updated_at, archived_at
+       FROM subjects WHERE id = $1`, [req.params.id]
+    );
+    if (!subjRows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+    const subject = subjRows[0];
+    const name = subject.name;
+    const mine = raw => normaliseSubject(raw) === name;
+
+    const [courseRes, quizRes, tutorRes, enrolRes, bookingRes, reviewRes] = await Promise.all([
+      pool.query(`SELECT c.id, c.title, c.subject, c.status, c.price, c.created_at,
+                         COALESCE(u.full_name, '—') AS tutor_name
+                  FROM courses c LEFT JOIN users u ON u.id = c.tutor_id
+                  WHERE c.subject IS NOT NULL AND c.subject <> ''`),
+      pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`SELECT tp.user_id, tp.subjects, tp.hourly_rate,
+                         COALESCE(u.full_name, '—') AS full_name, u.picture
+                  FROM tutor_profiles tp LEFT JOIN users u ON u.id = tp.user_id
+                  WHERE tp.subjects IS NOT NULL AND tp.subjects <> '' AND tp.status = 'approved'`),
+      pool.query(`SELECT c.subject, e.student_id FROM course_enrollments e
+                  JOIN courses c ON c.id = e.course_id
+                  WHERE e.status = 'active' AND c.subject IS NOT NULL AND c.subject <> ''`),
+      // bookings is the live lesson table (78 read sites, written by the booking
+      // flow). tutor_sessions and invoices both carry a `subject` column but
+      // nothing in the app ever inserts into them, so reading those would make
+      // every session and revenue figure permanently empty.
+      pool.query(`SELECT b.id, b.subject, b.status, b.lesson_date, b.time_slot,
+                         b.lesson_fee, b.escrow_released_at, b.tutor_id, b.student_id,
+                         COALESCE(t.full_name,  b.tutor_name,   '—') AS tutor_name,
+                         COALESCE(st.full_name, b.student_name, '—') AS student_name
+                  FROM bookings b
+                  LEFT JOIN users t  ON t.id  = b.tutor_id
+                  LEFT JOIN users st ON st.id = b.student_id
+                  WHERE b.subject IS NOT NULL AND b.subject <> ''`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT subject, rating FROM tutor_reviews`).catch(() => ({ rows: [] })),
+    ]);
+
+    const courses  = courseRes.rows.filter(c => mine(c.subject));
+    const sessions = bookingRes.rows.filter(b => mine(b.subject));
+    const reviews  = reviewRes.rows.filter(r => mine(r.subject));
+    const quizzes  = quizRes.rows.filter(q => mine(q.subject)).length;
+
+    const students = new Set(enrolRes.rows.filter(e => mine(e.subject)).map(e => e.student_id));
+
+    // Tutors: subjects column is CSV or a JSON array depending on how it was written.
+    const tutors = tutorRes.rows.filter(t => {
+      let parts = [];
+      try {
+        const parsed = JSON.parse(t.subjects);
+        parts = Array.isArray(parsed) ? parsed : [t.subjects];
+      } catch { parts = t.subjects.split(/[,;|]+/); }
+      return parts.some(p => mine(p));
+    });
+
+    // bookings.status is capitalised: Pending / Approved / InProgress /
+    // Completed / Cancelled / Declined / Timeout.
+    const DONE      = 'Completed';
+    const LOST      = new Set(['Cancelled', 'Declined', 'Timeout']);
+    const completed = sessions.filter(s => s.status === DONE).length;
+    const cancelled = sessions.filter(s => LOST.has(s.status)).length;
+
+    // Revenue is recognised on escrow release, matching how the rest of the
+    // platform reports it (see the tutor payout query using escrow_released_at).
+    // Booking a lesson is not revenue until the money actually moves.
+    const earned    = sessions.filter(s => s.escrow_released_at);
+    const revenue   = earned.reduce((n, s) => n + Number(s.lesson_fee || 0), 0);
+    const ratingSum = reviews.reduce((n, r) => n + Number(r.rating || 0), 0);
+
+    // Last 6 calendar months, oldest first. Buckets always exist so the chart
+    // shows real gaps instead of silently collapsing empty months.
+    const monthly = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const inMonth = iso => {
+        if (!iso) return false;
+        const x = new Date(iso);
+        return x.getFullYear() === d.getFullYear() && x.getMonth() === d.getMonth();
+      };
+      monthly.push({
+        month: key,
+        sessions:  sessions.filter(s => inMonth(s.lesson_date)).length,
+        completed: sessions.filter(s => s.status === DONE && inMonth(s.lesson_date)).length,
+        // Bucketed by release date, not lesson date, so the revenue bars line
+        // up with when the platform actually recognised the money.
+        revenue:   earned.filter(s => inMonth(s.escrow_released_at))
+                         .reduce((n, s) => n + Number(s.lesson_fee || 0), 0),
+      });
+    }
+
+    // Tutor leaderboard by session volume for this subject only.
+    const perTutor = new Map();
+    for (const s of sessions) {
+      if (!s.tutor_id) continue;
+      const cur = perTutor.get(s.tutor_id) || { id: s.tutor_id, name: s.tutor_name, sessions: 0, completed: 0 };
+      cur.sessions += 1;
+      if (s.status === DONE) cur.completed += 1;
+      perTutor.set(s.tutor_id, cur);
+    }
+    const top_tutors = [...perTutor.values()].sort((a, b) => b.sessions - a.sessions).slice(0, 8);
+
+    return res.json({
+      subject,
+      kpis: {
+        tutors:  tutors.length,
+        courses: courses.length,
+        students: students.size,
+        quizzes,
+        pending_courses: courses.filter(c => c.status === 'pending_review').length,
+        sessions_total: sessions.length,
+        sessions_completed: completed,
+        sessions_cancelled: cancelled,
+        completion_rate: sessions.length ? Math.round((completed / sessions.length) * 100) : null,
+        revenue,
+        paid_bookings: earned.length,
+        avg_rating: reviews.length ? Number((ratingSum / reviews.length).toFixed(2)) : null,
+        review_count: reviews.length,
+      },
+      monthly,
+      top_tutors,
+      tutors: tutors.slice(0, 100).map(t => ({
+        id: t.user_id, name: t.full_name, picture: t.picture, hourly_rate: t.hourly_rate,
+      })),
+      courses: courses.slice(0, 100).map(c => ({
+        id: c.id, title: c.title, tutor_name: c.tutor_name,
+        status: c.status, price: Number(c.price || 0), created_at: c.created_at,
+      })),
+      sessions: sessions
+        .sort((a, b) => new Date(b.lesson_date) - new Date(a.lesson_date))
+        .slice(0, 50)
+        .map(s => ({
+          id: s.id, tutor_name: s.tutor_name, student_name: s.student_name,
+          lesson_date: s.lesson_date, time_slot: s.time_slot, status: s.status,
+          lesson_fee: Number(s.lesson_fee || 0),
+          settled: Boolean(s.escrow_released_at),
+        })),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/subjects/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi tải chi tiết môn học." });
+  }
+});
+
+// GET /api/admin/subjects/:id/dependencies — delete preflight
+app.get("/api/admin/subjects/:id/dependencies", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT name FROM subjects WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+    const deps = await subjectDependencies(rows[0].name);
+    return res.json({ name: rows[0].name, ...deps, deletable: deps.total === 0 });
+  } catch (err) {
+    console.error("GET /api/admin/subjects/:id/dependencies error:", err);
+    return res.status(500).json({ message: "Lỗi khi kiểm tra ràng buộc môn học." });
+  }
+});
+
+// DELETE /api/admin/subjects/:id — refuses while anything still references it
+app.delete("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT name FROM subjects WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+
+    const deps = await subjectDependencies(rows[0].name);
+    if (deps.total > 0) {
+      return res.status(409).json({
+        message: `Không thể xóa “${rows[0].name}” vì vẫn còn dữ liệu liên kết. Hãy lưu trữ thay vì xóa.`,
+        dependencies: deps,
+      });
+    }
+    await pool.query(`DELETE FROM subjects WHERE id = $1`, [req.params.id]);
+    await refreshSubjectIndex();
+    return res.json({ ok: true, name: rows[0].name });
+  } catch (err) {
+    console.error("DELETE /api/admin/subjects/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi xóa môn học." });
   }
 });
 
@@ -6694,6 +7155,231 @@ app.get("/api/admin/fraud-alerts", verifyToken, requireAdmin, async (req, res) =
   }
 });
 
+// ── Fraud Investigation Center (Batch 35) ─────────────────────────────────────
+// Alerts above are computed live, never persisted (CAP-4.2). alert_id is
+// deterministic ("disp-<user_id>" / "dep-<transaction_id>"), so investigation
+// state (status/notes/audit) can key off it safely via fraud_investigations.
+async function resolveFraudAlertSubject(alertId) {
+  if (typeof alertId !== "string") return null;
+  if (alertId.startsWith("disp-")) {
+    const userId = alertId.slice(5);
+    const r = await pool.query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (!r.rows.length) return null;
+    return { kind: "DISPUTE", subjectUserId: userId, transactionId: null };
+  }
+  if (alertId.startsWith("dep-")) {
+    const txId = alertId.slice(4);
+    const r = await pool.query(
+      `SELECT w.user_id FROM transactions t JOIN wallets w ON w.id = t.wallet_id WHERE t.id = $1`,
+      [txId]
+    );
+    if (!r.rows.length) return null;
+    return { kind: "DEPOSIT", subjectUserId: r.rows[0].user_id, transactionId: txId };
+  }
+  return null;
+}
+
+// ── GET /api/admin/fraud-alerts/:id ───────────────────────────────────────────
+// Re-derives one alert's content live, upserts+returns its persistent
+// investigation anchor row, and returns the risk signal breakdown + notes.
+app.get("/api/admin/fraud-alerts/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const { kind, subjectUserId } = subject;
+
+    const userRes = await pool.query(
+      `SELECT id, full_name, email, role, picture, COALESCE(is_banned, false) AS is_banned, created_at
+       FROM users WHERE id = $1`,
+      [subjectUserId]
+    );
+    if (!userRes.rows.length) return res.status(404).json({ message: "Không tìm thấy người dùng liên quan." });
+    const user = userRes.rows[0];
+
+    let alert, signals, ai_reason;
+    if (kind === "DISPUTE") {
+      const dRes = await pool.query(
+        `SELECT COUNT(d.id)::int AS dispute_count,
+                SUM(CASE WHEN d.status='RESOLVED_REFUND' THEN 1 ELSE 0 END)::int AS refund_count,
+                MAX(d.created_at) AS last_at
+         FROM disputes d WHERE d.raised_by = $1`,
+        [subjectUserId]
+      );
+      const { dispute_count, refund_count, last_at } = dRes.rows[0];
+      const type = refund_count >= 1 ? "REFUND_ABUSE" : "UNUSUAL_ACTIVITY";
+      signals = [];
+      if (dispute_count > 0) signals.push({ label: "Nhiều tranh chấp", points: dispute_count * 30 });
+      if (refund_count >= 1) signals.push({ label: "Lạm dụng hoàn tiền", points: refund_count * 25 });
+      alert = {
+        id: alertId, type, severity: dispute_count >= 2 ? "HIGH" : "MEDIUM",
+        title: type === "REFUND_ABUSE" ? "Lạm dụng hoàn tiền" : "Hoạt động tranh chấp bất thường",
+        description: `${user.full_name || user.email} có ${dispute_count} tranh chấp, ${refund_count} lần hoàn tiền`,
+        risk_score: Math.min(100, dispute_count * 30 + refund_count * 25),
+        created_at: last_at,
+      };
+      ai_reason = refund_count >= 1
+        ? `Phát hiện qua ${refund_count} lần hoàn tiền trên tổng ${dispute_count} tranh chấp trong lịch sử người dùng.`
+        : `Phát hiện qua ${dispute_count} tranh chấp bất thường, chưa có hoàn tiền được xác nhận.`;
+    } else {
+      const tRes = await pool.query(`SELECT amount, created_at FROM transactions WHERE id = $1`, [subject.transactionId]);
+      const tx = tRes.rows[0] || {};
+      signals = [{ label: "Nạp tiền giá trị lớn", points: 20 }];
+      alert = {
+        id: alertId, type: "LARGE_DEPOSIT", severity: "LOW", title: "Nạp tiền giá trị lớn",
+        description: `Giao dịch nạp ${Number(tx.amount || 0).toLocaleString("vi-VN")}đ`,
+        risk_score: 20, created_at: tx.created_at,
+      };
+      ai_reason = `Giao dịch nạp ${Number(tx.amount || 0).toLocaleString("vi-VN")}đ vượt ngưỡng 3.000.000đ được giám sát tự động.`;
+    }
+    const total_signal_score = Math.min(100, signals.reduce((s, x) => s + x.points, 0));
+
+    await pool.query(
+      `INSERT INTO fraud_investigations (alert_id, subject_user_id) VALUES ($1, $2) ON CONFLICT (alert_id) DO NOTHING`,
+      [alertId, subjectUserId]
+    );
+    const invRes = await pool.query(
+      `SELECT fi.alert_id, fi.status, fi.assigned_to, fi.created_at, fi.updated_at, au.full_name AS assigned_to_name
+       FROM fraud_investigations fi LEFT JOIN users au ON au.id = fi.assigned_to
+       WHERE fi.alert_id = $1`,
+      [alertId]
+    );
+
+    const notesRes = await pool.query(
+      `SELECT n.id, n.content, n.admin_id, u.full_name AS admin_name, n.created_at, n.updated_at
+       FROM fraud_investigation_notes n JOIN users u ON u.id = n.admin_id
+       WHERE n.alert_id = $1 ORDER BY n.created_at DESC`,
+      [alertId]
+    );
+
+    return res.json({
+      alert, ai_reason, signals, total_signal_score,
+      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role, picture: user.picture, is_banned: user.is_banned, created_at: user.created_at },
+      investigation: invRes.rows[0],
+      notes: notesRes.rows,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy chi tiết cảnh báo." });
+  }
+});
+
+// ── GET /api/admin/fraud-alerts/:id/history ───────────────────────────────────
+// Related records for the subject user — reuses the same table shapes as the
+// existing /api/admin/transactions, /api/admin/disputes, /withdrawals,
+// /refunds endpoints, scoped with a WHERE user_id=$1 those don't support.
+app.get("/api/admin/fraud-alerts/:id/history", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const subject = await resolveFraudAlertSubject(req.params.id);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const uid = subject.subjectUserId;
+
+    const [txRes, disputeRes, bookingRes, wdRes, refundRes] = await Promise.all([
+      pool.query(
+        `SELECT t.id, t.amount, t.type, t.status, t.created_at
+         FROM transactions t JOIN wallets w ON w.id = t.wallet_id
+         WHERE w.user_id = $1 ORDER BY t.created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT d.id, d.reason, d.status, d.created_at, d.resolved_at
+         FROM disputes d WHERE d.raised_by = $1 ORDER BY d.created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT id, subject, status, lesson_fee, lesson_date, created_at
+         FROM bookings WHERE student_id = $1 OR tutor_id = $1 ORDER BY created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT wr.id, wr.amount, wr.status, wr.method, wr.created_at
+         FROM withdraw_requests wr JOIN wallets w ON w.id = wr.wallet_id
+         WHERE w.user_id = $1 ORDER BY wr.created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT d.id, d.created_at, d.resolved_at, COALESCE(c.price, 0)::numeric AS amount
+         FROM disputes d LEFT JOIN courses c ON c.id = d.course_id
+         WHERE d.raised_by = $1 AND d.status = 'RESOLVED_REFUND' ORDER BY d.created_at DESC LIMIT 20`, [uid]),
+    ]);
+
+    return res.json({
+      transactions: txRes.rows, complaints: disputeRes.rows, bookings: bookingRes.rows,
+      withdrawals: wdRes.rows, refunds: refundRes.rows,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id/history error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy lịch sử liên quan." });
+  }
+});
+
+// ── GET /api/admin/fraud-alerts/:id/timeline ──────────────────────────────────
+app.get("/api/admin/fraud-alerts/:id/timeline", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const uid = subject.subjectUserId;
+
+    const [createdRes, resolvedRes, auditRes] = await Promise.all([
+      pool.query(`SELECT id, created_at AS time FROM disputes WHERE raised_by = $1 ORDER BY created_at DESC LIMIT 10`, [uid]),
+      pool.query(`SELECT id, resolved_at AS time FROM disputes WHERE raised_by = $1 AND resolved_at IS NOT NULL ORDER BY resolved_at DESC LIMIT 10`, [uid]),
+      pool.query(`SELECT action, admin_id, reason, created_at AS time FROM fraud_audit_logs WHERE alert_id = $1 ORDER BY created_at DESC LIMIT 50`, [alertId]),
+    ]);
+
+    const events = [
+      ...createdRes.rows.map(r => ({ label: "Tranh chấp được tạo", time: r.time })),
+      ...resolvedRes.rows.map(r => ({ label: "Tranh chấp được giải quyết", time: r.time })),
+      ...auditRes.rows.map(r => ({ label: r.action, time: r.time })),
+    ].sort((a, b) => new Date(b.time) - new Date(a.time));
+
+    return res.json({ events });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id/timeline error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dòng thời gian." });
+  }
+});
+
+// ── POST /api/admin/fraud-alerts/:id/note ─────────────────────────────────────
+app.post("/api/admin/fraud-alerts/:id/note", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const content = (req.body?.content || "").trim();
+    if (!content) return res.status(400).json({ message: "Nội dung ghi chú không được để trống." });
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+
+    await pool.query(
+      `INSERT INTO fraud_investigations (alert_id, subject_user_id) VALUES ($1, $2) ON CONFLICT (alert_id) DO NOTHING`,
+      [alertId, subject.subjectUserId]
+    );
+    const insRes = await pool.query(
+      `INSERT INTO fraud_investigation_notes (alert_id, admin_id, content) VALUES ($1, $2, $3) RETURNING id, content, admin_id, created_at, updated_at`,
+      [alertId, req.user.userId, content]
+    );
+    const note = insRes.rows[0];
+    const adminRes = await pool.query(`SELECT full_name FROM users WHERE id = $1`, [req.user.userId]);
+    return res.status(201).json({ note: { ...note, admin_name: adminRes.rows[0]?.full_name || "" } });
+  } catch (err) {
+    console.error("POST /api/admin/fraud-alerts/:id/note error:", err);
+    return res.status(500).json({ message: "Lỗi khi thêm ghi chú." });
+  }
+});
+
+// ── PATCH /api/admin/fraud-alerts/:id/note/:noteId ────────────────────────────
+// Editable only by the note's creator.
+app.patch("/api/admin/fraud-alerts/:id/note/:noteId", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const content = (req.body?.content || "").trim();
+    if (!content) return res.status(400).json({ message: "Nội dung ghi chú không được để trống." });
+    const noteRes = await pool.query(`SELECT admin_id FROM fraud_investigation_notes WHERE id = $1 AND alert_id = $2`, [req.params.noteId, req.params.id]);
+    if (!noteRes.rows.length) return res.status(404).json({ message: "Không tìm thấy ghi chú." });
+    if (noteRes.rows[0].admin_id !== req.user.userId) return res.status(403).json({ message: "Chỉ người tạo mới có thể sửa ghi chú này." });
+
+    const updRes = await pool.query(
+      `UPDATE fraud_investigation_notes SET content = $1, updated_at = NOW() WHERE id = $2 RETURNING id, content, admin_id, created_at, updated_at`,
+      [content, req.params.noteId]
+    );
+    const adminRes = await pool.query(`SELECT full_name FROM users WHERE id = $1`, [req.user.userId]);
+    return res.json({ note: { ...updRes.rows[0], admin_name: adminRes.rows[0]?.full_name || "" } });
+  } catch (err) {
+    console.error("PATCH /api/admin/fraud-alerts/:id/note/:noteId error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật ghi chú." });
+  }
+});
+
 // ── GET /api/admin/transactions/withdrawals ───────────────────────────────────
 // CAP-3.5: Tutor withdrawal requests from withdraw_requests table (read-only).
 // account_details is JSONB — bank_name and account_number extracted if present;
@@ -8299,6 +8985,7 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
     else if (mimetype.startsWith('video/')) msgType = 'video';
 
     // Upload lên Supabase Storage
+    if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
     const { data: uploadData, error: uploadError } = await supabaseAdmin
       .storage.from(BUCKET)
       .upload(storagePath, buffer, { contentType: mimetype, upsert: false });
@@ -10728,6 +11415,7 @@ app.post('/api/complaints/upload', verifyToken, (req, res, next) => {
 }, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'Không có file được gửi.' });
+    if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
     const { originalname, mimetype, size, buffer } = req.file;
     const ext = originalname.includes('.') ? '.' + originalname.split('.').pop() : '';
     const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
@@ -16661,6 +17349,144 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
   } catch (err) {
     console.error('⚠️  DB migration (admin_analytics_queries Batch 29A) warning:', err.message);
   }
+
+  // ── Auto-migrate: subjects as first-class entities (Batch 32) ───────────────
+  // Until now subjects existed only as the hardcoded CANONICAL_SUBJECTS array
+  // plus free-text strings on courses/quizzes/tutor_profiles. That left admins
+  // with no row to edit, so create/edit/archive were impossible. This table
+  // gives each subject an identity; the free-text columns stay authoritative
+  // for counts and are still reconciled through normaliseSubject().
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS subjects (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name        TEXT NOT NULL UNIQUE,
+        slug        TEXT NOT NULL UNIQUE,
+        description TEXT,
+        icon        TEXT NOT NULL DEFAULT 'school',
+        color       TEXT NOT NULL DEFAULT 'bg-gray-100 text-gray-600',
+        levels      TEXT[] NOT NULL DEFAULT '{}',
+        status      TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active','draft','archived','disabled')),
+        sort_order  INT NOT NULL DEFAULT 0,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW(),
+        archived_at TIMESTAMPTZ,
+        created_by  UUID REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_subjects_status ON subjects(status);
+      CREATE INDEX IF NOT EXISTS idx_subjects_slug   ON subjects(slug);
+      CREATE INDEX IF NOT EXISTS idx_subjects_order  ON subjects(sort_order, name);
+    `);
+
+    // Seed the canonical ten, preserving the icons/colors the admin UI already
+    // shows so the redesign does not visually re-theme existing subjects.
+    // ON CONFLICT DO NOTHING keeps this safe to re-run and never clobbers an
+    // admin's later edits to icon/color/status.
+    await pool.query(`
+      INSERT INTO subjects (name, slug, icon, color, levels, sort_order) VALUES
+        ('Toán',       'toan',       'calculate',    'bg-blue-100 text-blue-700',       ARRAY['Tiểu học','THCS','THPT'], 1),
+        ('Tiếng Việt', 'tieng-viet', 'menu_book',    'bg-rose-100 text-rose-700',       ARRAY['Tiểu học'],               2),
+        ('Ngữ văn',    'ngu-van',    'auto_stories', 'bg-pink-100 text-pink-700',       ARRAY['THCS','THPT'],            3),
+        ('Tiếng Anh',  'tieng-anh',  'translate',    'bg-green-100 text-green-700',     ARRAY['Tiểu học','THCS','THPT'], 4),
+        ('Vật lý',     'vat-ly',     'bolt',         'bg-cyan-100 text-cyan-700',       ARRAY['THCS','THPT'],            5),
+        ('Hóa học',    'hoa-hoc',    'biotech',      'bg-purple-100 text-purple-700',   ARRAY['THCS','THPT'],            6),
+        ('Sinh học',   'sinh-hoc',   'grass',        'bg-emerald-100 text-emerald-700', ARRAY['THCS','THPT'],            7),
+        ('Lịch sử',    'lich-su',    'history_edu',  'bg-amber-100 text-amber-700',     ARRAY['THCS','THPT'],            8),
+        ('Địa lý',     'dia-ly',     'public',       'bg-teal-100 text-teal-700',       ARRAY['THCS','THPT'],            9),
+        ('Tin học',    'tin-hoc',    'code',         'bg-indigo-100 text-indigo-700',   ARRAY['Tiểu học','THCS','THPT'], 10)
+      ON CONFLICT (name) DO NOTHING
+    `);
+    console.log('✅ DB migration: subjects table + canonical seed ready (Batch 32)');
+  } catch (err) {
+    console.error('⚠️  DB migration (subjects Batch 32) warning:', err.message);
+  }
+
+  // ── Auto-migrate: fraud investigation tables (Batch 35) ─────────────────────
+  // fraud-alerts are computed live (see GET /api/admin/fraud-alerts, CAP-4.2) and
+  // are never persisted — alert_id is deterministic ("disp-<user_id>" /
+  // "dep-<transaction_id>") so investigation state can key off it safely.
+  // fraud_investigations is the anchor row; notes/audit_logs hang off alert_id.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS fraud_investigations (
+        alert_id         TEXT PRIMARY KEY,
+        status            TEXT NOT NULL DEFAULT 'OPEN',
+        subject_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+        assigned_to       UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS fraud_investigation_notes (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        alert_id    TEXT NOT NULL REFERENCES fraud_investigations(alert_id) ON DELETE CASCADE,
+        admin_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content     TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_fraud_notes_alert ON fraud_investigation_notes(alert_id);
+
+      CREATE TABLE IF NOT EXISTS fraud_audit_logs (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        alert_id         TEXT NOT NULL,
+        action           TEXT NOT NULL,
+        admin_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+        previous_status  TEXT,
+        new_status       TEXT,
+        reason           TEXT,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_fraud_audit_alert ON fraud_audit_logs(alert_id);
+    `);
+    console.log('✅ DB migration: fraud_investigations + fraud_investigation_notes + fraud_audit_logs ready (Batch 35)');
+  } catch (err) {
+    console.error('⚠️  DB migration (fraud investigations Batch 35) warning:', err.message);
+  }
+
+  // ── Auto-migrate: wallet deposit/withdraw requests (Batch 36 — bug fix) ─────
+  // These tables previously only existed via a standalone .sql file that was
+  // never actually run by startServer(), so create them here for consistency.
+  // Bug fix: admin approve for withdraw_requests sets status='APPROVED' as an
+  // intermediate step (tutor must self-confirm receipt before COMPLETED — see
+  // adminWalletRoutes.js / walletRoutes.js), but the live status CHECK
+  // constraint only allowed PENDING/COMPLETED/REJECTED, so every approval
+  // attempt failed and requests were stuck at PENDING forever. Widen it.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS deposit_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        wallet_id UUID NOT NULL REFERENCES wallets(id),
+        amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+        method TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'COMPLETED', 'REJECTED')),
+        admin_note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS withdraw_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        wallet_id UUID NOT NULL REFERENCES wallets(id),
+        amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+        method TEXT NOT NULL,
+        account_details JSONB,
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'COMPLETED', 'REJECTED')),
+        admin_note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await pool.query(`ALTER TABLE withdraw_requests DROP CONSTRAINT IF EXISTS withdraw_requests_status_check`);
+    await pool.query(`ALTER TABLE withdraw_requests ADD CONSTRAINT withdraw_requests_status_check CHECK (status IN ('PENDING', 'APPROVED', 'COMPLETED', 'REJECTED'))`);
+    console.log('✅ DB migration: deposit_requests + withdraw_requests ready, APPROVED status allowed (Batch 36)');
+  } catch (err) {
+    console.error('⚠️  DB migration (wallet deposit/withdraw requests Batch 36) warning:', err.message);
+  }
+
+  // Prime the dynamic subject index so admin-created subjects resolve from the
+  // first request onward, not only after the next mutation (Batch 33).
+  await refreshSubjectIndex();
 
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
   // Runs every minute; processNotificationOutbox() guards against overlap and
