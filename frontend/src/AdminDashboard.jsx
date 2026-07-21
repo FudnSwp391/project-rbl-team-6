@@ -532,7 +532,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-promotions'    && <PromotionTransactions token={token} />}
           {activeView === 'tx-reports'       && <FinancialReports token={token} />}
           {activeView === 'tx-reconciliation' && <Reconciliation token={token} />}
-          {activeView === 'tx-fraud'         && <FraudAlerts token={token} />}
+          {activeView === 'tx-fraud'         && <FraudAlerts token={token} onNavigate={setActiveView} />}
           {activeView === 'tx-notifications' && <NotificationCenter token={token} />}
           {activeView === 'tx-wallet-ledger'    && <WalletLedger token={token} />}
           {activeView === 'tx-commission-logs' && <CommissionLogs token={token} />}

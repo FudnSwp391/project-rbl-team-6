@@ -6736,6 +6736,231 @@ app.get("/api/admin/fraud-alerts", verifyToken, requireAdmin, async (req, res) =
   }
 });
 
+// ── Fraud Investigation Center (Batch 35) ─────────────────────────────────────
+// Alerts above are computed live, never persisted (CAP-4.2). alert_id is
+// deterministic ("disp-<user_id>" / "dep-<transaction_id>"), so investigation
+// state (status/notes/audit) can key off it safely via fraud_investigations.
+async function resolveFraudAlertSubject(alertId) {
+  if (typeof alertId !== "string") return null;
+  if (alertId.startsWith("disp-")) {
+    const userId = alertId.slice(5);
+    const r = await pool.query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (!r.rows.length) return null;
+    return { kind: "DISPUTE", subjectUserId: userId, transactionId: null };
+  }
+  if (alertId.startsWith("dep-")) {
+    const txId = alertId.slice(4);
+    const r = await pool.query(
+      `SELECT w.user_id FROM transactions t JOIN wallets w ON w.id = t.wallet_id WHERE t.id = $1`,
+      [txId]
+    );
+    if (!r.rows.length) return null;
+    return { kind: "DEPOSIT", subjectUserId: r.rows[0].user_id, transactionId: txId };
+  }
+  return null;
+}
+
+// ── GET /api/admin/fraud-alerts/:id ───────────────────────────────────────────
+// Re-derives one alert's content live, upserts+returns its persistent
+// investigation anchor row, and returns the risk signal breakdown + notes.
+app.get("/api/admin/fraud-alerts/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const { kind, subjectUserId } = subject;
+
+    const userRes = await pool.query(
+      `SELECT id, full_name, email, role, picture, COALESCE(is_banned, false) AS is_banned, created_at
+       FROM users WHERE id = $1`,
+      [subjectUserId]
+    );
+    if (!userRes.rows.length) return res.status(404).json({ message: "Không tìm thấy người dùng liên quan." });
+    const user = userRes.rows[0];
+
+    let alert, signals, ai_reason;
+    if (kind === "DISPUTE") {
+      const dRes = await pool.query(
+        `SELECT COUNT(d.id)::int AS dispute_count,
+                SUM(CASE WHEN d.status='RESOLVED_REFUND' THEN 1 ELSE 0 END)::int AS refund_count,
+                MAX(d.created_at) AS last_at
+         FROM disputes d WHERE d.raised_by = $1`,
+        [subjectUserId]
+      );
+      const { dispute_count, refund_count, last_at } = dRes.rows[0];
+      const type = refund_count >= 1 ? "REFUND_ABUSE" : "UNUSUAL_ACTIVITY";
+      signals = [];
+      if (dispute_count > 0) signals.push({ label: "Nhiều tranh chấp", points: dispute_count * 30 });
+      if (refund_count >= 1) signals.push({ label: "Lạm dụng hoàn tiền", points: refund_count * 25 });
+      alert = {
+        id: alertId, type, severity: dispute_count >= 2 ? "HIGH" : "MEDIUM",
+        title: type === "REFUND_ABUSE" ? "Lạm dụng hoàn tiền" : "Hoạt động tranh chấp bất thường",
+        description: `${user.full_name || user.email} có ${dispute_count} tranh chấp, ${refund_count} lần hoàn tiền`,
+        risk_score: Math.min(100, dispute_count * 30 + refund_count * 25),
+        created_at: last_at,
+      };
+      ai_reason = refund_count >= 1
+        ? `Phát hiện qua ${refund_count} lần hoàn tiền trên tổng ${dispute_count} tranh chấp trong lịch sử người dùng.`
+        : `Phát hiện qua ${dispute_count} tranh chấp bất thường, chưa có hoàn tiền được xác nhận.`;
+    } else {
+      const tRes = await pool.query(`SELECT amount, created_at FROM transactions WHERE id = $1`, [subject.transactionId]);
+      const tx = tRes.rows[0] || {};
+      signals = [{ label: "Nạp tiền giá trị lớn", points: 20 }];
+      alert = {
+        id: alertId, type: "LARGE_DEPOSIT", severity: "LOW", title: "Nạp tiền giá trị lớn",
+        description: `Giao dịch nạp ${Number(tx.amount || 0).toLocaleString("vi-VN")}đ`,
+        risk_score: 20, created_at: tx.created_at,
+      };
+      ai_reason = `Giao dịch nạp ${Number(tx.amount || 0).toLocaleString("vi-VN")}đ vượt ngưỡng 3.000.000đ được giám sát tự động.`;
+    }
+    const total_signal_score = Math.min(100, signals.reduce((s, x) => s + x.points, 0));
+
+    await pool.query(
+      `INSERT INTO fraud_investigations (alert_id, subject_user_id) VALUES ($1, $2) ON CONFLICT (alert_id) DO NOTHING`,
+      [alertId, subjectUserId]
+    );
+    const invRes = await pool.query(
+      `SELECT fi.alert_id, fi.status, fi.assigned_to, fi.created_at, fi.updated_at, au.full_name AS assigned_to_name
+       FROM fraud_investigations fi LEFT JOIN users au ON au.id = fi.assigned_to
+       WHERE fi.alert_id = $1`,
+      [alertId]
+    );
+
+    const notesRes = await pool.query(
+      `SELECT n.id, n.content, n.admin_id, u.full_name AS admin_name, n.created_at, n.updated_at
+       FROM fraud_investigation_notes n JOIN users u ON u.id = n.admin_id
+       WHERE n.alert_id = $1 ORDER BY n.created_at DESC`,
+      [alertId]
+    );
+
+    return res.json({
+      alert, ai_reason, signals, total_signal_score,
+      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role, picture: user.picture, is_banned: user.is_banned, created_at: user.created_at },
+      investigation: invRes.rows[0],
+      notes: notesRes.rows,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy chi tiết cảnh báo." });
+  }
+});
+
+// ── GET /api/admin/fraud-alerts/:id/history ───────────────────────────────────
+// Related records for the subject user — reuses the same table shapes as the
+// existing /api/admin/transactions, /api/admin/disputes, /withdrawals,
+// /refunds endpoints, scoped with a WHERE user_id=$1 those don't support.
+app.get("/api/admin/fraud-alerts/:id/history", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const subject = await resolveFraudAlertSubject(req.params.id);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const uid = subject.subjectUserId;
+
+    const [txRes, disputeRes, bookingRes, wdRes, refundRes] = await Promise.all([
+      pool.query(
+        `SELECT t.id, t.amount, t.type, t.status, t.created_at
+         FROM transactions t JOIN wallets w ON w.id = t.wallet_id
+         WHERE w.user_id = $1 ORDER BY t.created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT d.id, d.reason, d.status, d.created_at, d.resolved_at
+         FROM disputes d WHERE d.raised_by = $1 ORDER BY d.created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT id, subject, status, lesson_fee, lesson_date, created_at
+         FROM bookings WHERE student_id = $1 OR tutor_id = $1 ORDER BY created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT wr.id, wr.amount, wr.status, wr.method, wr.created_at
+         FROM withdraw_requests wr JOIN wallets w ON w.id = wr.wallet_id
+         WHERE w.user_id = $1 ORDER BY wr.created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT d.id, d.created_at, d.resolved_at, COALESCE(c.price, 0)::numeric AS amount
+         FROM disputes d LEFT JOIN courses c ON c.id = d.course_id
+         WHERE d.raised_by = $1 AND d.status = 'RESOLVED_REFUND' ORDER BY d.created_at DESC LIMIT 20`, [uid]),
+    ]);
+
+    return res.json({
+      transactions: txRes.rows, complaints: disputeRes.rows, bookings: bookingRes.rows,
+      withdrawals: wdRes.rows, refunds: refundRes.rows,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id/history error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy lịch sử liên quan." });
+  }
+});
+
+// ── GET /api/admin/fraud-alerts/:id/timeline ──────────────────────────────────
+app.get("/api/admin/fraud-alerts/:id/timeline", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const uid = subject.subjectUserId;
+
+    const [createdRes, resolvedRes, auditRes] = await Promise.all([
+      pool.query(`SELECT id, created_at AS time FROM disputes WHERE raised_by = $1 ORDER BY created_at DESC LIMIT 10`, [uid]),
+      pool.query(`SELECT id, resolved_at AS time FROM disputes WHERE raised_by = $1 AND resolved_at IS NOT NULL ORDER BY resolved_at DESC LIMIT 10`, [uid]),
+      pool.query(`SELECT action, admin_id, reason, created_at AS time FROM fraud_audit_logs WHERE alert_id = $1 ORDER BY created_at DESC LIMIT 50`, [alertId]),
+    ]);
+
+    const events = [
+      ...createdRes.rows.map(r => ({ label: "Tranh chấp được tạo", time: r.time })),
+      ...resolvedRes.rows.map(r => ({ label: "Tranh chấp được giải quyết", time: r.time })),
+      ...auditRes.rows.map(r => ({ label: r.action, time: r.time })),
+    ].sort((a, b) => new Date(b.time) - new Date(a.time));
+
+    return res.json({ events });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id/timeline error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dòng thời gian." });
+  }
+});
+
+// ── POST /api/admin/fraud-alerts/:id/note ─────────────────────────────────────
+app.post("/api/admin/fraud-alerts/:id/note", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const content = (req.body?.content || "").trim();
+    if (!content) return res.status(400).json({ message: "Nội dung ghi chú không được để trống." });
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+
+    await pool.query(
+      `INSERT INTO fraud_investigations (alert_id, subject_user_id) VALUES ($1, $2) ON CONFLICT (alert_id) DO NOTHING`,
+      [alertId, subject.subjectUserId]
+    );
+    const insRes = await pool.query(
+      `INSERT INTO fraud_investigation_notes (alert_id, admin_id, content) VALUES ($1, $2, $3) RETURNING id, content, admin_id, created_at, updated_at`,
+      [alertId, req.user.userId, content]
+    );
+    const note = insRes.rows[0];
+    const adminRes = await pool.query(`SELECT full_name FROM users WHERE id = $1`, [req.user.userId]);
+    return res.status(201).json({ note: { ...note, admin_name: adminRes.rows[0]?.full_name || "" } });
+  } catch (err) {
+    console.error("POST /api/admin/fraud-alerts/:id/note error:", err);
+    return res.status(500).json({ message: "Lỗi khi thêm ghi chú." });
+  }
+});
+
+// ── PATCH /api/admin/fraud-alerts/:id/note/:noteId ────────────────────────────
+// Editable only by the note's creator.
+app.patch("/api/admin/fraud-alerts/:id/note/:noteId", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const content = (req.body?.content || "").trim();
+    if (!content) return res.status(400).json({ message: "Nội dung ghi chú không được để trống." });
+    const noteRes = await pool.query(`SELECT admin_id FROM fraud_investigation_notes WHERE id = $1 AND alert_id = $2`, [req.params.noteId, req.params.id]);
+    if (!noteRes.rows.length) return res.status(404).json({ message: "Không tìm thấy ghi chú." });
+    if (noteRes.rows[0].admin_id !== req.user.userId) return res.status(403).json({ message: "Chỉ người tạo mới có thể sửa ghi chú này." });
+
+    const updRes = await pool.query(
+      `UPDATE fraud_investigation_notes SET content = $1, updated_at = NOW() WHERE id = $2 RETURNING id, content, admin_id, created_at, updated_at`,
+      [content, req.params.noteId]
+    );
+    const adminRes = await pool.query(`SELECT full_name FROM users WHERE id = $1`, [req.user.userId]);
+    return res.json({ note: { ...updRes.rows[0], admin_name: adminRes.rows[0]?.full_name || "" } });
+  } catch (err) {
+    console.error("PATCH /api/admin/fraud-alerts/:id/note/:noteId error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật ghi chú." });
+  }
+});
+
 // ── GET /api/admin/transactions/withdrawals ───────────────────────────────────
 // CAP-3.5: Tutor withdrawal requests from withdraw_requests table (read-only).
 // account_details is JSONB — bank_name and account_number extracted if present;
@@ -16268,6 +16493,49 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: subjects table + canonical seed ready (Batch 32)');
   } catch (err) {
     console.error('⚠️  DB migration (subjects Batch 32) warning:', err.message);
+  }
+
+  // ── Auto-migrate: fraud investigation tables (Batch 35) ─────────────────────
+  // fraud-alerts are computed live (see GET /api/admin/fraud-alerts, CAP-4.2) and
+  // are never persisted — alert_id is deterministic ("disp-<user_id>" /
+  // "dep-<transaction_id>") so investigation state can key off it safely.
+  // fraud_investigations is the anchor row; notes/audit_logs hang off alert_id.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS fraud_investigations (
+        alert_id         TEXT PRIMARY KEY,
+        status            TEXT NOT NULL DEFAULT 'OPEN',
+        subject_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+        assigned_to       UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS fraud_investigation_notes (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        alert_id    TEXT NOT NULL REFERENCES fraud_investigations(alert_id) ON DELETE CASCADE,
+        admin_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content     TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_fraud_notes_alert ON fraud_investigation_notes(alert_id);
+
+      CREATE TABLE IF NOT EXISTS fraud_audit_logs (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        alert_id         TEXT NOT NULL,
+        action           TEXT NOT NULL,
+        admin_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+        previous_status  TEXT,
+        new_status       TEXT,
+        reason           TEXT,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_fraud_audit_alert ON fraud_audit_logs(alert_id);
+    `);
+    console.log('✅ DB migration: fraud_investigations + fraud_investigation_notes + fraud_audit_logs ready (Batch 35)');
+  } catch (err) {
+    console.error('⚠️  DB migration (fraud investigations Batch 35) warning:', err.message);
   }
 
   // Prime the dynamic subject index so admin-created subjects resolve from the
