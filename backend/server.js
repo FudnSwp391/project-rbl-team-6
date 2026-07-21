@@ -16538,6 +16538,45 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.error('⚠️  DB migration (fraud investigations Batch 35) warning:', err.message);
   }
 
+  // ── Auto-migrate: wallet deposit/withdraw requests (Batch 36 — bug fix) ─────
+  // These tables previously only existed via a standalone .sql file that was
+  // never actually run by startServer(), so create them here for consistency.
+  // Bug fix: admin approve for withdraw_requests sets status='APPROVED' as an
+  // intermediate step (tutor must self-confirm receipt before COMPLETED — see
+  // adminWalletRoutes.js / walletRoutes.js), but the live status CHECK
+  // constraint only allowed PENDING/COMPLETED/REJECTED, so every approval
+  // attempt failed and requests were stuck at PENDING forever. Widen it.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS deposit_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        wallet_id UUID NOT NULL REFERENCES wallets(id),
+        amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+        method TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'COMPLETED', 'REJECTED')),
+        admin_note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS withdraw_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        wallet_id UUID NOT NULL REFERENCES wallets(id),
+        amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+        method TEXT NOT NULL,
+        account_details JSONB,
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'COMPLETED', 'REJECTED')),
+        admin_note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await pool.query(`ALTER TABLE withdraw_requests DROP CONSTRAINT IF EXISTS withdraw_requests_status_check`);
+    await pool.query(`ALTER TABLE withdraw_requests ADD CONSTRAINT withdraw_requests_status_check CHECK (status IN ('PENDING', 'APPROVED', 'COMPLETED', 'REJECTED'))`);
+    console.log('✅ DB migration: deposit_requests + withdraw_requests ready, APPROVED status allowed (Batch 36)');
+  } catch (err) {
+    console.error('⚠️  DB migration (wallet deposit/withdraw requests Batch 36) warning:', err.message);
+  }
+
   // Prime the dynamic subject index so admin-created subjects resolve from the
   // first request onward, not only after the next mutation (Batch 33).
   await refreshSubjectIndex();
