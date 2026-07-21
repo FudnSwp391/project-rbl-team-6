@@ -2760,8 +2760,13 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 
 const { createClient } = require('@supabase/supabase-js');
+const WebSocketImpl = require('ws');
+// supabaseAdmin is only ever used for .storage (file uploads) — never realtime
+// channels — but the client constructor initializes a RealtimeClient
+// unconditionally, which throws if it can't find a native WebSocket
+// implementation. Passing `ws` explicitly avoids relying on runtime detection.
 const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_KEY)
-  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { realtime: { transport: WebSocketImpl } })
   : null;
 
 async function uploadFileToStorage(file, path) {
