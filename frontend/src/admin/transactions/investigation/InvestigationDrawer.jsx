@@ -7,6 +7,8 @@ import EvidencePanel from './EvidencePanel'
 import TransactionTraceTable from './TransactionTraceTable'
 import SystemLogs from './SystemLogs'
 import RecommendationCard from './RecommendationCard'
+import IncidentPanel from './IncidentPanel'
+import AuditHistory from './AuditHistory'
 
 import { API_BASE_URL as API } from '../../../config'
 
@@ -19,6 +21,7 @@ export default function InvestigationDrawer({ token, findingKey, open, onClose }
   const [transactions, setTransactions] = useState(null)
   const [timeline, setTimeline]       = useState(null)
   const [logs, setLogs]               = useState(null)
+  const [auditLogs, setAuditLogs]     = useState(null)
   const [loading, setLoading]         = useState(true)
   const [statusBusy, setStatusBusy]   = useState(false)
 
@@ -36,14 +39,15 @@ export default function InvestigationDrawer({ token, findingKey, open, onClose }
       fetch(`${base}/transactions`, { headers }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       fetch(`${base}/timeline`, { headers }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       fetch(`${base}/logs`, { headers }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      fetch(`${base}/audit-logs`, { headers }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
     ])
-      .then(([f, e, a, t, tl, l]) => {
+      .then(([f, e, a, t, tl, l, al]) => {
         setFindingData(f); setEvidence(e); setAnalysis(a)
-        setTransactions(t.transactions); setTimeline(tl.events); setLogs(l)
+        setTransactions(t.transactions); setTimeline(tl.events); setLogs(l); setAuditLogs(al.logs)
       })
       .catch(() => {
         setFindingData(null); setEvidence(null); setAnalysis(null)
-        setTransactions(null); setTimeline(null); setLogs(null)
+        setTransactions(null); setTimeline(null); setLogs(null); setAuditLogs(null)
       })
       .finally(() => setLoading(false))
   }, [token, encodedKey])
@@ -52,7 +56,7 @@ export default function InvestigationDrawer({ token, findingKey, open, onClose }
     if (open && encodedKey) load()
     if (!open) {
       setFindingData(null); setEvidence(null); setAnalysis(null)
-      setTransactions(null); setTimeline(null); setLogs(null)
+      setTransactions(null); setTimeline(null); setLogs(null); setAuditLogs(null)
     }
   }, [open, encodedKey, load])
 
@@ -161,6 +165,22 @@ export default function InvestigationDrawer({ token, findingKey, open, onClose }
 
           {/* 9. Recommended Actions */}
           <RecommendationCard recommendation={analysis?.analysis?.recommendation} />
+
+          {/* 10. Incident */}
+          <IncidentPanel
+            token={token}
+            findingKey={findingKey}
+            findingTitle={findingData.finding.name || findingData.finding.title}
+            findingDescription={findingData.finding.description}
+            difference={findingData.difference}
+            rootCause={analysis?.analysis?.root_cause}
+            severity={findingData.severity}
+          />
+
+          {/* 11. Audit History */}
+          <SectionCard title="Lịch Sử Kiểm Toán" icon="history">
+            <AuditHistory logs={auditLogs} />
+          </SectionCard>
         </div>
       )}
     </Drawer>

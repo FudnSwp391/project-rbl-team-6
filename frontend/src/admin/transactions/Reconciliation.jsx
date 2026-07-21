@@ -35,6 +35,26 @@ export default function Reconciliation({ token }) {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
   const [investigateKey, setInvestigateKey] = useState(null)
+  const [dashSummary, setDashSummary] = useState(null)
+  const [runs, setRuns]         = useState(null)
+  const [showHistory, setShowHistory] = useState(false)
+  const [running, setRunning]   = useState(false)
+
+  const loadDashSummary = () => {
+    if (!token) return
+    fetch(`${API}/api/admin/financial/reconciliation/dashboard-summary`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(setDashSummary)
+      .catch(() => setDashSummary(null))
+  }
+
+  const loadRuns = () => {
+    if (!token) return
+    fetch(`${API}/api/admin/financial/reconciliation/runs`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(j => setRuns(j.runs))
+      .catch(() => setRuns([]))
+  }
 
   useEffect(() => {
     if (!token) return
@@ -45,7 +65,27 @@ export default function Reconciliation({ token }) {
       .then(d => setData(d))
       .catch(e => setError(`Không thể tải dữ liệu đối soát (${e})`))
       .finally(() => setLoading(false))
+    loadDashSummary()
+    loadRuns()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
+
+  const runAgain = async () => {
+    setRunning(true)
+    try {
+      const r = await fetch(`${API}/api/admin/financial/reconciliation/run`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) { window.alert('Không thể chạy đối soát.'); return }
+      const j = await r.json()
+      setData({ summary: j.summary, checks: j.checks, items: j.items })
+      loadDashSummary(); loadRuns()
+    } catch {
+      window.alert('Lỗi kết nối.')
+    } finally {
+      setRunning(false)
+    }
+  }
 
   if (loading) return (
     <div className="flex items-center justify-center py-24 text-gray-400">
@@ -66,7 +106,34 @@ export default function Reconciliation({ token }) {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Đối Soát" subtitle="Kiểm tra đối soát tài chính — chỉ đọc, không điều chỉnh dữ liệu" />
+      <PageHeader title="Đối Soát" subtitle="Kiểm tra đối soát tài chính — chỉ đọc, không điều chỉnh dữ liệu">
+        <button
+          onClick={runAgain}
+          disabled={running}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        >
+          <span className={`material-symbols-outlined text-[18px] ${running ? 'animate-spin' : ''}`}>refresh</span>
+          {running ? 'Đang chạy...' : 'Chạy Đối Soát Lại'}
+        </button>
+      </PageHeader>
+
+      {/* Module 16: extra dashboard cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        {[
+          { label: 'Vấn đề nghiêm trọng', value: dashSummary ? dashSummary.critical_issues_count : '—', icon: 'error', color: 'bg-red-50 text-red-600' },
+          { label: 'Sự cố đang mở',       value: dashSummary ? dashSummary.open_incidents_count : '—',   icon: 'report', color: 'bg-orange-50 text-orange-600' },
+          { label: 'Lần đối soát gần nhất', value: dashSummary?.last_run ? fmtDate(dashSummary.last_run.created_at) : 'Chưa có', icon: 'history', color: 'bg-sky-50 text-sky-600' },
+          { label: 'Lần kế tiếp theo lịch', value: 'Chưa cấu hình', icon: 'schedule', color: 'bg-gray-100 text-gray-500' },
+        ].map(c => (
+          <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+            <div className={`w-9 h-9 rounded-lg ${c.color} flex items-center justify-center mb-3`}>
+              <span className="material-symbols-outlined text-[18px]">{c.icon}</span>
+            </div>
+            <p className="text-xs font-semibold text-gray-400 uppercase mb-1">{c.label}</p>
+            <p className="text-lg font-bold text-gray-900">{c.value}</p>
+          </div>
+        ))}
+      </div>
 
       {/* Read-only notice */}
       <div className="bg-sky-50 border border-sky-100 rounded-xl p-4 mb-6 flex items-start gap-3">
@@ -207,6 +274,49 @@ export default function Reconciliation({ token }) {
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      {/* Module 13: Reconciliation History */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mt-6">
+        <button
+          onClick={() => setShowHistory(s => !s)}
+          className="w-full flex items-center justify-between px-6 py-4 border-b border-gray-100 hover:bg-gray-50 transition-colors"
+        >
+          <h3 className="text-sm font-bold text-gray-700 uppercase">Lịch Sử Đối Soát ({runs ? runs.length : 0})</h3>
+          <span className="material-symbols-outlined text-[20px] text-gray-500">{showHistory ? 'expand_less' : 'expand_more'}</span>
+        </button>
+        {showHistory && (
+          !runs || runs.length === 0 ? (
+            <div className="p-8"><EmptyState icon="history" title="Chưa có lịch sử" description="Chưa có lần đối soát nào được chạy thủ công." /></div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {['Thời Gian', 'Trạng Thái', 'Số Chênh Lệch', 'Thời Lượng', 'Người Thực Hiện'].map(h => (
+                      <th key={h} className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {runs.map(r => (
+                    <tr key={r.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="py-3 px-4 text-sm text-gray-700 whitespace-nowrap">{fmtDate(r.created_at)}</td>
+                      <td className="py-3 px-4">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${r.status === 'OK' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {r.status === 'OK' ? 'Không có vấn đề' : 'Phát hiện chênh lệch'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-sm text-gray-700">{r.difference_count}</td>
+                      <td className="py-3 px-4 text-sm text-gray-500 whitespace-nowrap">{r.duration_ms != null ? `${r.duration_ms} ms` : '—'}</td>
+                      <td className="py-3 px-4 text-sm text-gray-700">{r.performed_by_name || r.performed_by_email || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
         )}
       </div>
 

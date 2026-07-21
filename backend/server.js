@@ -26,6 +26,8 @@ const { computeSeverity } = require("./services/reconciliation/severity");
 const { gatherEvidence, gatherSystemLogs } = require("./services/reconciliation/evidenceService");
 const { buildAnalysis } = require("./services/reconciliation/aiExplanationService");
 const { buildTimeline: buildReconciliationTimeline } = require("./services/reconciliation/timelineService");
+const reconciliationIncidents = require("./services/reconciliation/incidentService");
+const { runReconciliation, listRuns: listReconciliationRuns } = require("./services/reconciliation/runService");
 
 dotenv.config();
 
@@ -6183,6 +6185,151 @@ app.patch("/api/admin/financial/reconciliation/findings/:key/status", verifyToke
   } catch (err) {
     console.error("PATCH .../findings/:key/status error:", err);
     return res.status(500).json({ message: "Lỗi khi cập nhật trạng thái điều tra." });
+  }
+});
+
+// GET .../findings/:key/audit-logs — Module 11
+app.get("/api/admin/financial/reconciliation/findings/:key/audit-logs", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const rows = await pool.query(
+      `SELECT a.id, a.action, a.previous_status, a.new_status, a.reason, a.ip_address, a.created_at,
+              u.full_name AS admin_name, u.email AS admin_email
+       FROM reconciliation_audit_logs a LEFT JOIN users u ON u.id = a.admin_id
+       WHERE a.finding_key = $1 ORDER BY a.created_at DESC LIMIT 100`,
+      [req.params.key]
+    );
+    return res.json({ logs: rows.rows });
+  } catch (err) {
+    console.error("GET .../findings/:key/audit-logs error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nhật ký kiểm toán." });
+  }
+});
+
+// POST .../reconciliation/run — Modules 9, 13. The only endpoint that persists
+// a reconciliation_runs row; GET /reconciliation itself never writes here.
+app.post("/api/admin/financial/reconciliation/run", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { run, result } = await runReconciliation(pool, req.user.userId);
+    return res.status(201).json({ run, ...result });
+  } catch (err) {
+    console.error("POST /api/admin/financial/reconciliation/run error:", err);
+    return res.status(500).json({ message: "Lỗi khi chạy đối soát." });
+  }
+});
+
+// GET .../reconciliation/runs — Module 13 history
+app.get("/api/admin/financial/reconciliation/runs", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await listReconciliationRuns(pool, { page: Number(req.query.page) || 1 });
+    return res.json(result);
+  } catch (err) {
+    console.error("GET /api/admin/financial/reconciliation/runs error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy lịch sử đối soát." });
+  }
+});
+
+// GET .../reconciliation/dashboard-summary — Module 16 extra cards
+app.get("/api/admin/financial/reconciliation/dashboard-summary", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [criticalRes, incidentsRes, lastRunRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS count FROM reconciliation_investigations WHERE severity = 'CRITICAL' AND status NOT IN ('RESOLVED','CLOSED')`),
+      pool.query(`SELECT COUNT(*)::int AS count FROM reconciliation_incidents WHERE status IN ('Open','Investigating')`),
+      pool.query(`SELECT id, status, difference_count, issue_count, created_at FROM reconciliation_runs ORDER BY created_at DESC LIMIT 1`),
+    ]);
+    return res.json({
+      critical_issues_count: criticalRes.rows[0].count,
+      open_incidents_count: incidentsRes.rows[0].count,
+      last_run: lastRunRes.rows[0] || null,
+      // No reconciliation scheduler exists in this repo yet — report honestly rather than inventing a time.
+      next_scheduled_run: null,
+    });
+  } catch (err) {
+    console.error("GET .../reconciliation/dashboard-summary error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy tổng quan đối soát." });
+  }
+});
+
+// ── Reconciliation Incidents (Batch 40, spec Module 10) ───────────────────────
+// Advisory tracking only — never touches wallets/transactions.
+app.post("/api/admin/incidents", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const {
+      finding_key, title, description, difference_amount, root_cause,
+      related_booking_id, related_transaction_ids, severity, assigned_developer,
+    } = req.body || {};
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ message: "Tiêu đề sự cố là bắt buộc." });
+    }
+    const incident = await reconciliationIncidents.createIncident(pool, {
+      findingKey: finding_key, title: String(title).trim(), description,
+      differenceAmount: difference_amount, rootCause: root_cause,
+      relatedBookingId: related_booking_id, relatedTransactionIds: related_transaction_ids,
+      severity, assignedDeveloper: assigned_developer, createdBy: req.user.userId,
+    });
+    if (finding_key) {
+      await pool.query(
+        `INSERT INTO reconciliation_audit_logs (finding_key, action, admin_id, reason) VALUES ($1,'INCIDENT_CREATED',$2,$3)`,
+        [finding_key, req.user.userId, `Sự cố: ${incident.title}`]
+      );
+    }
+    return res.status(201).json({ incident });
+  } catch (err) {
+    console.error("POST /api/admin/incidents error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo sự cố." });
+  }
+});
+
+app.get("/api/admin/incidents", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, severity, findingKey, page } = req.query;
+    const result = await reconciliationIncidents.listIncidents(pool, { status, severity, findingKey, page: Number(page) || 1 });
+    return res.json(result);
+  } catch (err) {
+    console.error("GET /api/admin/incidents error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách sự cố." });
+  }
+});
+
+app.get("/api/admin/incidents/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await reconciliationIncidents.getIncident(pool, req.params.id);
+    if (!result) return res.status(404).json({ message: "Không tìm thấy sự cố." });
+    return res.json(result);
+  } catch (err) {
+    console.error("GET /api/admin/incidents/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy chi tiết sự cố." });
+  }
+});
+
+app.patch("/api/admin/incidents/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const existing = await reconciliationIncidents.getIncident(pool, req.params.id);
+    if (!existing) return res.status(404).json({ message: "Không tìm thấy sự cố." });
+    const updated = await reconciliationIncidents.updateIncident(pool, req.params.id, req.body || {});
+    if (existing.incident.finding_key) {
+      await pool.query(
+        `INSERT INTO reconciliation_audit_logs (finding_key, action, admin_id, reason) VALUES ($1,'INCIDENT_UPDATED',$2,$3)`,
+        [existing.incident.finding_key, req.user.userId, `Cập nhật sự cố: ${updated.title}`]
+      );
+    }
+    return res.json({ incident: updated });
+  } catch (err) {
+    console.error("PATCH /api/admin/incidents/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật sự cố." });
+  }
+});
+
+app.post("/api/admin/incidents/:id/comments", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const content = (req.body?.content || "").trim();
+    if (!content) return res.status(400).json({ message: "Nội dung bình luận không được để trống." });
+    const existing = await pool.query(`SELECT id FROM reconciliation_incidents WHERE id = $1`, [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ message: "Không tìm thấy sự cố." });
+    const comment = await reconciliationIncidents.addComment(pool, req.params.id, req.user.userId, content);
+    return res.status(201).json({ comment });
+  } catch (err) {
+    console.error("POST /api/admin/incidents/:id/comments error:", err);
+    return res.status(500).json({ message: "Lỗi khi thêm bình luận." });
   }
 });
 
