@@ -62,18 +62,17 @@ test('TC06 register — 409 when email already exists', async () => {
 });
 
 // ─── TC07 ─────────────────────────────────────────────────────────────────────
-test('TC07 register — 201 + JWT token on success', async () => {
+// Register does not create the user directly — it stages the data in
+// registration_otps and emails an OTP; the account is only created once the
+// OTP is confirmed (separate endpoint), hence 202 + requireOtp, not 201.
+test('TC07 register — 202 + requireOtp on success', async () => {
   pool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
-  pool.query.mockResolvedValueOnce({
-    rows: [{ id: 'new-uuid', full_name: 'Test User', email: 'new@ex.com', role: 'student', picture: null, created_at: new Date() }],
-    rowCount: 1,
-  });
+  pool.query.mockResolvedValueOnce({ rows: [], rowCount: 1 });
   const res = await request(app).post('/api/auth/register').send({
     fullName: 'Test User', email: 'new@ex.com', password: 'securepass123', role: 'student',
   });
-  expect(res.status).toBe(201);
-  expect(res.body).toHaveProperty('token');
-  expect(res.body.user.email).toBe('new@ex.com');
+  expect(res.status).toBe(202);
+  expect(res.body).toHaveProperty('requireOtp', true);
 });
 
 // ─── TC08 ─────────────────────────────────────────────────────────────────────
