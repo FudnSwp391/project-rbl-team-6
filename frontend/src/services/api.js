@@ -730,10 +730,11 @@ export async function getStudentHomework() {
 }
 
 export async function submitStudentHomework(hwId, fileUrl) {
+  // Do NOT .catch() here — let errors propagate so the caller can handle them correctly
   return request(`/api/student/assessments/homework/${hwId}/submit`, {
     method: 'POST',
     body: JSON.stringify({ file_url: fileUrl }),
-  }).catch(() => null);
+  });
 }
 
 // ── Wallet APIs ───────────────────────────────────────────────────────────────

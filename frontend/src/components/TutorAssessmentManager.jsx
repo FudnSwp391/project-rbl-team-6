@@ -13,6 +13,7 @@ import {
   updateTutorHomework,
   deleteTutorHomework,
   getTutorCourses,
+  getHomeworkSubmissions,
 } from '../services/api';
 import { uploadHomeworkFile } from '../services/upload';
 import { API_BASE_URL } from '../config';
@@ -34,12 +35,32 @@ export default function TutorAssessmentManager({ token, user }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Submission panel state
+  const [viewingSubmissions, setViewingSubmissions] = useState(null); // homework object
+  const [submissions, setSubmissions] = useState([]);
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
+
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCourse, setFilterCourse] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
 
   const dropdownRef = useRef(null);
+
+  // Open submissions panel for a homework
+  const handleViewSubmissions = async (hw) => {
+    setViewingSubmissions(hw);
+    setSubmissions([]);
+    setLoadingSubmissions(true);
+    try {
+      const data = await getHomeworkSubmissions(hw.id);
+      setSubmissions(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Error fetching submissions:', err);
+    } finally {
+      setLoadingSubmissions(false);
+    }
+  };
 
   // Fetch Data
   const fetchData = async () => {
@@ -388,7 +409,21 @@ export default function TutorAssessmentManager({ token, user }) {
                         <span className={`px-sm py-1 rounded-full text-label-sm font-bold ${hw.status === 'Open' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                           {hw.status === 'Open' ? 'Đang mở' : 'Đã đóng'}
                         </span>
-                        <div className="flex items-center gap-xs ml-2">
+                        {/* View submissions button */}
+                        <button
+                          onClick={() => handleViewSubmissions(hw)}
+                          title="Xem bài nộp của học sinh"
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-label-sm font-semibold transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">assignment_turned_in</span>
+                          Bài nộp
+                          {(hw.submission_count || 0) > 0 && (
+                            <span className="ml-0.5 bg-primary text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                              {hw.submission_count}
+                            </span>
+                          )}
+                        </button>
+                        <div className="flex items-center gap-xs ml-1">
                            <button onClick={() => { setEditingHomework(hw); setIsHomeworkModalOpen(true); }} title="Chỉnh sửa" className="p-xs text-secondary hover:text-primary rounded-full hover:bg-surface-container">
                              <span className="material-symbols-outlined">edit</span>
                            </button>
@@ -426,6 +461,103 @@ export default function TutorAssessmentManager({ token, user }) {
           courses={courses}
           editingData={editingHomework}
         />
+      )}
+
+      {/* Submissions Panel */}
+      {viewingSubmissions && (
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-outline-variant flex items-start justify-between bg-surface-container-lowest">
+              <div>
+                <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Bài nộp của học sinh</p>
+                <h3 className="font-bold text-lg text-on-surface mt-0.5">{viewingSubmissions.title}</h3>
+                <p className="text-sm text-secondary mt-0.5">{viewingSubmissions.course || 'Chung'} • Hạn: {viewingSubmissions.deadline ? new Date(viewingSubmissions.deadline).toLocaleString('vi-VN') : 'Không giới hạn'}</p>
+              </div>
+              <button onClick={() => setViewingSubmissions(null)} className="p-1 rounded-full hover:bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="overflow-y-auto flex-1 p-6">
+              {loadingSubmissions ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-on-surface-variant">
+                  <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <p className="text-sm">Đang tải bài nộp...</p>
+                </div>
+              ) : submissions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[56px] opacity-30">assignment_late</span>
+                  <p className="font-semibold text-base">Chưa có học sinh nào nộp bài</p>
+                  <p className="text-sm text-secondary">Bài nộp sẽ hiển thị ở đây khi học sinh nộp.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  <p className="text-sm text-secondary font-medium">{submissions.length} bài nộp</p>
+                  {submissions.map((sub, idx) => (
+                    <div key={sub.id || idx} className="border border-outline-variant rounded-xl p-4 hover:bg-surface-container-low/30 transition-colors">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          {sub.student_picture ? (
+                            <img src={sub.student_picture} className="w-9 h-9 rounded-full object-cover ring-2 ring-outline-variant/30" alt="" />
+                          ) : (
+                            <div className="w-9 h-9 rounded-full bg-primary-container/50 flex items-center justify-center">
+                              <span className="material-symbols-outlined text-[18px] text-on-primary-container">person</span>
+                            </div>
+                          )}
+                          <div>
+                            <p className="font-semibold text-sm text-on-surface">{sub.student_name || 'Học sinh'}</p>
+                            <p className="text-xs text-secondary">
+                              Nộp lúc: {sub.submitted_at ? new Date(sub.submitted_at).toLocaleString('vi-VN') : '--'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {sub.score != null && (
+                            <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-bold">
+                              {sub.score} đ
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-bold">
+                            {sub.status || 'Submitted'}
+                          </span>
+                        </div>
+                      </div>
+                      {sub.file_url && (
+                        <a
+                          href={sub.file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-3 flex items-center gap-2 text-sm font-medium text-primary hover:text-primary/80 bg-primary/5 px-3 py-2 rounded-lg border border-primary/15 w-fit transition-colors hover:bg-primary/10"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">description</span>
+                          Tải / Xem bài nộp
+                        </a>
+                      )}
+                      {sub.feedback && (
+                        <div className="mt-2 p-2 bg-amber-50 border border-amber-200/50 rounded-lg">
+                          <p className="text-xs font-semibold text-amber-800">Nhận xét đã gửi:</p>
+                          <p className="text-xs text-amber-700 mt-0.5">{sub.feedback}</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-3 border-t border-outline-variant bg-surface-container-lowest flex justify-end">
+              <button
+                onClick={() => setViewingSubmissions(null)}
+                className="px-5 py-2 text-sm font-semibold border border-outline-variant rounded-lg hover:bg-surface-container text-on-surface transition-colors"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
