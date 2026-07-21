@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { PageHeader, EmptyState } from './components'
 import { fmtMoney, fmtDateTime } from './mockData'
 
-const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const GW_META = {
   'VNPay':           { icon: 'credit_card',            from: 'from-blue-600',    to: 'to-blue-400',    light: 'bg-blue-50 text-blue-600' },

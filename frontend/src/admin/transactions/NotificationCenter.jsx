@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { PageHeader, EmptyState } from './components'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const fmtDate = iso =>
   iso ? new Date(iso).toLocaleDateString('vi-VN') + ' ' +

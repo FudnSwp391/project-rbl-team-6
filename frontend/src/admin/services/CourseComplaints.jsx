@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+import { API_BASE_URL as API_BASE } from '../../config';
 
 const STATUS_CONFIG = {
   pending:         { label: 'Đang chờ',           color: '#b45309', bg: '#fef3c7', icon: 'pending' },

@@ -9,6 +9,7 @@ const { GoogleAuth } = require("google-auth-library");
 const { OAuth2Client } = require("google-auth-library");
 const pool = require("./db");
 const { generateQuizQuestions, chatWithAI, gradeEssayAnswer, suggestTutors } = require("./gemini");
+const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
 const moment = require("moment");
 const querystring = require("qs");
@@ -19,6 +20,14 @@ const {
   WITHDRAWAL_POLICY_VERSION, MIN_WITHDRAWAL_AMOUNT, normalizeWithdrawalAmount, sanitizeBankText,
   lessonDateStr, lessonStartFrom, lessonEndFrom, parseMethodSupport, parseBookingStartDateTime,
 } = require("./utils/businessRules");
+const { computeReconciliation } = require("./services/reconciliation/computeReconciliation");
+const { buildFindingKey, resolveFinding } = require("./services/reconciliation/findingKey");
+const { computeSeverity } = require("./services/reconciliation/severity");
+const { gatherEvidence, gatherSystemLogs } = require("./services/reconciliation/evidenceService");
+const { buildAnalysis } = require("./services/reconciliation/aiExplanationService");
+const { buildTimeline: buildReconciliationTimeline } = require("./services/reconciliation/timelineService");
+const reconciliationIncidents = require("./services/reconciliation/incidentService");
+const { runReconciliation, listRuns: listReconciliationRuns } = require("./services/reconciliation/runService");
 
 dotenv.config();
 
@@ -41,6 +50,24 @@ app.use(cors({
 // metadata nên 25mb là quá đủ, tránh nhận payload khổng lồ vào bộ nhớ.
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ limit: '25mb', extended: true }));
+
+// ─── Rate Limiters ──────────────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Quá nhiều yêu cầu, vui lòng thử lại sau 15 phút.' },
+});
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Quá nhiều yêu cầu AI, vui lòng thử lại sau.' },
+});
+app.use('/api/auth', authLimiter);
+app.use(['/api/ai-suggest', '/api/ask-ai', '/api/course-ai-chat', '/api/practice'], aiLimiter);
 
 // ΓöÇΓöÇΓöÇ Helper: tß║ío JWT token ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 function createToken(user) {
@@ -3324,8 +3351,13 @@ app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
     if (!filename) return res.status(400).json({ message: "Tên file là bắt buộc." });
     
     if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
+
+    const ALLOWED_BUCKETS = ['tutor-documents', 'edux-media'];
+    const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf', 'doc', 'docx', 'mp4', 'webm', 'mov'];
     const targetBucket = bucket || 'tutor-documents';
-    const ext = filename.split('.').pop();
+    if (!ALLOWED_BUCKETS.includes(targetBucket)) return res.status(400).json({ message: 'Bucket không hợp lệ.' });
+    const ext = filename.split('.').pop().toLowerCase();
+    if (!ALLOWED_EXTENSIONS.includes(ext)) return res.status(400).json({ message: 'Loại file không được phép.' });
     const safePath = folder ? `${folder}/${req.user.userId}_${Date.now()}.${ext}` : `${req.user.userId}_${Date.now()}.${ext}`;
 
     const { data, error } = await supabaseAdmin.storage
@@ -5922,221 +5954,382 @@ app.get("/api/admin/financial/reports", verifyToken, requireAdmin, async (req, r
 // CAP-8.2: Read-only reconciliation checks. Performs NO writes/fixes/settlements.
 // Where exact matching is impossible (internal transfers, no per-tx ledger link)
 // checks are marked "review_only" or "warning" — never a fake "matched".
+// Batch 37: computation body extracted to services/reconciliation/computeReconciliation.js
+// (byte-identical response) so the Investigation Center can reuse the exact
+// same source of truth via findingKey.resolveFinding() / reconciliation_runs.
 app.get("/api/admin/financial/reconciliation", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const LARGE_THRESHOLD = 1000000; // 1M VND — flagged for manual review only
-    const [
-      walletRes,
-      txAggRes,
-      escrowRes,
-      integrityRes,
-      refundRes,
-      largeRes,
-    ] = await Promise.all([
-      pool.query(`SELECT COALESCE(SUM(balance),0)::numeric AS balance, COALESCE(SUM(held_balance),0)::numeric AS held FROM wallets`),
-      pool.query(`
-        SELECT
-          COALESCE(SUM(amount) FILTER (WHERE type='DEPOSIT' AND status='SUCCESS' AND amount>0),0)::numeric      AS deposits,
-          COALESCE(SUM(ABS(amount)) FILTER (WHERE type='PAYMENT' AND status='SUCCESS' AND amount<0),0)::numeric AS payments
-        FROM transactions
-      `),
-      pool.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(ABS(amount)),0)::numeric AS amount FROM transactions WHERE status='HELD_IN_ESCROW'`),
-      pool.query(`
-        SELECT
-          (SELECT COUNT(*)::int FROM transactions t LEFT JOIN wallets w ON w.id=t.wallet_id WHERE w.id IS NULL) AS orphan_tx,
-          (SELECT COUNT(*)::int FROM wallets w LEFT JOIN users u ON u.id=w.user_id WHERE u.id IS NULL)          AS orphan_wallet,
-          (SELECT COUNT(*)::int FROM transactions WHERE amount IS NULL OR amount=0)                             AS bad_amount
-      `),
-      pool.query(`SELECT COUNT(*)::int AS count FROM disputes WHERE status='RESOLVED_REFUND'`),
-      pool.query(`
-        SELECT t.id::text, t.type, t.status, ABS(t.amount)::numeric AS amount, t.description, t.created_at
-        FROM transactions t
-        WHERE ABS(t.amount) >= ${LARGE_THRESHOLD}
-        ORDER BY ABS(t.amount) DESC
-        LIMIT 20
-      `),
-    ]);
-
-    const wallet    = walletRes.rows[0];
-    const txAgg     = txAggRes.rows[0];
-    const escrow    = escrowRes.rows[0];
-    const integ     = integrityRes.rows[0];
-    const refundCnt = refundRes.rows[0].count;
-
-    // ── Withdrawal reconciliation (Batch 19.1): prefer new withdrawal_requests,
-    //    fall back to the legacy withdraw_requests only if the new table is absent.
-    let withdraw = { pending_amount: 0, pending_count: 0, paid_amount: 0, rejected_amount: 0, cancelled_amount: 0 };
-    let withdrawalSource = 'withdrawal_requests';
-    let withdrawalItems  = [];
-    try {
-      const wagg = await pool.query(`
-        SELECT
-          COALESCE(SUM(amount) FILTER (WHERE status IN ('PENDING','APPROVED')),0)::numeric AS pending_amount,
-          COUNT(*) FILTER (WHERE status IN ('PENDING','APPROVED'))::int                    AS pending_count,
-          COALESCE(SUM(amount) FILTER (WHERE status='PAID'),0)::numeric                    AS paid_amount,
-          COALESCE(SUM(amount) FILTER (WHERE status='REJECTED'),0)::numeric                AS rejected_amount,
-          COALESCE(SUM(amount) FILTER (WHERE status='CANCELLED'),0)::numeric               AS cancelled_amount
-        FROM withdrawal_requests
-      `);
-      withdraw = wagg.rows[0];
-      const witems = await pool.query(`
-        SELECT wr.id::text AS withdrawal_request_id, wr.tutor_id::text AS tutor_id,
-               wr.amount::numeric AS amount, wr.status, wr.requested_at, wr.paid_at, wr.policy_version,
-               u.full_name AS tutor_name, u.email AS tutor_email
-        FROM withdrawal_requests wr
-        LEFT JOIN users u ON u.id = wr.tutor_id
-        WHERE wr.status IN ('PENDING','APPROVED')
-        ORDER BY wr.requested_at DESC
-        LIMIT 20
-      `);
-      withdrawalItems = witems.rows;
-    } catch (e) {
-      // New table missing → fall back to legacy withdraw_requests (pending only).
-      withdrawalSource = 'legacy_withdraw_requests';
-      const leg = await pool.query(`
-        SELECT COALESCE(SUM(amount) FILTER (WHERE status IN ('pending','PENDING')),0)::numeric AS pending_amount,
-               COUNT(*) FILTER (WHERE status IN ('pending','PENDING'))::int                     AS pending_count
-        FROM withdraw_requests
-      `).catch(() => ({ rows: [{ pending_amount: 0, pending_count: 0 }] }));
-      withdraw = { ...withdraw, pending_amount: leg.rows[0].pending_amount, pending_count: leg.rows[0].pending_count };
-    }
-
-    const walletBalance = Number(wallet.balance);
-    const walletHeld    = Number(wallet.held);
-    const deposits      = Number(txAgg.deposits);
-    const payments      = Number(txAgg.payments);
-    const escrowAmount  = Number(escrow.amount);
-    const netFlow       = deposits - payments; // gross expected liquid balance
-
-    const checks = [];
-
-    // 1. Escrow (transactions) vs wallet held_balance
-    const escrowDiff = escrowAmount - walletHeld;
-    checks.push({
-      id: 'escrow-vs-held',
-      name: 'Escrow giao dịch vs Số dư tạm giữ ví',
-      status: escrowDiff === 0 ? 'matched' : 'warning',
-      expected_amount: Math.round(walletHeld),
-      actual_amount: Math.round(escrowAmount),
-      difference: Math.round(escrowDiff),
-      description: 'So sánh tổng giao dịch HELD_IN_ESCROW với tổng held_balance của ví. Chỉ kiểm tra, không điều chỉnh.',
-    });
-
-    // 2. Wallet balance vs net transaction flow (review only — internal transfers exist)
-    const flowDiff = walletBalance - netFlow;
-    checks.push({
-      id: 'wallet-vs-transactions',
-      name: 'Số dư ví vs Dòng tiền giao dịch',
-      status: 'review_only',
-      expected_amount: Math.round(netFlow),
-      actual_amount: Math.round(walletBalance),
-      difference: Math.round(flowDiff),
-      description: 'Nạp trừ Thanh toán so với tổng số dư ví. Chênh lệch dự kiến do chuyển khoản nội bộ / giải ngân escrow không lưu theo từng giao dịch — chỉ để xem.',
-    });
-
-    // 3. Transaction integrity
-    const integrityIssues = integ.orphan_tx + integ.orphan_wallet + integ.bad_amount;
-    checks.push({
-      id: 'transaction-integrity',
-      name: 'Toàn vẹn giao dịch',
-      status: integrityIssues === 0 ? 'matched' : 'issue',
-      expected_amount: 0,
-      actual_amount: integrityIssues,
-      difference: integrityIssues,
-      description: `Giao dịch không có ví: ${integ.orphan_tx}; ví không có người dùng: ${integ.orphan_wallet}; số tiền null/0: ${integ.bad_amount}.`,
-    });
-
-    // 4. Pending withdrawals (Batch 19.1: PENDING + APPROVED from withdrawal_requests)
-    checks.push({
-      id: 'pending-withdrawals',
-      name: 'Yêu cầu rút tiền đang chờ',
-      status: Number(withdraw.pending_amount) === 0 ? 'matched' : 'review_only',
-      expected_amount: 0,
-      actual_amount: Math.round(Number(withdraw.pending_amount)),
-      difference: Math.round(Number(withdraw.pending_amount)),
-      description: `${withdraw.pending_count} yêu cầu rút tiền đang chờ/đã duyệt (nguồn: ${withdrawalSource}). Chỉ xem, không duyệt.`,
-    });
-
-    // 5. Refund disputes vs refund transactions
-    checks.push({
-      id: 'refund-dispute-check',
-      name: 'Tranh chấp hoàn tiền vs Giao dịch hoàn tiền',
-      status: refundCnt === 0 ? 'matched' : 'warning',
-      expected_amount: refundCnt,
-      actual_amount: 0,
-      difference: refundCnt,
-      description: `${refundCnt} tranh chấp RESOLVED_REFUND. Không có bảng giao dịch hoàn tiền để đối chiếu số tiền — cần kiểm tra thủ công.`,
-    });
-
-    // Build review items
-    const items = [];
-    // Pending/approved withdrawals awaiting manual payout (Batch 19.1)
-    for (const w of withdrawalItems) {
-      items.push({
-        id: `wd-${w.withdrawal_request_id}`,
-        type: 'withdrawal',
-        severity: Number(w.amount) >= 5000000 ? 'medium' : 'low',
-        status: 'review_only',
-        title: `Rút tiền chờ chi: ${w.tutor_name || w.tutor_email || w.tutor_id}`,
-        description: `Trạng thái ${w.status} — chờ admin chuyển khoản thủ công (${w.policy_version}).`,
-        amount: Math.round(Number(w.amount)),
-        reference_id: w.withdrawal_request_id,
-        created_at: w.requested_at,
-        // extra fields (ignored by the generic frontend table, useful for API consumers)
-        withdrawal_request_id: w.withdrawal_request_id,
-        tutor_id: w.tutor_id,
-        tutor_name: w.tutor_name,
-        tutor_email: w.tutor_email,
-        withdrawal_status: w.status,
-        requested_at: w.requested_at,
-        paid_at: w.paid_at,
-        policy_version: w.policy_version,
-      });
-    }
-    for (const r of largeRes.rows) {
-      const amt = Number(r.amount);
-      items.push({
-        id: r.id,
-        type: 'transaction',
-        severity: amt >= 5000000 ? 'medium' : 'low',
-        status: 'review_only',
-        title: `Giao dịch lớn: ${r.type}`,
-        description: r.description || `${r.type} — ${r.status}`,
-        amount: Math.round(amt),
-        reference_id: r.id,
-        created_at: r.created_at,
-      });
-    }
-
-    const issueCount   = checks.filter(c => c.status === 'issue').length;
-    const unmatchedCnt = checks.filter(c => c.status === 'warning' || c.status === 'issue').length;
-
-    return res.json({
-      summary: {
-        wallet_total_balance:      Math.round(walletBalance),
-        wallet_total_held_balance: Math.round(walletHeld),
-        successful_deposits:       Math.round(deposits),
-        successful_payments:       Math.round(payments),
-        escrow_transactions:       escrow.count,
-        escrow_amount:             Math.round(escrowAmount),
-        withdraw_pending_amount:   Math.round(Number(withdraw.pending_amount)), // kept for backward-compat
-        // Batch 19.1: withdrawal metrics from withdrawal_requests
-        withdrawal_source:            withdrawalSource,
-        withdrawal_pending_amount:    Math.round(Number(withdraw.pending_amount)),
-        withdrawal_pending_count:     Number(withdraw.pending_count) || 0,
-        withdrawal_paid_amount:       Math.round(Number(withdraw.paid_amount)),
-        withdrawal_rejected_amount:   Math.round(Number(withdraw.rejected_amount)),
-        withdrawal_cancelled_amount:  Math.round(Number(withdraw.cancelled_amount)),
-        unmatched_count:           unmatchedCnt,
-        issue_count:               issueCount,
-        generated_at:              new Date().toISOString(),
-      },
-      checks,
-      items,
-    });
+    const result = await computeReconciliation(pool);
+    return res.json(result);
   } catch (err) {
     console.error("GET /api/admin/financial/reconciliation error:", err);
     return res.status(500).json({ message: "Lỗi khi thực hiện đối soát." });
+  }
+});
+
+// ── Reconciliation Investigation Center (Batch 37/38) ─────────────────────────
+// All routes below are read-only against the 5 advisory tables added in Batch
+// 37 plus the existing ledger/log tables — none ever call process_deposit/
+// release_escrow/refund_escrow or write to wallets/transactions.
+
+// GET /api/admin/financial/reconciliation/findings/:key — upserts the
+// investigation anchor row (severity/difference only) and logs DRAWER_OPENED
+// on first view, VIEWED_AGAIN afterwards (created_at === updated_at on the
+// very first insert since both DEFAULT NOW() evaluate to the same statement
+// timestamp; a later conflict-update only bumps updated_at).
+app.get("/api/admin/financial/reconciliation/findings/:key", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+
+    const upsertRes = await pool.query(
+      `INSERT INTO reconciliation_investigations (finding_key, finding_type, severity, last_difference)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (finding_key) DO UPDATE SET
+         severity = EXCLUDED.severity, last_difference = EXCLUDED.last_difference, updated_at = NOW()
+       RETURNING *`,
+      [resolved.findingKey, resolved.findingType, resolved.severity, resolved.difference]
+    );
+    const investigation = upsertRes.rows[0];
+    const isFirstView = new Date(investigation.created_at).getTime() === new Date(investigation.updated_at).getTime();
+
+    await pool.query(
+      `INSERT INTO reconciliation_audit_logs (finding_key, action, admin_id, ip_address) VALUES ($1,$2,$3,$4)`,
+      [resolved.findingKey, isFirstView ? 'DRAWER_OPENED' : 'VIEWED_AGAIN', req.user.userId, req.ip]
+    );
+
+    return res.json({
+      finding_key: resolved.findingKey,
+      finding_type: resolved.findingType,
+      finding: resolved.finding,
+      difference: resolved.difference,
+      severity: resolved.severity,
+      investigation,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/financial/reconciliation/findings/:key error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy chi tiết đối soát." });
+  }
+});
+
+// GET .../findings/:key/evidence — Module 4
+app.get("/api/admin/financial/reconciliation/findings/:key/evidence", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    return res.json(bundle);
+  } catch (err) {
+    console.error("GET .../findings/:key/evidence error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy bằng chứng." });
+  }
+});
+
+// GET .../findings/:key/analysis — Modules 2, 3, 5. Upserts the anchor row's
+// cached root_cause/confidence/ai_summary/ai_model_used regardless of whether
+// GET .../findings/:key has already been called (parallel-fetch safe).
+app.get("/api/admin/financial/reconciliation/findings/:key/analysis", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    const result = await buildAnalysis(resolved, bundle);
+
+    await pool.query(
+      `INSERT INTO reconciliation_investigations (finding_key, finding_type, severity, last_difference, root_cause, confidence, ai_summary, ai_model_used)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (finding_key) DO UPDATE SET
+         severity = EXCLUDED.severity, last_difference = EXCLUDED.last_difference,
+         root_cause = EXCLUDED.root_cause, confidence = EXCLUDED.confidence,
+         ai_summary = EXCLUDED.ai_summary, ai_model_used = EXCLUDED.ai_model_used,
+         updated_at = NOW()`,
+      [resolved.findingKey, resolved.findingType, resolved.severity, resolved.difference,
+       result.analysis.root_cause, result.analysis.confidence, result.ai_summary, result.ai_model_used]
+    );
+
+    return res.json(result);
+  } catch (err) {
+    console.error("GET .../findings/:key/analysis error:", err);
+    return res.status(500).json({ message: "Lỗi khi phân tích chênh lệch." });
+  }
+});
+
+// GET .../findings/:key/transactions — Module 6 transaction trace table
+app.get("/api/admin/financial/reconciliation/findings/:key/transactions", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    const transactions = bundle.transactions || [];
+    if (transactions.length === 0) return res.json({ transactions: [] });
+
+    const ledgerByTx = {};
+    for (const l of bundle.walletLedger || []) {
+      if (l.transaction_id) (ledgerByTx[l.transaction_id] ||= []).push(l);
+    }
+    const bookingByRef = {};
+    for (const b of bundle.bookings || []) bookingByRef[b.id] = b;
+
+    const walletIds = [...new Set(transactions.map(t => t.wallet_id).filter(Boolean))];
+    const walletOwners = walletIds.length
+      ? (await pool.query(
+          `SELECT w.id AS wallet_id, u.id AS user_id FROM wallets w JOIN users u ON u.id = w.user_id WHERE w.id = ANY($1::uuid[])`,
+          [walletIds]
+        )).rows
+      : [];
+    const walletOwnerByWalletId = Object.fromEntries(walletOwners.map(w => [w.wallet_id, w.user_id]));
+
+    const userIdsNeeded = new Set(walletOwners.map(w => w.user_id));
+    for (const b of Object.values(bookingByRef)) {
+      if (b.student_id) userIdsNeeded.add(b.student_id);
+      if (b.tutor_id) userIdsNeeded.add(b.tutor_id);
+    }
+    const userRows = userIdsNeeded.size
+      ? (await pool.query(`SELECT id, full_name, email FROM users WHERE id = ANY($1::uuid[])`, [[...userIdsNeeded]])).rows
+      : [];
+    const userById = Object.fromEntries(userRows.map(u => [u.id, u]));
+    const nameOf = (id) => (id && userById[id]) ? (userById[id].full_name || userById[id].email) : null;
+
+    const rows = transactions.map(t => {
+      const booking = t.reference_id ? bookingByRef[t.reference_id] : null;
+      const ledgerRows = (ledgerByTx[t.id] || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      const first = ledgerRows[0];
+      const last = ledgerRows[ledgerRows.length - 1];
+      const walletOwnerId = walletOwnerByWalletId[t.wallet_id];
+      return {
+        transaction_id: t.id,
+        booking_id: booking?.id || null,
+        user: booking ? nameOf(booking.student_id) : nameOf(walletOwnerId),
+        tutor: booking ? nameOf(booking.tutor_id) : null,
+        type: t.type,
+        amount: Number(t.amount),
+        wallet_before: first ? Number(first.balance_before) : null,
+        wallet_after: last ? Number(last.balance_after) : null,
+        status: t.status,
+        created_at: t.created_at,
+        updated_at: t.updated_at,
+      };
+    });
+    return res.json({ transactions: rows });
+  } catch (err) {
+    console.error("GET .../findings/:key/transactions error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dấu vết giao dịch." });
+  }
+});
+
+// GET .../findings/:key/timeline — Module 7
+app.get("/api/admin/financial/reconciliation/findings/:key/timeline", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    const timeline = await buildReconciliationTimeline(pool, resolved, bundle);
+    return res.json(timeline);
+  } catch (err) {
+    console.error("GET .../findings/:key/timeline error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dòng thời gian." });
+  }
+});
+
+// GET .../findings/:key/logs — Module 12 (ledger/commission/refund logs only —
+// no generic app-log aggregator exists in this repo)
+app.get("/api/admin/financial/reconciliation/findings/:key/logs", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveFinding(pool, req.params.key);
+    if (!resolved) return res.status(404).json({ message: "Không tìm thấy mục cần đối soát." });
+    const bundle = await gatherEvidence(pool, resolved);
+    const logs = await gatherSystemLogs(pool, resolved, bundle);
+    return res.json(logs);
+  } catch (err) {
+    console.error("GET .../findings/:key/logs error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nhật ký hệ thống." });
+  }
+});
+
+// PATCH .../findings/:key/status — Module 9 (Mark Reviewed / Investigating /
+// Resolved / Reopen). Only ever writes to reconciliation_investigations +
+// reconciliation_audit_logs — never touches wallets/transactions.
+const RECON_STATUS_VALUES = ['OPEN', 'INVESTIGATING', 'RESOLVED', 'CLOSED'];
+app.patch("/api/admin/financial/reconciliation/findings/:key/status", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const findingKey = req.params.key;
+    const { status: newStatus, reason } = req.body || {};
+    if (!RECON_STATUS_VALUES.includes(newStatus)) {
+      return res.status(400).json({ message: `Trạng thái không hợp lệ. Cho phép: ${RECON_STATUS_VALUES.join(', ')}.` });
+    }
+
+    const currentRes = await pool.query(`SELECT * FROM reconciliation_investigations WHERE finding_key = $1`, [findingKey]);
+    if (!currentRes.rows.length) {
+      return res.status(404).json({ message: "Chưa có bản ghi điều tra cho mục này — hãy mở drawer trước." });
+    }
+    const previousStatus = currentRes.rows[0].status;
+
+    const updatedRes = await pool.query(
+      `UPDATE reconciliation_investigations
+       SET status = $2, reviewed_by = $3, reviewed_at = NOW(), updated_at = NOW()
+       WHERE finding_key = $1 RETURNING *`,
+      [findingKey, newStatus, req.user.userId]
+    );
+
+    let action = 'MARKED_REVIEWED';
+    if (newStatus === 'RESOLVED') action = 'RESOLVED';
+    else if (['RESOLVED', 'CLOSED'].includes(previousStatus) && ['OPEN', 'INVESTIGATING'].includes(newStatus)) action = 'REOPENED';
+
+    await pool.query(
+      `INSERT INTO reconciliation_audit_logs (finding_key, action, admin_id, previous_status, new_status, reason, ip_address)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [findingKey, action, req.user.userId, previousStatus, newStatus, reason || null, req.ip]
+    );
+
+    return res.json({ investigation: updatedRes.rows[0], action });
+  } catch (err) {
+    console.error("PATCH .../findings/:key/status error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật trạng thái điều tra." });
+  }
+});
+
+// GET .../findings/:key/audit-logs — Module 11
+app.get("/api/admin/financial/reconciliation/findings/:key/audit-logs", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const rows = await pool.query(
+      `SELECT a.id, a.action, a.previous_status, a.new_status, a.reason, a.ip_address, a.created_at,
+              u.full_name AS admin_name, u.email AS admin_email
+       FROM reconciliation_audit_logs a LEFT JOIN users u ON u.id = a.admin_id
+       WHERE a.finding_key = $1 ORDER BY a.created_at DESC LIMIT 100`,
+      [req.params.key]
+    );
+    return res.json({ logs: rows.rows });
+  } catch (err) {
+    console.error("GET .../findings/:key/audit-logs error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nhật ký kiểm toán." });
+  }
+});
+
+// POST .../reconciliation/run — Modules 9, 13. The only endpoint that persists
+// a reconciliation_runs row; GET /reconciliation itself never writes here.
+app.post("/api/admin/financial/reconciliation/run", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { run, result } = await runReconciliation(pool, req.user.userId);
+    return res.status(201).json({ run, ...result });
+  } catch (err) {
+    console.error("POST /api/admin/financial/reconciliation/run error:", err);
+    return res.status(500).json({ message: "Lỗi khi chạy đối soát." });
+  }
+});
+
+// GET .../reconciliation/runs — Module 13 history
+app.get("/api/admin/financial/reconciliation/runs", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await listReconciliationRuns(pool, { page: Number(req.query.page) || 1 });
+    return res.json(result);
+  } catch (err) {
+    console.error("GET /api/admin/financial/reconciliation/runs error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy lịch sử đối soát." });
+  }
+});
+
+// GET .../reconciliation/dashboard-summary — Module 16 extra cards
+app.get("/api/admin/financial/reconciliation/dashboard-summary", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const [criticalRes, incidentsRes, lastRunRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS count FROM reconciliation_investigations WHERE severity = 'CRITICAL' AND status NOT IN ('RESOLVED','CLOSED')`),
+      pool.query(`SELECT COUNT(*)::int AS count FROM reconciliation_incidents WHERE status IN ('Open','Investigating')`),
+      pool.query(`SELECT id, status, difference_count, issue_count, created_at FROM reconciliation_runs ORDER BY created_at DESC LIMIT 1`),
+    ]);
+    return res.json({
+      critical_issues_count: criticalRes.rows[0].count,
+      open_incidents_count: incidentsRes.rows[0].count,
+      last_run: lastRunRes.rows[0] || null,
+      // No reconciliation scheduler exists in this repo yet — report honestly rather than inventing a time.
+      next_scheduled_run: null,
+    });
+  } catch (err) {
+    console.error("GET .../reconciliation/dashboard-summary error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy tổng quan đối soát." });
+  }
+});
+
+// ── Reconciliation Incidents (Batch 40, spec Module 10) ───────────────────────
+// Advisory tracking only — never touches wallets/transactions.
+app.post("/api/admin/incidents", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const {
+      finding_key, title, description, difference_amount, root_cause,
+      related_booking_id, related_transaction_ids, severity, assigned_developer,
+    } = req.body || {};
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ message: "Tiêu đề sự cố là bắt buộc." });
+    }
+    const incident = await reconciliationIncidents.createIncident(pool, {
+      findingKey: finding_key, title: String(title).trim(), description,
+      differenceAmount: difference_amount, rootCause: root_cause,
+      relatedBookingId: related_booking_id, relatedTransactionIds: related_transaction_ids,
+      severity, assignedDeveloper: assigned_developer, createdBy: req.user.userId,
+    });
+    if (finding_key) {
+      await pool.query(
+        `INSERT INTO reconciliation_audit_logs (finding_key, action, admin_id, reason) VALUES ($1,'INCIDENT_CREATED',$2,$3)`,
+        [finding_key, req.user.userId, `Sự cố: ${incident.title}`]
+      );
+    }
+    return res.status(201).json({ incident });
+  } catch (err) {
+    console.error("POST /api/admin/incidents error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo sự cố." });
+  }
+});
+
+app.get("/api/admin/incidents", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, severity, findingKey, page } = req.query;
+    const result = await reconciliationIncidents.listIncidents(pool, { status, severity, findingKey, page: Number(page) || 1 });
+    return res.json(result);
+  } catch (err) {
+    console.error("GET /api/admin/incidents error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách sự cố." });
+  }
+});
+
+app.get("/api/admin/incidents/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await reconciliationIncidents.getIncident(pool, req.params.id);
+    if (!result) return res.status(404).json({ message: "Không tìm thấy sự cố." });
+    return res.json(result);
+  } catch (err) {
+    console.error("GET /api/admin/incidents/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy chi tiết sự cố." });
+  }
+});
+
+app.patch("/api/admin/incidents/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const existing = await reconciliationIncidents.getIncident(pool, req.params.id);
+    if (!existing) return res.status(404).json({ message: "Không tìm thấy sự cố." });
+    const updated = await reconciliationIncidents.updateIncident(pool, req.params.id, req.body || {});
+    if (existing.incident.finding_key) {
+      await pool.query(
+        `INSERT INTO reconciliation_audit_logs (finding_key, action, admin_id, reason) VALUES ($1,'INCIDENT_UPDATED',$2,$3)`,
+        [existing.incident.finding_key, req.user.userId, `Cập nhật sự cố: ${updated.title}`]
+      );
+    }
+    return res.json({ incident: updated });
+  } catch (err) {
+    console.error("PATCH /api/admin/incidents/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật sự cố." });
+  }
+});
+
+app.post("/api/admin/incidents/:id/comments", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const content = (req.body?.content || "").trim();
+    if (!content) return res.status(400).json({ message: "Nội dung bình luận không được để trống." });
+    const existing = await pool.query(`SELECT id FROM reconciliation_incidents WHERE id = $1`, [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ message: "Không tìm thấy sự cố." });
+    const comment = await reconciliationIncidents.addComment(pool, req.params.id, req.user.userId, content);
+    return res.status(201).json({ comment });
+  } catch (err) {
+    console.error("POST /api/admin/incidents/:id/comments error:", err);
+    return res.status(500).json({ message: "Lỗi khi thêm bình luận." });
   }
 });
 
@@ -16575,6 +16768,89 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: deposit_requests + withdraw_requests ready, APPROVED status allowed (Batch 36)');
   } catch (err) {
     console.error('⚠️  DB migration (wallet deposit/withdraw requests Batch 36) warning:', err.message);
+  }
+
+  // ── Auto-migrate: Reconciliation Investigation Center (Batch 37) ───────────
+  // Reconciliation checks/items are computed live (see computeReconciliation(),
+  // never persisted) — same design as fraud_investigations (Batch 35). finding_key
+  // is deterministic ("check:<check-id>" | "item:<item-id>"), so investigation
+  // state can key off it safely. reconciliation_runs stores explicit, admin-
+  // triggered snapshots only (POST /reconciliation/run) — the passive GET never
+  // writes here, so simply viewing the page can never inflate run history.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reconciliation_investigations (
+        finding_key     TEXT PRIMARY KEY,
+        finding_type    TEXT NOT NULL CHECK (finding_type IN ('check','item')),
+        status          TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','INVESTIGATING','RESOLVED','CLOSED')),
+        severity        TEXT,
+        last_difference NUMERIC(15,2),
+        root_cause      TEXT,
+        confidence      INT,
+        ai_summary      TEXT,
+        ai_model_used   TEXT,
+        assigned_to     UUID REFERENCES users(id) ON DELETE SET NULL,
+        reviewed_by     UUID REFERENCES users(id) ON DELETE SET NULL,
+        reviewed_at     TIMESTAMPTZ,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS reconciliation_audit_logs (
+        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        finding_key     TEXT NOT NULL,
+        action          TEXT NOT NULL,
+        admin_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+        previous_status TEXT,
+        new_status      TEXT,
+        reason          TEXT,
+        ip_address      TEXT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_recon_audit_finding ON reconciliation_audit_logs(finding_key);
+
+      CREATE TABLE IF NOT EXISTS reconciliation_incidents (
+        id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        finding_key              TEXT,
+        title                    TEXT NOT NULL,
+        description              TEXT,
+        difference_amount        NUMERIC(15,2),
+        root_cause               TEXT,
+        related_booking_id       UUID,
+        related_transaction_ids  UUID[] DEFAULT '{}',
+        severity                 TEXT NOT NULL DEFAULT 'MEDIUM' CHECK (severity IN ('INFO','LOW','MEDIUM','HIGH','CRITICAL')),
+        assigned_developer       TEXT,
+        status                   TEXT NOT NULL DEFAULT 'Open' CHECK (status IN ('Open','Investigating','Resolved','Closed')),
+        created_by               UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_recon_incidents_finding ON reconciliation_incidents(finding_key);
+      CREATE INDEX IF NOT EXISTS idx_recon_incidents_status  ON reconciliation_incidents(status);
+
+      CREATE TABLE IF NOT EXISTS reconciliation_incident_comments (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        incident_id UUID NOT NULL REFERENCES reconciliation_incidents(id) ON DELETE CASCADE,
+        admin_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content     TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS reconciliation_runs (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        status           TEXT NOT NULL,
+        difference_count INT NOT NULL DEFAULT 0,
+        issue_count      INT NOT NULL DEFAULT 0,
+        duration_ms      INT,
+        performed_by     UUID REFERENCES users(id) ON DELETE SET NULL,
+        snapshot         JSONB NOT NULL,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_recon_runs_created ON reconciliation_runs(created_at);
+    `);
+    console.log('✅ DB migration: reconciliation_investigations/_audit_logs/_incidents/_incident_comments/_runs ready (Batch 37)');
+  } catch (err) {
+    console.error('⚠️  DB migration (Reconciliation Investigation Center Batch 37) warning:', err.message);
   }
 
   // Prime the dynamic subject index so admin-created subjects resolve from the

@@ -9,6 +9,9 @@ const formatPrice = (price) => {
 
 const formatRating = (r) => (r > 0 ? parseFloat(r).toFixed(1) : null);
 
+const escapeHtml = (s) =>
+  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 const formatExp = (y) => {
   const years = parseInt(y);
   if (isNaN(years) || years === 0) return 'Chưa có kinh nghiệm';
@@ -438,7 +441,7 @@ export default function CompareModal({ tutors, onClose, onSelect }) {
                    {aiAnalysis.comparisons && aiAnalysis.comparisons.length > 0 && (
                      <ul className="mt-1 flex flex-col gap-2">
                        {aiAnalysis.comparisons.map((comp, idx) => (
-                         <li key={idx} className="text-on-surface-variant italic border-l-4 border-amber-300 pl-3 py-1 bg-amber-50/30" dangerouslySetInnerHTML={{ __html: comp.replace(/\*\*(.*?)\*\*/g, '<strong class="text-amber-800">$1</strong>') }} />
+                         <li key={idx} className="text-on-surface-variant italic border-l-4 border-amber-300 pl-3 py-1 bg-amber-50/30" dangerouslySetInnerHTML={{ __html: escapeHtml(comp).replace(/\*\*(.*?)\*\*/g, '<strong class="text-amber-800">$1</strong>') }} />
                        ))}
                      </ul>
                    )}
