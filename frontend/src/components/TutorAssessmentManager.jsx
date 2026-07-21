@@ -3,11 +3,14 @@ import {
   getTutorExams,
   createTutorExam,
   updateTutorExamStatus,
+  updateTutorExam,
   duplicateTutorExam,
   deleteTutorExam,
+  getTutorExamDetail,
   getTutorHomework,
   createTutorHomework,
   updateTutorHomeworkStatus,
+  updateTutorHomework,
   deleteTutorHomework,
   getTutorCourses,
 } from '../services/api';
@@ -21,6 +24,8 @@ export default function TutorAssessmentManager({ token, user }) {
   // Modals state
   const [isExamModalOpen, setIsExamModalOpen] = useState(false);
   const [isHomeworkModalOpen, setIsHomeworkModalOpen] = useState(false);
+  const [editingExam, setEditingExam] = useState(null);
+  const [editingHomework, setEditingHomework] = useState(null);
 
   // Data states
   const [exams, setExams] = useState([]);
@@ -167,13 +172,13 @@ export default function TutorAssessmentManager({ token, user }) {
           {isDropdownOpen && (
             <div className="absolute right-0 mt-2 w-56 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-xl z-50 overflow-hidden">
               <button 
-                onClick={() => { setIsExamModalOpen(true); setIsDropdownOpen(false); }}
+                onClick={() => { setEditingExam(null); setIsExamModalOpen(true); setIsDropdownOpen(false); }}
                 className="w-full text-left px-md py-sm hover:bg-surface-container-low flex items-center gap-md font-label-md transition-colors"
               >
                 <span className="material-symbols-outlined text-primary">edit_document</span> Tạo Đề thi mới
               </button>
               <button 
-                onClick={() => { setIsHomeworkModalOpen(true); setIsDropdownOpen(false); }}
+                onClick={() => { setEditingHomework(null); setIsHomeworkModalOpen(true); setIsDropdownOpen(false); }}
                 className="w-full text-left px-md py-sm hover:bg-surface-container-low flex items-center gap-md font-label-md border-t border-outline-variant transition-colors"
               >
                 <span className="material-symbols-outlined text-primary">cloud_upload</span> Giao Bài tập về nhà
@@ -330,6 +335,9 @@ export default function TutorAssessmentManager({ token, user }) {
                       </td>
                       <td className="px-lg py-md text-right">
                         <div className="flex items-center justify-end gap-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                           <button onClick={() => { setEditingExam(exam); setIsExamModalOpen(true); }} title="Chỉnh sửa" className="text-secondary hover:text-primary">
+                             <span className="material-symbols-outlined">edit</span>
+                           </button>
                            <button onClick={() => handlePublishExam(exam.id, exam.status)} title="Đổi trạng thái" className="text-secondary hover:text-primary">
                              <span className="material-symbols-outlined">{exam.status === 'Published' ? 'visibility_off' : 'visibility'}</span>
                            </button>
@@ -381,6 +389,9 @@ export default function TutorAssessmentManager({ token, user }) {
                           {hw.status === 'Open' ? 'Đang mở' : 'Đã đóng'}
                         </span>
                         <div className="flex items-center gap-xs ml-2">
+                           <button onClick={() => { setEditingHomework(hw); setIsHomeworkModalOpen(true); }} title="Chỉnh sửa" className="p-xs text-secondary hover:text-primary rounded-full hover:bg-surface-container">
+                             <span className="material-symbols-outlined">edit</span>
+                           </button>
                            <button onClick={() => handlePublishHomework(hw.id, hw.status)} title="Đổi trạng thái" className="p-xs text-secondary hover:text-primary rounded-full hover:bg-surface-container">
                              <span className="material-symbols-outlined">{hw.status === 'Open' ? 'lock' : 'lock_open'}</span>
                            </button>
@@ -404,6 +415,7 @@ export default function TutorAssessmentManager({ token, user }) {
           onClose={() => setIsExamModalOpen(false)} 
           onSuccess={() => { setIsExamModalOpen(false); fetchData(); }} 
           courses={courses}
+          editingData={editingExam}
         />
       )}
       
@@ -412,6 +424,7 @@ export default function TutorAssessmentManager({ token, user }) {
           onClose={() => setIsHomeworkModalOpen(false)} 
           onSuccess={() => { setIsHomeworkModalOpen(false); fetchData(); }} 
           courses={courses}
+          editingData={editingHomework}
         />
       )}
     </div>
@@ -422,7 +435,7 @@ export default function TutorAssessmentManager({ token, user }) {
 // Sub Components (Modals)
 // ----------------------------------------------------------------------
 
-function CreateExamModal({ onClose, onSuccess, courses }) {
+function CreateExamModal({ onClose, onSuccess, courses, editingData }) {
   const [formData, setFormData] = useState({
     title: '',
     course: '',
@@ -453,6 +466,39 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
     };
     fetchStudents();
   }, []);
+
+  useEffect(() => {
+    if (editingData) {
+      setLoading(true);
+      getTutorExamDetail(editingData.id).then(data => {
+        if (data) {
+          setFormData({
+            title: data.title || '',
+            course: data.subject || '',
+            duration_minutes: data.duration_minutes || 60,
+            total_score: 100,
+            status: data.is_published ? 'Published' : 'Draft',
+            assigned_students: data.assigned_students || [],
+            questions: (data.questions || []).map(q => ({
+              id: q.id,
+              question_type: q.question_type === 'essay' ? 'Essay' : 'MCQ',
+              question_text: q.question_text || '',
+              options: [
+                { text: q.option_a || '', isCorrect: q.correct_answer === 'A' },
+                { text: q.option_b || '', isCorrect: q.correct_answer === 'B' },
+                { text: q.option_c || '', isCorrect: q.correct_answer === 'C' },
+                { text: q.option_d || '', isCorrect: q.correct_answer === 'D' }
+              ],
+              correct_answer: q.correct_answer || 'A',
+              grading_note: q.explanation || q.suggested_answer || '',
+              max_point: 10
+            }))
+          });
+        }
+        setLoading(false);
+      });
+    }
+  }, [editingData]);
 
   const handleAddMCQ = () => {
     setFormData(prev => ({
@@ -521,7 +567,11 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
           suggested_answer: q.grading_note || ''
         }))
       };
-      await createTutorExam(payload);
+      if (editingData) {
+        await updateTutorExam(editingData.id, payload);
+      } else {
+        await createTutorExam(payload);
+      }
       onSuccess();
     } catch (err) {
       setFormError("Error saving exam: " + err.message);
@@ -537,7 +587,7 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
         
         <div className="px-xl py-lg border-b border-outline-variant flex justify-between items-center bg-white shrink-0">
           <div>
-            <h3 className="text-headline-md font-headline-md text-primary">Tạo Đề thi mới</h3>
+            <h3 className="text-headline-md font-headline-md text-primary">{editingData ? 'Chỉnh sửa Đề thi' : 'Tạo Đề thi mới'}</h3>
             <p className="text-body-md text-secondary">Thiết lập cấu hình và câu hỏi cho đề thi trắc nghiệm / tự luận.</p>
           </div>
           <button className="text-secondary hover:text-error transition-colors" onClick={onClose}>
@@ -735,7 +785,7 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
   );
 }
 
-function UploadHomeworkModal({ onClose, onSuccess, courses }) {
+function UploadHomeworkModal({ onClose, onSuccess, courses, editingData }) {
   const [formData, setFormData] = useState({
     title: '',
     course: '',
@@ -769,6 +819,21 @@ function UploadHomeworkModal({ onClose, onSuccess, courses }) {
     fetchStudents();
   }, []);
 
+  useEffect(() => {
+    if (editingData) {
+      setFormData({
+        title: editingData.title || '',
+        course: editingData.course || '',
+        deadline: editingData.deadline ? new Date(editingData.deadline).toISOString().split('T')[0] : '',
+        max_score: editingData.max_score || 100,
+        instructions: '',
+        allow_late: editingData.allow_late || false,
+        status: editingData.status || 'Open',
+        assigned_students: editingData.assigned_students || []
+      });
+    }
+  }, [editingData]);
+
   const handleSave = async (status) => {
     setFormError('');
     if (!formData.title.trim()) {
@@ -777,14 +842,18 @@ function UploadHomeworkModal({ onClose, onSuccess, courses }) {
     }
     setLoading(true);
     try {
-      let fileUrl = null;
-      let fileType = null;
+      let fileUrl = editingData ? editingData.file_url : null;
+      let fileType = editingData ? editingData.file_type : null;
       if (file) {
         fileUrl = await uploadHomeworkFile(file, 'me'); // In a real app, pass actual user id
         fileType = file.type;
       }
 
-      await createTutorHomework({ ...formData, status, file_url: fileUrl, file_type: fileType });
+      if (editingData) {
+        await updateTutorHomework(editingData.id, { ...formData, status, file_url: fileUrl, file_type: fileType });
+      } else {
+        await createTutorHomework({ ...formData, status, file_url: fileUrl, file_type: fileType });
+      }
       onSuccess();
     } catch (err) {
       setFormError("Error uploading homework: " + err.message);
@@ -798,7 +867,7 @@ function UploadHomeworkModal({ onClose, onSuccess, courses }) {
       <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={onClose}></div>
       <div className="relative w-full max-w-lg bg-surface rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
         <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-white shrink-0">
-          <h3 className="text-xl font-bold text-primary">Giao Bài tập về nhà</h3>
+          <h3 className="text-xl font-bold text-primary">{editingData ? 'Chỉnh sửa Bài tập' : 'Giao Bài tập về nhà'}</h3>
           <button className="text-secondary hover:text-error transition-colors" onClick={onClose}>
             <span className="material-symbols-outlined">close</span>
           </button>
