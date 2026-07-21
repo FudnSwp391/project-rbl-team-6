@@ -266,7 +266,7 @@ export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
               </div>
 
               {/* Kết quả + biểu đồ */}
-              <div className="lg:col-span-3 bt-card p-6 bg-gradient-to-br from-[#00288e] to-[#2747c4] text-white border-transparent relative overflow-hidden">
+              <div className="lg:col-span-3 rounded-2xl p-6 bg-gradient-to-br from-[#00288e] to-[#2747c4] text-white relative overflow-hidden">
                 <div className="absolute -top-16 -right-16 w-56 h-56 bg-white/10 rounded-full blur-3xl" />
                 <div className="relative z-10">
                   <p className="text-sm text-[#c7d3f7] mb-1">Thực nhận mỗi tháng (sau phí nền tảng)</p>
