@@ -10,16 +10,16 @@
 // have a local entry for.
 
 export const SUBJECT_META = {
-  'Toán':       { icon: 'calculate',    color: 'bg-blue-100 text-blue-700',       bar: 'bg-blue-500'    },
-  'Tiếng Việt': { icon: 'menu_book',    color: 'bg-rose-100 text-rose-700',       bar: 'bg-rose-500'    },
-  'Ngữ văn':    { icon: 'auto_stories', color: 'bg-pink-100 text-pink-700',       bar: 'bg-pink-500'    },
-  'Tiếng Anh':  { icon: 'translate',    color: 'bg-green-100 text-green-700',     bar: 'bg-green-500'   },
-  'Vật lý':     { icon: 'bolt',         color: 'bg-cyan-100 text-cyan-700',       bar: 'bg-cyan-500'    },
-  'Hóa học':    { icon: 'biotech',      color: 'bg-purple-100 text-purple-700',   bar: 'bg-purple-500'  },
-  'Sinh học':   { icon: 'grass',        color: 'bg-emerald-100 text-emerald-700', bar: 'bg-emerald-500' },
-  'Lịch sử':    { icon: 'history_edu',  color: 'bg-amber-100 text-amber-700',     bar: 'bg-amber-500'   },
-  'Địa lý':     { icon: 'public',       color: 'bg-teal-100 text-teal-700',       bar: 'bg-teal-500'    },
-  'Tin học':    { icon: 'code',         color: 'bg-indigo-100 text-indigo-700',   bar: 'bg-indigo-500'  },
+  'Toán':       { icon: 'calculate',    color: 'bg-blue-100 text-blue-700',       bar: 'bg-blue-500',    grad: 'from-blue-500 to-blue-700'       },
+  'Tiếng Việt': { icon: 'menu_book',    color: 'bg-rose-100 text-rose-700',       bar: 'bg-rose-500',    grad: 'from-rose-500 to-rose-700'       },
+  'Ngữ văn':    { icon: 'auto_stories', color: 'bg-pink-100 text-pink-700',       bar: 'bg-pink-500',    grad: 'from-pink-500 to-pink-700'       },
+  'Tiếng Anh':  { icon: 'translate',    color: 'bg-green-100 text-green-700',     bar: 'bg-green-500',   grad: 'from-green-500 to-green-700'     },
+  'Vật lý':     { icon: 'bolt',         color: 'bg-cyan-100 text-cyan-700',       bar: 'bg-cyan-500',    grad: 'from-cyan-500 to-cyan-700'       },
+  'Hóa học':    { icon: 'biotech',      color: 'bg-purple-100 text-purple-700',   bar: 'bg-purple-500',  grad: 'from-purple-500 to-purple-700'   },
+  'Sinh học':   { icon: 'grass',        color: 'bg-emerald-100 text-emerald-700', bar: 'bg-emerald-500', grad: 'from-emerald-500 to-emerald-700' },
+  'Lịch sử':    { icon: 'history_edu',  color: 'bg-amber-100 text-amber-700',     bar: 'bg-amber-500',   grad: 'from-amber-500 to-amber-700'     },
+  'Địa lý':     { icon: 'public',       color: 'bg-teal-100 text-teal-700',       bar: 'bg-teal-500',    grad: 'from-teal-500 to-teal-700'       },
+  'Tin học':    { icon: 'code',         color: 'bg-indigo-100 text-indigo-700',   bar: 'bg-indigo-500',  grad: 'from-indigo-500 to-indigo-700'   },
 }
 
 // Legacy keys used by the course-management view.
@@ -30,7 +30,7 @@ const ALIASES = {
 }
 
 export const SUBJECT_FALLBACK = {
-  icon: 'school', color: 'bg-gray-100 text-gray-600', bar: 'bg-gray-400',
+  icon: 'school', color: 'bg-gray-100 text-gray-600', bar: 'bg-gray-400', grad: 'from-gray-400 to-gray-600',
 }
 
 export function subjectMeta(name, row) {

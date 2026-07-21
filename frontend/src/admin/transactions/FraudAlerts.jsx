@@ -3,7 +3,7 @@ import { StatusBadge, PageHeader, DataTable, SearchFilterBar, FilterTabs, Pagina
 import { fmtDateTime } from './mockData'
 import FraudInvestigationDrawer from './FraudInvestigationDrawer'
 
-const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const STATUS_TABS = [
   { value: 'ALL',  label: 'Tất cả' },

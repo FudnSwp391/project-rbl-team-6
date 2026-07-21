@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { PageHeader, KpiCard, StatusBadge, EmptyState } from '../transactions/components'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 function fmtDate(iso) {
   if (!iso) return '—'

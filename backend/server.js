@@ -9,6 +9,7 @@ const { GoogleAuth } = require("google-auth-library");
 const { OAuth2Client } = require("google-auth-library");
 const pool = require("./db");
 const { generateQuizQuestions, chatWithAI, gradeEssayAnswer, suggestTutors } = require("./gemini");
+const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
 const moment = require("moment");
 const querystring = require("qs");
@@ -41,6 +42,24 @@ app.use(cors({
 // metadata nên 25mb là quá đủ, tránh nhận payload khổng lồ vào bộ nhớ.
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ limit: '25mb', extended: true }));
+
+// ─── Rate Limiters ──────────────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Quá nhiều yêu cầu, vui lòng thử lại sau 15 phút.' },
+});
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Quá nhiều yêu cầu AI, vui lòng thử lại sau.' },
+});
+app.use('/api/auth', authLimiter);
+app.use(['/api/ai-suggest', '/api/ask-ai', '/api/course-ai-chat', '/api/practice'], aiLimiter);
 
 // ΓöÇΓöÇΓöÇ Helper: tß║ío JWT token ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 function createToken(user) {
@@ -3324,8 +3343,13 @@ app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
     if (!filename) return res.status(400).json({ message: "Tên file là bắt buộc." });
     
     if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
+
+    const ALLOWED_BUCKETS = ['tutor-documents', 'edux-media'];
+    const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf', 'doc', 'docx', 'mp4', 'webm', 'mov'];
     const targetBucket = bucket || 'tutor-documents';
-    const ext = filename.split('.').pop();
+    if (!ALLOWED_BUCKETS.includes(targetBucket)) return res.status(400).json({ message: 'Bucket không hợp lệ.' });
+    const ext = filename.split('.').pop().toLowerCase();
+    if (!ALLOWED_EXTENSIONS.includes(ext)) return res.status(400).json({ message: 'Loại file không được phép.' });
     const safePath = folder ? `${folder}/${req.user.userId}_${Date.now()}.${ext}` : `${req.user.userId}_${Date.now()}.${ext}`;
 
     const { data, error } = await supabaseAdmin.storage

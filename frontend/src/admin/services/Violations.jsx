@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { PageHeader, DataTable, StatusBadge, EmptyState } from '../transactions/components'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const SEV_COLOR = {
   high:   'bg-red-100 text-red-700 border border-red-200',
