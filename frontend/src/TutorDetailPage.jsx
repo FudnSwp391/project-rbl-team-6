@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import EntityReviews from './components/EntityReviews';
+import CartButton from './components/CartButton';
 
 export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
   useEffect(() => {
@@ -40,9 +41,7 @@ export default function TutorDetailPage({ onGoSignIn, onGoSignUp, user }) {
           {/* Auth Buttons */}
           <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#444653] hover:text-[#00288e] flex items-center transition-colors" title="Giỏ hàng">
-                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
-              </a>
+              <CartButton className="text-[#444653] hover:text-[#00288e] flex items-center transition-colors" />
             )}
             {user ? (
                <button

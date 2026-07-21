@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { API_BASE_URL } from '../config';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API = API_BASE_URL
 
 export default function TutorAssessmentForm({ token, onCancel, onSuccess }) {
   const [formData, setFormData] = useState({

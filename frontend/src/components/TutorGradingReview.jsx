@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
+import { API_BASE_URL } from '../config';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API = API_BASE_URL
 
 export default function TutorGradingReview({ token, attemptInfo, onBack }) {
   const [data, setData] = useState(null)
@@ -184,13 +185,17 @@ export default function TutorGradingReview({ token, attemptInfo, onBack }) {
                 {wrongQuestions.map((q, i) => {
                   const globalIdx = questions.indexOf(q) + 1
                   return (
-                    <a
+                    <button
                       key={q.id}
-                      href={`#q-${q.id}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        document.getElementById(`q-${q.id}`)?.scrollIntoView({ behavior: 'smooth' });
+                      }}
                       className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-bold hover:bg-red-200 transition-colors"
                     >
                       Q{globalIdx}
-                    </a>
+                    </button>
                   )
                 })}
               </div>
@@ -363,13 +368,17 @@ export default function TutorGradingReview({ token, attemptInfo, onBack }) {
                       {wrongQuestions.map(q => {
                         const idx = questions.indexOf(q) + 1
                         return (
-                          <a
+                          <button
                             key={q.id}
-                            href={`#q-${q.id}`}
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              document.getElementById(`q-${q.id}`)?.scrollIntoView({ behavior: 'smooth' });
+                            }}
                             className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-bold hover:bg-red-200"
                           >
                             Q{idx}
-                          </a>
+                          </button>
                         )
                       })}
                     </div>

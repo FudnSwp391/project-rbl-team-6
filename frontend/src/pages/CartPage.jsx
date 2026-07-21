@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../AuthContext'
 import Toast from '../components/Toast'
+import CartButton from '../components/CartButton';
+import { API_BASE_URL } from '../config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_BASE = API_BASE_URL;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function CartPage({ onGoSignIn, user }) {
@@ -172,8 +174,21 @@ export default function CartPage({ onGoSignIn, user }) {
         return;
       }
       const data = await res.json();
-      if (data.success && data.url) window.location.href = data.url;
-      else { showToast('error', data.message || 'Lỗi tạo thanh toán VNPAY.'); setLoadingPayment(false); }
+      if (data.success && data.vnpUrl && data.params) {
+        // Dùng form redirect để tránh browser re-encode URL (gây sai chữ ký)
+        const form = document.createElement('form');
+        form.method = 'GET';
+        form.action = data.vnpUrl;
+        for (const [key, value] of Object.entries(data.params)) {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = key;
+          input.value = value;
+          form.appendChild(input);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      } else { showToast('error', data.message || 'Lỗi tạo thanh toán VNPAY.'); setLoadingPayment(false); }
     } catch (e) {
       showToast('error', 'Không thể kết nối cổng VNPAY.');
       setLoadingPayment(false);
@@ -280,9 +295,7 @@ export default function CartPage({ onGoSignIn, user }) {
 
           <div className="flex items-center gap-6">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
-                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
-              </a>
+              <CartButton />
             )}
             {user ? (
               <a href="#/dashboard" className="flex items-center gap-2 cursor-pointer text-[#444653] hover:text-[#00288e] transition-colors">

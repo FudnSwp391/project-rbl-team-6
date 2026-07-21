@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from './AuthContext'   // ← Global auth state
 import { GoogleLogin } from '@react-oauth/google'
+import { API_BASE_URL } from './config';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
@@ -12,7 +13,7 @@ const ROLE_OPTIONS = [
 
 export default function SignUp({ onSwitchToSignIn, onGoHome }) {
   const { loginAfterRegister } = useAuth()
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+  const apiBaseUrl = API_BASE_URL
   const initialRole = window.location.hash.includes('role=tutor') ? 'tutor' : 'student'
   const [role, setRole] = useState(initialRole)
   const [formData, setFormData] = useState({
@@ -26,6 +27,13 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
   const [isGoogleError, setIsGoogleError] = useState(false)
   const [googleError, setGoogleError] = useState('')
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false)
+  
+  // OTP states
+  const [showOtpModal, setShowOtpModal] = useState(false)
+  const [otp, setOtp] = useState('')
+  const [otpError, setOtpError] = useState('')
+  const [isVerifying, setIsVerifying] = useState(false)
+
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
 
   const handleGoogleSuccess = async (credentialResponse) => {
@@ -97,50 +105,8 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
     setIsSubmitting(true)
     try {
       // ── Tutor: kiểm tra email trước, rồi mới lưu sessionStorage ────────────
-      if (role === 'tutor') {
-        const checkResp = await fetch(`${apiBaseUrl}/api/auth/check-email`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: formData.email.trim() }),
-        })
-        if (!checkResp.ok) {
-          const checkData = await checkResp.json()
-          if (checkData?.isGoogleAccount) setIsGoogleError(true)
-          throw new Error(checkData?.message || 'Email này đã được đăng ký.')
-        }
-        sessionStorage.setItem('pendingTutorReg', JSON.stringify({
-          fullName: formData.fullName.trim(),
-          email: formData.email.trim(),
-          password: formData.password,
-          role: 'tutor',
-        }))
-        window.location.hash = '/tutor-profile'
-        return
-      }
+      // ── Đăng ký API ngay cho tất cả role ────────────────
 
-      // ── Student: kiểm tra email trước, lưu sessionStorage, chuyển sang Complete Profile ────────────
-      if (role === 'student') {
-        const checkResp = await fetch(`${apiBaseUrl}/api/auth/check-email`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: formData.email.trim() }),
-        })
-        if (!checkResp.ok) {
-          const checkData = await checkResp.json()
-          if (checkData?.isGoogleAccount) setIsGoogleError(true)
-          throw new Error(checkData?.message || 'Email này đã được đăng ký.')
-        }
-        sessionStorage.setItem('pendingStudentReg', JSON.stringify({
-          fullName: formData.fullName.trim(),
-          email: formData.email.trim(),
-          password: formData.password,
-          role: 'student',
-        }))
-        window.location.hash = '/complete-student-profile'
-        return
-      }
-
-      // ── Parent: đăng ký API ngay ────────────────
       const response = await fetch(`${apiBaseUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -160,7 +126,11 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
         throw new Error(data?.message || 'Đăng ký thất bại.')
       }
 
-      loginAfterRegister(data.token, data.user)
+      if (response.status === 202 && data.requireOtp) {
+        setShowOtpModal(true)
+      } else {
+        loginAfterRegister(data.token, data.user)
+      }
     } catch (submitError) {
       setErrors((prev) => ({
         ...prev,
@@ -168,6 +138,32 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
       }))
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleVerifyOtp = async (e) => {
+    e?.preventDefault()
+    if (!otp || otp.length < 6) {
+      setOtpError('Vui lòng nhập đủ 6 số OTP.')
+      return
+    }
+    setIsVerifying(true)
+    setOtpError('')
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/auth/verify-register-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: formData.email, otp }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.message || 'Xác thực OTP thất bại.')
+      
+      setShowOtpModal(false)
+      loginAfterRegister(data.token, data.user)
+    } catch (err) {
+      setOtpError(err.message)
+    } finally {
+      setIsVerifying(false)
     }
   }
 
@@ -472,6 +468,53 @@ export default function SignUp({ onSwitchToSignIn, onGoHome }) {
           </div>
         </div>
       </footer>
+
+      {showOtpModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl relative animate-scale-up">
+            <button 
+              onClick={() => setShowOtpModal(false)}
+              className="absolute top-4 right-4 text-on-surface-variant hover:text-error transition-colors"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-primary-fixed text-primary rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="material-symbols-outlined text-[32px]">mark_email_read</span>
+              </div>
+              <h2 className="text-[24px] font-bold text-on-surface mb-2">Xác Thực Email</h2>
+              <p className="text-on-surface-variant text-[15px]">
+                Chúng tôi đã gửi một mã OTP 6 số đến email <strong>{formData.email}</strong>. Vui lòng kiểm tra hộp thư (hoặc thư rác) và nhập vào bên dưới.
+              </p>
+            </div>
+            
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => {
+                    setOtp(e.target.value.replace(/[^0-9]/g, ''))
+                    setOtpError('')
+                  }}
+                  className="w-full text-center text-[24px] tracking-[0.5em] font-bold bg-surface-container-lowest border border-outline-variant rounded-xl h-14 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                  placeholder="------"
+                  disabled={isVerifying}
+                />
+                {otpError && <p className="text-error text-sm mt-2 text-center">{otpError}</p>}
+              </div>
+              <button
+                type="submit"
+                disabled={isVerifying || otp.length < 6}
+                className="w-full h-12 bg-primary text-on-primary font-bold rounded-xl hover:bg-primary/90 transition-all flex items-center justify-center disabled:opacity-50"
+              >
+                {isVerifying ? 'Đang xác thực...' : 'Xác Nhận & Đăng Ký'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .role-card {

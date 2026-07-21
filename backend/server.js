@@ -12,6 +12,13 @@ const { generateQuizQuestions, chatWithAI, gradeEssayAnswer, suggestTutors } = r
 const crypto = require("crypto");
 const moment = require("moment");
 const querystring = require("qs");
+const {
+  PLATFORM_COMMISSION_RATE, COMMISSION_POLICY_VERSION, calculateCommissionSplit,
+  REFUND_POLICY_VERSION, getCourseRefundDecision, getLessonRefundDecision,
+  ATTENDANCE_POLICY_VERSION, ATTENDANCE_ABSENT_GRACE_MINUTES, getAttendanceSettlement,
+  WITHDRAWAL_POLICY_VERSION, MIN_WITHDRAWAL_AMOUNT, normalizeWithdrawalAmount, sanitizeBankText,
+  lessonDateStr, lessonStartFrom, lessonEndFrom, parseMethodSupport, parseBookingStartDateTime,
+} = require("./utils/businessRules");
 
 dotenv.config();
 
@@ -30,8 +37,10 @@ app.use(cors({
     return cb(new Error("Not allowed by CORS"));
   },
 }));
-app.use(express.json({ limit: '500mb' }));
-app.use(express.urlencoded({ limit: '500mb', extended: true }));
+// File upload đi qua presigned URL (Supabase) hoặc multer — JSON body chỉ chứa
+// metadata nên 25mb là quá đủ, tránh nhận payload khổng lồ vào bộ nhớ.
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
 // ΓöÇΓöÇΓöÇ Helper: tß║ío JWT token ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 function createToken(user) {
@@ -78,11 +87,26 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function requireTutor(req, res, next) {
+async function requireTutor(req, res, next) {
   if (req.user?.role !== "tutor") {
     return res.status(403).json({ message: "Từ chối truy cập: chỉ dành cho gia sư." });
   }
-  next();
+  try {
+    const profileRes = await pool.query(
+      "SELECT status FROM tutor_profiles WHERE user_id = $1",
+      [req.user.userId]
+    );
+    if (profileRes.rows.length === 0) {
+      return res.status(403).json({ message: "Bạn cần tạo hồ sơ gia sư và chờ duyệt trước khi sử dụng tính năng này." });
+    }
+    if (profileRes.rows[0].status !== "approved") {
+      return res.status(403).json({ message: "Hồ sơ gia sư của bạn đang chờ duyệt hoặc bị từ chối. Vui lòng quay lại sau." });
+    }
+    next();
+  } catch (error) {
+    console.error("requireTutor error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ khi xác thực quyền gia sư." });
+  }
 }
 
 // ΓöÇΓöÇΓöÇ Nodemailer: email helper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -389,6 +413,73 @@ async function sendPasswordResetEmail(to, otp) {
   }
 }
 
+async function sendRegistrationOtpEmail(to, otp) {
+  if (!emailTransporter) {
+    console.log(`[Email] SMTP chua cau hinh - bo qua email toi ${to}. MA OTP: ${otp}`);
+    return;
+  }
+
+  const subject = "[EduX] Ma OTP Xac Thuc Dang Ky";
+  const html = `<!DOCTYPE html>
+<html lang="vi">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#00288e 0%,#1e40af 100%);padding:40px 40px 32px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-0.5px;">EduX</h1>
+            <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px;">Nen tang ket noi gia su</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px;text-align:center;">
+            <h2 style="margin:0 0 12px;color:#191c1e;font-size:24px;font-weight:700;">Xac Thuc Tai Khoan</h2>
+            <p style="margin:0;color:#444653;font-size:16px;line-height:1.6;">
+              Ma xac thuc OTP cua ban la:
+            </p>
+            <div style="margin:32px 0;background:#eef2ff;border:2px dashed #c7d2fe;border-radius:12px;padding:24px;display:inline-block;">
+              <span style="font-size:36px;font-weight:800;color:#4f46e5;letter-spacing:8px;">${otp}</span>
+            </div>
+            <p style="margin:0;color:#757684;font-size:14px;line-height:1.6;">
+              Ma nay se het han sau <strong>10 phut</strong>. Vui long khong chia se ma nay cho bat ky ai.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f8f9fb;padding:24px 40px;text-align:center;border-top:1px solid #e1e2e4;">
+            <p style="margin:0;color:#757684;font-size:13px;">© 2024 EduX. Moi thac mac xin lien he support@edux.com</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const plainText = `Ma OTP xac thuc dang ky cua ban la: ${otp}\n\nMa nay se het han sau 10 phut.`;
+
+  try {
+    await emailTransporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
+      subject,
+      text: plainText,
+      html,
+      headers: {
+        'X-Mailer': 'EduX Notification System',
+        'X-Priority': '1',
+        'Importance': 'high',
+      },
+    });
+    console.log(`[Email] Da gui email OTP toi ${to}`);
+  } catch (err) {
+    console.error(`[Email] Gui email OTP that bai toi ${to}:`, err.message);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NOTIFICATION & EMAIL RELIABILITY (Batch 20) — centralized in-app notification
 // + email outbox with retry. Module-level (not inside startServer) so it is
@@ -556,6 +647,7 @@ async function runPendingAiCases({ triggeredBy = 'cron', adminId = null } = {}) 
          FROM disputes d
          LEFT JOIN bookings b ON b.id = d.booking_id
         WHERE d.status = 'OPEN'
+          AND d.withdrawn_at IS NULL
           AND d.created_at <= NOW() - make_interval(hours => $1::int)
           AND NOT EXISTS (SELECT 1 FROM ai_case_resolutions r WHERE r.dispute_id = d.id)
         ORDER BY d.created_at ASC
@@ -711,6 +803,21 @@ async function collectTutorCopilotContext(tutorId) {
     ctx.metrics.rating_prior      = prior.length && prior[0].avg != null ? Number(prior[0].avg) : null;
     ctx.metrics.reviews_30d       = recent.length ? Number(recent[0].n) : 0;
   }
+
+  // Batch 27: semantic moderation signals (safe if tables empty/absent).
+  ctx.metrics.semantic_reports_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.semantic_external_payment  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.semantic_toxicity          = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'TOXIC_LANGUAGE' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.semantic_low_teaching      = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'LOW_TEACHING_QUALITY' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  const semRep = (await copilotSafeRows(`SELECT overall_reputation_score, external_payment_risk_score, toxicity_risk_score FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC LIMIT 1`, [tutorId]))[0] || null;
+  ctx.metrics.semantic_overall_reputation = semRep ? Number(semRep.overall_reputation_score) : null;
+
+  // Batch 28: fraud intel signals (safe if tables empty/absent).
+  ctx.metrics.fraud_reports_90d          = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (tutor_id=$1 OR primary_user_id=$1) AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.fraud_high_risk_reports    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (tutor_id=$1 OR primary_user_id=$1) AND severity IN ('HIGH','CRITICAL') AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.fraud_external_payment_reports = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE tutor_id=$1 AND report_type='EXTERNAL_PAYMENT_COLLUSION' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+  ctx.metrics.fraud_withdrawal_risk_reports  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE tutor_id=$1 AND report_type='WITHDRAWAL_RISK' AND created_at > NOW() - INTERVAL '90 days'`, [tutorId]);
+
   return ctx;
 }
 
@@ -730,6 +837,9 @@ async function collectStudentCopilotContext(studentId) {
   ctx.metrics.auto_refunds_30d    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE student_id=$1 AND status='AUTO_RESOLVED' AND money_action='REFUND_TO_STUDENT' AND created_at > NOW() - INTERVAL '30 days'`, [studentId]);
   ctx.metrics.bookings_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
   ctx.metrics.absences_90d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM attendance WHERE student_id=$1 AND status='absent' AND marked_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  // Batch 28: fraud intel signals (safe if tables empty/absent).
+  ctx.metrics.fraud_reports_90d       = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (student_id=$1 OR primary_user_id=$1) AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
+  ctx.metrics.fraud_high_risk_reports = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE (student_id=$1 OR primary_user_id=$1) AND severity IN ('HIGH','CRITICAL') AND created_at > NOW() - INTERVAL '90 days'`, [studentId]);
   return ctx;
 }
 
@@ -796,10 +906,12 @@ async function collectTransactionCopilotContext(transactionId) {
 
 async function collectPageCopilotContext(pageKey, pageContext) {
   const ctx = { entity_type: 'PAGE', entity_id: null, page_key: pageKey || null, identity: {}, metrics: {}, notes: [] };
-  ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN'`);
+  ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN' AND withdrawn_at IS NULL`);
   ctx.metrics.pending_tutors   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='pending'`);
   ctx.metrics.appealed_ai_cases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`);
   ctx.metrics.failed_tx_24h    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE status='FAILED' AND created_at > NOW() - INTERVAL '24 hours'`);
+  // Batch 29A: recent admin analytics activity (safe; Copilot never depends on it)
+  ctx.metrics.analytics_queries_7d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_analytics_queries WHERE created_at > NOW() - INTERVAL '7 days'`);
   // Only a small allow-list of primitive page-context hints is kept (no PII).
   if (pageContext && typeof pageContext === 'object') {
     ctx.notes.push(`page_hint:${String(pageKey || 'unknown').slice(0, 40)}`);
@@ -842,6 +954,14 @@ function generateAdminCopilotReport(entityType, context) {
     if (m.ai_flags_90d >= 2) { score += 1; findings.push(`AI đã gắn cờ rủi ro ${m.ai_flags_90d} lần trong 90 ngày.`); evidence.push({ label: 'Cờ rủi ro AI', value: m.ai_flags_90d }); }
     if (m.reputation_score != null && m.reputation_score < 70) { score += 1; findings.push(`Điểm uy tín thấp (${m.reputation_score}/100).`); evidence.push({ label: 'Điểm uy tín', value: m.reputation_score }); }
     if (m.active_escrow_exposure > 0 && m.disputes_30d > 0) { score += 1; findings.push(`Đang giữ ${copilotVnd(m.active_escrow_exposure)} escrow trong khi có khiếu nại mở.`); evidence.push({ label: 'Escrow đang giữ', value: `${copilotVnd(m.active_escrow_exposure)} · ${m.active_escrow_count} buổi` }); }
+    // Batch 27: semantic moderation signals (0 when tables empty — never breaks)
+    if (m.semantic_external_payment >= 1) { score += 2; findings.push(`AI kiểm duyệt phát hiện ${m.semantic_external_payment} dấu hiệu rủ giao dịch ngoài nền tảng.`); evidence.push({ label: 'Rủi ro giao dịch ngoài (AI)', value: m.semantic_external_payment }); }
+    if (m.semantic_toxicity >= 1) { score += 1; findings.push(`Có ${m.semantic_toxicity} nội dung bị gắn cờ ngôn từ tiêu cực.`); }
+    if (m.semantic_low_teaching >= 2) { score += 1; findings.push(`Có ${m.semantic_low_teaching} phản hồi bị gắn cờ chất lượng giảng dạy thấp.`); }
+    // Batch 28: fraud intel signals (0 when tables empty — never breaks)
+    if (m.fraud_high_risk_reports >= 1) { score += 2; findings.push(`Có ${m.fraud_high_risk_reports} báo cáo gian lận AI mức cao liên quan đến gia sư này.`); evidence.push({ label: 'Báo cáo gian lận (cao)', value: m.fraud_high_risk_reports }); }
+    else if (m.fraud_reports_90d >= 1) { score += 1; findings.push(`Có ${m.fraud_reports_90d} báo cáo gian lận AI liên quan đến gia sư này.`); }
+    if (m.fraud_withdrawal_risk_reports >= 1) { score += 1; findings.push(`Có ${m.fraud_withdrawal_risk_reports} báo cáo rủi ro rút tiền.`); }
     if (m.is_banned) limitations.push('Tài khoản đang bị khóa.');
     if (m.late_noshow_disputes_30d >= 2 || m.disputes_30d >= 3) recommendations.push('Xem xét gửi cảnh báo chính thức về chất lượng giảng dạy.');
     actions.push(copilotAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Có dấu hiệu giảm chất lượng'));
@@ -853,6 +973,9 @@ function generateAdminCopilotReport(entityType, context) {
     if (m.auto_refunds_30d >= 3) { score += 2; findings.push(`Được tự động hoàn tiền ${m.auto_refunds_30d} lần trong 30 ngày (tần suất cao).`); evidence.push({ label: 'Tự động hoàn 30 ngày', value: m.auto_refunds_30d }); }
     if (m.disputes_raised_30d >= 3) { score += 1; findings.push(`Mở ${m.disputes_raised_30d} khiếu nại trong 30 ngày.`); evidence.push({ label: 'Khiếu nại đã mở 30 ngày', value: m.disputes_raised_30d }); }
     if (m.absences_90d >= 3) { score += 1; findings.push(`Vắng mặt ${m.absences_90d} buổi trong 90 ngày.`); evidence.push({ label: 'Vắng mặt 90 ngày', value: m.absences_90d }); }
+    // Batch 28: fraud intel signals (0 when tables empty — never breaks)
+    if (m.fraud_high_risk_reports >= 1) { score += 2; findings.push(`Có ${m.fraud_high_risk_reports} báo cáo gian lận AI mức cao liên quan đến học sinh này.`); evidence.push({ label: 'Báo cáo gian lận (cao)', value: m.fraud_high_risk_reports }); }
+    else if (m.fraud_reports_90d >= 1) { score += 1; findings.push(`Có ${m.fraud_reports_90d} báo cáo gian lận AI liên quan đến học sinh này.`); }
     actions.push(copilotAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Tần suất hoàn tiền/khiếu nại bất thường'));
     actions.push(copilotAction('REVIEW_REFUND_PATTERN', 'Rà soát mẫu hoàn tiền', 'Kiểm tra khả năng lạm dụng'));
 
@@ -894,9 +1017,34 @@ function generateAdminCopilotReport(entityType, context) {
   const risk_level = copilotRiskLevelFromScore(score);
   limitations.push('Phân tích dựa trên quy tắc, chỉ mang tính tham khảo. Quyết định cuối cùng thuộc về admin.');
 
-  // Confidence grows with data volume; rule-based capped at 92.
-  const dataPoints = evidence.length + findings.length;
-  const confidence = Math.max(40, Math.min(92, 55 + dataPoints * 5));
+  // Confidence = how much real behavioral data exists, not how many risk signals.
+  // For TUTOR/STUDENT: base off actual activity history (bookings, reviews, disputes).
+  // A brand-new profile with zero history gets LOW confidence (~30%) because there
+  // is simply not enough data to make a reliable assessment.
+  let confidence;
+  if (entityType === 'TUTOR') {
+    const hasHistory =
+      (m.completed_lessons > 0 ? 1 : 0) +
+      (m.review_count       > 0 ? 1 : 0) +
+      (m.bookings_90d       > 0 ? 1 : 0) +
+      (m.disputes_30d       > 0 ? 1 : 0) +
+      (m.reputation_score   != null ? 1 : 0);
+    // 0 signals → 30%, each signal adds ~12%, cap at 92%
+    confidence = Math.min(92, 30 + hasHistory * 12 + evidence.length * 4);
+    if (hasHistory === 0) limitations.push('Gia sư chưa có lịch sử hoạt động — độ tin cậy phân tích thấp.');
+  } else if (entityType === 'STUDENT') {
+    const hasHistory =
+      (m.bookings_90d       > 0 ? 1 : 0) +
+      (m.disputes_raised_30d > 0 ? 1 : 0) +
+      (m.refunds_90d        > 0 ? 1 : 0) +
+      (m.absences_90d       > 0 ? 1 : 0);
+    confidence = Math.min(92, 30 + hasHistory * 12 + evidence.length * 4);
+    if (hasHistory === 0) limitations.push('Học sinh chưa có lịch sử hoạt động — độ tin cậy phân tích thấp.');
+  } else {
+    // For DISPUTE/TRANSACTION/BOOKING/PAGE: original evidence-based formula
+    const dataPoints = evidence.length + (findings.filter(f => !f.includes('Không phát hiện')).length);
+    confidence = Math.max(40, Math.min(92, 50 + dataPoints * 6));
+  }
 
   const name = context.identity?.name || context.identity?.tutor_name || context.identity?.student_name || '';
   const head = {
@@ -961,6 +1109,1081 @@ async function maybeCopilotLLMRewrite(report, context) {
     console.warn('[copilot] LLM rewrite failed, falling back:', err.message);
     return { summary: report.summary, model_used: 'RULE_BASED' };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEMANTIC REVIEW & CHAT MODERATION (Batch 27) — ADVISORY-ONLY.
+// Deterministic/rule-based keyword classifier for reviews & chat messages.
+// Detects external-payment attempts, toxicity, spam/scam, teaching quality,
+// positive signals, and privacy risk. NEVER bans/suspends/refunds/emails or
+// mutates account/money. Optional LLM rewrite (off by default).
+// ═══════════════════════════════════════════════════════════════════════════
+const SEMANTIC_MODERATION_LLM_ENABLED   = String(process.env.SEMANTIC_MODERATION_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const SEMANTIC_MODERATION_PROVIDER      = String(process.env.SEMANTIC_MODERATION_PROVIDER || 'gemini').toLowerCase();
+const SEMANTIC_MODERATION_MAX_TEXT_CHARS = Number(process.env.SEMANTIC_MODERATION_MAX_TEXT_CHARS || 8000);
+const SEMANTIC_MODERATION_WORKER_ENABLED = String(process.env.SEMANTIC_MODERATION_WORKER_ENABLED ?? 'false').toLowerCase() === 'true';
+const SEMANTIC_MODERATION_INTERVAL_MINUTES = Number(process.env.SEMANTIC_MODERATION_INTERVAL_MINUTES || 60);
+const SEMANTIC_MODERATION_BATCH_LIMIT   = Number(process.env.SEMANTIC_MODERATION_BATCH_LIMIT || 50);
+const SEMANTIC_MODERATION_RULE_VERSION  = 'SEMANTIC_MODERATION_V1';
+
+const SEMANTIC_ALLOWED_ACTIONS = new Set([
+  'MANUAL_REVIEW', 'COPY_WARNING_DRAFT', 'WATCHLIST', 'REQUEST_MORE_EVIDENCE',
+  'REVIEW_TUTOR_QUALITY', 'NO_ACTION', 'MARK_FALSE_POSITIVE',
+]);
+
+const SEMANTIC_KEYWORDS = {
+  paymentProviders: ['momo', 'zalopay', 'viettel money', 'vietcombank', 'techcombank', 'vietinbank', 'bidv', 'vcb', 'stk', 'số tài khoản', 'so tai khoan', 'bank transfer', 'internet banking', 'ngân hàng', 'ngan hang'],
+  transferVerbs:    ['chuyển khoản', 'chuyen khoan', 'chuyển tiền', 'chuyen tien', 'pay me directly', 'direct payment', 'pay directly', 'thanh toán riêng', 'trả riêng', 'tra rieng'],
+  avoidPlatform:    ['khỏi đặt trên web', 'khoi dat tren web', 'học ngoài app', 'hoc ngoai app', 'ngoài app', 'ngoai app', 'né phí', 'ne phi', 'đỡ mất phí', 'do mat phi', 'outside platform', 'không qua app', 'khong qua app', 'nhắn zalo riêng', 'nhan zalo rieng', 'liên hệ riêng', 'lien he rieng', 'khỏi đặt', 'khoi dat'],
+  toxic:            ['đồ ngu', 'thằng ngu', 'con ngu', 'óc chó', 'oc cho', 'im mồm', 'câm mồm', 'cam mom', 'đồ rác', 'do rac', 'vô dụng', 'vo dung', 'khốn nạn', 'khon nan', 'mất dạy', 'mat day', 'con điên', 'stupid', 'idiot', 'shut up', 'moron', 'asshole', 'loser', 'trash tutor'],
+  threat:           ['tao giết', 'giết mày', 'giet may', 'đánh cho', 'danh cho', 'cho mày biết tay', 'đe dọa', 'de doa', 'kill you', 'beat you up'],
+  lowQuality:       ['không giải thích', 'khong giai thich', 'khó hiểu', 'kho hieu', 'dạy qua loa', 'day qua loa', 'không chuẩn bị', 'khong chuan bi', 'không nhiệt tình', 'khong nhiet tinh', 'thiếu kiên nhẫn', 'thieu kien nhan', 'vào trễ', 'vao tre', 'đi muộn', 'di muon', 'hủy liên tục', 'huy lien tuc', 'no-show', 'no show', 'unprepared', 'bỏ buổi', 'bo buoi'],
+  positive:         ['kiên nhẫn', 'kien nhan', 'thân thiện', 'than thien', 'dễ hiểu', 'de hieu', 'chuẩn bị tốt', 'chuan bi tot', 'nhiệt tình', 'nhiet tinh', 'đúng giờ', 'dung gio', 'tận tâm', 'tan tam', 'punctual', 'helpful', 'clear explanation', 'patient', 'friendly'],
+  spamPromo:        ['khuyến mãi', 'khuyen mai', 'giảm giá sốc', 'giam gia soc', 'đăng ký ngay', 'dang ky ngay', 'click here', 'freeship', 'trúng thưởng', 'trung thuong'],
+};
+
+const SEM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function asUuidOrNull(v) { return (v && SEM_UUID_RE.test(String(v))) ? String(v) : null; }
+
+// Trim, strip control chars, collapse whitespace, cap length.
+function sanitizeModerationText(text, maxChars = SEMANTIC_MODERATION_MAX_TEXT_CHARS) {
+  if (text == null) return '';
+  // eslint-disable-next-line no-control-regex
+  const s = String(text).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s.slice(0, maxChars);
+}
+
+// Mask emails, long digit runs (phones / bank accounts), and IPs inside a string.
+function maskSensitiveText(text) {
+  if (text == null) return text;
+  let s = String(text);
+  s = s.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP]');
+  s = s.replace(/([a-zA-Z0-9._%+-]{1,2})[a-zA-Z0-9._%+-]*(@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, (m, a, b) => `${a}***${b}`);
+  s = s.replace(/\d[\d\s.\-]{6,}\d/g, (m) => {
+    const digits = m.replace(/\D/g, '');
+    if (digits.length < 8) return m;
+    if (digits.length >= 12) return '****' + digits.slice(-4);
+    return digits.slice(0, 2) + '****' + digits.slice(-3);
+  });
+  return s;
+}
+
+function hashModerationInput(text, sourceType, sourceId) {
+  return crypto.createHash('sha256')
+    .update(`${sourceType || ''}|${sourceId || ''}|${String(text || '').trim().toLowerCase()}`)
+    .digest('hex');
+}
+
+// Core deterministic classifier. Returns the full analysis object.
+function classifyTextModeration(rawText, context = {}) {
+  const original = sanitizeModerationText(rawText);
+  const lower = original.toLowerCase();
+  const categories = new Set();
+  const evidence = [];
+  const highlighted = [];
+  const limitations = [];
+  const clamp = v => Math.max(0, Math.min(100, Math.round(v)));
+  const find = list => list.filter(kw => lower.includes(kw));
+
+  const phoneMatches   = original.match(/\d[\d\s.\-]{6,}\d/g) || [];
+  const emailMatches   = original.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+  const linkMatches    = original.match(/(https?:\/\/|www\.)\S+/gi) || [];
+  const accountMatches = original.match(/\b\d{9,19}\b/g) || [];
+
+  // 1. External payment attempt
+  const provHits = find(SEMANTIC_KEYWORDS.paymentProviders);
+  const verbHits = find(SEMANTIC_KEYWORDS.transferVerbs);
+  const avoidHits = find(SEMANTIC_KEYWORDS.avoidPlatform);
+  const directInstruction = verbHits.length > 0 && (provHits.length > 0 || accountMatches.length > 0);
+  let externalPaymentRisk = 0;
+  if (provHits.length || verbHits.length || avoidHits.length) {
+    categories.add('EXTERNAL_PAYMENT_ATTEMPT');
+    externalPaymentRisk = clamp(25 + provHits.length * 20 + verbHits.length * 20 + avoidHits.length * 18 + (directInstruction ? 30 : 0));
+    [...new Set([...provHits, ...verbHits, ...avoidHits])].forEach(kw => highlighted.push({ text: kw, reason: 'external_payment' }));
+    evidence.push({ label: 'Dấu hiệu giao dịch ngoài nền tảng', value: [...new Set([...provHits, ...verbHits, ...avoidHits])].join(', ') });
+  }
+
+  // 2. Toxic language
+  const toxicHits = find(SEMANTIC_KEYWORDS.toxic);
+  const threatHits = find(SEMANTIC_KEYWORDS.threat);
+  let toxicityRisk = 0;
+  if (toxicHits.length || threatHits.length) {
+    categories.add('TOXIC_LANGUAGE');
+    toxicityRisk = clamp(toxicHits.length * 25 + threatHits.length * 45);
+    [...new Set([...toxicHits, ...threatHits])].forEach(kw => highlighted.push({ text: kw, reason: 'toxic' }));
+    evidence.push({ label: 'Ngôn từ tiêu cực/đe dọa', value: [...new Set([...toxicHits, ...threatHits])].join(', ') });
+  }
+
+  // 3. Spam / scam
+  const spamHits = find(SEMANTIC_KEYWORDS.spamPromo);
+  const repeatedContact = phoneMatches.length >= 2 || linkMatches.length >= 2;
+  let spamRisk = clamp(spamHits.length * 15 + linkMatches.length * 20 + (repeatedContact ? 30 : 0));
+  if (spamHits.length >= 2 || repeatedContact) {
+    categories.add('SPAM_OR_SCAM');
+    evidence.push({ label: 'Dấu hiệu spam/quảng cáo', value: `từ khóa=${spamHits.length}, links=${linkMatches.length}, sđt=${phoneMatches.length}` });
+  }
+
+  // 4. Privacy risk (mask in highlights)
+  if (phoneMatches.length || emailMatches.length || accountMatches.length) {
+    categories.add('PRIVACY_RISK');
+    [...phoneMatches, ...emailMatches].forEach(t => highlighted.push({ text: maskSensitiveText(t), reason: 'privacy' }));
+    evidence.push({ label: 'Chia sẻ thông tin cá nhân (đã che)', value: `sđt=${phoneMatches.length}, email=${emailMatches.length}, stk=${accountMatches.length}` });
+  }
+
+  // 5. Low teaching quality
+  const negHits = find(SEMANTIC_KEYWORDS.lowQuality);
+  if (negHits.length) {
+    categories.add('LOW_TEACHING_QUALITY');
+    [...new Set(negHits)].forEach(kw => highlighted.push({ text: kw, reason: 'low_quality' }));
+    evidence.push({ label: 'Phàn nàn chất lượng giảng dạy', value: [...new Set(negHits)].join(', ') });
+  }
+
+  // 6. Positive teaching signal
+  const posHits = find(SEMANTIC_KEYWORDS.positive);
+  if (posHits.length) {
+    categories.add('POSITIVE_TEACHING_SIGNAL');
+    evidence.push({ label: 'Tín hiệu tích cực', value: [...new Set(posHits)].join(', ') });
+  }
+
+  // Teaching-quality dimension scores (neutral baseline 70)
+  const posN = posHits.length, negN = negHits.length;
+  const scores = {
+    patience:         clamp(70 + posN * 8 - negN * 12 - toxicityRisk * 0.1),
+    friendliness:     clamp(70 + posN * 8 - negN * 6 - toxicityRisk * 0.2),
+    teaching_quality: clamp(70 + posN * 8 - negN * 14),
+    professionalism:  clamp(70 + posN * 5 - negN * 8 - externalPaymentRisk * 0.2 - toxicityRisk * 0.2),
+    external_payment_risk: clamp(externalPaymentRisk),
+    toxicity_risk:    clamp(toxicityRisk),
+    spam_risk:        clamp(spamRisk),
+  };
+
+  // Severity
+  let severity = 'LOW';
+  if (directInstruction || threatHits.length || (categories.has('SPAM_OR_SCAM') && externalPaymentRisk >= 50)) severity = 'CRITICAL';
+  else if (externalPaymentRisk >= 60 || toxicityRisk >= 50 || repeatedContact || (phoneMatches.length + emailMatches.length) >= 2) severity = 'HIGH';
+  else if (externalPaymentRisk >= 30 || toxicityRisk >= 25 || negN >= 2 || categories.has('EXTERNAL_PAYMENT_ATTEMPT') || categories.has('TOXIC_LANGUAGE') || categories.has('PRIVACY_RISK')) severity = 'MEDIUM';
+
+  // Suggested actions (allowed set only)
+  const actions = [];
+  const add = (type, label, reason) => { if (SEMANTIC_ALLOWED_ACTIONS.has(type)) actions.push({ type, label, reason }); };
+  if (severity === 'CRITICAL' || severity === 'HIGH') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Tín hiệu rủi ro cao');
+    if (categories.has('EXTERNAL_PAYMENT_ATTEMPT')) add('REVIEW_TUTOR_QUALITY', 'Rà soát gia sư', 'Nghi ngờ giao dịch ngoài nền tảng');
+    add('COPY_WARNING_DRAFT', 'Soạn nháp cảnh báo', 'Chuẩn bị nhắc nhở');
+    add('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm');
+  } else if (severity === 'MEDIUM') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Cần xác minh thêm');
+    add('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Tín hiệu chưa rõ ràng');
+  } else {
+    add('NO_ACTION', 'Không cần hành động', categories.has('POSITIVE_TEACHING_SIGNAL') ? 'Nội dung tích cực' : 'Tín hiệu yếu/trung tính');
+  }
+  add('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai');
+
+  // Vietnamese summary
+  const catVi = {
+    EXTERNAL_PAYMENT_ATTEMPT: 'giao dịch ngoài nền tảng', TOXIC_LANGUAGE: 'ngôn từ tiêu cực',
+    SPAM_OR_SCAM: 'spam/lừa đảo', LOW_TEACHING_QUALITY: 'chất lượng giảng dạy thấp',
+    POSITIVE_TEACHING_SIGNAL: 'tín hiệu tích cực', PRIVACY_RISK: 'lộ thông tin cá nhân',
+  };
+  const catList = [...categories];
+  const sevVi = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' }[severity];
+  let summary;
+  if (catList.length === 0) summary = 'Không phát hiện dấu hiệu bất thường. Nội dung trung tính.';
+  else if (catList.length === 1 && catList[0] === 'POSITIVE_TEACHING_SIGNAL') summary = 'Nội dung tích cực về gia sư, không có rủi ro. Mức rủi ro thấp.';
+  else summary = `Phát hiện: ${catList.map(c => catVi[c] || c).join(', ')}. Mức rủi ro ${sevVi}.`;
+
+  limitations.push('Phân tích dựa trên quy tắc từ khóa, chỉ mang tính tham khảo. Admin quyết định cuối cùng.');
+
+  return {
+    severity, categories: catList, scores, summary,
+    evidence, highlighted_text: highlighted, suggested_actions: actions, limitations,
+    model_used: 'RULE_BASED',
+  };
+}
+
+function analyzeReviewSemantic(review) {
+  const text = review.text || review.comment || review.content || '';
+  return { ...classifyTextModeration(text, { sourceType: 'REVIEW' }), source_type: 'REVIEW', source_id: review.id || null, text };
+}
+function analyzeChatMessageSemantic(message) {
+  const text = message.text || message.content || '';
+  return { ...classifyTextModeration(text, { sourceType: 'CHAT_MESSAGE' }), source_type: 'CHAT_MESSAGE', source_id: message.id || null, text };
+}
+
+// Optional LLM rewrite of summary only (off by default). Never invents evidence.
+async function maybeSemanticLLMRewrite(report, sanitizedText) {
+  if (!SEMANTIC_MODERATION_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+  try {
+    const payload = JSON.stringify({ categories: report.categories, severity: report.severity, scores: report.scores, text: sanitizeModerationText(sanitizedText, 2000) }).slice(0, SEMANTIC_MODERATION_MAX_TEXT_CHARS);
+    const prompt = `Bạn là trợ lý kiểm duyệt nội dung cho nền tảng gia sư EduX. Viết lại TÓM TẮT bằng tiếng Việt ngắn gọn, khách quan, CHỈ dựa trên dữ liệu JSON dưới đây, KHÔNG bịa thêm bằng chứng, KHÔNG đề xuất khóa/cấm tài khoản. Trả về JSON {"summary_vi":"..."}. Dữ liệu: ${payload}`;
+    if (SEMANTIC_MODERATION_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try {
+            const parsed = JSON.parse(t);
+            if (parsed && typeof parsed.summary_vi === 'string' && parsed.summary_vi.trim().length > 10) {
+              return { summary: parsed.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' };
+            }
+          } catch { /* invalid -> fall through */ }
+        }
+      }
+    }
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  } catch (err) {
+    console.warn('[semantic] LLM rewrite failed, falling back:', err.message);
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  }
+}
+
+async function saveSemanticModerationReport(r) {
+  try {
+    const ins = await pool.query(
+      `INSERT INTO semantic_moderation_reports
+        (source_type, source_id, tutor_id, student_id, target_user_id, severity, status,
+         categories, scores, summary, evidence, highlighted_text, suggested_actions, limitations,
+         model_used, rule_version, input_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,'OPEN',$7::jsonb,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16)
+       RETURNING id`,
+      [
+        r.source_type, r.source_id != null ? String(r.source_id) : null,
+        asUuidOrNull(r.tutor_id), asUuidOrNull(r.student_id), asUuidOrNull(r.target_user_id),
+        r.severity, JSON.stringify(r.categories || []), JSON.stringify(r.scores || {}), r.summary || null,
+        JSON.stringify(r.evidence || []), JSON.stringify(r.highlighted_text || []),
+        JSON.stringify(r.suggested_actions || []), JSON.stringify(r.limitations || []),
+        r.model_used || 'RULE_BASED', SEMANTIC_MODERATION_RULE_VERSION, r.input_hash || null,
+      ]
+    );
+    return ins.rows[0].id;
+  } catch (e) { console.warn('[semantic] save report failed:', e.message); return null; }
+}
+
+// Aggregate a tutor's review texts into semantic reputation scores (read-only).
+async function analyzeTutorSemanticReputation(tutorUserId, { days = 90 } = {}) {
+  const rows = await copilotSafeRows(
+    `SELECT COALESCE(r.comment, r.content) AS text
+       FROM reviews r JOIN tutor_profiles tp ON tp.id = r.tutor_id
+      WHERE tp.user_id = $1 AND r.created_at > NOW() - make_interval(days => $2::int)
+        AND COALESCE(r.comment, r.content) IS NOT NULL
+      ORDER BY r.created_at DESC LIMIT 200`, [tutorUserId, days]);
+  const dims = { patience: [], friendliness: [], teaching_quality: [], professionalism: [] };
+  const risk = { external_payment_risk: 0, toxicity_risk: 0, spam_risk: 0 };
+  let count = 0;
+  for (const row of rows) {
+    if (!row.text) continue;
+    const a = classifyTextModeration(row.text, { sourceType: 'REVIEW' });
+    dims.patience.push(a.scores.patience);
+    dims.friendliness.push(a.scores.friendliness);
+    dims.teaching_quality.push(a.scores.teaching_quality);
+    dims.professionalism.push(a.scores.professionalism);
+    risk.external_payment_risk = Math.max(risk.external_payment_risk, a.scores.external_payment_risk);
+    risk.toxicity_risk = Math.max(risk.toxicity_risk, a.scores.toxicity_risk);
+    risk.spam_risk = Math.max(risk.spam_risk, a.scores.spam_risk);
+    count++;
+  }
+  const avg = arr => arr.length ? Math.round(arr.reduce((s, x) => s + x, 0) / arr.length) : 70;
+  const patience = avg(dims.patience), friendliness = avg(dims.friendliness);
+  const teaching_quality = avg(dims.teaching_quality), professionalism = avg(dims.professionalism);
+  const overall = Math.max(0, Math.min(100, Math.round(
+    (patience + friendliness + teaching_quality + professionalism) / 4
+    - (risk.external_payment_risk + risk.toxicity_risk + risk.spam_risk) / 6
+  )));
+  return {
+    tutor_id: tutorUserId, report_count: count,
+    patience_score: patience, friendliness_score: friendliness,
+    teaching_quality_score: teaching_quality, professionalism_score: professionalism,
+    external_payment_risk_score: risk.external_payment_risk, toxicity_risk_score: risk.toxicity_risk,
+    spam_risk_score: risk.spam_risk, overall_reputation_score: overall,
+    summary: count ? `Dựa trên ${count} đánh giá trong ${days} ngày gần nhất.` : 'Chưa đủ dữ liệu đánh giá để chấm điểm.',
+  };
+}
+
+async function upsertTutorReputationSemanticScore(tutorUserId, { days = 90 } = {}) {
+  const uid = asUuidOrNull(tutorUserId);
+  if (!uid) return null;
+  const rep = await analyzeTutorSemanticReputation(uid, { days });
+  try {
+    await pool.query(
+      `INSERT INTO tutor_reputation_semantic_scores
+        (tutor_id, period_start, period_end, patience_score, friendliness_score, teaching_quality_score,
+         professionalism_score, external_payment_risk_score, toxicity_risk_score, spam_risk_score,
+         overall_reputation_score, summary, report_count, updated_at)
+       VALUES ($1, (CURRENT_DATE - make_interval(days => $2::int))::date, CURRENT_DATE,
+               $3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW())
+       ON CONFLICT (tutor_id, period_start, period_end) DO UPDATE SET
+         patience_score=EXCLUDED.patience_score, friendliness_score=EXCLUDED.friendliness_score,
+         teaching_quality_score=EXCLUDED.teaching_quality_score, professionalism_score=EXCLUDED.professionalism_score,
+         external_payment_risk_score=EXCLUDED.external_payment_risk_score, toxicity_risk_score=EXCLUDED.toxicity_risk_score,
+         spam_risk_score=EXCLUDED.spam_risk_score, overall_reputation_score=EXCLUDED.overall_reputation_score,
+         summary=EXCLUDED.summary, report_count=EXCLUDED.report_count, updated_at=NOW()`,
+      [uid, days, rep.patience_score, rep.friendliness_score, rep.teaching_quality_score, rep.professionalism_score,
+       rep.external_payment_risk_score, rep.toxicity_risk_score, rep.spam_risk_score, rep.overall_reputation_score,
+       rep.summary, rep.report_count]
+    );
+  } catch (e) { console.warn('[semantic] reputation upsert failed:', e.message); }
+  return rep;
+}
+
+// Shared scan used by POST run-pending and the optional worker. Advisory only.
+async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_LIMIT, triggeredBy = 'worker' } = {}) {
+  const stats = { reviews_scanned: 0, chat_scanned: 0, created: 0, skipped: 0, failed: 0, tutors_scored: 0 };
+  const limitations = [];
+  const touchedTutors = new Set();
+
+  let reviews = [];
+  try {
+    reviews = (await pool.query(
+      `SELECT r.id, COALESCE(r.comment, r.content) AS text, tp.user_id AS tutor_user_id
+         FROM reviews r LEFT JOIN tutor_profiles tp ON tp.id = r.tutor_id
+        WHERE COALESCE(r.comment, r.content) IS NOT NULL AND TRIM(COALESCE(r.comment, r.content)) <> ''
+          AND NOT EXISTS (SELECT 1 FROM semantic_moderation_reports s WHERE s.source_type='REVIEW' AND s.source_id = r.id::text)
+        ORDER BY r.created_at DESC LIMIT $1`, [limit])).rows;
+  } catch (e) { limitations.push('Không quét được reviews: ' + e.message); }
+
+  for (const rv of reviews) {
+    stats.reviews_scanned++;
+    try {
+      const a = classifyTextModeration(rv.text, { sourceType: 'REVIEW' });
+      const suspicious = a.severity !== 'LOW' || a.categories.some(c => c !== 'POSITIVE_TEACHING_SIGNAL');
+      if (suspicious) {
+        const id = await saveSemanticModerationReport({
+          ...a, source_type: 'REVIEW', source_id: rv.id,
+          tutor_id: asUuidOrNull(rv.tutor_user_id), input_hash: hashModerationInput(rv.text, 'REVIEW', rv.id),
+        });
+        if (id) stats.created++; else stats.failed++;
+      } else stats.skipped++;
+      if (rv.tutor_user_id) touchedTutors.add(rv.tutor_user_id);
+    } catch { stats.failed++; }
+  }
+
+  let chats = [];
+  try {
+    chats = (await pool.query(
+      `SELECT cm.id, cm.content AS text, cm.sender_id
+         FROM chat_messages cm
+        WHERE cm.content IS NOT NULL AND TRIM(cm.content) <> ''
+          AND NOT EXISTS (SELECT 1 FROM semantic_moderation_reports s WHERE s.source_type='CHAT_MESSAGE' AND s.source_id = cm.id::text)
+        ORDER BY cm.created_at DESC LIMIT $1`, [limit])).rows;
+  } catch (e) { limitations.push('Bỏ qua chat: bảng chat_messages không khả dụng hoặc lỗi truy vấn.'); }
+
+  for (const c of chats) {
+    stats.chat_scanned++;
+    try {
+      const a = classifyTextModeration(c.text, { sourceType: 'CHAT_MESSAGE' });
+      const suspicious = a.severity !== 'LOW' && a.categories.some(cat => ['EXTERNAL_PAYMENT_ATTEMPT', 'TOXIC_LANGUAGE', 'SPAM_OR_SCAM', 'PRIVACY_RISK'].includes(cat));
+      if (suspicious) {
+        const id = await saveSemanticModerationReport({
+          ...a, source_type: 'CHAT_MESSAGE', source_id: c.id,
+          target_user_id: asUuidOrNull(c.sender_id), input_hash: hashModerationInput(c.text, 'CHAT_MESSAGE', c.id),
+        });
+        if (id) stats.created++; else stats.failed++;
+      } else stats.skipped++;
+    } catch { stats.failed++; }
+  }
+
+  for (const t of [...touchedTutors].slice(0, 50)) {
+    try { await upsertTutorReputationSemanticScore(t, { days: 90 }); stats.tutors_scored++; } catch { /* best-effort */ }
+  }
+
+  console.log(`[semantic] run by=${triggeredBy} reviews=${stats.reviews_scanned} chat=${stats.chat_scanned} created=${stats.created} skipped=${stats.skipped} failed=${stats.failed} tutorsScored=${stats.tutors_scored}`);
+  return { ...stats, limitations, triggered_by: triggeredBy, rule_version: SEMANTIC_MODERATION_RULE_VERSION };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI FRAUD RING DETECTION — THREAT INTEL (Batch 28) — ADVISORY-ONLY.
+// Deterministic, read-only analyzers that build fraud intelligence reports for
+// admin review. NEVER bans/suspends/refunds/releases/holds/cancels/blocks or
+// mutates any account/money/booking/transaction. Optional LLM (off by default).
+// ═══════════════════════════════════════════════════════════════════════════
+const FRAUD_INTEL_LLM_ENABLED     = String(process.env.FRAUD_INTEL_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const FRAUD_INTEL_PROVIDER        = String(process.env.FRAUD_INTEL_PROVIDER || 'gemini').toLowerCase();
+const FRAUD_INTEL_MAX_CONTEXT_CHARS = Number(process.env.FRAUD_INTEL_MAX_CONTEXT_CHARS || 12000);
+const FRAUD_INTEL_WORKER_ENABLED  = String(process.env.FRAUD_INTEL_WORKER_ENABLED ?? 'false').toLowerCase() === 'true';
+const FRAUD_INTEL_INTERVAL_MINUTES = Number(process.env.FRAUD_INTEL_INTERVAL_MINUTES || 360);
+const FRAUD_INTEL_PERIOD_DAYS     = Number(process.env.FRAUD_INTEL_PERIOD_DAYS || 30);
+const FRAUD_INTEL_BATCH_LIMIT     = Number(process.env.FRAUD_INTEL_BATCH_LIMIT || 100);
+const FRAUD_INTEL_RULE_VERSION    = 'FRAUD_INTEL_V1';
+
+const FRAUD_ALLOWED_ACTIONS = new Set([
+  'MANUAL_REVIEW', 'WATCHLIST', 'REQUEST_MORE_EVIDENCE', 'REVIEW_WITHDRAWAL_MANUALLY',
+  'REVIEW_REFUND_PATTERN', 'REVIEW_TUTOR_QUALITY', 'REVIEW_EXTERNAL_PAYMENT_SIGNAL',
+  'NO_ACTION', 'MARK_FALSE_POSITIVE',
+]);
+
+function buildFraudPeriod(days) {
+  const d = Math.max(1, Math.min(365, Number(days) || 30));
+  return { days: d, start: new Date(Date.now() - d * 86400000), end: new Date() };
+}
+function buildEntityKey(type, ...ids) { return `${type}:${ids.filter(Boolean).join(':')}`; }
+function calculateSeverityFromRiskScore(score, flags = []) {
+  const s = Number(score) || 0;
+  if (s >= 85 && (flags?.length || 0) >= 2) return 'CRITICAL';
+  if (s >= 70) return 'HIGH';
+  if (s >= 45) return 'MEDIUM';
+  return 'LOW';
+}
+function maskFraudSensitiveText(text) { return maskSensitiveText(text); }
+function fraudAction(type, label, reason) { if (!FRAUD_ALLOWED_ACTIONS.has(type)) type = 'MANUAL_REVIEW'; return { type, label, reason }; }
+function buildFraudActions(severity, flags = []) {
+  const a = [];
+  if (severity === 'CRITICAL' || severity === 'HIGH') a.push(fraudAction('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Rủi ro cao'));
+  a.push(fraudAction('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm'));
+  if (flags.some(f => f.includes('EXTERNAL_PAYMENT') || f.includes('PLATFORM_FEE') || f.includes('OFF_PLATFORM') || f.includes('CONTACT_SHARING'))) a.push(fraudAction('REVIEW_EXTERNAL_PAYMENT_SIGNAL', 'Rà soát giao dịch ngoài', 'Nghi ngờ né phí nền tảng'));
+  if (flags.some(f => f.includes('REFUND'))) a.push(fraudAction('REVIEW_REFUND_PATTERN', 'Rà soát mẫu hoàn tiền', 'Tần suất bất thường'));
+  if (flags.some(f => f.includes('WITHDRAW') || f.includes('CASH_OUT'))) a.push(fraudAction('REVIEW_WITHDRAWAL_MANUALLY', 'Rà soát rút tiền thủ công', 'Rủi ro rút tiền'));
+  a.push(fraudAction('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Củng cố hồ sơ'));
+  a.push(fraudAction('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai'));
+  return a;
+}
+function normalizeFraudReport(r) {
+  return {
+    ...r,
+    risk_score:  Math.max(0, Math.min(100, Number(r.risk_score) || 0)),
+    confidence:  Math.max(0, Math.min(100, Number(r.confidence) || 0)),
+    severity:    ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(r.severity) ? r.severity : 'LOW',
+    risk_flags:  Array.isArray(r.risk_flags) ? r.risk_flags : [],
+    suggested_actions: (r.suggested_actions || []).filter(a => FRAUD_ALLOWED_ACTIONS.has(a.type)),
+  };
+}
+async function fraudTableExists(table) {
+  try { await pool.query(`SELECT 1 FROM ${table} LIMIT 1`); return true; } catch { return false; }
+}
+async function getFraudSignalAvailability() {
+  const tables = ['bookings', 'transactions', 'refund_logs', 'commission_logs', 'withdrawal_requests', 'disputes', 'ai_case_resolutions', 'semantic_moderation_reports', 'tutor_reputation_semantic_scores', 'reviews', 'chat_messages', 'wallet_ledger', 'lesson_session_events', 'coupon_usages'];
+  const avail = {};
+  for (const t of tables) avail[t] = await fraudTableExists(t);
+  return avail;
+}
+async function fraudUserName(id) {
+  const r = await copilotSafeRows(`SELECT full_name FROM users WHERE id=$1 LIMIT 1`, [id]);
+  return r.length ? (r[0].full_name || 'Người dùng') : 'Không rõ';
+}
+
+// ── Analyzer: student↔tutor pair collusion ──────────────────────────────────
+async function analyzeStudentTutorPair(studentId, tutorId, period, hint = {}) {
+  const flags = [], evidence = []; let risk = 0;
+  const bookingCount = hint.bookingCount ?? await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  const bookingTotal = hint.bookingTotal ?? await copilotSafeSum(`SELECT COALESCE(SUM(lesson_fee),0)::numeric AS s FROM bookings WHERE student_id=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  if (bookingCount >= 5) { risk += 25; flags.push('REPEATED_PAIR_BOOKINGS'); }
+  else if (bookingCount >= 3) { risk += 15; flags.push('REPEATED_PAIR_BOOKINGS'); }
+  evidence.push({ label: 'Số buổi đặt giữa cặp', value: bookingCount });
+
+  const releases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM bookings WHERE student_id=$1 AND tutor_id=$2 AND escrow_released_at IS NOT NULL AND escrow_released_at > $3`, [studentId, tutorId, period.start]);
+  const disputes = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE raised_by=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  const refunds  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM refund_logs WHERE student_id=$1 AND tutor_id=$2 AND created_at > $3`, [studentId, tutorId, period.start]);
+  if (disputes + refunds >= 2) { risk += 20; flags.push('REPEATED_REFUND_DISPUTE_PAIR'); evidence.push({ label: 'Khiếu nại/hoàn tiền giữa cặp', value: `${disputes} + ${refunds}` }); }
+  if (bookingTotal >= 3000000) { risk += 15; flags.push('HIGH_PAIR_FINANCIAL_EXPOSURE'); evidence.push({ label: 'Tổng giá trị giữa cặp', value: copilotVnd(bookingTotal) }); }
+
+  const extPay = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
+  if (extPay > 0) { risk += 25; flags.push('EXTERNAL_PAYMENT_SIGNAL'); evidence.push({ label: 'Báo cáo giao dịch ngoài (semantic)', value: extPay }); }
+
+  const sessionEvents = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM lesson_session_events lse JOIN bookings b ON b.id=lse.booking_id WHERE b.student_id=$1 AND b.tutor_id=$2`, [studentId, tutorId]);
+  if (bookingCount >= 3 && sessionEvents === 0) { risk += 15; flags.push('LOW_SESSION_ACTIVITY'); }
+  if (flags.length >= 3) flags.push('SAME_PAIR_ABNORMAL_PATTERN');
+
+  if (risk < 45 && !flags.includes('EXTERNAL_PAYMENT_SIGNAL')) return null;
+  const severity = calculateSeverityFromRiskScore(risk, flags);
+  const [sName, tName] = await Promise.all([fraudUserName(studentId), fraudUserName(tutorId)]);
+  return normalizeFraudReport({
+    report_type: 'USER_PAIR', entity_key: buildEntityKey('pair', studentId, tutorId),
+    primary_user_id: studentId, secondary_user_id: tutorId, student_id: studentId, tutor_id: tutorId,
+    title: `Cặp học sinh–gia sư nghi vấn: ${sName} ↔ ${tName}`,
+    summary: `Cặp có ${bookingCount} buổi đặt, ${disputes} khiếu nại, ${refunds} hoàn tiền${extPay > 0 ? ', có dấu hiệu giao dịch ngoài nền tảng' : ''}.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(95, 40 + flags.length * 12), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'student', id: studentId, name: sName }, { type: 'tutor', id: tutorId, name: tName }],
+    financial_trace: { pair_booking_total: bookingTotal, releases }, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: refund abuse (per student) ────────────────────────────────────
+async function analyzeRefundAbuse(studentId, period) {
+  const flags = [], evidence = []; let risk = 0;
+  const refunds30 = await copilotSafeCount(`SELECT COUNT(*)::int n FROM refund_logs WHERE student_id=$1 AND created_at > NOW()-INTERVAL '30 days'`, [studentId]);
+  const refunds90 = await copilotSafeCount(`SELECT COUNT(*)::int n FROM refund_logs WHERE student_id=$1 AND created_at > NOW()-INTERVAL '90 days'`, [studentId]);
+  const autoRefunds = await copilotSafeCount(`SELECT COUNT(*)::int n FROM ai_case_resolutions WHERE student_id=$1 AND money_action='REFUND_TO_STUDENT' AND created_at > NOW()-INTERVAL '30 days'`, [studentId]);
+  const disputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE raised_by=$1 AND created_at > NOW()-INTERVAL '90 days'`, [studentId]);
+  if (refunds30 >= 3) { risk += 30; flags.push('HIGH_REFUND_FREQUENCY'); }
+  else if (refunds30 >= 2) { risk += 18; flags.push('HIGH_REFUND_FREQUENCY'); }
+  if (autoRefunds >= 3) { risk += 20; flags.push('ABNORMAL_REFUND_RATE'); }
+  if (disputes >= 4) { risk += 18; flags.push('REPEATED_WEAK_EVIDENCE_DISPUTES'); }
+  evidence.push({ label: 'Hoàn tiền 30/90 ngày', value: `${refunds30} / ${refunds90}` });
+  if (autoRefunds) evidence.push({ label: 'Tự động hoàn (AI) 30 ngày', value: autoRefunds });
+  if (risk < 45) return null;
+  const severity = calculateSeverityFromRiskScore(risk, flags);
+  const name = await fraudUserName(studentId);
+  return normalizeFraudReport({
+    report_type: 'REFUND_ABUSE', entity_key: buildEntityKey('student', studentId),
+    primary_user_id: studentId, student_id: studentId,
+    title: `Nghi vấn lạm dụng hoàn tiền: ${name}`,
+    summary: `Học sinh có ${refunds30} hoàn tiền trong 30 ngày (${refunds90} trong 90 ngày), ${autoRefunds} lần tự động hoàn.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(90, 45 + flags.length * 12), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'student', id: studentId, name }],
+    financial_trace: {}, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: tutor withdrawal risk ─────────────────────────────────────────
+async function analyzeWithdrawalRisk(tutorId, period) {
+  const flags = [], evidence = []; let risk = 0;
+  const wr = await copilotSafeRows(`SELECT COUNT(*)::int n, COALESCE(SUM(amount),0)::numeric total FROM withdrawal_requests WHERE tutor_id=$1 AND requested_at > $2`, [tutorId, period.start]);
+  const wcount = wr.length ? Number(wr[0].n) : 0, wtotal = wr.length ? Number(wr[0].total) : 0;
+  if (!wcount) return null;
+  const activeDisputes = await copilotSafeCount(`SELECT COUNT(*)::int n FROM disputes WHERE tutor_id=$1 AND status='OPEN' AND withdrawn_at IS NULL`, [tutorId]);
+  const releases = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND escrow_released_at > $2`, [tutorId, period.start]);
+  const extPay = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
+  const distinctStudents = await copilotSafeCount(`SELECT COUNT(DISTINCT student_id)::int n FROM bookings WHERE tutor_id=$1 AND created_at > $2`, [tutorId, period.start]);
+  if (releases >= 5 && wcount >= 2) { risk += 25; flags.push('RAPID_WITHDRAW_AFTER_RELEASE'); }
+  if (activeDisputes >= 1 && wcount >= 1) { risk += 25; flags.push('WITHDRAWAL_WITH_ACTIVE_DISPUTES'); }
+  if (activeDisputes >= 3) { risk += 15; flags.push('HIGH_DISPUTE_TUTOR'); }
+  if (extPay > 0) { risk += 20; flags.push('EXTERNAL_PAYMENT_TUTOR_RISK'); }
+  if (distinctStudents > 0 && distinctStudents <= 2 && releases >= 4) { risk += 15; flags.push('CONCENTRATED_STUDENT_SOURCE'); }
+  evidence.push({ label: 'Yêu cầu rút / tổng', value: `${wcount} · ${copilotVnd(wtotal)}` });
+  evidence.push({ label: 'Khiếu nại đang mở', value: activeDisputes });
+  if (risk < 45) return null;
+  const severity = calculateSeverityFromRiskScore(risk, flags);
+  const name = await fraudUserName(tutorId);
+  return normalizeFraudReport({
+    report_type: 'WITHDRAWAL_RISK', entity_key: buildEntityKey('tutor', tutorId),
+    primary_user_id: tutorId, tutor_id: tutorId,
+    title: `Rủi ro rút tiền: ${name}`,
+    summary: `Gia sư có ${wcount} yêu cầu rút (${copilotVnd(wtotal)})${activeDisputes ? `, ${activeDisputes} khiếu nại đang mở` : ''}${extPay ? ', có báo cáo giao dịch ngoài' : ''}.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(90, 45 + flags.length * 11), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'tutor', id: tutorId, name }],
+    financial_trace: { withdrawal_total: wtotal, releases }, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: external payment collusion (per tutor) ─────────────────────────
+async function analyzeExternalPaymentCollusion(tutorId, period) {
+  const flags = [], evidence = []; let risk = 0;
+  const extReports = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND created_at > $2`, [tutorId, period.start]);
+  if (!extReports) return null;
+  const privacyReports = await copilotSafeCount(`SELECT COUNT(*)::int n FROM semantic_moderation_reports WHERE tutor_id=$1 AND categories ? 'PRIVACY_RISK' AND created_at > $2`, [tutorId, period.start]);
+  const repRow = (await copilotSafeRows(`SELECT external_payment_risk_score FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC LIMIT 1`, [tutorId]))[0];
+  risk += 30 + Math.min(30, extReports * 10);
+  flags.push('EXTERNAL_PAYMENT_ATTEMPT');
+  if (privacyReports > 0) { risk += 15; flags.push('CONTACT_SHARING_PATTERN'); }
+  if (repRow && Number(repRow.external_payment_risk_score) >= 50) { risk += 15; flags.push('PLATFORM_FEE_AVOIDANCE'); }
+  const recentBookings = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND created_at > NOW()-INTERVAL '30 days'`, [tutorId]);
+  const priorBookings  = await copilotSafeCount(`SELECT COUNT(*)::int n FROM bookings WHERE tutor_id=$1 AND created_at > NOW()-INTERVAL '90 days' AND created_at <= NOW()-INTERVAL '30 days'`, [tutorId]);
+  if (priorBookings >= 3 && recentBookings < priorBookings / 2) { risk += 15; flags.push('OFF_PLATFORM_MIGRATION_RISK'); }
+  evidence.push({ label: 'Báo cáo giao dịch ngoài', value: extReports });
+  if (privacyReports) evidence.push({ label: 'Báo cáo lộ thông tin', value: privacyReports });
+  const severity = calculateSeverityFromRiskScore(Math.min(100, risk), flags);
+  const name = await fraudUserName(tutorId);
+  return normalizeFraudReport({
+    report_type: 'EXTERNAL_PAYMENT_COLLUSION', entity_key: buildEntityKey('tutor', tutorId),
+    primary_user_id: tutorId, tutor_id: tutorId,
+    title: `Nghi vấn né phí nền tảng: ${name}`,
+    summary: `Gia sư có ${extReports} báo cáo giao dịch ngoài nền tảng${privacyReports ? `, ${privacyReports} báo cáo lộ thông tin` : ''}.`,
+    reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+    risk_score: risk, confidence: Math.min(92, 50 + flags.length * 11), severity, risk_flags: flags,
+    evidence, timeline: [], related_entities: [{ type: 'tutor', id: tutorId, name }],
+    financial_trace: {}, suggested_actions: buildFraudActions(severity, flags), limitations: [],
+  });
+}
+
+// ── Analyzer: transaction ring / money-flow concentration (per tutor) ────────
+async function analyzeTransactionRing(period, { limit = 50 } = {}) {
+  const out = [];
+  let rows = [];
+  try {
+    rows = (await pool.query(
+      `SELECT tutor_id, COUNT(*)::int releases, COUNT(DISTINCT student_id)::int students, COALESCE(SUM(lesson_fee),0)::numeric total
+         FROM bookings WHERE escrow_released_at > $1 AND tutor_id IS NOT NULL
+         GROUP BY tutor_id HAVING COUNT(*) >= 4
+         ORDER BY SUM(lesson_fee) DESC LIMIT $2`, [period.start, Math.min(limit, 50)])).rows;
+  } catch { return out; }
+  for (const r of rows) {
+    const flags = [], evidence = []; let risk = 0;
+    const releases = Number(r.releases), students = Number(r.students), total = Number(r.total);
+    if (students > 0 && releases / students >= 3) { risk += 25; flags.push('MONEY_FLOW_CONCENTRATION'); }
+    if (students <= 2 && releases >= 5) { risk += 20; flags.push('REPEATED_RELEASE_WITH_LOW_ACTIVITY'); }
+    const sessionEvents = await copilotSafeCount(`SELECT COUNT(*)::int n FROM lesson_session_events lse JOIN bookings b ON b.id=lse.booking_id WHERE b.tutor_id=$1`, [r.tutor_id]);
+    if (releases >= 4 && sessionEvents === 0) { risk += 20; flags.push('LOW_ACTIVITY_HIGH_VALUE'); }
+    const withdrawFast = await copilotSafeCount(`SELECT COUNT(*)::int n FROM withdrawal_requests WHERE tutor_id=$1 AND requested_at > $2`, [r.tutor_id, period.start]);
+    if (withdrawFast >= 2 && total >= 2000000) { risk += 20; flags.push('RAPID_CASH_OUT'); }
+    if (risk < 45) continue;
+    const severity = calculateSeverityFromRiskScore(Math.min(100, risk), flags);
+    const name = await fraudUserName(r.tutor_id);
+    out.push(normalizeFraudReport({
+      report_type: 'TRANSACTION_RING', entity_key: buildEntityKey('txring', r.tutor_id),
+      primary_user_id: r.tutor_id, tutor_id: r.tutor_id,
+      title: `Dòng tiền tập trung bất thường: ${name}`,
+      summary: `Gia sư nhận ${releases} lần giải ngân từ ${students} học sinh (${copilotVnd(total)}) với hoạt động học thấp.`,
+      reason_summary: `Điểm rủi ro ${Math.min(100, risk)}. Cờ: ${flags.join(', ')}.`,
+      risk_score: risk, confidence: Math.min(85, 40 + flags.length * 12), severity, risk_flags: flags,
+      evidence: [{ label: 'Giải ngân / học sinh', value: `${releases} / ${students}` }, { label: 'Tổng tiền', value: copilotVnd(total) }],
+      timeline: [], related_entities: [{ type: 'tutor', id: r.tutor_id, name }],
+      financial_trace: { release_total: total, releases, distinct_students: students },
+      suggested_actions: buildFraudActions(severity, flags), limitations: [],
+    }));
+  }
+  return out;
+}
+
+// ── Analyzer: voucher abuse (best-effort; no coupon-usage table in schema) ───
+async function analyzeVoucherAbuse(period) {
+  const has = await fraudTableExists('coupon_usages');
+  if (!has) return { skipped: true, limitation: 'VOUCHER_SCHEMA_NOT_FOUND: không có bảng lượt dùng voucher.' };
+  return { skipped: true, limitation: 'VOUCHER_ABUSE: analyzer chưa triển khai cho schema hiện tại.' };
+}
+
+// ── Aggregate signal helpers (used by entity lookup + Copilot) ──────────────
+async function analyzeTutorFraudSignals(tutorId, period) {
+  const reports = [await analyzeWithdrawalRisk(tutorId, period), await analyzeExternalPaymentCollusion(tutorId, period)].filter(Boolean);
+  const maxRisk = reports.reduce((m, r) => Math.max(m, r.risk_score), 0);
+  const flags = [...new Set(reports.flatMap(r => r.risk_flags))];
+  return { risk_score: maxRisk, severity: calculateSeverityFromRiskScore(maxRisk, flags), risk_flags: flags, reports };
+}
+async function analyzeStudentFraudSignals(studentId, period) {
+  const reports = [await analyzeRefundAbuse(studentId, period)].filter(Boolean);
+  const maxRisk = reports.reduce((m, x) => Math.max(m, x.risk_score), 0);
+  const flags = [...new Set(reports.flatMap(x => x.risk_flags))];
+  return { risk_score: maxRisk, severity: calculateSeverityFromRiskScore(maxRisk, flags), risk_flags: flags, reports };
+}
+
+// Persist a fraud report; idempotent per (report_type+entity+day) via detection_window_key.
+async function saveFraudIntelReport(rep) {
+  try {
+    const r = normalizeFraudReport(rep);
+    const dayBucket = new Date().toISOString().slice(0, 10);
+    const dwk = `${r.report_type}|${r.entity_key}|${dayBucket}`;
+    const res = await pool.query(
+      `INSERT INTO fraud_intel_reports
+        (report_type, status, severity, risk_score, confidence, primary_user_id, secondary_user_id,
+         tutor_id, student_id, entity_key, detection_window_key, title, summary, reason_summary,
+         risk_flags, evidence, timeline, related_entities, financial_trace, suggested_actions, limitations,
+         model_used, rule_version, period_start, period_end)
+       VALUES ($1,'OPEN',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+               $14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,$21,$22,$23,$24)
+       ON CONFLICT (detection_window_key) DO UPDATE SET
+         severity=EXCLUDED.severity, risk_score=EXCLUDED.risk_score, confidence=EXCLUDED.confidence,
+         summary=EXCLUDED.summary, reason_summary=EXCLUDED.reason_summary, risk_flags=EXCLUDED.risk_flags,
+         evidence=EXCLUDED.evidence, timeline=EXCLUDED.timeline, related_entities=EXCLUDED.related_entities,
+         financial_trace=EXCLUDED.financial_trace, suggested_actions=EXCLUDED.suggested_actions,
+         limitations=EXCLUDED.limitations, period_start=EXCLUDED.period_start, period_end=EXCLUDED.period_end, updated_at=NOW()
+       RETURNING (xmax = 0) AS inserted`,
+      [r.report_type, r.severity, r.risk_score, r.confidence,
+       asUuidOrNull(r.primary_user_id), asUuidOrNull(r.secondary_user_id), asUuidOrNull(r.tutor_id), asUuidOrNull(r.student_id),
+       r.entity_key, dwk, r.title || null, r.summary || null, r.reason_summary || null,
+       JSON.stringify(r.risk_flags || []), JSON.stringify(r.evidence || []), JSON.stringify(r.timeline || []),
+       JSON.stringify(r.related_entities || []), JSON.stringify(r.financial_trace || {}), JSON.stringify(r.suggested_actions || []),
+       JSON.stringify(r.limitations || []), r.model_used || 'RULE_BASED', FRAUD_INTEL_RULE_VERSION, r.period_start || null, r.period_end || null]
+    );
+    return res.rows[0].inserted ? 'created' : 'updated';
+  } catch (e) { console.warn('[fraud] save failed:', e.message); return 'failed'; }
+}
+
+// Optional LLM rewrite of summary only (off by default). Never invents evidence.
+async function maybeFraudLLMRewrite(report) {
+  if (!FRAUD_INTEL_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+  try {
+    const payload = JSON.stringify({ report_type: report.report_type, severity: report.severity, risk_flags: report.risk_flags, evidence: report.evidence }).slice(0, FRAUD_INTEL_MAX_CONTEXT_CHARS);
+    const prompt = `Bạn là chuyên viên phân tích gian lận cho nền tảng gia sư EduX. Viết lại TÓM TẮT bằng tiếng Việt ngắn gọn, khách quan, CHỈ dựa trên JSON dưới đây, KHÔNG bịa thêm bằng chứng, KHÔNG đề xuất khóa/cấm/hoàn tiền tự động. Trả về JSON {"summary_vi":"..."}. Dữ liệu: ${payload}`;
+    if (FRAUD_INTEL_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try { const p = JSON.parse(t); if (p && typeof p.summary_vi === 'string' && p.summary_vi.trim().length > 10) return { summary: p.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' }; } catch { /* ignore */ }
+        }
+      }
+    }
+    return { summary: report.summary, model_used: 'RULE_BASED' };
+  } catch (err) { console.warn('[fraud] LLM rewrite failed:', err.message); return { summary: report.summary, model_used: 'RULE_BASED' }; }
+}
+
+// Orchestrator — shared by POST run and the worker. Advisory only; bounded scans.
+async function runFraudRingDetection({ periodDays = FRAUD_INTEL_PERIOD_DAYS, limit = FRAUD_INTEL_BATCH_LIMIT, dryRun = false, analyzers = null, triggeredBy = 'worker' } = {}) {
+  const startedAt = new Date();
+  const period = buildFraudPeriod(periodDays);
+  const cap = Math.min(Math.max(1, Number(limit) || 100), 200);
+  const want = new Set((analyzers && analyzers.length ? analyzers : ['PAIR', 'VOUCHER', 'REFUND', 'WITHDRAWAL', 'EXTERNAL_PAYMENT', 'TRANSACTION_RING']).map(a => String(a).toUpperCase()));
+  const stats = { scanned_pairs: 0, scanned_users: 0, scanned_transactions: 0, reports_created: 0, reports_updated: 0, skipped: 0, failed: 0 };
+  const limitations = [], generated = [];
+  const avail = await getFraudSignalAvailability();
+  if (!avail.coupon_usages) limitations.push('VOUCHER_SCHEMA_NOT_FOUND');
+
+  const persist = async (rep) => {
+    if (!rep) { stats.skipped++; return; }
+    if (dryRun) { generated.push(rep); return; }
+    const r = await saveFraudIntelReport({ ...rep, period_start: period.start, period_end: period.end });
+    if (r === 'created') stats.reports_created++; else if (r === 'updated') stats.reports_updated++; else stats.failed++;
+    generated.push(rep);
+  };
+
+  if (want.has('PAIR')) {
+    try {
+      const pairs = (await pool.query(
+        `SELECT student_id, tutor_id, COUNT(*)::int AS n, COALESCE(SUM(lesson_fee),0)::numeric AS total
+           FROM bookings WHERE created_at > $1 AND student_id IS NOT NULL AND tutor_id IS NOT NULL
+          GROUP BY student_id, tutor_id HAVING COUNT(*) >= 3 ORDER BY COUNT(*) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const p of pairs) { stats.scanned_pairs++; try { await persist(await analyzeStudentTutorPair(p.student_id, p.tutor_id, period, { bookingCount: p.n, bookingTotal: Number(p.total) })); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('PAIR: ' + e.message); }
+  }
+  if (want.has('REFUND')) {
+    try {
+      const students = (await pool.query(`SELECT student_id, COUNT(*)::int AS n FROM refund_logs WHERE created_at > $1 AND student_id IS NOT NULL GROUP BY student_id HAVING COUNT(*) >= 2 ORDER BY COUNT(*) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const s of students) { stats.scanned_users++; try { await persist(await analyzeRefundAbuse(s.student_id, period)); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('REFUND: ' + e.message); }
+  }
+  if (want.has('WITHDRAWAL')) {
+    try {
+      const tutors = (await pool.query(`SELECT tutor_id, COUNT(*)::int AS n FROM withdrawal_requests WHERE requested_at > $1 GROUP BY tutor_id ORDER BY SUM(amount) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const t of tutors) { stats.scanned_users++; try { await persist(await analyzeWithdrawalRisk(t.tutor_id, period)); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('WITHDRAWAL: ' + e.message); }
+  }
+  if (want.has('EXTERNAL_PAYMENT')) {
+    try {
+      const tutors = (await pool.query(`SELECT tutor_id, COUNT(*)::int AS n FROM semantic_moderation_reports WHERE created_at > $1 AND tutor_id IS NOT NULL AND categories ? 'EXTERNAL_PAYMENT_ATTEMPT' GROUP BY tutor_id ORDER BY COUNT(*) DESC LIMIT $2`, [period.start, cap])).rows;
+      for (const t of tutors) { stats.scanned_users++; try { await persist(await analyzeExternalPaymentCollusion(t.tutor_id, period)); } catch { stats.failed++; } }
+    } catch (e) { limitations.push('EXTERNAL_PAYMENT: ' + e.message); }
+  }
+  if (want.has('TRANSACTION_RING')) {
+    try { const reps = await analyzeTransactionRing(period, { limit: Math.min(cap, 50) }); for (const r of reps) { stats.scanned_transactions++; await persist(r); } }
+    catch (e) { limitations.push('TRANSACTION_RING: ' + e.message); }
+  }
+  if (want.has('VOUCHER')) { const v = await analyzeVoucherAbuse(period); if (v?.limitation) limitations.push(v.limitation); }
+
+  const finishedAt = new Date();
+  try {
+    await pool.query(
+      `INSERT INTO fraud_intel_run_logs (triggered_by, scanned_pairs, scanned_users, scanned_transactions, reports_created, reports_updated, skipped, failed, limitations, finished_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)`,
+      [triggeredBy, stats.scanned_pairs, stats.scanned_users, stats.scanned_transactions, stats.reports_created, stats.reports_updated, stats.skipped, stats.failed, JSON.stringify(limitations), finishedAt]);
+  } catch { /* run-log best-effort */ }
+
+  console.log(`[fraud] run by=${triggeredBy} pairs=${stats.scanned_pairs} users=${stats.scanned_users} tx=${stats.scanned_transactions} created=${stats.reports_created} updated=${stats.reports_updated} failed=${stats.failed} dryRun=${dryRun}`);
+  return { ...stats, limitations, period_days: period.days, dry_run: dryRun, triggered_by: triggeredBy, generated: dryRun ? generated : undefined, started_at: startedAt.toISOString(), finished_at: finishedAt.toISOString() };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SAFE NATURAL-LANGUAGE ANALYTICS (Batch 29A) — template allowlist only.
+// Admin asks in VN/EN; deterministic intent detection maps to a VETTED,
+// parameterized, SELECT-only template. NEVER executes free-form or LLM-generated
+// SQL. Read-only; no mutation of any business table. Optional LLM only classifies
+// intent into an allowlisted template key (never writes SQL).
+// ═══════════════════════════════════════════════════════════════════════════
+const ADMIN_ANALYTICS_LLM_ENABLED    = String(process.env.ADMIN_ANALYTICS_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const ADMIN_ANALYTICS_PROVIDER       = String(process.env.ADMIN_ANALYTICS_PROVIDER || 'gemini').toLowerCase();
+const ADMIN_ANALYTICS_MAX_QUESTION_CHARS = Number(process.env.ADMIN_ANALYTICS_MAX_QUESTION_CHARS || 1000);
+const ADMIN_ANALYTICS_DEFAULT_DAYS   = Number(process.env.ADMIN_ANALYTICS_DEFAULT_DAYS || 30);
+const ADMIN_ANALYTICS_DEFAULT_LIMIT  = Number(process.env.ADMIN_ANALYTICS_DEFAULT_LIMIT || 50);
+const ADMIN_ANALYTICS_MAX_LIMIT      = Number(process.env.ADMIN_ANALYTICS_MAX_LIMIT || 200);
+
+const ANALYTICS_BLOCKED_RE   = /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|copy|execute|exec|merge)\b|;|--|\/\*|\bpg_|information_schema/i;
+const ANALYTICS_SENSITIVE_RE = /(password|mat khau|token|otp|secret|reset|api[ _]?key|private key|raw ip|dia chi ip)/i;
+
+function stripDiacritics(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+}
+function normalizeAnalyticsQuestion(q) {
+  return stripDiacritics(String(q || '').toLowerCase()).replace(/\s+/g, ' ').trim();
+}
+function maskAnalyticsSensitiveValue(value, col) {
+  if (value == null) return value;
+  const c = String(col).toLowerCase();
+  if (/(password|token|otp|secret|reset|api_key|apikey|hash|private)/.test(c)) return '[REDACTED]';
+  if (c.includes('email')) return maskEmail(String(value));
+  if (c.includes('phone')) return maskPhone(String(value));
+  if (c.includes('ip')) return '[IP]';
+  return value;
+}
+function maskAnalyticsRow(row) { const out = {}; for (const k of Object.keys(row)) out[k] = maskAnalyticsSensitiveValue(row[k], k); return out; }
+
+// ── Template registry (the primary security boundary). Static, parameterized. ─
+const ANALYTICS_TEMPLATES = [
+  {
+    key: 'top_refund_tutors_30d', label: 'Top gia sư bị hoàn tiền nhiều nhất',
+    description: 'Xếp hạng gia sư theo số lần và tổng tiền bị hoàn trong N ngày.',
+    exampleQuestions: ['Top gia sư có nhiều refund nhất 30 ngày', 'Gia sư nào bị hoàn tiền nhiều nhất tháng này'],
+    keywords: [['refund', 2], ['hoan tien', 2], ['gia su', 1], ['tutor', 1], ['nhieu nhat', 1], ['top', 1], ['most', 1]],
+    requiredTables: ['refund_logs', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'refund_count',
+    columns: ['tutor_id', 'tutor_name', 'refund_count', 'refund_amount', 'dispute_count'],
+    sql: `SELECT rl.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS refund_count,
+                 COALESCE(SUM(rl.refund_amount),0)::numeric AS refund_amount,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=rl.tutor_id AND d.created_at > NOW()-make_interval(days=>$1::int)) AS dispute_count
+            FROM refund_logs rl LEFT JOIN users u ON u.id=rl.tutor_id
+           WHERE rl.tutor_id IS NOT NULL AND rl.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY rl.tutor_id, u.full_name ORDER BY refund_count DESC, refund_amount DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, gia sư bị hoàn tiền nhiều nhất là ${rows[0].tutor_name || 'N/A'} với ${rows[0].refund_count} lần (${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ). Tổng ${rows.length} gia sư có hoàn tiền.` : `Không có gia sư nào bị hoàn tiền trong ${p.days} ngày.`,
+  },
+  {
+    key: 'top_dispute_students_30d', label: 'Top học sinh khiếu nại nhiều nhất',
+    description: 'Xếp hạng học sinh theo số khiếu nại đã mở trong N ngày.',
+    exampleQuestions: ['Học sinh nào khiếu nại nhiều nhất', 'Top học sinh tạo dispute nhiều nhất tháng này'],
+    keywords: [['hoc sinh', 2], ['student', 2], ['khieu nai', 2], ['dispute', 2], ['nhieu nhat', 1], ['top', 1]],
+    requiredTables: ['disputes', 'users'], chartType: 'bar', labelKey: 'student_name', valueKey: 'dispute_count',
+    columns: ['student_id', 'student_name', 'dispute_count', 'refund_count'],
+    sql: `SELECT d.raised_by AS student_id, u.full_name AS student_name, COUNT(*)::int AS dispute_count,
+                 (SELECT COUNT(*)::int FROM refund_logs rl WHERE rl.student_id=d.raised_by AND rl.created_at > NOW()-make_interval(days=>$1::int)) AS refund_count
+            FROM disputes d LEFT JOIN users u ON u.id=d.raised_by
+           WHERE d.raised_by IS NOT NULL AND d.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY d.raised_by, u.full_name ORDER BY dispute_count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Học sinh mở nhiều khiếu nại nhất trong ${p.days} ngày: ${rows[0].student_name || 'N/A'} (${rows[0].dispute_count} khiếu nại).` : `Không có khiếu nại nào trong ${p.days} ngày.`,
+  },
+  {
+    key: 'fraud_high_risk_tutors', label: 'Gia sư rủi ro gian lận cao',
+    description: 'Gia sư có báo cáo gian lận mức HIGH/CRITICAL (Batch 28).',
+    exampleQuestions: ['Gia sư nào có rủi ro gian lận cao nhất', 'Top fraud tutor high risk'],
+    keywords: [['gian lan', 2], ['fraud', 2], ['rui ro', 1], ['gia su', 1], ['tutor', 1], ['cao nhat', 1], ['high risk', 2]],
+    requiredTables: ['fraud_intel_reports', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'max_risk_score',
+    columns: ['tutor_id', 'tutor_name', 'report_count', 'max_risk_score', 'latest_summary'],
+    sql: `SELECT f.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS report_count,
+                 MAX(f.risk_score)::numeric AS max_risk_score, (ARRAY_AGG(f.summary ORDER BY f.created_at DESC))[1] AS latest_summary
+            FROM fraud_intel_reports f LEFT JOIN users u ON u.id=f.tutor_id
+           WHERE f.tutor_id IS NOT NULL AND f.severity IN ('HIGH','CRITICAL') AND f.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY f.tutor_id, u.full_name ORDER BY max_risk_score DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư bị gắn cờ gian lận cao trong ${p.days} ngày. Cao nhất: ${rows[0].tutor_name || 'N/A'} (điểm ${Math.round(Number(rows[0].max_risk_score))}).` : `Không có báo cáo gian lận mức cao trong ${p.days} ngày.`,
+  },
+  {
+    key: 'external_payment_signals', label: 'Dấu hiệu giao dịch ngoài nền tảng',
+    description: 'Người dùng có báo cáo kiểm duyệt EXTERNAL_PAYMENT_ATTEMPT (Batch 27).',
+    exampleQuestions: ['Ai có dấu hiệu giao dịch ngoài nền tảng', 'Top gia sư rủ chuyển khoản ngoài app'],
+    keywords: [['giao dich ngoai', 3], ['ngoai nen tang', 2], ['ngoai app', 2], ['chuyen khoan', 2], ['external payment', 3], ['off platform', 2], ['ne phi', 1]],
+    requiredTables: ['semantic_moderation_reports', 'users'], chartType: 'bar', labelKey: 'user_name', valueKey: 'semantic_report_count',
+    columns: ['user_id', 'user_name', 'semantic_report_count', 'fraud_report_count', 'latest_summary'],
+    sql: `SELECT s.tutor_id AS user_id, u.full_name AS user_name, COUNT(*)::int AS semantic_report_count,
+                 (SELECT COUNT(*)::int FROM fraud_intel_reports f WHERE f.tutor_id=s.tutor_id AND f.report_type='EXTERNAL_PAYMENT_COLLUSION' AND f.created_at > NOW()-make_interval(days=>$1::int)) AS fraud_report_count,
+                 (ARRAY_AGG(s.summary ORDER BY s.created_at DESC))[1] AS latest_summary
+            FROM semantic_moderation_reports s LEFT JOIN users u ON u.id=s.tutor_id
+           WHERE s.tutor_id IS NOT NULL AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND s.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY s.tutor_id, u.full_name ORDER BY semantic_report_count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Phát hiện ${rows.length} người dùng có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.` : `Không có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.`,
+  },
+  {
+    key: 'withdrawal_pending_risk', label: 'Gia sư chờ rút tiền có rủi ro',
+    description: 'Yêu cầu rút tiền PENDING kèm khiếu nại/gian lận/giao dịch ngoài.',
+    exampleQuestions: ['Gia sư đang chờ rút tiền có rủi ro cao', 'Withdrawal pending risky tutors'],
+    keywords: [['rut tien', 3], ['withdrawal', 3], ['cho rut', 2], ['pending', 1], ['rui ro', 1]],
+    requiredTables: ['withdrawal_requests', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'pending_amount',
+    columns: ['tutor_id', 'tutor_name', 'pending_amount', 'active_disputes', 'fraud_reports', 'external_payment_reports'],
+    sql: `SELECT w.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(w.amount),0)::numeric AS pending_amount,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=w.tutor_id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS active_disputes,
+                 (SELECT COUNT(*)::int FROM fraud_intel_reports f WHERE f.tutor_id=w.tutor_id AND f.created_at > NOW()-make_interval(days=>$1::int)) AS fraud_reports,
+                 (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=w.tutor_id AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT') AS external_payment_reports
+            FROM withdrawal_requests w LEFT JOIN users u ON u.id=w.tutor_id
+           WHERE w.status='PENDING'
+           GROUP BY w.tutor_id, u.full_name ORDER BY pending_amount DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư đang chờ rút tiền; ưu tiên rà soát: ${rows[0].tutor_name || 'N/A'} (${Number(rows[0].pending_amount).toLocaleString('vi-VN')}đ, ${rows[0].active_disputes} khiếu nại mở).` : `Không có yêu cầu rút tiền đang chờ.`,
+  },
+  {
+    key: 'monthly_revenue_summary', label: 'Doanh thu theo tháng',
+    description: 'Tổng hoa hồng/doanh thu ghi nhận (commission_logs EARNED) theo tháng.',
+    exampleQuestions: ['Doanh thu theo tháng', 'Revenue by month'],
+    keywords: [['doanh thu', 3], ['revenue', 3], ['theo thang', 2], ['by month', 2], ['thang', 1]],
+    requiredTables: ['commission_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'gross_revenue',
+    columns: ['month', 'gross_revenue', 'commission_amount', 'transaction_count'],
+    sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month,
+                 COALESCE(SUM(gross_amount),0)::numeric AS gross_revenue,
+                 COALESCE(SUM(commission_amount),0)::numeric AS commission_amount, COUNT(*)::int AS transaction_count
+            FROM commission_logs WHERE event_type='EARNED' AND created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
+    summarize: (rows) => rows.length ? `Doanh thu ghi nhận theo ${rows.length} tháng gần nhất. Tháng mới nhất (${rows[0].month}): ${Number(rows[0].gross_revenue).toLocaleString('vi-VN')}đ (hoa hồng ${Number(rows[0].commission_amount).toLocaleString('vi-VN')}đ).` : `Chưa có dữ liệu doanh thu (commission_logs EARNED).`,
+  },
+  {
+    key: 'monthly_refund_summary', label: 'Hoàn tiền theo tháng',
+    description: 'Số lần và tổng tiền hoàn theo tháng.',
+    exampleQuestions: ['Refund theo tháng', 'Hoàn tiền theo tháng'],
+    keywords: [['refund', 2], ['hoan tien', 2], ['theo thang', 3], ['by month', 3], ['thang', 1]],
+    requiredTables: ['refund_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'refund_amount',
+    columns: ['month', 'refund_count', 'refund_amount'],
+    sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month, COUNT(*)::int AS refund_count,
+                 COALESCE(SUM(refund_amount),0)::numeric AS refund_amount
+            FROM refund_logs WHERE created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
+    summarize: (rows) => rows.length ? `Hoàn tiền theo ${rows.length} tháng. Tháng mới nhất (${rows[0].month}): ${rows[0].refund_count} lần, ${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ.` : `Chưa có dữ liệu hoàn tiền.`,
+  },
+  {
+    key: 'dispute_status_summary', label: 'Khiếu nại theo trạng thái',
+    description: 'Phân bố khiếu nại theo trạng thái trong N ngày.',
+    exampleQuestions: ['Thống kê khiếu nại theo trạng thái', 'Dispute status summary'],
+    keywords: [['khieu nai', 2], ['dispute', 2], ['trang thai', 3], ['status', 2], ['thong ke', 1]],
+    requiredTables: ['disputes'], chartType: 'bar', labelKey: 'status', valueKey: 'count',
+    columns: ['status', 'count', 'latest_created_at'],
+    sql: `SELECT status, COUNT(*)::int AS count, MAX(created_at) AS latest_created_at
+            FROM disputes WHERE created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY status ORDER BY count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày có ${rows.reduce((s, r) => s + Number(r.count), 0)} khiếu nại; nhiều nhất ở trạng thái "${rows[0].status}" (${rows[0].count}).` : `Không có khiếu nại trong ${p.days} ngày.`,
+  },
+  {
+    key: 'semantic_high_risk_reports', label: 'Kiểm duyệt nội dung rủi ro cao',
+    description: 'Báo cáo kiểm duyệt ngữ nghĩa mức HIGH/CRITICAL theo mức độ.',
+    exampleQuestions: ['Nội dung kiểm duyệt rủi ro cao', 'Semantic moderation high risk'],
+    keywords: [['kiem duyet', 2], ['semantic', 2], ['noi dung', 1], ['rui ro cao', 2], ['high risk', 2]],
+    requiredTables: ['semantic_moderation_reports'], chartType: 'bar', labelKey: 'severity', valueKey: 'report_count',
+    columns: ['severity', 'report_count', 'latest_summary'],
+    sql: `SELECT severity, COUNT(*)::int AS report_count, (ARRAY_AGG(summary ORDER BY created_at DESC))[1] AS latest_summary
+            FROM semantic_moderation_reports WHERE severity IN ('HIGH','CRITICAL') AND created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY severity ORDER BY report_count DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.reduce((s, r) => s + Number(r.report_count), 0)} báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.` : `Không có báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.`,
+  },
+  {
+    key: 'fraud_critical_reports', label: 'Báo cáo gian lận CRITICAL',
+    description: 'Danh sách báo cáo gian lận mức CRITICAL (Batch 28).',
+    exampleQuestions: ['Báo cáo gian lận critical', 'Fraud critical reports'],
+    keywords: [['gian lan', 2], ['fraud', 2], ['critical', 3], ['nghiem trong', 2]],
+    requiredTables: ['fraud_intel_reports'], chartType: 'none', labelKey: 'report_type', valueKey: 'risk_score',
+    columns: ['report_type', 'severity', 'risk_score', 'summary', 'status'],
+    sql: `SELECT report_type, severity, risk_score::numeric AS risk_score, summary, status
+            FROM fraud_intel_reports WHERE severity='CRITICAL' AND created_at > NOW()-make_interval(days=>$1::int)
+           ORDER BY risk_score DESC, created_at DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} báo cáo gian lận CRITICAL trong ${p.days} ngày cần ưu tiên xử lý.` : `Không có báo cáo gian lận CRITICAL trong ${p.days} ngày.`,
+  },
+  {
+    key: 'ai_case_manual_review', label: 'AI case cần admin review',
+    description: 'Các quyết định AI ở trạng thái NEED_HUMAN_REVIEW (Batch 25).',
+    exampleQuestions: ['AI case nào cần admin review', 'Khiếu nại AI cần xử lý thủ công'],
+    keywords: [['ai case', 3], ['case', 1], ['admin review', 2], ['xu ly thu cong', 2], ['manual review', 2], ['khieu nai ai', 2]],
+    requiredTables: ['ai_case_resolutions'], chartType: 'none', labelKey: 'status', valueKey: 'confidence',
+    columns: ['case_type', 'status', 'recommendation', 'confidence', 'reason_summary'],
+    sql: `SELECT money_action AS case_type, status, recommendation, confidence::numeric AS confidence, reason_summary
+            FROM ai_case_resolutions WHERE status='NEED_HUMAN_REVIEW' AND created_at > NOW()-make_interval(days=>$1::int)
+           ORDER BY created_at DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} quyết định AI cần admin xem xét thủ công trong ${p.days} ngày.` : `Không có AI case nào cần review trong ${p.days} ngày.`,
+  },
+  {
+    key: 'tutor_quality_decline', label: 'Gia sư giảm chất lượng',
+    description: 'Gia sư có báo cáo chất lượng thấp / khiếu nại / hoàn tiền tăng.',
+    exampleQuestions: ['Gia sư có dấu hiệu giảm chất lượng', 'Tutor quality decline'],
+    keywords: [['giam chat luong', 3], ['chat luong', 1], ['quality decline', 3], ['gia su', 1], ['tutor', 1]],
+    requiredTables: ['tutor_profiles', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'dispute_count',
+    columns: ['tutor_id', 'tutor_name', 'avg_rating', 'low_teaching_reports', 'dispute_count', 'refund_count'],
+    sql: `SELECT tp.user_id AS tutor_id, u.full_name AS tutor_name, COALESCE(tp.avg_rating,0)::numeric AS avg_rating,
+                 (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=tp.user_id AND s.categories ? 'LOW_TEACHING_QUALITY' AND s.created_at > NOW()-make_interval(days=>$1::int)) AS low_teaching_reports,
+                 (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=tp.user_id AND d.created_at > NOW()-make_interval(days=>$1::int)) AS dispute_count,
+                 (SELECT COUNT(*)::int FROM refund_logs rl WHERE rl.tutor_id=tp.user_id AND rl.created_at > NOW()-make_interval(days=>$1::int)) AS refund_count
+            FROM tutor_profiles tp LEFT JOIN users u ON u.id=tp.user_id
+           WHERE tp.status='approved' AND (
+                 (SELECT COUNT(*) FROM semantic_moderation_reports s WHERE s.tutor_id=tp.user_id AND s.categories ? 'LOW_TEACHING_QUALITY' AND s.created_at > NOW()-make_interval(days=>$1::int)) > 0
+              OR (SELECT COUNT(*) FROM disputes d WHERE d.tutor_id=tp.user_id AND d.created_at > NOW()-make_interval(days=>$1::int)) >= 2)
+           ORDER BY dispute_count DESC, low_teaching_reports DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư có dấu hiệu giảm chất lượng trong ${p.days} ngày.` : `Không phát hiện gia sư giảm chất lượng rõ rệt trong ${p.days} ngày.`,
+  },
+];
+const ANALYTICS_TEMPLATE_MAP = Object.fromEntries(ANALYTICS_TEMPLATES.map(t => [t.key, t]));
+
+function getAnalyticsTemplate(key) { return ANALYTICS_TEMPLATE_MAP[key] || null; }
+function listAnalyticsTemplates() {
+  return ANALYTICS_TEMPLATES.map(t => ({ key: t.key, label: t.label, description: t.description, exampleQuestions: t.exampleQuestions, params: ['days', 'limit'], chartType: t.chartType, columns: t.columns }));
+}
+// Secondary defense: assert our own template SQL is a single bounded SELECT/WITH.
+function validateAnalyticsTemplate(t) {
+  if (!t || typeof t.sql !== 'string') return { ok: false, reason: 'NO_TEMPLATE' };
+  const sql = t.sql.trim();
+  if (!/^(select|with)\b/i.test(sql)) return { ok: false, reason: 'NOT_SELECT' };
+  if (!/\blimit\b/i.test(sql)) return { ok: false, reason: 'NO_LIMIT' };
+  if (ANALYTICS_BLOCKED_RE.test(sql.replace(/\$\d+/g, '')) && /\b(insert|update|delete|drop|alter|truncate|grant|revoke)\b/i.test(sql)) return { ok: false, reason: 'BLOCKED_KEYWORD' };
+  return { ok: true };
+}
+// Deterministic intent detection (rule-based). Returns { key, score } or null.
+function detectAnalyticsIntent(question) {
+  const q = normalizeAnalyticsQuestion(question);
+  let best = null, bestScore = 0;
+  for (const t of ANALYTICS_TEMPLATES) {
+    let score = 0;
+    for (const [kw, w] of t.keywords) if (q.includes(kw)) score += w;
+    if (score > bestScore) { bestScore = score; best = t; }
+  }
+  return best && bestScore >= 3 ? { key: best.key, score: bestScore } : null;
+}
+// Optional LLM intent classification (never writes SQL; must return a known key).
+async function maybeAnalyticsLLMIntent(question) {
+  if (!ADMIN_ANALYTICS_LLM_ENABLED) return null;
+  try {
+    const keys = ANALYTICS_TEMPLATES.map(t => t.key).join(', ');
+    const prompt = `Bạn phân loại câu hỏi phân tích dữ liệu của admin nền tảng gia sư vào ĐÚNG MỘT template key trong danh sách sau (hoặc "NONE"): ${keys}. TUYỆT ĐỐI KHÔNG sinh SQL. Trả về JSON {"template_key":"..."}. Câu hỏi: ${String(question).slice(0, 500)}`;
+    if (ADMIN_ANALYTICS_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try { const p = JSON.parse(t); if (p && ANALYTICS_TEMPLATE_MAP[p.template_key]) return { key: p.template_key, score: 99 }; } catch { /* ignore */ }
+        }
+      }
+    }
+    return null;
+  } catch { return null; }
+}
+
+function clampAnalyticsParams(params = {}) {
+  let days = parseInt(params.days, 10); if (!Number.isFinite(days)) days = ADMIN_ANALYTICS_DEFAULT_DAYS;
+  days = Math.max(1, Math.min(365, days));
+  let limit = parseInt(params.limit, 10); if (!Number.isFinite(limit)) limit = ADMIN_ANALYTICS_DEFAULT_LIMIT;
+  limit = Math.max(1, Math.min(ADMIN_ANALYTICS_MAX_LIMIT, limit));
+  return { days, limit };
+}
+
+function buildChartData(t, rows) {
+  if (!t || t.chartType === 'none' || !rows.length) return {};
+  const labels = rows.slice(0, 20).map(r => String(r[t.labelKey] ?? ''));
+  const values = rows.slice(0, 20).map(r => Number(r[t.valueKey]) || 0);
+  return { type: t.chartType, labels, values, value_label: t.valueKey };
+}
+
+// Run a vetted template with a transaction-scoped statement_timeout (read-only).
+async function runAnalyticsTemplate(templateKey, params, adminId) {
+  const t = getAnalyticsTemplate(templateKey);
+  if (!t) return { status: 'NO_MATCH', limitations: ['TEMPLATE_NOT_FOUND'] };
+  const v = validateAnalyticsTemplate(t);
+  if (!v.ok) return { status: 'BLOCKED', limitations: [v.reason], safety_flags: ['TEMPLATE_VALIDATION_FAILED'] };
+
+  const { days, limit } = clampAnalyticsParams(params);
+  const limitations = [];
+  for (const tbl of t.requiredTables) { if (!(await fraudTableExists(tbl))) limitations.push(`TABLE_NOT_FOUND:${tbl}`); }
+  if (limitations.length) {
+    return { status: 'SUCCESS', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Không đủ dữ liệu: một số bảng chưa sẵn sàng.', limitations, sql_preview: t.sql, params: { days, limit } };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL statement_timeout = 8000');
+    const r = await client.query(t.sql, [days, limit]);
+    await client.query('COMMIT');
+    const rows = r.rows.map(maskAnalyticsRow);
+    return {
+      status: 'SUCCESS', template_key: t.key, columns: t.columns, rows,
+      chart: buildChartData(t, rows), summary: t.summarize(rows, { days, limit }),
+      limitations, sql_preview: t.sql, params: { days, limit },
+    };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.warn(`[analytics] template ${t.key} failed:`, e.message);
+    return { status: 'FAILED', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Truy vấn thất bại.', limitations: ['QUERY_FAILED'], error_message: e.message, sql_preview: t.sql, params: { days, limit } };
+  } finally { client.release(); }
+}
+
+function buildAnalyticsSummary(templateKey, rows, params, limitations) {
+  const t = getAnalyticsTemplate(templateKey);
+  if (!t) return 'Không có mẫu phù hợp.';
+  return t.summarize(rows, params) + (limitations?.length ? ` (Giới hạn: ${limitations.join(', ')})` : '');
+}
+
+async function saveAnalyticsAuditLog(log) {
+  try {
+    const r = await pool.query(
+      `INSERT INTO admin_analytics_queries
+        (question, normalized_question, detected_intent, template_key, status, summary, sql_preview,
+         parameters, result_count, result_preview, chart_data, limitations, safety_flags, model_used, created_by, error_message)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16)
+       RETURNING id`,
+      [
+        String(log.question || '').slice(0, ADMIN_ANALYTICS_MAX_QUESTION_CHARS), log.normalized_question || null,
+        log.detected_intent || null, log.template_key || null, log.status || 'SUCCESS', log.summary || null,
+        log.sql_preview || null, JSON.stringify(log.parameters || {}), Number(log.result_count) || 0,
+        JSON.stringify((log.result_preview || []).slice(0, 20)), JSON.stringify(log.chart_data || {}),
+        JSON.stringify(log.limitations || []), JSON.stringify(log.safety_flags || []),
+        log.model_used || 'TEMPLATE_RULE_BASED', asUuidOrNull(log.created_by), log.error_message || null,
+      ]
+    );
+    return r.rows[0].id;
+  } catch (e) { console.warn('[analytics] audit save failed:', e.message); return null; }
 }
 
 // Trim, strip control chars, collapse whitespace, cap length. Null-safe.
@@ -1036,10 +2259,21 @@ const NOTIFICATION_TEMPLATES = {
     body: 'Admin xem xét và phán quyết gia sư không vi phạm.',
     icon: 'gavel', priority: 'normal',
   }),
+  dispute_withdrawn: d => ({
+    subject: '[EduX] Khiếu nại đã được rút', title: d.forAdmin ? 'Học sinh đã rút khiếu nại' : 'Khiếu nại đã được rút',
+    body: d.forAdmin
+      ? `${d.reporterName || 'Học sinh'} đã rút khiếu nại, không cần xử lý nữa.`
+      : 'Học sinh đã rút khiếu nại đối với bạn. Không cần phản hồi thêm.',
+    icon: 'undo', priority: 'normal',
+  }),
   booking_approved: d => ({
-    subject: '[EduX] Lịch học đã được xác nhận', title: 'Lịch học đã được xác nhận — Tiền tạm giữ',
-    body: `Gia sư đã duyệt lịch học. ${fmtVnd(d.amount)} đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`,
+    subject: '[EduX] Lịch học đã được xác nhận',
+    title: Number(d.amount) > 0 ? 'Lịch học đã được xác nhận — Tiền tạm giữ' : 'Lịch học đã được xác nhận',
+    body: Number(d.amount) > 0
+      ? `Gia sư đã duyệt lịch học. ${fmtVnd(d.amount)} đã được tạm giữ và sẽ giải ngân sau khi buổi học hoàn thành.`
+      : 'Gia sư đã duyệt lịch học của bạn. Hẹn gặp bạn trong buổi học!',
     icon: 'lock', priority: 'normal',
+    ctaLabel: 'Xem lịch học', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
   }),
   booking_declined: d => ({
     subject: '[EduX] Lịch học bị từ chối', title: 'Hoàn tiền lịch học bị từ chối',
@@ -1129,10 +2363,99 @@ const NOTIFICATION_TEMPLATES = {
     body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
     icon: 'block', priority: 'critical',
   }),
+  booking_new_request: d => ({
+    subject: '[EduX] Lịch học mới đang chờ bạn duyệt', title: 'Lịch học mới chờ duyệt',
+    body: `Học sinh ${d.studentName || ''} vừa đặt lịch ${d.subject ? `môn ${d.subject} ` : ''}lúc ${d.timeSlot || ''} ngày ${d.date || ''}${d.method ? ` (hình thức ${d.method === 'online' ? 'Online' : 'Offline'})` : ''}. Vui lòng duyệt trong 24 giờ — quá hạn hệ thống sẽ tự hủy và hoàn tiền cho học sinh.`,
+    icon: 'event', priority: 'high',
+    ctaLabel: 'Duyệt lịch ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  lesson_reminder: d => ({
+    subject: d.hoursLeft <= 1 ? '[EduX] Buoi hoc bat dau trong 1 gio' : '[EduX] Nhac lich: buoi hoc trong 24h toi',
+    title: d.forTutor
+      ? (d.hoursLeft <= 1 ? 'Sắp đến giờ dạy (còn ~1 tiếng)' : 'Nhắc lịch: buổi dạy trong 24h tới')
+      : (d.hoursLeft <= 1 ? 'Sắp đến giờ học (còn ~1 tiếng)' : 'Nhắc lịch: buổi học trong 24h tới'),
+    body: d.message || '',
+    icon: 'alarm', priority: d.hoursLeft <= 1 ? 'high' : 'normal',
+    ctaLabel: d.meetLink ? 'Vào phòng học' : null, ctaUrl: d.meetLink || null,
+  }),
+  session_info_updated: d => ({
+    subject: '[EduX] Gia su da cap nhat thong tin buoi hoc', title: 'Thông tin buổi học đã được cập nhật',
+    body: `Gia sư ${d.tutorName || ''} vừa cập nhật thông tin buổi học ${d.subject ? `môn ${d.subject} ` : ''}ngày ${d.date || ''}.${d.mode === 'online' ? (d.meetLink ? `\nHình thức: Online — link phòng học đã đính kèm bên dưới.` : '\nHình thức: Online.') : d.mode === 'offline' ? `\nHình thức: Offline${d.location ? ` — địa điểm: ${d.location}` : ''}.` : ''}${d.topic ? `\nChủ đề: ${d.topic}` : ''}`,
+    icon: 'edit_calendar', priority: 'normal',
+    ctaLabel: d.meetLink ? 'Vào phòng học' : 'Xem lịch học', ctaUrl: d.meetLink || `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  method_change_requested: d => ({
+    subject: '[EduX] Hoc sinh xin doi hinh thuc hoc', title: 'Học sinh xin đổi hình thức học',
+    body: `${d.studentName || 'Học sinh'} xin đổi buổi học ngày ${d.date || ''} sang ${d.requested === 'online' ? 'Online' : 'Offline'}.${d.reason ? `\nLý do: ${d.reason}` : ''}\nVui lòng vào Lịch trình để đồng ý hoặc từ chối.`,
+    icon: 'swap_horiz', priority: 'high',
+    ctaLabel: 'Xem yêu cầu', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  method_change_resolved: d => ({
+    subject: d.accepted ? '[EduX] Yeu cau doi hinh thuc duoc chap nhan' : '[EduX] Yeu cau doi hinh thuc bi tu choi',
+    title: d.accepted ? 'Gia sư đồng ý đổi hình thức học' : 'Gia sư từ chối đổi hình thức học',
+    body: d.accepted
+      ? `Buổi học ngày ${d.date || ''} sẽ chuyển sang ${d.requested === 'online' ? 'Online — gia sư sẽ gắn link phòng học trước giờ' : 'Offline'}.`
+      : `Buổi học ngày ${d.date || ''} giữ nguyên hình thức cũ. Bạn có thể nhắn tin trao đổi thêm với gia sư.`,
+    icon: d.accepted ? 'check_circle' : 'cancel', priority: 'normal',
+  }),
+  welcome_user: d => ({
+    subject: '[EduX] Chao mung ban den voi EduX', title: `Chào mừng ${d.name || 'bạn'} đến với EduX!`,
+    body: `Tài khoản của bạn đã sẵn sàng. Với EduX bạn có thể:\n• Tìm gia sư theo môn học, hình thức Online/Offline\n• Đặt lịch học thử miễn phí trước khi quyết định\n• Thanh toán an toàn — tiền chỉ chuyển cho gia sư sau khi buổi học hoàn thành\n\nChúc bạn học tốt!`,
+    icon: 'celebration', priority: 'normal',
+    ctaLabel: 'Tìm gia sư ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/find-tutors`,
+  }),
+  wallet_topup_success: d => ({
+    subject: '[EduX] Nap tien thanh cong', title: 'Nạp tiền thành công',
+    body: `Bạn đã nạp ${fmtVnd(d.amount)} vào ví EduX qua ${d.provider || 'VNPAY'}.${d.txnRef ? `\nMã giao dịch: ${d.txnRef}` : ''}\nSố tiền đã sẵn sàng để đặt lịch học hoặc mua khóa học.`,
+    icon: 'account_balance_wallet', priority: 'high',
+    ctaLabel: 'Xem ví của tôi', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  admin_new_tutor_profile: d => ({
+    subject: '[EduX][Admin] Ho so gia su moi cho duyet', title: 'Hồ sơ gia sư mới chờ duyệt',
+    body: `${d.tutorName || 'Một gia sư'} vừa nộp hồ sơ${d.subjects ? ` (môn: ${d.subjects})` : ''}. Vui lòng vào trang quản trị để xét duyệt.`,
+    icon: 'assignment_ind', priority: 'high',
+    ctaLabel: 'Xét duyệt ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/admin`,
+  }),
+  admin_new_withdrawal: d => ({
+    subject: '[EduX][Admin] Yeu cau rut tien moi', title: 'Yêu cầu rút tiền mới',
+    body: `Gia sư ${d.tutorName || ''} yêu cầu rút ${fmtVnd(d.amount)}. Vui lòng xử lý trong trang quản trị.`,
+    icon: 'account_balance', priority: 'high',
+    ctaLabel: 'Xử lý ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/admin`,
+  }),
 };
 
 // Renders a template into {subject,title,body,htmlBody,icon,priority}. Unknown
 // keys fall back to a generic safe template rather than throwing.
+// Khung HTML chung cho mọi email outbox: header gradient EduX, nút CTA tùy
+// chọn, footer có link hủy đăng ký. Mọi giá trị text ĐÃ được escape trước khi
+// gọi (title/body qua sanitize + escapeHtml, url do server sinh).
+function buildEmailHtml({ title, body, ctaLabel, ctaUrl, unsubUrl }) {
+  const htmlTitle = escapeHtml(title || 'Thông báo');
+  const htmlBodyText = escapeHtml(body || '');
+  const ctaBlock = (ctaLabel && ctaUrl) ? `
+<table cellpadding="0" cellspacing="0" style="margin:24px 0 4px;"><tr><td align="center" style="border-radius:10px;background:linear-gradient(120deg,#00288e,#2747c4);">
+<a href="${escapeHtml(ctaUrl)}" style="display:inline-block;padding:13px 32px;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;">${escapeHtml(ctaLabel)}</a>
+</td></tr></table>` : '';
+  const unsubBlock = unsubUrl
+    ? `<p style="margin:8px 0 0;color:#9a9bab;font-size:11px;">Không muốn nhận email thông báo? <a href="${escapeHtml(unsubUrl)}" style="color:#757684;">Hủy đăng ký</a></p>`
+    : '';
+  return `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f8f9fb;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:32px 16px;"><tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+<tr><td style="background:linear-gradient(135deg,#00288e 0%,#1e40af 100%);padding:28px 32px;">
+<h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.5px;">EduX</h1>
+<p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:13px;">Nền tảng kết nối gia sư chuyên nghiệp</p></td></tr>
+<tr><td style="padding:32px;">
+<h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${htmlTitle}</h2>
+<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${htmlBodyText}</p>
+${ctaBlock}</td></tr>
+<tr><td style="background:#f8f9fb;padding:16px 32px;border-top:1px solid #e1e2e4;">
+<p style="margin:0;color:#757684;font-size:12px;">© EduX — mọi thắc mắc liên hệ <a href="mailto:support@edux.com" style="color:#00288e;">support@edux.com</a></p>
+${unsubBlock}</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
 function renderNotificationTemplate(templateKey, data = {}) {
   const fn = NOTIFICATION_TEMPLATES[templateKey];
   const base = fn ? fn(data) : {
@@ -1142,18 +2465,19 @@ function renderNotificationTemplate(templateKey, data = {}) {
   const title = sanitizeNotificationText(base.title, 200) || 'Thông báo';
   const body  = sanitizeNotificationText(base.body, 1000) || '';
   const subject = sanitizeNotificationText(base.subject, 200) || `[EduX] ${title}`;
-  const htmlTitle = escapeHtml(title);
-  const htmlBodyText = escapeHtml(body);
-  const htmlBody = `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/></head>
-<body style="margin:0;padding:0;background:#f8f9fb;font-family:Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fb;padding:32px 16px;"><tr><td align="center">
-<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);">
-<tr><td style="background:#00288e;padding:24px 32px;"><h1 style="margin:0;color:#fff;font-size:20px;">EduX</h1></td></tr>
-<tr><td style="padding:32px;"><h2 style="margin:0 0 12px;color:#191c1e;font-size:18px;">${htmlTitle}</h2>
-<p style="margin:0;color:#444653;font-size:15px;line-height:1.6;white-space:pre-line;">${htmlBodyText}</p></td></tr>
-<tr><td style="background:#f8f9fb;padding:16px 32px;border-top:1px solid #e1e2e4;"><p style="margin:0;color:#757684;font-size:12px;">EduX — support@edux.com</p></td></tr>
-</table></td></tr></table></body></html>`;
-  return { subject, title, body, htmlBody, icon: base.icon || 'notifications', priority: base.priority || 'normal' };
+  const ctaLabel = base.ctaLabel || data.ctaLabel || null;
+  const ctaUrl   = base.ctaUrl   || data.ctaUrl   || null;
+  const htmlBody = buildEmailHtml({ title, body, ctaLabel, ctaUrl });
+  return {
+    subject, title, body, htmlBody,
+    icon: base.icon || 'notifications', priority: base.priority || 'normal',
+    ctaLabel, ctaUrl,
+  };
+}
+
+// Token hủy đăng ký email — nhúng vào footer mọi email outbox
+function makeUnsubToken(userId) {
+  return jwt.sign({ userId, purpose: 'email_unsub' }, jwtSecret, { expiresIn: '180d' });
 }
 
 // Insert an in-app notification row. Idempotent via idempotency_key (ON
@@ -1184,6 +2508,15 @@ async function createInAppNotification(clientOrPool, payload) {
 // idempotency_key. Returns the outbox row id, or null if duplicate.
 async function queueEmailNotification(clientOrPool, payload) {
   const rendered = renderNotificationTemplate(payload.templateKey, payload.data || {});
+  // Gắn link hủy đăng ký cá nhân hóa vào footer khi biết userId
+  if (payload.userId) {
+    const backendOrigin = process.env.BACKEND_ORIGIN || `http://localhost:${process.env.PORT || 5000}`;
+    const unsubUrl = `${backendOrigin}/api/email/unsubscribe?token=${encodeURIComponent(makeUnsubToken(payload.userId))}`;
+    rendered.htmlBody = buildEmailHtml({
+      title: rendered.title, body: rendered.body,
+      ctaLabel: rendered.ctaLabel, ctaUrl: rendered.ctaUrl, unsubUrl,
+    });
+  }
   const r = await clientOrPool.query(
     `INSERT INTO notification_outbox
        (user_id, email, channel, event_type, template_key, subject, title, body, html_body,
@@ -1220,11 +2553,13 @@ async function notifyUser(clientOrPool, payload) {
 
   if (channels.includes('EMAIL') && (payload.email || payload.userId)) {
     let email = payload.email;
-    if (!email && payload.userId) {
-      const u = await clientOrPool.query('SELECT email FROM users WHERE id=$1', [payload.userId]);
-      email = u.rows[0]?.email || null;
+    let optOut = false;
+    if (payload.userId) {
+      const u = await clientOrPool.query('SELECT email, email_opt_out FROM users WHERE id=$1', [payload.userId]);
+      if (!email) email = u.rows[0]?.email || null;
+      optOut = !!u.rows[0]?.email_opt_out;
     }
-    if (email) {
+    if (email && !optOut) {
       const idemKey = payload.idempotencyKey ? `email:${payload.idempotencyKey}` : null;
       result.outboxId = await queueEmailNotification(clientOrPool, {
         ...payload, email, notificationId: result.notificationId, idempotencyKey: idemKey,
@@ -1347,11 +2682,16 @@ async function processNotificationOutbox(limit = 20) {
         continue;
       }
       try {
+        // EMAIL_DEMO_REDIRECT: hộp thư chung cho demo — mọi email đổ về 1 địa
+        // chỉ, tiêu đề ghi kèm người nhận gốc. Bỏ biến env này để gửi thật.
+        const demoRedirect = (process.env.EMAIL_DEMO_REDIRECT || '').trim();
         const info = await emailTransporter.sendMail({
           from: process.env.SMTP_FROM || process.env.SMTP_USER,
-          to: row.email,
+          to: demoRedirect || row.email,
           replyTo: process.env.SMTP_FROM || process.env.SMTP_USER,
-          subject: row.subject || row.title || 'EduX',
+          subject: demoRedirect
+            ? `${row.subject || row.title || 'EduX'} [gửi cho: ${row.email}]`
+            : (row.subject || row.title || 'EduX'),
           text: row.body,
           html: row.html_body || undefined,
           headers: { 'X-Mailer': 'EduX Notification System' },
@@ -1417,7 +2757,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 
 const { createClient } = require('@supabase/supabase-js');
-const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  : null;
 
 async function uploadFileToStorage(file, path) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -1550,16 +2892,87 @@ app.post("/api/auth/register", async (req, res) => {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Tß║ío user mß╗¢i
-    const result = await pool.query(
+    // Tạo OTP 6 số
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Lưu thông tin vào registration_otps (Upsert)
+    const userData = {
+      fullName: fullName.trim(),
+      email: email.toLowerCase().trim(),
+      passwordHash,
+      userRole,
+      phone: phone || null,
+      city: city || null,
+      avatarUrl: avatarUrl || null
+    };
+
+    await pool.query(
+      `INSERT INTO registration_otps (email, otp, expiry, user_data)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (email) DO UPDATE SET otp = EXCLUDED.otp, expiry = EXCLUDED.expiry, user_data = EXCLUDED.user_data`,
+      [email.toLowerCase().trim(), otp, expiry, JSON.stringify(userData)]
+    );
+
+    // Gửi email
+    sendRegistrationOtpEmail(email.toLowerCase().trim(), otp).catch(console.error);
+
+    return res.status(202).json({
+      requireOtp: true,
+      message: "Vui lòng kiểm tra email để lấy mã OTP."
+    });
+  } catch (error) {
+    console.error("Register error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ. Vui lòng thử lại." });
+  }
+});
+
+// POST /api/auth/verify-register-otp
+app.post("/api/auth/verify-register-otp", async (req, res) => {
+  try {
+    const { email, otp } = req.body || {};
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Thiếu thông tin." });
+    }
+
+    const result = await pool.query("SELECT * FROM registration_otps WHERE email = $1", [email.toLowerCase().trim()]);
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: "Mã OTP không hợp lệ hoặc đã hết hạn." });
+    }
+
+    const record = result.rows[0];
+    if (record.otp !== otp) {
+      return res.status(400).json({ message: "Mã OTP không chính xác." });
+    }
+
+    if (new Date() > new Date(record.expiry)) {
+      return res.status(400).json({ message: "Mã OTP đã hết hạn." });
+    }
+
+    const userData = record.user_data;
+
+    // Tiến hành tạo user
+    const insertResult = await pool.query(
       `INSERT INTO users (full_name, email, password_hash, role, phone, city, picture)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, full_name, email, role, picture, created_at`,
-      [fullName.trim(), email.toLowerCase().trim(), passwordHash, userRole, phone || null, city || null, avatarUrl || null]
+      [userData.fullName, userData.email, userData.passwordHash, userData.userRole, userData.phone, userData.city, userData.avatarUrl]
     );
 
-    const newUser = result.rows[0];
+    const newUser = insertResult.rows[0];
     const token = createToken(newUser);
+
+    // Xóa record OTP
+    await pool.query("DELETE FROM registration_otps WHERE email = $1", [userData.email]);
+
+    // Email chào mừng (qua outbox — không chặn response đăng ký)
+    await safeNotifyUser(pool, {
+      userId: newUser.id, type: 'welcome',
+      channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'welcome_user', eventType: 'welcome_user',
+      idempotencyKey: `welcome:${newUser.id}`,
+      data: { name: newUser.full_name },
+    });
 
     return res.status(201).json({
       token,
@@ -1572,8 +2985,26 @@ app.post("/api/auth/register", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Register error:", error);
-    return res.status(500).json({ message: "Lỗi máy chủ. Vui lòng thử lại." });
+    console.error("Verify OTP error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ─── GET /api/email/unsubscribe?token= ── hủy đăng ký email từ footer ────────
+app.get("/api/email/unsubscribe", async (req, res) => {
+  const page = (msg, ok) => `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/><title>EduX</title></head>
+<body style="margin:0;font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fb;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+<div style="background:#fff;border-radius:16px;padding:40px;max-width:420px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+<h1 style="margin:0 0 8px;color:#00288e;font-size:22px;">EduX</h1>
+<p style="margin:0;color:${ok ? '#15803d' : '#b91c1c'};font-size:15px;line-height:1.6;">${msg}</p>
+</div></body></html>`;
+  try {
+    const decoded = jwt.verify(String(req.query.token || ''), jwtSecret);
+    if (decoded.purpose !== 'email_unsub' || !decoded.userId) throw new Error('bad purpose');
+    await pool.query('UPDATE users SET email_opt_out = TRUE WHERE id = $1', [decoded.userId]);
+    return res.send(page('Đã hủy đăng ký email thông báo. Bạn vẫn nhận được thông báo trên web và các email bảo mật (OTP).', true));
+  } catch {
+    return res.status(400).send(page('Liên kết hủy đăng ký không hợp lệ hoặc đã hết hạn.', false));
   }
 });
 
@@ -1671,7 +3102,11 @@ app.post("/api/auth/login", async (req, res) => {
 
     // T├¼m user theo email
     const result = await pool.query(
-      "SELECT id, full_name, email, password_hash, role, picture FROM users WHERE email = $1",
+      `SELECT u.id, u.full_name, u.email, u.password_hash, u.role, u.picture,
+              tp.status AS tutor_status
+       FROM users u
+       LEFT JOIN tutor_profiles tp ON tp.user_id = u.id
+       WHERE u.email = $1`,
       [email.toLowerCase().trim()]
     );
 
@@ -1709,10 +3144,12 @@ app.post("/api/auth/login", async (req, res) => {
         email: user.email,
         role: user.role,
         picture: user.picture,
+        tutor_status: user.role === 'tutor' ? (user.tutor_status || null) : undefined,
       },
       suspiciousLogin: suspicious,
       loginIP: ip,
     });
+
   } catch (error) {
     console.error("Login error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ. Vui lòng thử lại." });
@@ -1806,12 +3243,24 @@ app.post("/api/auth/google", async (req, res) => {
 // PUT /api/tutor/availability
 app.put("/api/tutor/availability", verifyToken, async (req, res) => {
   try {
-    const { availability } = req.body;
-    await pool.query(
-      "UPDATE tutor_profiles SET availability = $1 WHERE user_id = $2",
-      [availability, req.user.userId]
-    );
-    return res.json({ message: "Cập nhật lịch trống thành công." });
+    const { availability, monthly_availability, slot_duration_mins } = req.body;
+    // Validate slot_duration_mins: chỉ chấp nhận 60, 120, 180
+    const validDurations = [60, 120, 180];
+    const duration = validDurations.includes(Number(slot_duration_mins)) ? Number(slot_duration_mins) : 60;
+    
+    // Nếu client không gửi monthly_availability, giữ nguyên giá trị cũ
+    if (monthly_availability !== undefined) {
+      await pool.query(
+        "UPDATE tutor_profiles SET availability = $1, monthly_availability = $2, slot_duration_mins = $3 WHERE user_id = $4",
+        [availability, monthly_availability, duration, req.user.userId]
+      );
+    } else {
+      await pool.query(
+        "UPDATE tutor_profiles SET availability = $1, slot_duration_mins = $2 WHERE user_id = $3",
+        [availability, duration, req.user.userId]
+      );
+    }
+    return res.json({ message: "Cập nhật lịch trống thành công.", slot_duration_mins: duration });
   } catch (error) {
     console.error("PUT /api/tutor/availability error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
@@ -1825,25 +3274,27 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
     const tutorId = req.params.id;
     const { from, to } = req.query; // date range: YYYY-MM-DD
 
-    // Get availability from tutor_profiles (try both user_id and profile id)
+    // Get availability + slot_duration_mins from tutor_profiles (try both user_id and profile id)
     let result = await pool.query(
-      "SELECT availability FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
+      "SELECT availability, monthly_availability, slot_duration_mins FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
       [tutorId]
     );
     if (!result.rows.length) {
       result = await pool.query(
-        "SELECT availability FROM tutor_profiles WHERE id::text = $1 LIMIT 1",
+        "SELECT availability, monthly_availability, slot_duration_mins FROM tutor_profiles WHERE id::text = $1 LIMIT 1",
         [tutorId]
       );
     }
 
     const availability = result.rows.length ? (result.rows[0].availability || {}) : {};
+    const monthly_availability = result.rows.length ? (result.rows[0].monthly_availability || {}) : {};
+    const slot_duration_mins = result.rows.length ? (result.rows[0].slot_duration_mins || 60) : 60;
 
     // Get booked slots for the date range
     let bookedSlots = {};
     if (from && to) {
       const bookingsResult = await pool.query(
-        `SELECT lesson_date, time_slot, status
+        `SELECT to_char(lesson_date, 'YYYY-MM-DD') AS lesson_date_str, time_slot, status
          FROM bookings
          WHERE tutor_id = $1
            AND lesson_date >= $2::date
@@ -1853,13 +3304,13 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
         [tutorId, from, to]
       );
       for (const row of bookingsResult.rows) {
-        const dateKey = String(row.lesson_date).slice(0, 10);
+        const dateKey = row.lesson_date_str;
         if (!bookedSlots[dateKey]) bookedSlots[dateKey] = [];
         bookedSlots[dateKey].push({ timeSlot: row.time_slot, status: row.status });
       }
     }
 
-    return res.json({ availability, bookedSlots });
+    return res.json({ availability, monthly_availability, bookedSlots, slot_duration_mins });
   } catch (error) {
     console.error("GET /api/tutors/:id/availability error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
@@ -1869,12 +3320,13 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
 // POST /api/tutor/presigned-url
 app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
   try {
-    const { filename, bucket } = req.body;
+    const { filename, bucket, folder } = req.body;
     if (!filename) return res.status(400).json({ message: "Tên file là bắt buộc." });
     
+    if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
     const targetBucket = bucket || 'tutor-documents';
     const ext = filename.split('.').pop();
-    const safePath = `${req.user.userId}_${Date.now()}.${ext}`;
+    const safePath = folder ? `${folder}/${req.user.userId}_${Date.now()}.${ext}` : `${req.user.userId}_${Date.now()}.${ext}`;
 
     const { data, error } = await supabaseAdmin.storage
       .from(targetBucket)
@@ -1910,6 +3362,150 @@ app.get("/api/tutor/profile", verifyToken, async (req, res) => {
   }
 });
 
+// PATCH /api/tutor/profile/cv — gia sư cập nhật CV từ dashboard (kèm hình thức dạy)
+app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const existing = await pool.query("SELECT * FROM tutor_profiles WHERE user_id = $1", [userId]);
+    if (!existing.rows.length) return res.status(404).json({ message: "Không tìm thấy hồ sơ gia sư." });
+    const cur = existing.rows[0];
+    const b = req.body || {};
+
+    let methods = cur.teaching_methods;
+    if (b.teaching_methods !== undefined) {
+      try {
+        methods = Array.isArray(b.teaching_methods) ? b.teaching_methods : JSON.parse(b.teaching_methods || '[]');
+      } catch { methods = cur.teaching_methods; }
+    }
+
+    const result = await pool.query(
+      `UPDATE tutor_profiles SET
+         headline = $1, phone = $2, location = $3, subjects = $4,
+         hourly_rate = $5, experience_years = $6, bio = $7,
+         teaching_style = $8, demo_video_url = $9, teaching_methods = $10
+       WHERE user_id = $11 RETURNING *`,
+      [
+        b.headline !== undefined ? b.headline : cur.headline,
+        b.phone !== undefined ? b.phone : cur.phone,
+        b.location !== undefined ? b.location : cur.location,
+        b.subjects !== undefined ? b.subjects : cur.subjects,
+        b.hourly_rate !== undefined && b.hourly_rate !== '' ? parseFloat(b.hourly_rate) || null : cur.hourly_rate,
+        b.experience_years !== undefined && b.experience_years !== '' ? parseInt(b.experience_years) || 0 : cur.experience_years,
+        b.bio !== undefined ? b.bio : cur.bio,
+        b.teaching_style !== undefined ? b.teaching_style : cur.teaching_style,
+        b.demo_video_url !== undefined ? b.demo_video_url : cur.demo_video_url,
+        // Cột teaching_methods là text[] trong DB (không phải jsonb) — truyền mảng JS trực tiếp
+        Array.isArray(methods) ? methods : [],
+        userId,
+      ]
+    );
+
+    if (b.full_name && String(b.full_name).trim()) {
+      await pool.query("UPDATE users SET full_name = $1 WHERE id = $2", [String(b.full_name).trim(), userId]);
+    }
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Update tutor CV error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// Báo mọi admin có hồ sơ gia sư mới / nộp lại chờ duyệt (chuông + email,
+// idempotent theo hồ sơ + ngày + admin để không spam khi bấm lưu nhiều lần)
+async function notifyAdminsTutorProfilePending(profile, tutorName) {
+  try {
+    const admins = await pool.query(
+      `SELECT id FROM users WHERE role = 'admin' AND COALESCE(is_banned, FALSE) = FALSE`
+    );
+    const day = new Date().toISOString().slice(0, 10);
+    for (const admin of admins.rows) {
+      await safeNotifyUser(pool, {
+        userId: admin.id, type: 'admin_alert',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'admin_new_tutor_profile', eventType: 'admin_new_tutor_profile',
+        refId: profile.id, refType: 'tutor_profile',
+        idempotencyKey: `admin_new_tutor:${profile.id}:${day}:${admin.id}`,
+        data: { tutorName: tutorName || '', subjects: profile.subjects || '' },
+      });
+    }
+  } catch (err) {
+    console.error('[notifyAdminsTutorProfilePending] non-fatal:', err.message);
+  }
+}
+
+// PUT /api/tutor/instant-settings
+app.put('/api/tutor/instant-settings', verifyToken, requireTutor, async (req, res) => {
+  try {
+    let { instant_price, instant_price_unit, instant_duration_mins, availability_status } = req.body;
+    if (instant_price === '') instant_price = null;
+    const durationMins = parseInt(instant_duration_mins) || 30;
+    // Ensure column exists (idempotent)
+    await pool.query(`ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS instant_duration_mins INT DEFAULT 30`);
+    await pool.query(
+      `UPDATE tutor_profiles 
+       SET instant_price = $1, 
+           instant_price_unit = $2, 
+           instant_duration_mins = $3,
+           availability_status = COALESCE($4, availability_status),
+           updated_at = NOW()
+       WHERE user_id = $5`,
+      [instant_price, instant_price_unit, durationMins, availability_status, req.user.userId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('PUT /api/tutor/instant-settings error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// GET /api/tutor/instant-pending — Gia sư poll kiểm tra có yêu cầu Học Ngay đang chờ không
+// Dùng khi Supabase Realtime không khả dụng ở frontend
+app.get('/api/tutor/instant-pending', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.id, b.student_id, b.student_name, b.subject, b.lesson_fee,
+              b.duration_mins, b.note, b.created_at,
+              u.full_name AS student_full_name, u.picture AS student_picture
+       FROM bookings b
+       LEFT JOIN users u ON u.id = b.student_id
+       WHERE b.tutor_id = $1
+         AND b.booking_type = 'Instant'
+         AND b.status = 'Pending'
+         AND b.created_at > NOW() - INTERVAL '70 seconds'
+       ORDER BY b.created_at DESC
+       LIMIT 1`,
+      [req.user.userId]
+    );
+    const booking = result.rows[0] || null;
+    if (booking) {
+      // Tính số giây còn lại trước khi timeout
+      const elapsed = Math.floor((Date.now() - new Date(booking.created_at).getTime()) / 1000);
+      booking.seconds_left = Math.max(0, 60 - elapsed);
+      booking.student_name = booking.student_name || booking.student_full_name || 'Học viên';
+    }
+    res.json({ booking });
+  } catch (err) {
+    console.error('GET /api/tutor/instant-pending error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// PATCH /api/tutor/profile/submit — nộp lại hồ sơ cho admin duyệt
+app.patch("/api/tutor/profile/submit", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "UPDATE tutor_profiles SET status = 'pending', reject_reason = NULL WHERE user_id = $1 RETURNING *",
+      [req.user.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy hồ sơ gia sư." });
+    await notifyAdminsTutorProfilePending(result.rows[0], req.user.name);
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Submit tutor profile error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
 // Upload profile data (JSON based)
 app.post(
   "/api/tutor/profile",
@@ -1923,22 +3519,24 @@ app.post(
         education, language, hourly_rate,
         teaching_style, qualifications,
         teaching_methods, suitable_students, cert_metadata,
-        profile_photo_url, cccd_url
+        certificate_urls,
+        profile_photo_url, cccd_url, cccd_front_url, cccd_back_url
       } = req.body;
       const userId = req.user.userId;
 
       let parsedTeachingMethods = [];
       let parsedSuitableStudents = [];
       let parsedCertMetadata = [];
+      let parsedCertUrls = [];
       try { parsedTeachingMethods = JSON.parse(teaching_methods || '[]'); } catch {}
       try { parsedSuitableStudents = JSON.parse(suitable_students || '[]'); } catch {}
       try { parsedCertMetadata = JSON.parse(cert_metadata || '[]'); } catch {}
+      try { parsedCertUrls = JSON.parse(certificate_urls || '[]'); } catch {}
 
-      // Route này nhận JSON (không phải multipart), certificates upload riêng qua presigned URL
-      const certFiles = [];
-
-            let photoPath = profile_photo_url || null;
-      let cccdPath  = cccd_url || null;
+      let photoPath    = profile_photo_url || null;
+      // cccd_front_url ưu tiên hơn cccd_url (legacy 1-ảnh)
+      let cccdPath     = cccd_front_url || cccd_url || null;
+      let cccdBackPath = cccd_back_url  || null;
 
       const existing = await pool.query(
         "SELECT id FROM tutor_profiles WHERE user_id = $1",
@@ -1965,8 +3563,9 @@ app.post(
           status = $17, reject_reason = NULL`;
 
         let idx = 19; // $18 = userId
-        if (photoPath) { query += `, profile_photo_url = $${idx}`; values.push(photoPath); idx++; }
-        if (cccdPath)  { query += `, cccd_url = $${idx}`;          values.push(cccdPath);  idx++; }
+        if (photoPath)   { query += `, profile_photo_url = $${idx}`; values.push(photoPath);   idx++; }
+        if (cccdPath)    { query += `, cccd_url = $${idx}`;          values.push(cccdPath);    idx++; }
+        if (cccdBackPath){ query += `, cccd_back_url = $${idx}`;     values.push(cccdBackPath); idx++; }
 
         query += ` WHERE user_id = $18 RETURNING *`;
         result = await pool.query(query, values);
@@ -1978,7 +3577,7 @@ app.post(
             birthday, gender, country, city, phone,
             education, language, hourly_rate,
             teaching_style, qualifications,
-            profile_photo_url, cccd_url,
+            profile_photo_url, cccd_url, cccd_back_url,
             status
           ) VALUES (
             $1, $2, $3, $4,
@@ -1986,7 +3585,7 @@ app.post(
             $8, $9, $10, $11, $12,
             $13, $14, $15,
             $16, $17,
-            $18, $19,
+            $18, $19, $20,
             'pending'
           ) RETURNING *`,
           [
@@ -1995,20 +3594,31 @@ app.post(
             birthday || null, gender, country, city, phone,
             education, language, parseFloat(hourly_rate) || null,
             teaching_style, qualifications,
-            photoPath, cccdPath,
+            photoPath, cccdPath, cccdBackPath,
           ]
         );
       }
 
+      // Update user role to tutor if they are student or parent
+      try {
+        await pool.query(
+          "UPDATE users SET role = 'tutor' WHERE id = $1 AND role != 'admin'",
+          [userId]
+        );
+      } catch (roleErr) {
+        console.warn("[Profile] role update skipped:", roleErr.message);
+      }
+
       // Optional: save structured fields (separate query, non-fatal if columns not ready)
+      // Lưu ý: teaching_methods là text[] (truyền mảng JS), suitable_students là jsonb (stringify)
       try {
         await pool.query(
           `UPDATE tutor_profiles SET
-            teaching_methods  = $1::jsonb,
+            teaching_methods  = $1,
             suitable_students = $2::jsonb
            WHERE id = $3`,
           [
-            JSON.stringify(parsedTeachingMethods),
+            Array.isArray(parsedTeachingMethods) ? parsedTeachingMethods : [],
             JSON.stringify(parsedSuitableStudents),
             result.rows[0].id,
           ]
@@ -2017,29 +3627,48 @@ app.post(
         console.warn("[Profile] structured fields save skipped:", structErr.message);
       }
 
-      // Insert new certificates into tutor_certificates table (with metadata)
-      if (certFiles.length > 0) {
+      // Insert certificates — dùng certificate_urls (URLs đã upload sẵn từ frontend)
+      if (parsedCertUrls.length > 0) {
         const profileId = result.rows[0].id;
-        await pool.query("DELETE FROM tutor_certificates WHERE tutor_profile_id = $1", [profileId]);
-        for (let i = 0; i < certFiles.length; i++) {
-          const f = certFiles[i];
+        try {
+          await pool.query("DELETE FROM tutor_certificates WHERE tutor_profile_id = $1", [profileId]);
+        } catch (delErr) {
+          console.warn("[Profile] delete old certs skipped:", delErr.message);
+        }
+        for (let i = 0; i < parsedCertUrls.length; i++) {
+          const certUrl = parsedCertUrls[i];
           const meta = parsedCertMetadata[i] || {};
-          const ext = f.originalname.split('.').pop();
-          const certPath = await uploadFileToStorage(f, `certificates/${userId}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
           try {
             await pool.query(
               "INSERT INTO tutor_certificates (tutor_profile_id, name, url, cert_type, issuer, issue_year) VALUES ($1, $2, $3, $4, $5, $6)",
-              [profileId, meta.name || f.originalname, certPath, meta.cert_type || 'Chứng chỉ', meta.issuer || null, meta.year ? parseInt(meta.year) : null]
+              [
+                profileId,
+                meta.name || `Chứng chỉ ${i + 1}`,
+                certUrl,
+                meta.cert_type || 'Chứng chỉ',
+                meta.issuer || null,
+                meta.year ? parseInt(meta.year) : null
+              ]
             );
           } catch (certExtErr) {
-            // Fall back to basic insert if extended cert columns don't exist yet
-            await pool.query(
-              "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
-              [profileId, meta.name || f.originalname, certPath]
-            );
+            // Fallback: insert tối giản nếu các cột mở rộng chưa tồn tại
+            try {
+              await pool.query(
+                "INSERT INTO tutor_certificates (tutor_profile_id, name, url) VALUES ($1, $2, $3)",
+                [profileId, meta.name || `Chứng chỉ ${i + 1}`, certUrl]
+              );
+            } catch (fallbackErr) {
+              console.warn("[Profile] cert insert fallback also failed:", fallbackErr.message);
+            }
           }
         }
       }
+
+      // Báo admin có hồ sơ chờ duyệt (mọi lần lưu đều đưa status về pending)
+      await notifyAdminsTutorProfilePending(
+        result.rows[0],
+        display_name || `${first_name || ''} ${last_name || ''}`.trim() || req.user.name
+      );
 
       return res.status(200).json(result.rows[0]);
     } catch (error) {
@@ -2084,8 +3713,15 @@ app.get("/api/admin/document-url", verifyToken, requireAdmin, async (req, res) =
     const { path } = req.query;
     if (!path) return res.status(400).json({ message: "Đường dẫn là bắt buộc." });
     
+    // Extract filename if path is a full public URL
+    let cleanPath = path;
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      const parts = path.split('/');
+      cleanPath = parts[parts.length - 1];
+    }
+    
     // Convert path to signed URL via Supabase Storage REST API
-    const signedUrl = await createSignedUrl(path);
+    const signedUrl = await createSignedUrl(cleanPath || path);
     if (!signedUrl) return res.status(500).json({ message: "Không thể tạo URL. Kiểm tra cấu hình Supabase." });
     
     return res.json({ signedUrl });
@@ -2103,9 +3739,12 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
       SELECT
         tp.id, tp.user_id, u.full_name, u.email,
         tp.bio, tp.subjects, tp.experience_years,
-        tp.certificate_url, tp.cccd_url, tp.status, tp.reject_reason,
+        tp.certificate_url, tp.cccd_url, tp.cccd_back_url, tp.status, tp.reject_reason,
         tp.created_at, tp.profile_photo_url, tp.hourly_rate,
         tp.teaching_methods, tp.suitable_students,
+        tp.first_name, tp.last_name, tp.display_name,
+        tp.birthday, tp.gender, tp.country, tp.city, tp.phone,
+        tp.education, tp.language, tp.teaching_style, tp.qualifications,
         COALESCE(
           (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
            FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
@@ -2285,6 +3924,145 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ── ADMIN APIs (all protected by verifyToken + requireAdmin) ──────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── GET /api/admin/tutors/stats ──────────────────────────────────────────────
+// Returns count of pending / approved / rejected tutor profiles
+app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'pending')  AS pending,
+        COUNT(*) FILTER (WHERE status = 'approved') AS approved,
+        COUNT(*) FILTER (WHERE status = 'rejected') AS rejected
+      FROM tutor_profiles
+    `);
+    const row = result.rows[0];
+    return res.json({
+      pending:  Number(row.pending),
+      approved: Number(row.approved),
+      rejected: Number(row.rejected),
+    });
+  } catch (error) {
+    console.error("Stats error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── GET /api/admin/tutors/pending (duplicate route kept for compatibility) ───
+app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        tp.id, tp.user_id, u.full_name, u.email,
+        tp.bio, tp.subjects, tp.experience_years,
+        tp.certificate_url, tp.cccd_url, tp.cccd_back_url, tp.status, tp.reject_reason,
+        tp.created_at, tp.profile_photo_url, tp.hourly_rate,
+        tp.teaching_methods, tp.suitable_students,
+        tp.first_name, tp.last_name, tp.display_name,
+        tp.birthday, tp.gender, tp.country, tp.city, tp.phone,
+        tp.education, tp.language, tp.teaching_style, tp.qualifications,
+        COALESCE(
+          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
+           FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
+          '[]'::json
+        ) AS certificates
+      FROM tutor_profiles tp
+      JOIN users u ON u.id = tp.user_id
+      WHERE tp.status = 'pending'
+      ORDER BY tp.created_at ASC
+    `);
+    return res.json(result.rows);
+  } catch (error) {
+    console.error("Pending tutors error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── PATCH /api/admin/tutors/:id/approve ─────────────────────────────────────
+// Approves a tutor application and optionally sends them an email
+app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `UPDATE tutor_profiles
+       SET status = 'approved', reject_reason = NULL
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Tutor profile not found." });
+    }
+
+    const profile = result.rows[0];
+
+    // Also update the user's role to 'tutor' (if not already)
+    await pool.query(
+      `UPDATE users SET role = 'tutor' WHERE id = $1 AND role != 'admin'`,
+      [profile.user_id]
+    );
+
+    // Fetch user email to send notification
+    const userResult = await pool.query(
+      "SELECT email FROM users WHERE id = $1",
+      [profile.user_id]
+    );
+    if (userResult.rows.length > 0) {
+      sendTutorReviewEmail(userResult.rows[0].email, "approved", null);
+    }
+
+    return res.json(profile);
+  } catch (error) {
+    console.error("Approve error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── PATCH /api/admin/tutors/:id/reject ──────────────────────────────────────
+// Rejects a tutor application with a reason and optionally sends them an email
+app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body || {};
+
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ message: "Reject reason is required." });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE tutor_profiles
+       SET status = 'rejected', reject_reason = $1
+       WHERE id = $2
+       RETURNING *`,
+      [reason.trim(), id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Tutor profile not found." });
+    }
+
+    const profile = result.rows[0];
+
+    // Fetch user email to send notification
+    const userResult = await pool.query(
+      "SELECT email FROM users WHERE id = $1",
+      [profile.user_id]
+    );
+    if (userResult.rows.length > 0) {
+      sendTutorReviewEmail(userResult.rows[0].email, "rejected", reason);
+    }
+
+    return res.json(profile);
+  } catch (error) {
+    console.error("Reject error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 const classRoutes = require("./routes/classRoutes");
@@ -2298,6 +4076,8 @@ const tutorRequestRoutes = require("./routes/tutorRequestRoutes");
 const tutorInteractionRoutes = require("./routes/tutorInteractionRoutes");
 const studentProfileRoutes = require("./routes/studentProfileRoutes");
 const studentCourseRoutes = require("./routes/studentCourseRoutes");
+const walletRoutes = require("./routes/walletRoutes");
+const adminWalletRoutes = require("./routes/adminWalletRoutes");
 
 app.use("/api/classes/:classId/materials", materialRoutes);
 app.use("/api/classes", classRoutes);
@@ -2310,6 +4090,8 @@ app.use("/", tutorRequestRoutes);
 app.use("/", tutorInteractionRoutes);
 app.use("/api/student/profile", studentProfileRoutes);
 app.use("/", studentCourseRoutes);
+app.use("/api/wallet", walletRoutes);
+app.use("/api/admin/wallet", adminWalletRoutes);
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
@@ -2530,7 +4312,7 @@ app.get("/api/admin/analytics/dashboard/stats", verifyToken, requireAdmin, async
       `),
 
       // 6. Open disputes requiring admin attention
-      pool.query("SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'"),
+      pool.query("SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN' AND withdrawn_at IS NULL"),
     ]);
 
     // COUNT fields: pg returns bigint as string → parseInt is safe.
@@ -2792,24 +4574,76 @@ const SUBJECT_NORM_MAP = {
   "lập trình": "Tin học", "lap trinh": "Tin học",
 };
 
+// Strips Vietnamese diacritics so "toan"/"Toán" and "dia ly"/"Địa lý" compare equal.
+function deaccentVi(s) {
+  return (s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D')
+    .toLowerCase()
+    .trim();
+}
+
+// Index of subject names that live in the `subjects` table but are absent from
+// the hardcoded SUBJECT_NORM_MAP — i.e. subjects an admin created. Without it a
+// newly created subject would report zero counts forever, because
+// normaliseSubject() could never resolve a course's free-text subject onto it.
+let dynamicSubjectIndex = new Map();   // deaccented name -> canonical name
+
+async function refreshSubjectIndex() {
+  try {
+    const { rows } = await pool.query(`SELECT name FROM subjects`);
+    const idx = new Map();
+    for (const r of rows) idx.set(deaccentVi(r.name), r.name);
+    dynamicSubjectIndex = idx;
+  } catch {
+    // Table may not exist yet (migration pending); the hardcoded map still applies.
+  }
+}
+
 function normaliseSubject(raw) {
   if (!raw) return null;
   const key = raw.trim().toLowerCase();
-  return SUBJECT_NORM_MAP[key] || null;
+  if (SUBJECT_NORM_MAP[key]) return SUBJECT_NORM_MAP[key];
+  return dynamicSubjectIndex.get(deaccentVi(raw)) || null;
 }
 
 app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const [quizRes, tutorRes, courseRes] = await Promise.all([
+    const [quizRes, tutorRes, courseRes, enrolRes, rowsRes] = await Promise.all([
       pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
       pool.query(`SELECT subjects FROM tutor_profiles WHERE subjects IS NOT NULL AND subjects <> '' AND status = 'approved'`),
-      pool.query(`SELECT subject FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`SELECT subject, status FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`
+        SELECT c.subject, e.student_id
+        FROM course_enrollments e
+        JOIN courses c ON c.id = e.course_id
+        WHERE e.status = 'active' AND c.subject IS NOT NULL AND c.subject <> ''
+      `),
+      // Batch 32: subjects are real rows now. Fall back to the canonical array
+      // if the migration has not run yet so the admin UI never renders empty.
+      pool.query(`
+        SELECT id, name, slug, description, icon, color, levels, status, sort_order, updated_at
+        FROM subjects ORDER BY sort_order, name
+      `).catch(() => ({ rows: [] })),
     ]);
 
-    // Initialise counters for every canonical subject
-    const quizCount   = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
-    const tutorCount  = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
-    const courseCount = Object.fromEntries(CANONICAL_SUBJECTS.map(s => [s, 0]));
+    const subjectRows = rowsRes.rows.length
+      ? rowsRes.rows
+      : CANONICAL_SUBJECTS.map((name, i) => ({
+          id: null, name, slug: null, description: null,
+          icon: 'school', color: 'bg-gray-100 text-gray-600',
+          levels: [], status: 'active', sort_order: i + 1, updated_at: null,
+        }));
+
+    // Counters are keyed by the rows we will actually return, not by the
+    // hardcoded list, so admin-created subjects get counted too.
+    const names       = subjectRows.map(r => r.name);
+    const quizCount   = Object.fromEntries(names.map(s => [s, 0]));
+    const tutorCount  = Object.fromEntries(names.map(s => [s, 0]));
+    const courseCount = Object.fromEntries(names.map(s => [s, 0]));
+    const pendingCount = Object.fromEntries(names.map(s => [s, 0]));
+    const studentSets  = Object.fromEntries(names.map(s => [s, new Set()]));
 
     // Aggregate quiz counts
     for (const row of quizRes.rows) {
@@ -2837,23 +4671,404 @@ app.get("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
       }
     }
 
-    // Aggregate course counts
+    // Aggregate course counts; pending_review courses are the admin's work queue.
     for (const row of courseRes.rows) {
       const canon = normaliseSubject(row.subject);
-      if (canon) courseCount[canon] = (courseCount[canon] || 0) + 1;
+      if (!canon || !(canon in courseCount)) continue;
+      courseCount[canon] += 1;
+      if (row.status === 'pending_review') pendingCount[canon] += 1;
     }
 
-    const subjects = CANONICAL_SUBJECTS.map(name => ({
-      name,
-      quiz_count:   quizCount[name]   || 0,
-      tutor_count:  tutorCount[name]  || 0,
-      course_count: courseCount[name] || 0,
+    // Distinct active learners per subject, via course enrolments.
+    for (const row of enrolRes.rows) {
+      const canon = normaliseSubject(row.subject);
+      if (canon && studentSets[canon]) studentSets[canon].add(row.student_id);
+    }
+
+    const subjects = subjectRows.map(r => ({
+      id:            r.id,
+      name:          r.name,
+      slug:          r.slug,
+      description:   r.description,
+      icon:          r.icon,
+      color:         r.color,
+      levels:        r.levels || [],
+      status:        r.status,
+      sort_order:    r.sort_order,
+      updated_at:    r.updated_at,
+      quiz_count:    quizCount[r.name]    || 0,
+      tutor_count:   tutorCount[r.name]   || 0,
+      course_count:  courseCount[r.name]  || 0,
+      pending_count: pendingCount[r.name] || 0,
+      student_count: studentSets[r.name] ? studentSets[r.name].size : 0,
     }));
 
     return res.json({ subjects });
   } catch (err) {
     console.error("GET /api/admin/subjects error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy danh sách môn học." });
+  }
+});
+
+// ── Subject mutations (Batch 33) ──────────────────────────────────────────────
+const SUBJECT_STATUSES = ['active', 'draft', 'archived', 'disabled'];
+const SUBJECT_LEVELS   = ['Tiểu học', 'THCS', 'THPT'];
+
+function slugifySubject(name) {
+  return deaccentVi(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mon-hoc';
+}
+
+// Returns a slug not already taken, appending -2, -3, … when needed.
+async function uniqueSubjectSlug(name, excludeId) {
+  const base = slugifySubject(name);
+  for (let n = 1; n < 50; n++) {
+    const candidate = n === 1 ? base : `${base}-${n}`;
+    const { rows } = await pool.query(
+      `SELECT 1 FROM subjects WHERE slug = $1 AND ($2::uuid IS NULL OR id <> $2)`,
+      [candidate, excludeId || null]
+    );
+    if (!rows.length) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+// Shared field validation for create and edit. Returns { error } or { value }.
+function validateSubjectPayload(body, { partial = false } = {}) {
+  const out = {};
+
+  if (body.name !== undefined || !partial) {
+    const name = String(body.name ?? '').trim();
+    if (!name)             return { error: 'Tên môn học là bắt buộc.' };
+    if (name.length > 100) return { error: 'Tên môn học tối đa 100 ký tự.' };
+    out.name = name;
+  }
+  if (body.description !== undefined) {
+    const d = String(body.description ?? '').trim();
+    if (d.length > 500) return { error: 'Mô tả tối đa 500 ký tự.' };
+    out.description = d || null;
+  }
+  if (body.icon !== undefined) {
+    const icon = String(body.icon ?? '').trim();
+    if (!/^[a-z0-9_]{1,40}$/.test(icon)) return { error: 'Icon không hợp lệ.' };
+    out.icon = icon;
+  }
+  if (body.color !== undefined) {
+    const color = String(body.color ?? '').trim();
+    // Tailwind utility pair, e.g. "bg-blue-100 text-blue-700".
+    if (!/^bg-[a-z]+-\d{2,3} text-[a-z]+-\d{2,3}$/.test(color)) {
+      return { error: 'Bảng màu không hợp lệ.' };
+    }
+    out.color = color;
+  }
+  if (body.levels !== undefined) {
+    const levels = Array.isArray(body.levels) ? body.levels : [];
+    if (levels.some(l => !SUBJECT_LEVELS.includes(l))) {
+      return { error: 'Cấp học không hợp lệ.' };
+    }
+    out.levels = levels;
+  }
+  if (body.status !== undefined) {
+    if (!SUBJECT_STATUSES.includes(body.status)) return { error: 'Trạng thái không hợp lệ.' };
+    out.status = body.status;
+  }
+  return { value: out };
+}
+
+// Counts every row that still points at this subject's name. Used both as the
+// delete preflight and by the DELETE handler itself, so the check the admin was
+// shown is the same one actually enforced.
+async function subjectDependencies(name) {
+  const [courseRes, quizRes, tutorRes] = await Promise.all([
+    pool.query(`SELECT subject FROM courses WHERE subject IS NOT NULL AND subject <> ''`),
+    pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
+    pool.query(`SELECT subjects FROM tutor_profiles WHERE subjects IS NOT NULL AND subjects <> ''`),
+  ]);
+  const hits = rows => rows.filter(r => normaliseSubject(r.subject) === name).length;
+
+  let tutors = 0;
+  for (const row of tutorRes.rows) {
+    let parts = [];
+    try {
+      const parsed = JSON.parse(row.subjects);
+      parts = Array.isArray(parsed) ? parsed : [row.subjects];
+    } catch { parts = row.subjects.split(/[,;|]+/); }
+    if (parts.some(p => normaliseSubject(p) === name)) tutors++;
+  }
+
+  const courses = hits(courseRes.rows);
+  const quizzes = hits(quizRes.rows);
+  return { courses, quizzes, tutors, total: courses + quizzes + tutors };
+}
+
+// POST /api/admin/subjects — create
+app.post("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { error, value } = validateSubjectPayload(req.body);
+    if (error) return res.status(400).json({ message: error });
+
+    // Reject names that only differ by diacritics or case — "Toan" vs "Toán"
+    // would otherwise create a second subject that silently steals counts.
+    const { rows: clash } = await pool.query(`SELECT name FROM subjects`);
+    const wanted = deaccentVi(value.name);
+    const dup = clash.find(r => deaccentVi(r.name) === wanted);
+    if (dup) return res.status(409).json({ message: `Môn học “${dup.name}” đã tồn tại.` });
+
+    const slug = await uniqueSubjectSlug(value.name);
+    const { rows: maxRows } = await pool.query(`SELECT COALESCE(MAX(sort_order), 0) AS m FROM subjects`);
+
+    const { rows } = await pool.query(
+      `INSERT INTO subjects (name, slug, description, icon, color, levels, status, sort_order, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, name, slug, description, icon, color, levels, status, sort_order, updated_at`,
+      [
+        value.name, slug, value.description ?? null,
+        value.icon  ?? 'school',
+        value.color ?? 'bg-gray-100 text-gray-600',
+        value.levels ?? [],
+        value.status ?? 'active',
+        Number(maxRows[0].m) + 1,
+        req.user?.userId ?? null,
+      ]
+    );
+    await refreshSubjectIndex();
+    return res.status(201).json({ subject: rows[0] });
+  } catch (err) {
+    console.error("POST /api/admin/subjects error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo môn học." });
+  }
+});
+
+// PATCH /api/admin/subjects/:id — edit identity / appearance / status
+app.patch("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { error, value } = validateSubjectPayload(req.body, { partial: true });
+    if (error) return res.status(400).json({ message: error });
+    if (!Object.keys(value).length) {
+      return res.status(400).json({ message: "Không có thay đổi nào." });
+    }
+
+    const { rows: current } = await pool.query(`SELECT * FROM subjects WHERE id = $1`, [req.params.id]);
+    if (!current.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+
+    if (value.name && deaccentVi(value.name) !== deaccentVi(current[0].name)) {
+      const { rows: clash } = await pool.query(`SELECT name FROM subjects WHERE id <> $1`, [req.params.id]);
+      const wanted = deaccentVi(value.name);
+      const dup = clash.find(r => deaccentVi(r.name) === wanted);
+      if (dup) return res.status(409).json({ message: `Môn học “${dup.name}” đã tồn tại.` });
+      value.slug = await uniqueSubjectSlug(value.name, req.params.id);
+    }
+
+    // archived_at tracks when the subject left circulation, for restore ordering.
+    const sets = [], params = [];
+    for (const [k, v] of Object.entries(value)) {
+      params.push(v);
+      sets.push(`${k} = $${params.length}`);
+    }
+    if (value.status) {
+      sets.push(value.status === 'archived' ? `archived_at = NOW()` : `archived_at = NULL`);
+    }
+    sets.push(`updated_at = NOW()`);
+    params.push(req.params.id);
+
+    const { rows } = await pool.query(
+      `UPDATE subjects SET ${sets.join(', ')} WHERE id = $${params.length}
+       RETURNING id, name, slug, description, icon, color, levels, status, sort_order, updated_at`,
+      params
+    );
+    await refreshSubjectIndex();
+    return res.json({ subject: rows[0] });
+  } catch (err) {
+    console.error("PATCH /api/admin/subjects/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật môn học." });
+  }
+});
+
+// GET /api/admin/subjects/:id — detail: KPIs, monthly series, tutors, courses, sessions
+//
+// Aggregation happens in JS rather than SQL because the link between a subject
+// row and the free-text `subject` columns on courses/bookings/reviews runs
+// through normaliseSubject(), which is not expressible in SQL. Volumes are
+// small at this scale; if these tables grow, add a subject_id FK and move the
+// grouping into the query.
+app.get("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows: subjRows } = await pool.query(
+      `SELECT id, name, slug, description, icon, color, levels, status, sort_order,
+              created_at, updated_at, archived_at
+       FROM subjects WHERE id = $1`, [req.params.id]
+    );
+    if (!subjRows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+    const subject = subjRows[0];
+    const name = subject.name;
+    const mine = raw => normaliseSubject(raw) === name;
+
+    const [courseRes, quizRes, tutorRes, enrolRes, bookingRes, reviewRes] = await Promise.all([
+      pool.query(`SELECT c.id, c.title, c.subject, c.status, c.price, c.created_at,
+                         COALESCE(u.full_name, '—') AS tutor_name
+                  FROM courses c LEFT JOIN users u ON u.id = c.tutor_id
+                  WHERE c.subject IS NOT NULL AND c.subject <> ''`),
+      pool.query(`SELECT subject FROM quizzes WHERE subject IS NOT NULL AND subject <> ''`),
+      pool.query(`SELECT tp.user_id, tp.subjects, tp.hourly_rate,
+                         COALESCE(u.full_name, '—') AS full_name, u.picture
+                  FROM tutor_profiles tp LEFT JOIN users u ON u.id = tp.user_id
+                  WHERE tp.subjects IS NOT NULL AND tp.subjects <> '' AND tp.status = 'approved'`),
+      pool.query(`SELECT c.subject, e.student_id FROM course_enrollments e
+                  JOIN courses c ON c.id = e.course_id
+                  WHERE e.status = 'active' AND c.subject IS NOT NULL AND c.subject <> ''`),
+      // bookings is the live lesson table (78 read sites, written by the booking
+      // flow). tutor_sessions and invoices both carry a `subject` column but
+      // nothing in the app ever inserts into them, so reading those would make
+      // every session and revenue figure permanently empty.
+      pool.query(`SELECT b.id, b.subject, b.status, b.lesson_date, b.time_slot,
+                         b.lesson_fee, b.escrow_released_at, b.tutor_id, b.student_id,
+                         COALESCE(t.full_name,  b.tutor_name,   '—') AS tutor_name,
+                         COALESCE(st.full_name, b.student_name, '—') AS student_name
+                  FROM bookings b
+                  LEFT JOIN users t  ON t.id  = b.tutor_id
+                  LEFT JOIN users st ON st.id = b.student_id
+                  WHERE b.subject IS NOT NULL AND b.subject <> ''`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT subject, rating FROM tutor_reviews`).catch(() => ({ rows: [] })),
+    ]);
+
+    const courses  = courseRes.rows.filter(c => mine(c.subject));
+    const sessions = bookingRes.rows.filter(b => mine(b.subject));
+    const reviews  = reviewRes.rows.filter(r => mine(r.subject));
+    const quizzes  = quizRes.rows.filter(q => mine(q.subject)).length;
+
+    const students = new Set(enrolRes.rows.filter(e => mine(e.subject)).map(e => e.student_id));
+
+    // Tutors: subjects column is CSV or a JSON array depending on how it was written.
+    const tutors = tutorRes.rows.filter(t => {
+      let parts = [];
+      try {
+        const parsed = JSON.parse(t.subjects);
+        parts = Array.isArray(parsed) ? parsed : [t.subjects];
+      } catch { parts = t.subjects.split(/[,;|]+/); }
+      return parts.some(p => mine(p));
+    });
+
+    // bookings.status is capitalised: Pending / Approved / InProgress /
+    // Completed / Cancelled / Declined / Timeout.
+    const DONE      = 'Completed';
+    const LOST      = new Set(['Cancelled', 'Declined', 'Timeout']);
+    const completed = sessions.filter(s => s.status === DONE).length;
+    const cancelled = sessions.filter(s => LOST.has(s.status)).length;
+
+    // Revenue is recognised on escrow release, matching how the rest of the
+    // platform reports it (see the tutor payout query using escrow_released_at).
+    // Booking a lesson is not revenue until the money actually moves.
+    const earned    = sessions.filter(s => s.escrow_released_at);
+    const revenue   = earned.reduce((n, s) => n + Number(s.lesson_fee || 0), 0);
+    const ratingSum = reviews.reduce((n, r) => n + Number(r.rating || 0), 0);
+
+    // Last 6 calendar months, oldest first. Buckets always exist so the chart
+    // shows real gaps instead of silently collapsing empty months.
+    const monthly = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const inMonth = iso => {
+        if (!iso) return false;
+        const x = new Date(iso);
+        return x.getFullYear() === d.getFullYear() && x.getMonth() === d.getMonth();
+      };
+      monthly.push({
+        month: key,
+        sessions:  sessions.filter(s => inMonth(s.lesson_date)).length,
+        completed: sessions.filter(s => s.status === DONE && inMonth(s.lesson_date)).length,
+        // Bucketed by release date, not lesson date, so the revenue bars line
+        // up with when the platform actually recognised the money.
+        revenue:   earned.filter(s => inMonth(s.escrow_released_at))
+                         .reduce((n, s) => n + Number(s.lesson_fee || 0), 0),
+      });
+    }
+
+    // Tutor leaderboard by session volume for this subject only.
+    const perTutor = new Map();
+    for (const s of sessions) {
+      if (!s.tutor_id) continue;
+      const cur = perTutor.get(s.tutor_id) || { id: s.tutor_id, name: s.tutor_name, sessions: 0, completed: 0 };
+      cur.sessions += 1;
+      if (s.status === DONE) cur.completed += 1;
+      perTutor.set(s.tutor_id, cur);
+    }
+    const top_tutors = [...perTutor.values()].sort((a, b) => b.sessions - a.sessions).slice(0, 8);
+
+    return res.json({
+      subject,
+      kpis: {
+        tutors:  tutors.length,
+        courses: courses.length,
+        students: students.size,
+        quizzes,
+        pending_courses: courses.filter(c => c.status === 'pending_review').length,
+        sessions_total: sessions.length,
+        sessions_completed: completed,
+        sessions_cancelled: cancelled,
+        completion_rate: sessions.length ? Math.round((completed / sessions.length) * 100) : null,
+        revenue,
+        paid_bookings: earned.length,
+        avg_rating: reviews.length ? Number((ratingSum / reviews.length).toFixed(2)) : null,
+        review_count: reviews.length,
+      },
+      monthly,
+      top_tutors,
+      tutors: tutors.slice(0, 100).map(t => ({
+        id: t.user_id, name: t.full_name, picture: t.picture, hourly_rate: t.hourly_rate,
+      })),
+      courses: courses.slice(0, 100).map(c => ({
+        id: c.id, title: c.title, tutor_name: c.tutor_name,
+        status: c.status, price: Number(c.price || 0), created_at: c.created_at,
+      })),
+      sessions: sessions
+        .sort((a, b) => new Date(b.lesson_date) - new Date(a.lesson_date))
+        .slice(0, 50)
+        .map(s => ({
+          id: s.id, tutor_name: s.tutor_name, student_name: s.student_name,
+          lesson_date: s.lesson_date, time_slot: s.time_slot, status: s.status,
+          lesson_fee: Number(s.lesson_fee || 0),
+          settled: Boolean(s.escrow_released_at),
+        })),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/subjects/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi tải chi tiết môn học." });
+  }
+});
+
+// GET /api/admin/subjects/:id/dependencies — delete preflight
+app.get("/api/admin/subjects/:id/dependencies", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT name FROM subjects WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+    const deps = await subjectDependencies(rows[0].name);
+    return res.json({ name: rows[0].name, ...deps, deletable: deps.total === 0 });
+  } catch (err) {
+    console.error("GET /api/admin/subjects/:id/dependencies error:", err);
+    return res.status(500).json({ message: "Lỗi khi kiểm tra ràng buộc môn học." });
+  }
+});
+
+// DELETE /api/admin/subjects/:id — refuses while anything still references it
+app.delete("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT name FROM subjects WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
+
+    const deps = await subjectDependencies(rows[0].name);
+    if (deps.total > 0) {
+      return res.status(409).json({
+        message: `Không thể xóa “${rows[0].name}” vì vẫn còn dữ liệu liên kết. Hãy lưu trữ thay vì xóa.`,
+        dependencies: deps,
+      });
+    }
+    await pool.query(`DELETE FROM subjects WHERE id = $1`, [req.params.id]);
+    await refreshSubjectIndex();
+    return res.json({ ok: true, name: rows[0].name });
+  } catch (err) {
+    console.error("DELETE /api/admin/subjects/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi xóa môn học." });
   }
 });
 
@@ -4521,6 +6736,231 @@ app.get("/api/admin/fraud-alerts", verifyToken, requireAdmin, async (req, res) =
   }
 });
 
+// ── Fraud Investigation Center (Batch 35) ─────────────────────────────────────
+// Alerts above are computed live, never persisted (CAP-4.2). alert_id is
+// deterministic ("disp-<user_id>" / "dep-<transaction_id>"), so investigation
+// state (status/notes/audit) can key off it safely via fraud_investigations.
+async function resolveFraudAlertSubject(alertId) {
+  if (typeof alertId !== "string") return null;
+  if (alertId.startsWith("disp-")) {
+    const userId = alertId.slice(5);
+    const r = await pool.query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (!r.rows.length) return null;
+    return { kind: "DISPUTE", subjectUserId: userId, transactionId: null };
+  }
+  if (alertId.startsWith("dep-")) {
+    const txId = alertId.slice(4);
+    const r = await pool.query(
+      `SELECT w.user_id FROM transactions t JOIN wallets w ON w.id = t.wallet_id WHERE t.id = $1`,
+      [txId]
+    );
+    if (!r.rows.length) return null;
+    return { kind: "DEPOSIT", subjectUserId: r.rows[0].user_id, transactionId: txId };
+  }
+  return null;
+}
+
+// ── GET /api/admin/fraud-alerts/:id ───────────────────────────────────────────
+// Re-derives one alert's content live, upserts+returns its persistent
+// investigation anchor row, and returns the risk signal breakdown + notes.
+app.get("/api/admin/fraud-alerts/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const { kind, subjectUserId } = subject;
+
+    const userRes = await pool.query(
+      `SELECT id, full_name, email, role, picture, COALESCE(is_banned, false) AS is_banned, created_at
+       FROM users WHERE id = $1`,
+      [subjectUserId]
+    );
+    if (!userRes.rows.length) return res.status(404).json({ message: "Không tìm thấy người dùng liên quan." });
+    const user = userRes.rows[0];
+
+    let alert, signals, ai_reason;
+    if (kind === "DISPUTE") {
+      const dRes = await pool.query(
+        `SELECT COUNT(d.id)::int AS dispute_count,
+                SUM(CASE WHEN d.status='RESOLVED_REFUND' THEN 1 ELSE 0 END)::int AS refund_count,
+                MAX(d.created_at) AS last_at
+         FROM disputes d WHERE d.raised_by = $1`,
+        [subjectUserId]
+      );
+      const { dispute_count, refund_count, last_at } = dRes.rows[0];
+      const type = refund_count >= 1 ? "REFUND_ABUSE" : "UNUSUAL_ACTIVITY";
+      signals = [];
+      if (dispute_count > 0) signals.push({ label: "Nhiều tranh chấp", points: dispute_count * 30 });
+      if (refund_count >= 1) signals.push({ label: "Lạm dụng hoàn tiền", points: refund_count * 25 });
+      alert = {
+        id: alertId, type, severity: dispute_count >= 2 ? "HIGH" : "MEDIUM",
+        title: type === "REFUND_ABUSE" ? "Lạm dụng hoàn tiền" : "Hoạt động tranh chấp bất thường",
+        description: `${user.full_name || user.email} có ${dispute_count} tranh chấp, ${refund_count} lần hoàn tiền`,
+        risk_score: Math.min(100, dispute_count * 30 + refund_count * 25),
+        created_at: last_at,
+      };
+      ai_reason = refund_count >= 1
+        ? `Phát hiện qua ${refund_count} lần hoàn tiền trên tổng ${dispute_count} tranh chấp trong lịch sử người dùng.`
+        : `Phát hiện qua ${dispute_count} tranh chấp bất thường, chưa có hoàn tiền được xác nhận.`;
+    } else {
+      const tRes = await pool.query(`SELECT amount, created_at FROM transactions WHERE id = $1`, [subject.transactionId]);
+      const tx = tRes.rows[0] || {};
+      signals = [{ label: "Nạp tiền giá trị lớn", points: 20 }];
+      alert = {
+        id: alertId, type: "LARGE_DEPOSIT", severity: "LOW", title: "Nạp tiền giá trị lớn",
+        description: `Giao dịch nạp ${Number(tx.amount || 0).toLocaleString("vi-VN")}đ`,
+        risk_score: 20, created_at: tx.created_at,
+      };
+      ai_reason = `Giao dịch nạp ${Number(tx.amount || 0).toLocaleString("vi-VN")}đ vượt ngưỡng 3.000.000đ được giám sát tự động.`;
+    }
+    const total_signal_score = Math.min(100, signals.reduce((s, x) => s + x.points, 0));
+
+    await pool.query(
+      `INSERT INTO fraud_investigations (alert_id, subject_user_id) VALUES ($1, $2) ON CONFLICT (alert_id) DO NOTHING`,
+      [alertId, subjectUserId]
+    );
+    const invRes = await pool.query(
+      `SELECT fi.alert_id, fi.status, fi.assigned_to, fi.created_at, fi.updated_at, au.full_name AS assigned_to_name
+       FROM fraud_investigations fi LEFT JOIN users au ON au.id = fi.assigned_to
+       WHERE fi.alert_id = $1`,
+      [alertId]
+    );
+
+    const notesRes = await pool.query(
+      `SELECT n.id, n.content, n.admin_id, u.full_name AS admin_name, n.created_at, n.updated_at
+       FROM fraud_investigation_notes n JOIN users u ON u.id = n.admin_id
+       WHERE n.alert_id = $1 ORDER BY n.created_at DESC`,
+      [alertId]
+    );
+
+    return res.json({
+      alert, ai_reason, signals, total_signal_score,
+      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role, picture: user.picture, is_banned: user.is_banned, created_at: user.created_at },
+      investigation: invRes.rows[0],
+      notes: notesRes.rows,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy chi tiết cảnh báo." });
+  }
+});
+
+// ── GET /api/admin/fraud-alerts/:id/history ───────────────────────────────────
+// Related records for the subject user — reuses the same table shapes as the
+// existing /api/admin/transactions, /api/admin/disputes, /withdrawals,
+// /refunds endpoints, scoped with a WHERE user_id=$1 those don't support.
+app.get("/api/admin/fraud-alerts/:id/history", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const subject = await resolveFraudAlertSubject(req.params.id);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const uid = subject.subjectUserId;
+
+    const [txRes, disputeRes, bookingRes, wdRes, refundRes] = await Promise.all([
+      pool.query(
+        `SELECT t.id, t.amount, t.type, t.status, t.created_at
+         FROM transactions t JOIN wallets w ON w.id = t.wallet_id
+         WHERE w.user_id = $1 ORDER BY t.created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT d.id, d.reason, d.status, d.created_at, d.resolved_at
+         FROM disputes d WHERE d.raised_by = $1 ORDER BY d.created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT id, subject, status, lesson_fee, lesson_date, created_at
+         FROM bookings WHERE student_id = $1 OR tutor_id = $1 ORDER BY created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT wr.id, wr.amount, wr.status, wr.method, wr.created_at
+         FROM withdraw_requests wr JOIN wallets w ON w.id = wr.wallet_id
+         WHERE w.user_id = $1 ORDER BY wr.created_at DESC LIMIT 20`, [uid]),
+      pool.query(
+        `SELECT d.id, d.created_at, d.resolved_at, COALESCE(c.price, 0)::numeric AS amount
+         FROM disputes d LEFT JOIN courses c ON c.id = d.course_id
+         WHERE d.raised_by = $1 AND d.status = 'RESOLVED_REFUND' ORDER BY d.created_at DESC LIMIT 20`, [uid]),
+    ]);
+
+    return res.json({
+      transactions: txRes.rows, complaints: disputeRes.rows, bookings: bookingRes.rows,
+      withdrawals: wdRes.rows, refunds: refundRes.rows,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id/history error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy lịch sử liên quan." });
+  }
+});
+
+// ── GET /api/admin/fraud-alerts/:id/timeline ──────────────────────────────────
+app.get("/api/admin/fraud-alerts/:id/timeline", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+    const uid = subject.subjectUserId;
+
+    const [createdRes, resolvedRes, auditRes] = await Promise.all([
+      pool.query(`SELECT id, created_at AS time FROM disputes WHERE raised_by = $1 ORDER BY created_at DESC LIMIT 10`, [uid]),
+      pool.query(`SELECT id, resolved_at AS time FROM disputes WHERE raised_by = $1 AND resolved_at IS NOT NULL ORDER BY resolved_at DESC LIMIT 10`, [uid]),
+      pool.query(`SELECT action, admin_id, reason, created_at AS time FROM fraud_audit_logs WHERE alert_id = $1 ORDER BY created_at DESC LIMIT 50`, [alertId]),
+    ]);
+
+    const events = [
+      ...createdRes.rows.map(r => ({ label: "Tranh chấp được tạo", time: r.time })),
+      ...resolvedRes.rows.map(r => ({ label: "Tranh chấp được giải quyết", time: r.time })),
+      ...auditRes.rows.map(r => ({ label: r.action, time: r.time })),
+    ].sort((a, b) => new Date(b.time) - new Date(a.time));
+
+    return res.json({ events });
+  } catch (err) {
+    console.error("GET /api/admin/fraud-alerts/:id/timeline error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy dòng thời gian." });
+  }
+});
+
+// ── POST /api/admin/fraud-alerts/:id/note ─────────────────────────────────────
+app.post("/api/admin/fraud-alerts/:id/note", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const alertId = req.params.id;
+    const content = (req.body?.content || "").trim();
+    if (!content) return res.status(400).json({ message: "Nội dung ghi chú không được để trống." });
+    const subject = await resolveFraudAlertSubject(alertId);
+    if (!subject) return res.status(404).json({ message: "Không tìm thấy cảnh báo." });
+
+    await pool.query(
+      `INSERT INTO fraud_investigations (alert_id, subject_user_id) VALUES ($1, $2) ON CONFLICT (alert_id) DO NOTHING`,
+      [alertId, subject.subjectUserId]
+    );
+    const insRes = await pool.query(
+      `INSERT INTO fraud_investigation_notes (alert_id, admin_id, content) VALUES ($1, $2, $3) RETURNING id, content, admin_id, created_at, updated_at`,
+      [alertId, req.user.userId, content]
+    );
+    const note = insRes.rows[0];
+    const adminRes = await pool.query(`SELECT full_name FROM users WHERE id = $1`, [req.user.userId]);
+    return res.status(201).json({ note: { ...note, admin_name: adminRes.rows[0]?.full_name || "" } });
+  } catch (err) {
+    console.error("POST /api/admin/fraud-alerts/:id/note error:", err);
+    return res.status(500).json({ message: "Lỗi khi thêm ghi chú." });
+  }
+});
+
+// ── PATCH /api/admin/fraud-alerts/:id/note/:noteId ────────────────────────────
+// Editable only by the note's creator.
+app.patch("/api/admin/fraud-alerts/:id/note/:noteId", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const content = (req.body?.content || "").trim();
+    if (!content) return res.status(400).json({ message: "Nội dung ghi chú không được để trống." });
+    const noteRes = await pool.query(`SELECT admin_id FROM fraud_investigation_notes WHERE id = $1 AND alert_id = $2`, [req.params.noteId, req.params.id]);
+    if (!noteRes.rows.length) return res.status(404).json({ message: "Không tìm thấy ghi chú." });
+    if (noteRes.rows[0].admin_id !== req.user.userId) return res.status(403).json({ message: "Chỉ người tạo mới có thể sửa ghi chú này." });
+
+    const updRes = await pool.query(
+      `UPDATE fraud_investigation_notes SET content = $1, updated_at = NOW() WHERE id = $2 RETURNING id, content, admin_id, created_at, updated_at`,
+      [content, req.params.noteId]
+    );
+    const adminRes = await pool.query(`SELECT full_name FROM users WHERE id = $1`, [req.user.userId]);
+    return res.json({ note: { ...updRes.rows[0], admin_name: adminRes.rows[0]?.full_name || "" } });
+  } catch (err) {
+    console.error("PATCH /api/admin/fraud-alerts/:id/note/:noteId error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật ghi chú." });
+  }
+});
+
 // ── GET /api/admin/transactions/withdrawals ───────────────────────────────────
 // CAP-3.5: Tutor withdrawal requests from withdraw_requests table (read-only).
 // account_details is JSONB — bank_name and account_number extracted if present;
@@ -4571,7 +7011,7 @@ app.get("/api/admin/transactions/refunds", verifyToken, requireAdmin, async (req
               d.created_at,
               d.resolved_at,
               d.target_type,
-              d.evidence_url,
+              d.evidence_urls,
               COALESCE(u.full_name, '')               AS user_name,
               COALESCE(u.email,     '')               AS user_email,
               COALESCE(c.title,     '')               AS course_title,
@@ -4634,7 +7074,7 @@ app.get("/api/admin/financial/overview", verifyToken, requireAdmin, async (req, 
       `),
       pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'SUCCESS'`),
       pool.query(`SELECT COUNT(*) AS count FROM transactions WHERE status = 'FAILED'`),
-      pool.query(`SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN'`),
+      pool.query(`SELECT COUNT(*) AS count FROM disputes WHERE status = 'OPEN' AND withdrawn_at IS NULL`),
       // Internal deposits (no external gateway) ≈ tutor earnings released
       pool.query(`
         SELECT COALESCE(SUM(amount), 0) AS total
@@ -5027,7 +7467,22 @@ app.get('/api/exam-papers', verifyToken, async (req, res) => {
   try {
     const { grade, subject, year } = req.query;
     const studentId = req.user.userId;
-    let q = `SELECT ep.*, epa.id AS attempt_id, epa.status AS attempt_status, epa.score AS attempt_score FROM exam_papers ep LEFT JOIN exam_paper_attempts epa ON ep.id=epa.exam_paper_id AND epa.student_id=$1 WHERE ep.is_published=true`;
+    let q = `
+      SELECT ep.*, epa.id AS attempt_id, epa.status AS attempt_status, epa.score AS attempt_score 
+      FROM exam_papers ep 
+      LEFT JOIN exam_paper_attempts epa ON ep.id=epa.exam_paper_id AND epa.student_id=$1 
+      WHERE ep.is_published=true 
+        AND (
+          ep.uploaded_by IS NULL
+          OR (ep.assigned_students IS NOT NULL AND jsonb_array_length(ep.assigned_students) > 0 AND ep.assigned_students ? $1)
+          OR (
+            (ep.assigned_students IS NULL OR jsonb_array_length(ep.assigned_students) = 0)
+            AND ep.uploaded_by IN (
+              SELECT tutor_id FROM bookings WHERE student_id = $1 AND status = 'Approved'
+            )
+          )
+        )
+    `;
     const params = [studentId]; let idx=2;
     if (grade) { q+=` AND ep.grade=$${idx++}`; params.push(parseInt(grade)); }
     if (subject) { q+=` AND ep.subject ILIKE $${idx++}`; params.push(`%${subject}%`); }
@@ -5143,107 +7598,91 @@ app.post('/api/exam-papers/:paperId/submit', verifyToken, async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/parent/overview
+// GET /api/parent/overview
 // Returns: stats, recent quiz attempts, available tutors, practice sessions
 app.get("/api/parent/overview", verifyToken, async (req, res) => {
   try {
-    // Total students in system
+    const parentId = req.user.userId;
+    // Total students of this parent
     const studentsRes = await pool.query(
-      `SELECT COUNT(*) as count FROM users WHERE role='student'`
+      `SELECT COUNT(*) as count FROM parent_children WHERE parent_id=$1`,
+      [parentId]
     );
-    // Total quiz attempts (submitted)
+    // Total quiz attempts
     const attemptsRes = await pool.query(
-      `SELECT COUNT(*) as count FROM quiz_attempts WHERE status='submitted'`
+      `SELECT COUNT(*) as count FROM quiz_attempts WHERE status='submitted' AND student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)`,
+      [parentId]
     );
-    // Total practice sessions (submitted)
+    // Total practice sessions
     const practiceRes = await pool.query(
-      `SELECT COUNT(*) as count FROM practice_sessions WHERE status='submitted'`
+      `SELECT COUNT(*) as count FROM practice_sessions WHERE status='submitted' AND student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)`,
+      [parentId]
     );
-    // Approved tutors
+    // Approved tutors teaching these kids
     const tutorsRes = await pool.query(
-      `SELECT COUNT(*) as count FROM tutor_profiles WHERE status='approved'`
+      `SELECT COUNT(DISTINCT tutor_id) as count FROM bookings WHERE student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)`,
+      [parentId]
     );
 
-    // Recent quiz attempts with student & quiz info
+    // Recent quiz attempts
     const recentAttemptsRes = await pool.query(`
-      SELECT
-        qa.id,
-        qa.score,
-        qa.status,
-        qa.submitted_at,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        q.title      AS quiz_title,
-        q.subject    AS quiz_subject,
-        q.total_questions
+      SELECT qa.id, qa.score, qa.status, qa.submitted_at, u.full_name AS student_name, u.picture AS student_picture, q.title AS quiz_title, q.subject AS quiz_subject, q.total_questions
       FROM quiz_attempts qa
       JOIN users u ON qa.student_id = u.id
       JOIN quizzes q ON qa.quiz_id = q.id
-      WHERE qa.status = 'submitted'
-      ORDER BY qa.submitted_at DESC
-      LIMIT 10
-    `);
+      WHERE qa.status = 'submitted' AND qa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY qa.submitted_at DESC LIMIT 10
+    `, [parentId]);
 
-    // Recent practice sessions
+    // Recent practice
     const recentPracticeRes = await pool.query(`
-      SELECT
-        ps.id,
-        ps.topic,
-        ps.difficulty,
-        ps.score,
-        ps.total_questions,
-        ps.total_correct,
-        ps.status,
-        ps.submitted_at,
-        u.full_name AS student_name,
-        u.picture   AS student_picture
+      SELECT ps.id, ps.topic, ps.difficulty, ps.score, ps.total_questions, ps.total_correct, ps.status, ps.submitted_at, u.full_name AS student_name, u.picture AS student_picture
       FROM practice_sessions ps
       JOIN users u ON ps.student_id = u.id
-      WHERE ps.status = 'submitted'
-      ORDER BY ps.submitted_at DESC
-      LIMIT 10
-    `);
+      WHERE ps.status = 'submitted' AND ps.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY ps.submitted_at DESC LIMIT 10
+    `, [parentId]);
 
-    // Available tutors list
-    const availableTutorsRes = await pool.query(`
-      SELECT
-        u.id,
-        u.full_name,
-        u.picture,
-        u.email,
-        tp.subjects,
-        tp.hourly_rate,
-        tp.headline,
-        tp.bio,
-        tp.experience_years,
-        tp.location
-      FROM tutor_profiles tp
-      JOIN users u ON tp.user_id = u.id
-      WHERE tp.status = 'approved'
-      ORDER BY tp.created_at DESC
-      LIMIT 20
-    `);
+    // Tutors list: First try "My Tutors", then "Suggested"
+    let myTutorsRes = await pool.query(`
+      SELECT DISTINCT u.id, u.full_name, u.picture, u.email, tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, 'my_tutor' as tutor_type
+      FROM bookings b
+      JOIN users u ON b.tutor_id = u.id
+      JOIN tutor_profiles tp ON tp.user_id = u.id
+      WHERE b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1) AND tp.status='approved'
+      LIMIT 10
+    `, [parentId]);
+
+    if (myTutorsRes.rows.length === 0) {
+      myTutorsRes = await pool.query(`
+        SELECT u.id, u.full_name, u.picture, u.email, tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, 'suggested' as tutor_type
+        FROM tutor_profiles tp
+        JOIN users u ON tp.user_id = u.id
+        WHERE tp.status = 'approved'
+        ORDER BY tp.created_at DESC
+        LIMIT 10
+      `);
+    }
 
     // Exam paper attempts
     const examAttemptsRes = await pool.query(`
-      SELECT
-        epa.id,
-        epa.score,
-        epa.status,
-        epa.submitted_at,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        ep.title     AS exam_title,
-        ep.subject   AS exam_subject,
-        ep.grade,
-        ep.year,
-        ep.total_questions
+      SELECT epa.id, epa.score, epa.status, epa.submitted_at, u.full_name AS student_name, u.picture AS student_picture, ep.title AS exam_title, ep.subject AS exam_subject, ep.grade, ep.year, ep.total_questions
       FROM exam_paper_attempts epa
       JOIN users u ON epa.student_id = u.id
       JOIN exam_papers ep ON epa.exam_paper_id = ep.id
-      WHERE epa.status = 'submitted'
-      ORDER BY epa.submitted_at DESC
-      LIMIT 10
-    `);
+      WHERE epa.status = 'submitted' AND epa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY epa.submitted_at DESC LIMIT 10
+    `, [parentId]);
+
+    // Upcoming classes (tutor_sessions where status=scheduled/ongoing)
+    const upcomingClassesRes = await pool.query(`
+      SELECT ts.id, ts.scheduled_at, ts.duration_mins, ts.subject, ts.status, u.full_name AS tutor_name, stu.full_name AS student_name
+      FROM tutor_sessions ts
+      JOIN users u ON ts.tutor_id = u.id
+      JOIN users stu ON ts.student_id = stu.id
+      WHERE ts.status IN ('scheduled', 'ongoing') AND ts.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY ts.scheduled_at ASC LIMIT 5
+    `, [parentId]);
 
     return res.json({
       stats: {
@@ -5254,8 +7693,9 @@ app.get("/api/parent/overview", verifyToken, async (req, res) => {
       },
       recent_quiz_attempts: recentAttemptsRes.rows,
       recent_practice_sessions: recentPracticeRes.rows,
-      available_tutors: availableTutorsRes.rows,
+      available_tutors: myTutorsRes.rows,
       recent_exam_attempts: examAttemptsRes.rows,
+      upcoming_classes: upcomingClassesRes.rows,
     });
   } catch (error) {
     console.error("Parent overview error:", error);
@@ -5267,22 +7707,20 @@ app.get("/api/parent/overview", verifyToken, async (req, res) => {
 // Returns list of all students with their quiz/practice stats
 app.get("/api/parent/students", verifyToken, async (req, res) => {
   try {
+    const parentId = req.user.userId;
     const studentsRes = await pool.query(`
       SELECT
-        u.id,
-        u.full_name,
-        u.email,
-        u.picture,
-        u.created_at,
+        u.id, u.full_name, u.email, u.picture, u.created_at,
         (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS quiz_attempts_count,
         (SELECT COUNT(*) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS practice_count,
         (SELECT ROUND(AVG(qa.score),1) FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted') AS avg_quiz_score,
         (SELECT ROUND(AVG(ps.score),1) FROM practice_sessions ps WHERE ps.student_id=u.id AND ps.status='submitted') AS avg_practice_score,
         (SELECT qa.submitted_at FROM quiz_attempts qa WHERE qa.student_id=u.id AND qa.status='submitted' ORDER BY qa.submitted_at DESC LIMIT 1) AS last_activity
       FROM users u
-      WHERE u.role = 'student'
+      JOIN parent_children pc ON pc.student_id = u.id
+      WHERE u.role = 'student' AND pc.parent_id = $1
       ORDER BY last_activity DESC NULLS LAST
-    `);
+    `, [parentId]);
     return res.json({ students: studentsRes.rows });
   } catch (error) {
     console.error("Parent students error:", error);
@@ -5294,26 +7732,17 @@ app.get("/api/parent/students", verifyToken, async (req, res) => {
 // Returns all approved tutors with detailed profile
 app.get("/api/parent/tutors", verifyToken, async (req, res) => {
   try {
+    const parentId = req.user.userId;
     const res2 = await pool.query(`
-      SELECT
-        u.id,
-        u.full_name,
-        u.email,
-        u.picture,
-        tp.subjects,
-        tp.hourly_rate,
-        tp.headline,
-        tp.bio,
-        tp.experience_years,
-        tp.location,
-        tp.teaching_style,
-        tp.status,
-        tp.created_at
+      SELECT DISTINCT
+        u.id, u.full_name, u.email, u.picture,
+        tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, tp.teaching_style, tp.status, tp.created_at
       FROM tutor_profiles tp
       JOIN users u ON tp.user_id = u.id
-      WHERE tp.status = 'approved'
+      JOIN bookings b ON b.tutor_id = u.id
+      WHERE tp.status = 'approved' AND b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
       ORDER BY tp.created_at DESC
-    `);
+    `, [parentId]);
     return res.json({ tutors: res2.rows });
   } catch (error) {
     console.error("Parent tutors error:", error);
@@ -5325,69 +7754,34 @@ app.get("/api/parent/tutors", verifyToken, async (req, res) => {
 // Returns all quiz + practice + exam activity across all students
 app.get("/api/parent/activity", verifyToken, async (req, res) => {
   try {
+    const parentId = req.user.userId;
     const quizRes = await pool.query(`
-      SELECT
-        'quiz' AS type,
-        qa.id,
-        qa.score,
-        qa.submitted_at AS timestamp,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        q.title      AS title,
-        q.subject    AS subject,
-        q.total_questions
+      SELECT 'quiz' AS type, qa.id, qa.score, qa.submitted_at AS timestamp, u.full_name AS student_name, u.picture AS student_picture, q.title AS title, q.subject AS subject, q.total_questions
       FROM quiz_attempts qa
       JOIN users u ON qa.student_id=u.id
       JOIN quizzes q ON qa.quiz_id=q.id
-      WHERE qa.status='submitted'
-      ORDER BY qa.submitted_at DESC
-      LIMIT 50
-    `);
+      WHERE qa.status='submitted' AND qa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY qa.submitted_at DESC LIMIT 50
+    `, [parentId]);
 
     const practiceRes = await pool.query(`
-      SELECT
-        'practice' AS type,
-        ps.id,
-        ps.score,
-        ps.submitted_at AS timestamp,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        ps.topic     AS title,
-        ps.difficulty AS subject,
-        ps.total_questions
+      SELECT 'practice' AS type, ps.id, ps.score, ps.submitted_at AS timestamp, u.full_name AS student_name, u.picture AS student_picture, ps.topic AS title, ps.difficulty AS subject, ps.total_questions
       FROM practice_sessions ps
       JOIN users u ON ps.student_id=u.id
-      WHERE ps.status='submitted'
-      ORDER BY ps.submitted_at DESC
-      LIMIT 50
-    `);
+      WHERE ps.status='submitted' AND ps.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY ps.submitted_at DESC LIMIT 50
+    `, [parentId]);
 
     const examRes = await pool.query(`
-      SELECT
-        'exam' AS type,
-        epa.id,
-        epa.score,
-        epa.submitted_at AS timestamp,
-        u.full_name  AS student_name,
-        u.picture    AS student_picture,
-        ep.title     AS title,
-        ep.subject   AS subject,
-        ep.total_questions
+      SELECT 'exam' AS type, epa.id, epa.score, epa.submitted_at AS timestamp, u.full_name AS student_name, u.picture AS student_picture, ep.title AS title, ep.subject AS subject, ep.total_questions
       FROM exam_paper_attempts epa
       JOIN users u ON epa.student_id=u.id
       JOIN exam_papers ep ON epa.exam_paper_id=ep.id
-      WHERE epa.status='submitted'
-      ORDER BY epa.submitted_at DESC
-      LIMIT 50
-    `);
+      WHERE epa.status='submitted' AND epa.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+      ORDER BY epa.submitted_at DESC LIMIT 50
+    `, [parentId]);
 
-    // Merge and sort by timestamp
-    const all = [
-      ...quizRes.rows,
-      ...practiceRes.rows,
-      ...examRes.rows,
-    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
+    const all = [...quizRes.rows, ...practiceRes.rows, ...examRes.rows].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     return res.json({ activities: all.slice(0, 50) });
   } catch (error) {
     console.error("Parent activity error:", error);
@@ -5416,7 +7810,10 @@ app.get('/api/student/link-code', verifyToken, async (req, res) => {
     do { code=generateLinkCode(); tries++; } while (tries<10 && (await pool.query('SELECT id FROM student_link_codes WHERE code=$1',[code])).rows.length>0);
     const r = await pool.query('INSERT INTO student_link_codes (student_id,code) VALUES ($1,$2) RETURNING code,created_at', [studentId,code]);
     return res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+  } catch (e) { 
+    console.error('Error in link-code:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' }); 
+  }
 });
 
 // Student: view parents monitoring them
@@ -5473,11 +7870,11 @@ app.post('/api/parent/create-child', verifyToken, async (req, res) => {
     const parentId = req.user.userId;
     const { full_name, email, password, nickname } = req.body;
     if (!full_name?.trim()||!email?.trim()||!password) return res.status(400).json({ message: 'Vui lòng điền đầy đủ thông tin.' });
-    if (password.length<6) return res.status(400).json({ message: 'Mật khẩu phải ít nhất 6 ký tự.' });
+    if (password.length < 8) return res.status(400).json({ message: 'Mật khẩu phải có ít nhất 8 ký tự.' });
     const exists = await pool.query('SELECT id FROM users WHERE email=$1', [email.trim().toLowerCase()]);
     if (exists.rows.length) return res.status(409).json({ message: 'Email đã tồn tại. Dùng mã liên kết nếu đây là con bạn.' });
     const bcrypt = require('bcryptjs');
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, 12);
     const student = await pool.query(`INSERT INTO users (full_name,email,password_hash,role) VALUES ($1,$2,$3,'student') RETURNING id,full_name,email,role`, [full_name.trim(),email.trim().toLowerCase(),hash]);
     const s = student.rows[0];
     await pool.query('INSERT INTO parent_children (parent_id,student_id,nickname) VALUES ($1,$2,$3)', [parentId,s.id,nickname?.trim()||null]);
@@ -5785,35 +8182,53 @@ const chatUpload = multer({
   } catch (e) { console.error('chat_messages table error:', e.message); }
 })();
 
+// GET /api/messages/unread-count — Đếm tổng số tin nhắn chưa đọc
+app.get('/api/messages/unread-count', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await pool.query(
+      `SELECT count(*) AS n FROM chat_messages WHERE receiver_id = $1 AND is_read = false`,
+      [userId]
+    );
+    return res.json({ count: parseInt(result.rows[0].n, 10) || 0 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
 // GET /api/chat/conversations — danh sách hội thoại
 app.get('/api/chat/conversations', verifyToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const result = await pool.query(`
-      SELECT DISTINCT ON (other_id)
-        other_id, other_name, other_email, other_picture, other_role,
-        last_message, last_msg_type, last_message_at, unread_count
-      FROM (
-        SELECT
-          CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END AS other_id,
-          CASE WHEN m.sender_id=$1 THEN ru.full_name  ELSE su.full_name  END AS other_name,
-          CASE WHEN m.sender_id=$1 THEN ru.email      ELSE su.email      END AS other_email,
-          CASE WHEN m.sender_id=$1 THEN ru.picture    ELSE su.picture    END AS other_picture,
-          CASE WHEN m.sender_id=$1 THEN ru.role       ELSE su.role       END AS other_role,
-          COALESCE(m.content, m.file_name, '[File]')  AS last_message,
-          m.msg_type                                   AS last_msg_type,
-          m.created_at                                 AS last_message_at,
-          (SELECT COUNT(*) FROM chat_messages um
-           WHERE um.sender_id != $1 AND um.receiver_id=$1 AND um.is_read=false
-             AND um.sender_id = CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END
-          ) AS unread_count
-        FROM chat_messages m
-        JOIN users su ON su.id=m.sender_id
-        JOIN users ru ON ru.id=m.receiver_id
-        WHERE m.sender_id=$1 OR m.receiver_id=$1
-        ORDER BY m.created_at DESC
-      ) sub
-      ORDER BY other_id, last_message_at DESC
+      SELECT * FROM (
+        SELECT DISTINCT ON (other_id)
+          other_id, other_name, other_email, other_picture, other_role,
+          last_message, last_msg_type, last_message_at, unread_count
+        FROM (
+          SELECT
+            CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END AS other_id,
+            CASE WHEN m.sender_id=$1 THEN ru.full_name  ELSE su.full_name  END AS other_name,
+            CASE WHEN m.sender_id=$1 THEN ru.email      ELSE su.email      END AS other_email,
+            CASE WHEN m.sender_id=$1 THEN ru.picture    ELSE su.picture    END AS other_picture,
+            CASE WHEN m.sender_id=$1 THEN ru.role       ELSE su.role       END AS other_role,
+            COALESCE(m.content, m.file_name, '[File]')  AS last_message,
+            m.msg_type                                   AS last_msg_type,
+            m.created_at                                 AS last_message_at,
+            (SELECT COUNT(*) FROM chat_messages um
+             WHERE um.sender_id != $1 AND um.receiver_id=$1 AND um.is_read=false
+               AND um.sender_id = CASE WHEN m.sender_id=$1 THEN m.receiver_id ELSE m.sender_id END
+            ) AS unread_count
+          FROM chat_messages m
+          JOIN users su ON su.id=m.sender_id
+          JOIN users ru ON ru.id=m.receiver_id
+          WHERE m.sender_id=$1 OR m.receiver_id=$1
+          ORDER BY m.created_at DESC
+        ) sub
+        ORDER BY other_id, last_message_at DESC
+      ) final_sub
+      ORDER BY last_message_at DESC
     `, [userId]);
     return res.json({ conversations: result.rows });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -6059,6 +8474,22 @@ app.get('/api/chat/:otherId', verifyToken, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
+// PUT /api/chat/:otherId/read — đánh dấu đã đọc một hội thoại cụ thể
+app.put('/api/chat/:otherId/read', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { otherId } = req.params;
+    await pool.query(
+      `UPDATE chat_messages SET is_read=true WHERE sender_id=$1 AND receiver_id=$2 AND is_read=false`,
+      [otherId, userId]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
 // POST /api/chat — gửi tin nhắn text
 app.post('/api/chat', verifyToken, async (req, res) => {
   try {
@@ -6090,15 +8521,8 @@ app.post('/api/chat', verifyToken, async (req, res) => {
       [senderId, receiver_id, content.trim()]
     );
 
-    // Thêm thông báo cho người nhận (Batch 20.1: safeNotifyUser, IN_APP only)
-    await safeNotifyUser(pool, {
-      userId: receiver_id, type: 'new_message', channels: ['IN_APP'],
-      templateKey: 'chat_new_message', eventType: 'chat_new_message',
-      title: `Tin nhắn mới từ ${req.user.name || 'một người dùng'}`,
-      body: content.trim(), icon: 'chat', refId: senderId, refType: 'chat',
-      sourceType: 'chat_message', sourceId: msg.rows[0].id, priority: 'low',
-      idempotencyKey: `chat_message:${msg.rows[0].id}:${receiver_id}`,
-    });
+    // Đã bỏ safeNotifyUser cho tin nhắn ở đây để tách riêng Notification và Messages.
+    // Frontend tự bắt event INSERT trên bảng chat_messages qua Supabase để hiện popup.
 
     return res.status(201).json({ message: msg.rows[0] });
   } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -6134,6 +8558,7 @@ app.post('/api/chat/upload', verifyToken, (req, res, next) => {
     else if (mimetype.startsWith('video/')) msgType = 'video';
 
     // Upload lên Supabase Storage
+    if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
     const { data: uploadData, error: uploadError } = await supabaseAdmin
       .storage.from(BUCKET)
       .upload(storagePath, buffer, { contentType: mimetype, upsert: false });
@@ -6276,13 +8701,13 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { title, subject, grade, duration_minutes, description, questions } = req.body;
+    const { title, subject, grade, duration_minutes, description, questions, assigned_students } = req.body;
     
     // Create exam_paper
     const insertPaperRes = await client.query(
-      `INSERT INTO exam_papers (title, subject, grade, duration_minutes, description, uploaded_by, total_questions)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [title, subject, grade, duration_minutes, description, req.user.userId, questions.length]
+      `INSERT INTO exam_papers (title, subject, grade, duration_minutes, description, uploaded_by, total_questions, assigned_students)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING *`,
+      [title, subject, grade, duration_minutes, description, req.user.userId, questions.length, JSON.stringify(assigned_students || [])]
     );
     const paper = insertPaperRes.rows[0];
 
@@ -6316,6 +8741,98 @@ app.post('/api/tutor/assessments', verifyToken, requireTutor, async (req, res) =
     res.status(500).json({ message: 'Server error' });
   } finally {
     client.release();
+  }
+});
+
+// ── Homework Table Init ──
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_homeworks (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title             VARCHAR(255) NOT NULL,
+        course            VARCHAR(255),
+        deadline          TIMESTAMP,
+        max_score         INTEGER DEFAULT 100,
+        allow_late        BOOLEAN DEFAULT false,
+        status            VARCHAR(50) DEFAULT 'Draft',
+        file_url          TEXT,
+        file_type         VARCHAR(100),
+        tutor_id          UUID REFERENCES users(id),
+        assigned_students JSONB DEFAULT '[]'::jsonb,
+        submission_count  INTEGER DEFAULT 0,
+        created_at        TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_homework_submissions (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        homework_id   UUID REFERENCES tutor_homeworks(id) ON DELETE CASCADE,
+        student_id    UUID REFERENCES users(id),
+        file_url      TEXT NOT NULL,
+        status        VARCHAR(50) DEFAULT 'Submitted',
+        score         INTEGER,
+        feedback      TEXT,
+        submitted_at  TIMESTAMP DEFAULT NOW(),
+        UNIQUE(homework_id, student_id)
+      )
+    `);
+    console.log('[DB] tutor_homeworks and tutor_homework_submissions tables ready');
+  } catch (err) {
+    console.error('Error creating tutor_homeworks:', err);
+  }
+})();
+
+// GET /api/tutor/assessments/homework
+app.get('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM tutor_homeworks WHERE tutor_id=$1 ORDER BY created_at DESC`,
+      [req.user.userId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST /api/tutor/assessments/homework
+app.post('/api/tutor/assessments/homework', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { title, course, deadline, max_score, allow_late, status, file_url, file_type, assigned_students } = req.body;
+    const result = await pool.query(
+      `INSERT INTO tutor_homeworks (title, course, deadline, max_score, allow_late, status, file_url, file_type, tutor_id, assigned_students)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb) RETURNING *`,
+      [title, course, deadline || null, max_score || 100, allow_late || false, status || 'Draft', file_url, file_type, req.user.userId, JSON.stringify(assigned_students || [])]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    console.error('POST homework error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PATCH /api/tutor/assessments/homework/:id/status
+app.patch('/api/tutor/assessments/homework/:id/status', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { status } = req.body;
+    await pool.query(`UPDATE tutor_homeworks SET status=$1 WHERE id=$2 AND tutor_id=$3`, [status, req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH homework status error:', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE /api/tutor/assessments/homework/:id
+app.delete('/api/tutor/assessments/homework/:id', verifyToken, requireTutor, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM tutor_homeworks WHERE id=$1 AND tutor_id=$2`, [req.params.id, req.user.userId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE homework error:', e);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -6486,35 +9003,6 @@ app.get("/api/courses", async (req, res) => {
 });
 
 // ── GET /api/courses/:id ── Chi tiết 1 khóa học (public) ─────────────────────
-app.get("/api/courses/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const courseRes = await pool.query(
-      `SELECT c.*, u.full_name AS tutor_name, u.picture AS tutor_picture, u.email AS tutor_email
-       FROM courses c
-       JOIN users u ON c.tutor_id = u.id
-       WHERE c.id = $1`, [id]
-    );
-    if (courseRes.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy khóa học." });
-    const course = courseRes.rows[0];
-
-    // Lấy danh sách bài học
-    let lessons = [];
-    try {
-      const lessonsRes = await pool.query(
-        `SELECT id, title, description, video_url, duration_label, is_preview, position
-         FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`, [id]
-      );
-      lessons = lessonsRes.rows;
-    } catch (_) { /* bảng chưa tồn tại thì bỏ qua */ }
-
-    return res.json({ ...course, lessons });
-  } catch (err) {
-    console.error("GET /api/courses/:id error:", err);
-    return res.status(500).json({ message: "Lỗi máy chủ." });
-  }
-});
-
 // ── POST /api/coupons/validate ── Kiểm tra mã giảm giá ──────────────────────
 app.post("/api/coupons/validate", async (req, res) => {
   try {
@@ -6616,11 +9104,11 @@ app.get('/api/student/my-courses', verifyToken, async (req, res) => {
         c.price,
         c.thumbnail_url,
         c.tutor_id,
-        u.full_name    AS tutor_name,
+        COALESCE(u.full_name, c.instructor_name) AS tutor_name,
         u.picture      AS tutor_avatar,
         COALESCE(
           ROUND(
-            100.0 * COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true)
+            (COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true))::numeric * 100.0
             / NULLIF(COUNT(DISTINCT cl.id), 0)
           )::int, 0
         ) AS progress_percent,
@@ -6628,14 +9116,14 @@ app.get('/api/student/my-courses', verifyToken, async (req, res) => {
         COUNT(DISTINCT cp.id) FILTER (WHERE cp.is_completed = true)::int AS completed_lessons,
         EXISTS (
           SELECT 1 FROM disputes d
-          WHERE d.course_id = c.id AND d.raised_by = $1 AND d.status = 'OPEN'
+          WHERE d.course_id = c.id AND d.raised_by = $1 AND d.status = 'OPEN' AND d.withdrawn_at IS NULL
         ) AS has_open_dispute
       FROM course_enrollments ce
       JOIN courses c ON c.id = ce.course_id
       LEFT JOIN users u ON u.id = c.tutor_id
       LEFT JOIN course_lessons cl ON cl.course_id = c.id
       LEFT JOIN course_progress cp ON cp.enrollment_id = ce.id AND cp.lesson_id = cl.id
-      WHERE ce.student_id = $1
+      WHERE ce.student_id = $1 AND ce.status = 'active'
       GROUP BY ce.id, c.id, u.full_name, u.picture
       ORDER BY ce.created_at DESC
     `, [userId]);
@@ -6683,7 +9171,7 @@ app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
        JOIN courses c ON c.id = ce.course_id
        LEFT JOIN users u  ON u.id  = c.tutor_id
        LEFT JOIN users su ON su.id = ce.student_id
-       WHERE ce.course_id = $1 AND ce.student_id = $2 LIMIT 1`, [courseId, req.user.userId]);
+       WHERE ce.course_id = $1 AND ce.student_id = $2 AND ce.status = 'active' LIMIT 1`, [courseId, req.user.userId]);
     if (en.rowCount === 0) return res.status(403).json({ eligible: false, message: "Bạn chưa đăng ký khóa học này." });
     const row = en.rows[0];
 
@@ -6723,6 +9211,58 @@ app.get("/api/student/certificate/:courseId", verifyToken, async (req, res) => {
 });
 
 // ══ Thanh toán giỏ hàng bằng VÍ (trừ số dư + đăng ký nhiều khóa) ══════════
+// ═══════════════════════════════════════════════════════════════════════════
+// WALLET LEDGER (Batch 17) — set transaction-local context so the wallets
+// trigger records meaningful reason codes. MUST be called on the same `client`
+// inside an active transaction (set_config is_local=true => auto-cleared on
+// COMMIT/ROLLBACK, never leaks across requests). Safe to call multiple times.
+// ═══════════════════════════════════════════════════════════════════════════
+async function setLedgerContext(client, context) {
+  await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
+// commission_logs is append-only; wallet_ledger remains the low-level audit.
+// ═══════════════════════════════════════════════════════════════════════════
+// calculateCommissionSplit + hằng số hoa hồng → utils/businessRules.js
+
+// Idempotent commission log insert. Returns new row id or null on duplicate.
+// Must be called inside caller's transaction so rollback covers the log too.
+async function createCommissionLog(client, log) {
+  try {
+    const r = await client.query(
+      `INSERT INTO commission_logs
+         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
+          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
+          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING id`,
+      [
+        log.source_type, log.source_id,
+        log.booking_id   || null,
+        log.course_id    || null,
+        log.dispute_id   || null,
+        log.transaction_id || null,
+        log.student_id   || null,
+        log.tutor_id     || null,
+        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
+        log.commission_amount, log.tutor_amount,
+        log.event_type, log.reason_code,
+        log.policy_version || COMMISSION_POLICY_VERSION,
+        log.decision_by || 'system',
+        log.actor_id    || null,
+        log.idempotency_key || null,
+        JSON.stringify(log.metadata || {}),
+      ]
+    );
+    return r.rows.length ? r.rows[0].id : null;
+  } catch (e) {
+    throw e;
+  }
+}
+
 app.post("/api/cart/checkout", verifyToken, async (req, res) => {
   const studentId = req.user.userId;
   const { items, couponCode, source } = req.body || {};
@@ -6809,7 +9349,7 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
         });
         // Notify student (Batch 20)
         await safeNotifyUser(client, {
-          userId: studentId, channels: ['IN_APP'],
+          userId: studentId, channels: ['IN_APP', 'EMAIL'],
           templateKey: 'course_purchased', eventType: 'course_purchased',
           data: { courseName: c.title }, refId: c.id, refType: 'course',
           sourceType: 'course', sourceId: c.id,
@@ -6843,10 +9383,11 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
 app.get("/api/courses/:id/enrollment-status", verifyToken, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, status, created_at FROM course_enrollments WHERE course_id = $1 AND student_id = $2`,
+      `SELECT id, status, created_at FROM course_enrollments WHERE course_id = $1 AND student_id = $2 ORDER BY updated_at DESC LIMIT 1`,
       [req.params.id, req.user.userId]
     );
-    if (r.rowCount > 0) return res.json({ enrolled: true, enrollment: r.rows[0] });
+    if (r.rowCount > 0 && r.rows[0].status === 'active') return res.json({ enrolled: true, enrollment: r.rows[0] });
+    if (r.rowCount > 0 && r.rows[0].status === 'refunded') return res.json({ enrolled: false, refunded: true });
     return res.json({ enrolled: false });
   } catch (err) {
     console.error("GET enrollment-status error:", err);
@@ -6987,7 +9528,7 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
 
     // Gửi thông báo (Batch 20.1: safeNotifyUser, same client, rollback-safe)
     await safeNotifyUser(client, {
-      userId: course.tutor_id, type: 'course_enrollment', channels: ['IN_APP'],
+      userId: course.tutor_id, type: 'course_enrollment', channels: ['IN_APP', 'EMAIL'],
       templateKey: 'course_enrollment_ping', eventType: 'course_enrollment_ping',
       title: 'Học sinh mới đăng ký khóa học',
       body: `${studentName} vừa mua khóa học "${course.title}"`,
@@ -7018,6 +9559,45 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
     return res.status(500).json({ message: "Lỗi server khi đăng ký." });
   } finally {
     client.release();
+  }
+});
+
+// ── PATCH /api/courses/:courseId/lessons/:lessonId/progress ── Cập nhật tiến độ ──
+app.patch("/api/courses/:courseId/lessons/:lessonId/progress", verifyToken, async (req, res) => {
+  try {
+    const { courseId, lessonId } = req.params;
+    const { isCompleted, watchedSeconds } = req.body;
+    const studentId = req.user?.userId || req.user?.id; // Lấy từ req.user do verifyToken cung cấp
+
+    // Lấy enrollment_id
+    const enrollRes = await pool.query(
+      `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+      [courseId, studentId]
+    );
+
+    if (enrollRes.rows.length === 0) {
+      return res.status(403).json({ message: "Bạn chưa đăng ký khóa học này." });
+    }
+
+    const enrollmentId = enrollRes.rows[0].id;
+
+    // Upsert course_progress
+    await pool.query(
+      `INSERT INTO course_progress (enrollment_id, lesson_id, is_completed, watched_seconds, completed_at, updated_at)
+       VALUES ($1, $2, $3, $4, CASE WHEN $3 = true THEN NOW() ELSE NULL END, NOW())
+       ON CONFLICT (enrollment_id, lesson_id) 
+       DO UPDATE SET 
+         is_completed = EXCLUDED.is_completed,
+         watched_seconds = EXCLUDED.watched_seconds,
+         completed_at = CASE WHEN EXCLUDED.is_completed = true AND course_progress.is_completed = false THEN NOW() ELSE course_progress.completed_at END,
+         updated_at = NOW()`,
+      [enrollmentId, lessonId, isCompleted || false, watchedSeconds || 0]
+    );
+
+    return res.json({ success: true, message: "Cập nhật tiến độ thành công." });
+  } catch (err) {
+    console.error("PATCH /progress error:", err);
+    return res.status(500).json({ message: "Lỗi server khi cập nhật tiến độ." });
   }
 });
 
@@ -7055,7 +9635,8 @@ app.get("/api/tutors", async (req, res) => {
   const level    = (req.query.level  || "").trim();   // 'Cấp 1' | 'Cấp 2' | 'Cấp 3' | 'Đại học'
   if (!isNaN(minPrice)) { conditions.push(`tp.hourly_rate >= $${idx}`); values.push(minPrice); idx++; }
   if (!isNaN(maxPrice)) { conditions.push(`tp.hourly_rate <= $${idx}`); values.push(maxPrice); idx++; }
-  if (method)           { conditions.push(`$${idx} = ANY(tp.teaching_methods)`); values.push(method); idx++; }
+  // ILIKE ANY để khớp không phân biệt hoa/thường ('online' khớp cả 'Online')
+  if (method)           { conditions.push(`$${idx} ILIKE ANY(tp.teaching_methods)`); values.push(method); idx++; }
   if (level) {
     // suitable_students là jsonb (hiện đa số rỗng) → khớp nếu chứa level HOẶC chưa khai báo (cho qua)
     conditions.push(`(tp.suitable_students @> $${idx}::jsonb OR COALESCE(jsonb_array_length(tp.suitable_students), 0) = 0)`);
@@ -7085,6 +9666,7 @@ app.get("/api/tutors", async (req, res) => {
          u.id, u.full_name, u.picture,
          tp.bio, tp.subjects, tp.experience_years,
          tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
+         tp.teaching_methods,
          COALESCE(tp.avg_rating, 0)  AS avg_r,
          COALESCE(tp.review_count, 0) AS review_count
        FROM tutor_profiles tp
@@ -7244,6 +9826,8 @@ app.get("/api/tutors/:id", async (req, res) => {
          tp.education, tp.language, tp.teaching_style, tp.qualifications,
          tp.first_name, tp.last_name, tp.display_name, tp.phone,
          tp.headline, tp.teaching_methods, tp.suitable_students, tp.availability,
+         tp.availability_status, tp.instant_price,
+         COALESCE(tp.instant_duration_mins, 30) AS instant_duration_mins,
          COALESCE(tp.total_students, 0) AS total_students, tp.completed_lessons_count,
          COALESCE(
            (SELECT ROUND(AVG(r.rating)::numeric, 1) FROM reviews r WHERE r.tutor_id = tp.id),
@@ -7309,7 +9893,10 @@ app.get("/api/tutors/:id", async (req, res) => {
         created_at: r.created_at
       })),
       total_students: parseInt(tutorInfo.total_students) || 0,
-      completed_lessons_count: parseInt(tutorInfo.completed_lessons_count) || 0
+      completed_lessons_count: parseInt(tutorInfo.completed_lessons_count) || 0,
+      availability_status: tutorInfo.availability_status || 'Offline',
+      instant_price: tutorInfo.instant_price ? parseFloat(tutorInfo.instant_price) : null,
+      instant_duration_mins: parseInt(tutorInfo.instant_duration_mins) || 30
     };
 
     return res.json(responseData);
@@ -7321,6 +9908,252 @@ app.get("/api/tutors/:id", async (req, res) => {
 
 // (Deleted duplicated GET /api/courses TV3)
 
+// ── GET /api/courses/:id — Chi tiết khóa học ──────────────────────────────
+app.get("/api/courses/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const courseRes = await pool.query(
+      `SELECT c.*, 
+              u.id as tutor_id, COALESCE(u.full_name, c.instructor_name) as tutor_name, u.picture as tutor_picture,
+              tp.headline as tutor_headline
+       FROM courses c
+       LEFT JOIN users u ON c.tutor_id = u.id
+       LEFT JOIN tutor_profiles tp ON u.id = tp.user_id
+       WHERE c.id = $1`,
+      [id]
+    );
+
+    if (courseRes.rows.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    }
+
+    const courseData = courseRes.rows[0];
+
+    const lessonsRes = await pool.query(
+      `SELECT * FROM course_lessons WHERE course_id = $1 ORDER BY position ASC, created_at ASC`,
+      [id]
+    );
+
+    let isEnrolled = false;
+    let userId = null;
+    let userRole = null;
+    let enrollmentId = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, jwtSecret);
+        userId = decoded.userId || decoded.id;
+        userRole = decoded.role;
+        if (userId) {
+          const enrollRes = await pool.query(
+            `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+            [id, userId]
+          );
+          isEnrolled = enrollRes.rows.length > 0;
+          enrollmentId = enrollRes.rows[0]?.id || null;
+        }
+      } catch (err) {
+        // Bỏ qua lỗi token (để xem dưới quyền khách)
+      }
+    }
+
+    // Lấy tiến độ học tập nếu đã mua
+    let progressMap = {};
+    if (enrollmentId) {
+       const progressRes = await pool.query(
+         `SELECT lesson_id, is_completed, watched_seconds FROM course_progress WHERE enrollment_id = $1`,
+         [enrollmentId]
+       );
+       progressRes.rows.forEach(p => {
+         progressMap[p.lesson_id] = {
+           isCompleted: p.is_completed,
+           watchedSeconds: p.watched_seconds
+         };
+       });
+    }
+
+    const isCourseTutor = userId === courseData.tutor_id;
+    const isAdmin = userRole === 'admin';
+
+    // Tiến độ từng bài học của chính học sinh này (nếu đã đăng ký)
+    let completedLessonIds = new Set();
+    if (enrollmentId) {
+      const progressRes = await pool.query(
+        `SELECT lesson_id FROM course_progress WHERE enrollment_id = $1 AND is_completed = true`,
+        [enrollmentId]
+      );
+      completedLessonIds = new Set(progressRes.rows.map(p => p.lesson_id));
+    }
+
+    const response = {
+      ...courseData,
+      thumbnailPreviewUrl: courseData.thumbnail_url,
+      thumbnailUrl: courseData.thumbnail_url,
+      tutor: {
+        id: courseData.tutor_id,
+        name: courseData.tutor_name,
+        picture: courseData.tutor_picture,
+        headline: courseData.tutor_headline
+      },
+      tutorName: courseData.tutor_name,
+      lessons: lessonsRes.rows.map(lesson => {
+        const isPreview = lesson.is_preview;
+        const isLocked = !isEnrolled && !isCourseTutor && !isAdmin && !isPreview;
+        const prog = progressMap[lesson.id] || {};
+        return {
+          id: lesson.id,
+          title: lesson.title,
+          description: lesson.description,
+          position: lesson.position,
+          duration_label: lesson.duration_label,
+          durationLabel: lesson.duration_label,
+          is_preview: isPreview,
+          isPreview: isPreview,
+          isLocked: isLocked,
+          video_url: isLocked ? null : lesson.video_url,
+          isCompleted: prog.isCompleted || false,
+          watchedSeconds: prog.watchedSeconds || 0,
+          videoUrl: isLocked ? null : lesson.video_url,
+          materialUrl: isLocked ? null : lesson.material_url,
+          isCompleted: completedLessonIds.has(lesson.id),
+          createdAt: lesson.created_at,
+          updatedAt: lesson.updated_at
+        };
+      }),
+      learningOutcomes: courseData.learning_outcomes || [],
+      requirements: courseData.requirements || [],
+      isEnrolled,
+      isCourseTutor,
+      enrollmentId
+    };
+
+    return res.json(response);
+  } catch (err) {
+    console.error("GET /api/courses/:id error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// PATCH /api/courses/:id/lessons/:lessonId/progress — học sinh đánh dấu (bỏ) hoàn thành 1 bài học
+app.patch("/api/courses/:id/lessons/:lessonId/progress", verifyToken, async (req, res) => {
+  try {
+    const { id: courseId, lessonId } = req.params;
+    const { watchedSeconds, isCompleted } = req.body;
+    const studentId = req.user.userId;
+
+    const enrollRes = await pool.query(
+      `SELECT id FROM course_enrollments WHERE course_id = $1 AND student_id = $2 AND status = 'active'`,
+      [courseId, studentId]
+    );
+    if (!enrollRes.rows.length) {
+      return res.status(403).json({ message: "Bạn chưa đăng ký khóa học này." });
+    }
+    const enrollmentId = enrollRes.rows[0].id;
+
+    const lessonRes = await pool.query(`SELECT id FROM course_lessons WHERE id = $1 AND course_id = $2`, [lessonId, courseId]);
+    if (!lessonRes.rows.length) {
+      return res.status(404).json({ message: "Không tìm thấy bài học." });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO course_progress (enrollment_id, lesson_id, watched_seconds, is_completed, completed_at)
+       VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
+       ON CONFLICT (enrollment_id, lesson_id) DO UPDATE SET
+         watched_seconds = GREATEST(course_progress.watched_seconds, EXCLUDED.watched_seconds),
+         is_completed = EXCLUDED.is_completed,
+         completed_at = EXCLUDED.completed_at,
+         updated_at = NOW()
+       RETURNING *`,
+      [enrollmentId, lessonId, Math.max(0, Number(watchedSeconds) || 0), !!isCompleted]
+    );
+
+    return res.json({ success: true, progress: result.rows[0] });
+  } catch (err) {
+    console.error("PATCH /api/courses/:id/lessons/:lessonId/progress error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ── POST /api/ai-suggest (TV3) ────────────────────────────────────────────────
+// Body { prompt } → query gia sư approved → AI chọn gia sư phù hợp.
+// Trả { success, aiUsed, reply, tutors:[...] }. AI lỗi → fallback lọc thủ công.
+app.post("/api/ai-suggest", async (req, res) => {
+  const prompt = (req.body?.prompt ?? req.body?.userMessage ?? "").toString().trim();
+  if (!prompt) return res.status(400).json({ success: false, message: "Thiếu prompt." });
+  try {
+    const tutorsRes = await pool.query(
+      `SELECT u.id, u.full_name, u.picture,
+              tp.bio, tp.subjects, tp.experience_years, tp.hourly_rate,
+              tp.profile_photo_url, tp.city, tp.country, tp.teaching_methods,
+              COALESCE(tp.avg_rating, 0)  AS avg_r,
+              COALESCE(tp.review_count, 0) AS review_count
+       FROM tutor_profiles tp
+       JOIN users u ON u.id = tp.user_id
+       WHERE tp.status = 'approved'
+       ORDER BY tp.avg_rating DESC NULLS LAST, tp.experience_years DESC NULLS LAST`
+    );
+    const all = tutorsRes.rows;
+    if (all.length === 0) {
+      return res.json({ success: true, aiUsed: false, reply: "Hiện chưa có gia sư nào được duyệt. Vui lòng quay lại sau.", tutors: [] });
+    }
+
+    const byId = new Map(all.map(t => [String(t.id), t]));
+    const ai = await suggestTutors(prompt, all);
+    if (ai) {
+      const chosen = ai.tutorIds.map(id => byId.get(String(id))).filter(Boolean).slice(0, 3);
+      return res.json({ success: true, aiUsed: true, reply: ai.reply, tutors: chosen });
+    }
+
+    // Fallback (khi chưa cấu hình AI key): xử lý theo từ khóa NHƯNG tự nhiên như chatbot
+    const t = prompt.toLowerCase().trim();
+    const greetRe  = /^(hi|hello|hey+|chào|xin chào|alo+|hế ?lô|helo|yo)\b|bạn là ai|bạn tên|khoẻ không|khỏe không|cảm ơn|cám ơn|thanks|thank you/i;
+    const searchRe = /(gia sư|giáo viên|tìm|dạy|học|môn|lớp|cấp|toán|lý|vật lý|hoá|hóa|văn|ngữ văn|anh|tiếng|ielts|toeic|sinh|sử|địa|tin|lập trình|python|java|online|offline|ôn thi|luyện thi|gia sư)/i;
+
+    // 1) Chào hỏi / trò chuyện → trả lời thân thiện, KHÔNG đổ danh sách gia sư
+    if (greetRe.test(t) && !searchRe.test(t)) {
+      return res.json({
+        success: true, aiUsed: false,
+        reply: "Xin chào! 👋 Mình là trợ lý EduX. Bạn cần tìm gia sư môn gì, cấp lớp nào, học online hay offline? Mô tả giúp mình nhé!",
+        tutors: [],
+      });
+    }
+    // 2) Không rõ nhu cầu tìm gia sư → hỏi lại, KHÔNG đổ danh sách
+    if (!searchRe.test(t)) {
+      return res.json({
+        success: true, aiUsed: false,
+        reply: 'Bạn mô tả nhu cầu học giúp mình nhé — ví dụ: "Gia sư Toán lớp 10 dạy online" — mình sẽ gợi ý gia sư phù hợp.',
+        tutors: [],
+      });
+    }
+
+    // 3) Có nhu cầu tìm gia sư → lọc theo từ khóa
+    const method = t.includes("online") ? "online" : t.includes("offline") ? "offline" : null;
+    const matchSubject = (x) => (x.subjects || "").toLowerCase().split(/[,;]/)
+      .some(s => s.trim() && t.includes(s.trim().toLowerCase()));
+    const okMethod = (x) => !method || (Array.isArray(x.teaching_methods) && x.teaching_methods.includes(method));
+    const pool2 = all.filter(okMethod);
+    const subjHits = pool2.filter(matchSubject);
+    const result = (subjHits.length ? subjHits : pool2).slice(0, 3);
+
+    if (result.length === 0) {
+      return res.json({
+        success: true, aiUsed: false,
+        reply: "Mình chưa tìm thấy gia sư khớp tiêu chí. Bạn thử nới điều kiện (giá, hình thức, môn học) xem nhé.",
+        tutors: [],
+      });
+    }
+    return res.json({
+      success: true, aiUsed: false,
+      reply: "Dưới đây là một số gia sư phù hợp với nhu cầu của bạn:",
+      tutors: result,
+    });
+  } catch (e) {
+    console.error("POST /api/ai-suggest error:", e.message);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 // ── Reviews theo gia sư / khóa học (TV3) — dùng bảng `reviews` (review_type) ──
@@ -7371,10 +10204,12 @@ app.post("/api/entity-reviews", verifyToken, async (req, res) => {
       const p = await pool.query(`SELECT id FROM tutor_profiles WHERE user_id = $1`, [target_id]);
       if (p.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy gia sư." });
       tutorProfileId = p.rows[0].id;
-      // Điều kiện (TV3): đã HOÀN THÀNH ≥1 buổi học (booking 'Approved' đã qua ngày học)
+      // Điều kiện: đã THỰC SỰ HỌC ≥1 buổi với gia sư này (điểm danh present), không chỉ đặt lịch
+      // được duyệt + qua ngày — booking có thể "Approved" nhưng gia sư no-show/học sinh vắng.
       const bk = await pool.query(
-        `SELECT 1 FROM bookings
-          WHERE student_id = $1 AND tutor_id = $2 AND status = 'Approved' AND lesson_date <= CURRENT_DATE
+        `SELECT 1 FROM bookings b
+           JOIN attendance a ON a.booking_id = b.id
+          WHERE b.student_id = $1 AND b.tutor_id = $2 AND a.status = 'present'
           LIMIT 1`,
         [req.user.userId, target_id]
       );
@@ -7541,13 +10376,597 @@ async function logLoginAttempt(userId, ip, userAgent) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  COURSE COMPLAINTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+const complaintUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = ['image/jpeg', 'image/png', 'application/pdf'].includes(file.mimetype);
+    if (!ok) return cb(new Error('Chỉ hỗ trợ jpg, png, pdf (tối đa 5MB)'));
+    cb(null, true);
+  }
+});
+
+// DB setup
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS course_complaints (
+        id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+        complaint_number  BIGSERIAL   UNIQUE NOT NULL,
+        course_id         UUID        NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        student_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        enrollment_id     UUID        NOT NULL REFERENCES course_enrollments(id) ON DELETE CASCADE,
+        title             TEXT        NOT NULL CHECK (char_length(title) BETWEEN 5 AND 200),
+        category          TEXT        NOT NULL CHECK (category IN ('tutor_behavior','content_quality','technical','payment','other')),
+        reason            TEXT        NOT NULL CHECK (char_length(reason) BETWEEN 2 AND 300),
+        description       TEXT        CHECK (description IS NULL OR char_length(description) <= 2000),
+        status            TEXT        NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','waiting_student','waiting_tutor','resolved','rejected','closed')),
+        admin_response    TEXT,
+        admin_id          UUID        REFERENCES users(id) ON DELETE SET NULL,
+        resolved_at       TIMESTAMPTZ,
+        created_at        TIMESTAMPTZ DEFAULT NOW(),
+        updated_at        TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cc_student  ON course_complaints(student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cc_course   ON course_complaints(course_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cc_status   ON course_complaints(status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cc_created  ON course_complaints(created_at DESC)`);
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS resolution_type TEXT CHECK (resolution_type IN ('accepted','rejected','partial')), ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(12,0)`);
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'uq_one_active_complaint') THEN
+          CREATE UNIQUE INDEX uq_one_active_complaint
+          ON course_complaints(student_id, course_id)
+          WHERE status IN ('pending','processing','waiting_student','waiting_tutor');
+        END IF;
+      END $$
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS course_complaint_messages (
+        id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+        complaint_id  UUID        NOT NULL REFERENCES course_complaints(id) ON DELETE CASCADE,
+        sender_id     UUID        REFERENCES users(id) ON DELETE SET NULL,
+        sender_role   TEXT        NOT NULL CHECK (sender_role IN ('student','admin','system')),
+        message       TEXT        NOT NULL CHECK (char_length(message) BETWEEN 1 AND 5000),
+        message_type  TEXT        NOT NULL DEFAULT 'message' CHECK (message_type IN ('message','status_change')),
+        metadata      JSONB       DEFAULT '{}',
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ccm_complaint ON course_complaint_messages(complaint_id, created_at)`);
+    await pool.query(`DO $$ BEGIN ALTER TABLE course_complaint_messages DROP CONSTRAINT IF EXISTS course_complaint_messages_message_type_check; ALTER TABLE course_complaint_messages ADD CONSTRAINT course_complaint_messages_message_type_check CHECK (message_type IN ('message','status_change','resolution')); EXCEPTION WHEN OTHERS THEN NULL; END $$`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS course_complaint_attachments (
+        id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+        complaint_id  UUID        NOT NULL REFERENCES course_complaints(id) ON DELETE CASCADE,
+        file_url      TEXT        NOT NULL,
+        file_name     TEXT        NOT NULL,
+        file_type     TEXT        NOT NULL,
+        file_size     INT         NOT NULL CHECK (file_size > 0 AND file_size <= 5242880),
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_cca_complaint ON course_complaint_attachments(complaint_id)`);
+    console.log('✅ Course complaints tables ready');
+  } catch (e) {
+    console.error('❌ Course complaints table setup error:', e.message);
+  }
+})();
+
+// Migration v2: add refund fields + extend category constraint
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS refund_type TEXT CHECK (refund_type IS NULL OR refund_type IN ('full','partial'))`);
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS refund_amount BIGINT CHECK (refund_amount IS NULL OR refund_amount > 0)`);
+    await pool.query(`
+      DO $$
+      BEGIN
+        ALTER TABLE course_complaints DROP CONSTRAINT IF EXISTS course_complaints_category_check;
+        ALTER TABLE course_complaints ADD CONSTRAINT course_complaints_category_check
+          CHECK (category IN ('tutor_behavior','content_quality','technical','payment','other','refund_request'));
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $$
+    `);
+    console.log('✅ Course complaints migration v2 done');
+  } catch (e) {
+    console.error('❌ Course complaints migration v2 error:', e.message);
+  }
+})();
+
+// Migration v3: add resolution_request + refund_reason fields
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS resolution_request TEXT CHECK (resolution_request IS NULL OR resolution_request IN ('report_only','admin_contact','course_swap','refund'))`);
+    await pool.query(`ALTER TABLE course_complaints ADD COLUMN IF NOT EXISTS refund_reason TEXT`);
+    console.log('✅ Course complaints migration v3 done');
+  } catch (e) {
+    console.error('❌ Course complaints migration v3 error:', e.message);
+  }
+})();
+
+// Migration v4: expand resolution_request CHECK to include new resolution types
+(async () => {
+  try {
+    await pool.query(`DO $$ BEGIN ALTER TABLE course_complaints DROP CONSTRAINT IF EXISTS course_complaints_resolution_request_check; ALTER TABLE course_complaints ADD CONSTRAINT course_complaints_resolution_request_check CHECK (resolution_request IS NULL OR resolution_request IN ('report_only','admin_contact','course_swap','refund','REFUND','CHANGE_COURSE','CHANGE_TUTOR','OTHER')); EXCEPTION WHEN OTHERS THEN NULL; END $$`);
+    console.log('✅ Course complaints migration v4 done');
+  } catch (e) {
+    console.error('❌ Course complaints migration v4 error:', e.message);
+  }
+})();
+
+// POST /api/complaints/upload
+app.post('/api/complaints/upload', verifyToken, (req, res, next) => {
+  complaintUpload.single('file')(req, res, err => {
+    if (err) return res.status(400).json({ message: err.message });
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'Không có file được gửi.' });
+    if (!supabaseAdmin) return res.status(503).json({ message: 'Supabase Storage chưa được cấu hình.' });
+    const { originalname, mimetype, size, buffer } = req.file;
+    const ext = originalname.includes('.') ? '.' + originalname.split('.').pop() : '';
+    const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+    const storagePath = `complaints/${req.user.userId}/${safeName}`;
+    const { error } = await supabaseAdmin.storage.from(BUCKET).upload(storagePath, buffer, { contentType: mimetype, upsert: false });
+    if (error) return res.status(500).json({ message: 'Lỗi upload: ' + error.message });
+    const { data: urlData } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(storagePath);
+    return res.json({ file_url: urlData.publicUrl, file_name: originalname, file_type: mimetype, file_size: size });
+  } catch (e) {
+    console.error('Complaint upload error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/complaints
+app.post('/api/complaints', verifyToken, async (req, res) => {
+  const { course_id, title, category, reason, description, attachments = [], resolution_request, refund_reason } = req.body;
+  const studentId = req.user.userId;
+  if (!course_id || !title || !category || !reason) {
+    return res.status(400).json({ message: 'Thiếu thông tin bắt buộc.' });
+  }
+  if (resolution_request && !['report_only','admin_contact','course_swap','refund','REFUND','CHANGE_COURSE','CHANGE_TUTOR','OTHER'].includes(resolution_request)) {
+    return res.status(400).json({ message: 'Loại yêu cầu không hợp lệ.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const enroll = await client.query(
+      `SELECT id FROM course_enrollments WHERE course_id=$1 AND student_id=$2 AND status='active' LIMIT 1`,
+      [course_id, studentId]
+    );
+    if (!enroll.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Bạn chưa đăng ký hoặc khóa học chưa kích hoạt.' });
+    }
+    let complaint;
+    try {
+      complaint = await client.query(
+        `INSERT INTO course_complaints (course_id, student_id, enrollment_id, title, category, reason, description, resolution_request, refund_reason)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [course_id, studentId, enroll.rows[0].id, title.trim(), category, reason.trim(), description?.trim() || null, resolution_request || null, refund_reason?.trim() || null]
+      );
+    } catch (e) {
+      if (e.code === '23505') {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: 'Bạn đã có khiếu nại đang xử lý cho khóa học này. Vui lòng chờ khiếu nại hiện tại được giải quyết.' });
+      }
+      throw e;
+    }
+    const comp = complaint.rows[0];
+    if (attachments.length > 0) {
+      for (const att of attachments) {
+        await client.query(
+          `INSERT INTO course_complaint_attachments (complaint_id, file_url, file_name, file_type, file_size) VALUES ($1,$2,$3,$4,$5)`,
+          [comp.id, att.file_url, att.file_name, att.file_type, att.file_size]
+        );
+      }
+    }
+    if (description?.trim()) {
+      await client.query(
+        `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type)
+         VALUES ($1,$2,'student',$3,'message')`,
+        [comp.id, studentId, description.trim()]
+      );
+    }
+    const admins = await client.query(`SELECT id FROM users WHERE role='admin' LIMIT 5`);
+    for (const admin of admins.rows) {
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1,'new_complaint',$2,$3,'report_problem',$4,'complaint')`,
+        [admin.id, 'Khiếu nại mới từ học viên', `${title.trim()}`, comp.id]
+      );
+    }
+    await client.query('COMMIT');
+    const responseBody = {
+      id: comp.id,
+      complaint_number: comp.complaint_number,
+      ticket_number: String(comp.complaint_number).padStart(6, '0'),
+      status: comp.status,
+      created_at: comp.created_at
+    };
+    return res.status(201).json(responseBody);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('[POST /complaints] 500 error:', e.message, e.code);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/complaints/active?course_id=
+app.get('/api/complaints/active', verifyToken, async (req, res) => {
+  const { course_id } = req.query;
+  if (!course_id) return res.status(400).json({ message: 'course_id là bắt buộc.' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT cc.*, LPAD(cc.complaint_number::text, 6, '0') AS ticket_number, c.title AS course_title
+       FROM course_complaints cc
+       JOIN courses c ON cc.course_id = c.id
+       WHERE cc.student_id=$1 AND cc.course_id=$2
+         AND cc.status IN ('pending','processing','waiting_student','waiting_tutor')
+       ORDER BY cc.created_at DESC LIMIT 1`,
+      [req.user.userId, course_id]
+    );
+    if (!rows.length) return res.json({ active: null });
+    const messages = await pool.query(
+      `SELECT m.*, u.full_name AS sender_name
+       FROM course_complaint_messages m
+       LEFT JOIN users u ON m.sender_id = u.id
+       WHERE m.complaint_id=$1 ORDER BY m.created_at ASC`,
+      [rows[0].id]
+    );
+    const attachments = await pool.query(
+      `SELECT * FROM course_complaint_attachments WHERE complaint_id=$1 ORDER BY created_at ASC`,
+      [rows[0].id]
+    );
+    return res.json({ active: { ...rows[0], messages: messages.rows, attachments: attachments.rows } });
+  } catch (e) {
+    console.error('Get active complaint error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/complaints
+app.get('/api/complaints', verifyToken, async (req, res) => {
+  const studentId = req.user.userId;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(20, parseInt(req.query.limit) || 10);
+  const offset = (page - 1) * limit;
+  try {
+    const { rows } = await pool.query(
+      `SELECT cc.id, cc.complaint_number, LPAD(cc.complaint_number::text,6,'0') AS ticket_number,
+              cc.title, cc.category, cc.status, cc.admin_response, cc.resolution_request, cc.refund_reason,
+              cc.created_at, cc.updated_at,
+              c.title AS course_title,
+              u.full_name AS admin_name
+       FROM course_complaints cc
+       JOIN courses c ON cc.course_id = c.id
+       LEFT JOIN users u ON cc.admin_id = u.id
+       WHERE cc.student_id=$1
+       ORDER BY cc.created_at DESC LIMIT $2 OFFSET $3`,
+      [studentId, limit, offset]
+    );
+    const total = parseInt((await pool.query(`SELECT COUNT(*) FROM course_complaints WHERE student_id=$1`, [studentId])).rows[0].count);
+    return res.json({ complaints: rows, total, page, limit });
+  } catch (e) {
+    console.error('List complaints error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/complaints/:id
+app.get('/api/complaints/:id', verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cc.*, LPAD(cc.complaint_number::text,6,'0') AS ticket_number, c.title AS course_title
+       FROM course_complaints cc
+       JOIN courses c ON cc.course_id = c.id
+       WHERE cc.id=$1 AND cc.student_id=$2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const messages = await pool.query(
+      `SELECT m.*, u.full_name AS sender_name
+       FROM course_complaint_messages m
+       LEFT JOIN users u ON m.sender_id = u.id
+       WHERE m.complaint_id=$1 ORDER BY m.created_at ASC`,
+      [req.params.id]
+    );
+    const attachments = await pool.query(
+      `SELECT * FROM course_complaint_attachments WHERE complaint_id=$1 ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+    return res.json({ ...rows[0], messages: messages.rows, attachments: attachments.rows });
+  } catch (e) {
+    console.error('Get complaint detail error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/complaints/:id/messages
+app.post('/api/complaints/:id/messages', verifyToken, async (req, res) => {
+  const { message } = req.body;
+  if (!message?.trim()) return res.status(400).json({ message: 'Nội dung không được trống.' });
+  try {
+    const comp = await pool.query(
+      `SELECT * FROM course_complaints WHERE id=$1 AND student_id=$2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!comp.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    if (!['processing', 'waiting_student'].includes(comp.rows[0].status)) {
+      return res.status(400).json({ message: 'Không thể gửi tin nhắn ở trạng thái này.' });
+    }
+    const msg = await pool.query(
+      `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type)
+       VALUES ($1,$2,'student',$3,'message') RETURNING *`,
+      [req.params.id, req.user.userId, message.trim()]
+    );
+    await pool.query(
+      `UPDATE course_complaints SET status='processing', updated_at=NOW() WHERE id=$1`,
+      [req.params.id]
+    );
+    const admins = await pool.query(`SELECT id FROM users WHERE role='admin' LIMIT 5`);
+    for (const admin of admins.rows) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1,'complaint_message','Học viên phản hồi khiếu nại',$2,'chat',$3,'complaint')`,
+        [admin.id, message.trim().slice(0, 100), req.params.id]
+      );
+    }
+    return res.status(201).json({ message: msg.rows[0] });
+  } catch (e) {
+    console.error('Post complaint message error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// DELETE /api/complaints/:id — student huỷ khiếu nại (chỉ khi pending)
+app.delete('/api/complaints/:id', verifyToken, async (req, res) => {
+  try {
+    const comp = await pool.query(
+      `SELECT id, status, student_id FROM course_complaints WHERE id=$1`,
+      [req.params.id]
+    );
+    if (!comp.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const c = comp.rows[0];
+    if (c.student_id !== req.user.userId) return res.status(403).json({ message: 'Không có quyền xoá khiếu nại này.' });
+    if (c.status !== 'pending') return res.status(409).json({ message: 'Chỉ có thể xoá khiếu nại khi đang chờ xử lý.' });
+    await pool.query(`DELETE FROM course_complaints WHERE id=$1`, [req.params.id]);
+    return res.json({ message: 'Đã xoá khiếu nại.' });
+  } catch (e) {
+    console.error('[DELETE /complaints/:id]', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// PUT /api/complaints/:id — student chỉnh sửa khiếu nại (chỉ khi pending)
+app.put('/api/complaints/:id', verifyToken, async (req, res) => {
+  try {
+    const comp = await pool.query(
+      `SELECT id, status, student_id FROM course_complaints WHERE id=$1`,
+      [req.params.id]
+    );
+    if (!comp.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const c = comp.rows[0];
+    if (c.student_id !== req.user.userId) return res.status(403).json({ message: 'Không có quyền chỉnh sửa khiếu nại này.' });
+    if (c.status !== 'pending') return res.status(409).json({ message: 'Chỉ có thể chỉnh sửa khi đang chờ xử lý.' });
+    const { title, category, reason, description, resolution_request } = req.body;
+    if (!title?.trim() || title.trim().length < 5) return res.status(400).json({ message: 'Tiêu đề phải có ít nhất 5 ký tự.' });
+    if (!category) return res.status(400).json({ message: 'Vui lòng chọn danh mục.' });
+    if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng nhập lý do.' });
+    const updated = await pool.query(
+      `UPDATE course_complaints
+       SET title=$1, category=$2, reason=$3, description=$4, resolution_request=$5, updated_at=NOW()
+       WHERE id=$6 RETURNING *`,
+      [title.trim(), category, reason.trim(), description?.trim() || null, resolution_request || null, req.params.id]
+    );
+    return res.json(updated.rows[0]);
+  } catch (e) {
+    console.error('[PUT /complaints/:id]', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/admin/course-complaints
+app.get('/api/admin/course-complaints', verifyToken, requireAdmin, async (req, res) => {
+  const { status, search, page = 1, limit = 20 } = req.query;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const conditions = [];
+  const params = [];
+  if (status && status !== 'all') {
+    params.push(status);
+    conditions.push(`cc.status = $${params.length}`);
+  }
+  if (search) {
+    params.push(`%${search}%`);
+    const idx = params.length;
+    conditions.push(`(u.full_name ILIKE $${idx} OR c.title ILIKE $${idx} OR cc.title ILIKE $${idx})`);
+  }
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  try {
+    const total = parseInt((await pool.query(
+      `SELECT COUNT(*) FROM course_complaints cc JOIN users u ON cc.student_id=u.id JOIN courses c ON cc.course_id=c.id ${where}`,
+      params
+    )).rows[0].count);
+    const { rows } = await pool.query(
+      `SELECT cc.id, LPAD(cc.complaint_number::text,6,'0') AS ticket_number,
+              cc.title, cc.category, cc.status, cc.resolution_request, cc.created_at, cc.updated_at,
+              u.full_name AS student_name, u.email AS student_email,
+              c.title AS course_title
+       FROM course_complaints cc
+       JOIN users u ON cc.student_id=u.id
+       JOIN courses c ON cc.course_id=c.id
+       ${where}
+       ORDER BY cc.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, parseInt(limit), offset]
+    );
+    const statsRes = await pool.query(`SELECT status, COUNT(*) AS cnt FROM course_complaints GROUP BY status`);
+    const stats = {};
+    statsRes.rows.forEach(r => { stats[r.status] = parseInt(r.cnt); });
+    return res.json({ complaints: rows, total, page: parseInt(page), limit: parseInt(limit), stats });
+  } catch (e) {
+    console.error('Admin list complaints error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/admin/course-complaints/:id
+app.get('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cc.*, LPAD(cc.complaint_number::text,6,'0') AS ticket_number,
+              u.full_name AS student_name, u.email AS student_email, u.picture AS student_picture,
+              c.title AS course_title, c.price AS course_price, c.subject AS course_subject,
+              tu.full_name AS tutor_name
+       FROM course_complaints cc
+       JOIN users u ON cc.student_id=u.id
+       JOIN courses c ON cc.course_id=c.id
+       LEFT JOIN users tu ON tu.id=c.tutor_id
+       WHERE cc.id=$1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy.' });
+    const messages = await pool.query(
+      `SELECT m.*, u.full_name AS sender_name
+       FROM course_complaint_messages m
+       LEFT JOIN users u ON m.sender_id=u.id
+       WHERE m.complaint_id=$1 ORDER BY m.created_at ASC`,
+      [req.params.id]
+    );
+    const attachments = await pool.query(
+      `SELECT * FROM course_complaint_attachments WHERE complaint_id=$1 ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+    return res.json({ ...rows[0], messages: messages.rows, attachments: attachments.rows });
+  } catch (e) {
+    console.error('Admin get complaint detail error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// PUT /api/admin/course-complaints/:id
+app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (req, res) => {
+  const { status, message, admin_response, resolution_type, refund_amount, resolution_details } = req.body;
+  const validStatuses = ['pending','processing','waiting_student','waiting_tutor','resolved','rejected','closed'];
+  if (status && !validStatuses.includes(status)) {
+    return res.status(400).json({ message: 'Trạng thái không hợp lệ.' });
+  }
+  if (resolution_type && !['accepted','rejected','partial'].includes(resolution_type)) {
+    return res.status(400).json({ message: 'Kết quả không hợp lệ.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query(`SELECT * FROM course_complaints WHERE id=$1 FOR UPDATE`, [req.params.id]);
+    if (!existing.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy.' }); }
+    const comp = existing.rows[0];
+    if (['resolved', 'rejected', 'closed'].includes(comp.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Complaint has already been processed.' });
+    }
+    if (refund_amount && parseInt(refund_amount) > 0) {
+      const courseRes = await client.query(`SELECT price FROM courses WHERE id=$1`, [comp.course_id]);
+      const coursePrice = courseRes.rows.length ? Number(courseRes.rows[0].price) || 0 : 0;
+      if (parseInt(refund_amount) > coursePrice) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: 'Số tiền hoàn không được vượt quá giá khóa học.' });
+      }
+    }
+    const oldStatus = comp.status;
+    const newStatus = status || (resolution_type === 'accepted' ? 'resolved' : resolution_type === 'rejected' ? 'rejected' : resolution_type === 'partial' ? 'resolved' : oldStatus);
+    const isTerminal = ['resolved','rejected','closed'].includes(newStatus);
+    const updated = await client.query(
+      `UPDATE course_complaints
+       SET status=$1, admin_id=$2,
+           admin_response=COALESCE($3, admin_response),
+           resolution_type=COALESCE($6, resolution_type),
+           refund_amount=COALESCE($7, refund_amount),
+           resolved_at=CASE WHEN $4 AND resolved_at IS NULL THEN NOW() ELSE resolved_at END,
+           updated_at=NOW()
+       WHERE id=$5 RETURNING *`,
+      [newStatus, req.user.userId, admin_response || null, isTerminal, req.params.id, resolution_type || null, refund_amount ? parseInt(refund_amount) : null]
+    );
+    if (newStatus !== oldStatus) {
+      await client.query(
+        `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type, metadata)
+         VALUES ($1,$2,'admin','Trạng thái khiếu nại đã được cập nhật','status_change',$3)`,
+        [req.params.id, req.user.userId, JSON.stringify({ from: oldStatus, to: newStatus })]
+      );
+    }
+    if (resolution_type && message?.trim()) {
+      await client.query(
+        `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type, metadata)
+         VALUES ($1,$2,'admin',$3,'resolution',$4)`,
+        [req.params.id, req.user.userId, message.trim(), JSON.stringify({ resolution_type, refund_amount: refund_amount ? parseInt(refund_amount) : null, resolution_details: resolution_details || null })]
+      );
+    } else if (message?.trim()) {
+      await client.query(
+        `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type)
+         VALUES ($1,$2,'admin',$3,'message')`,
+        [req.params.id, req.user.userId, message.trim()]
+      );
+    }
+    if (['accepted', 'partial'].includes(resolution_type) && refund_amount && parseInt(refund_amount) > 0) {
+      const amt = parseInt(refund_amount);
+      const walletRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [comp.student_id]);
+      if (!walletRes.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(500).json({ message: 'Student wallet not found.' });
+      }
+      const wId = walletRes.rows[0].id;
+      await client.query('UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE id = $2', [amt, wId]);
+      await client.query(
+        `INSERT INTO transactions (wallet_id, amount, type, status, description) VALUES ($1, $2, 'REFUND', 'SUCCESS', $3)`,
+        [wId, amt, `Hoàn tiền khiếu nại #${comp.complaint_number || req.params.id}`]
+      );
+      // Refund settled: revoke course access so it drops out of "Khóa học của tôi"
+      if (comp.enrollment_id) {
+        await client.query(`UPDATE course_enrollments SET status='refunded', updated_at=NOW() WHERE id=$1`, [comp.enrollment_id]);
+      }
+    }
+    const statusLabels = {
+      resolved: 'Khiếu nại của bạn đã được giải quyết',
+      rejected: 'Khiếu nại của bạn đã bị từ chối',
+      closed: 'Khiếu nại của bạn đã được đóng',
+      processing: 'Khiếu nại của bạn đang được xử lý',
+      waiting_student: 'Vui lòng cung cấp thêm thông tin cho khiếu nại',
+    };
+    const resolutionLabels = { accepted: 'Khiếu nại của bạn đã được chấp nhận', rejected: 'Khiếu nại của bạn đã bị từ chối', partial: 'Khiếu nại của bạn được chấp nhận một phần' };
+    const notifTitle = resolutionLabels[resolution_type] || statusLabels[newStatus] || 'Cập nhật khiếu nại của bạn';
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1,'complaint_update',$2,$3,'support_agent',$4,'complaint')`,
+      [comp.student_id, notifTitle, message?.trim() || notifTitle, req.params.id]
+    );
+    await client.query('COMMIT');
+    return res.json({ complaint: updated.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('Admin update complaint error:', e);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
 async function startServer() {
   // Auto-migrate: add is_banned column if it doesn't exist yet
   try {
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE
     `);
-    console.log("✅ DB migration: users.is_banned ready");
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email_opt_out BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    console.log("✅ DB migration: users.is_banned + email_opt_out ready");
   } catch (err) {
     console.error("❌  DB migration warning:", err.message);
   }
@@ -7627,6 +11046,36 @@ async function startServer() {
     console.log("✅ DB migration: teaching_methods & suitable_students columns ready");
   } catch (err) {
     console.error("⚠️  DB migration (teaching_methods) warning:", err.message);
+  }
+
+  // Auto-migrate: hình thức học + thông tin buổi học trên bookings (online/offline, link meet, địa điểm...)
+  try {
+    await pool.query(`
+      ALTER TABLE bookings
+        ADD COLUMN IF NOT EXISTS teaching_method         TEXT,
+        ADD COLUMN IF NOT EXISTS meeting_link            TEXT,
+        ADD COLUMN IF NOT EXISTS meeting_password        TEXT,
+        ADD COLUMN IF NOT EXISTS location                TEXT,
+        ADD COLUMN IF NOT EXISTS location_note           TEXT,
+        ADD COLUMN IF NOT EXISTS session_topic           TEXT,
+        ADD COLUMN IF NOT EXISTS session_duration        INTEGER,
+        ADD COLUMN IF NOT EXISTS session_materials       TEXT,
+        ADD COLUMN IF NOT EXISTS session_homework        TEXT,
+        ADD COLUMN IF NOT EXISTS method_change_requested TEXT,
+        ADD COLUMN IF NOT EXISTS method_change_reason    TEXT,
+        ADD COLUMN IF NOT EXISTS method_change_status    TEXT,
+        ADD COLUMN IF NOT EXISTS reminded_24h_at         TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS reminded_1h_at          TIMESTAMPTZ
+    `);
+    await pool.query(`
+      ALTER TABLE tutor_profiles
+        ADD COLUMN IF NOT EXISTS location       TEXT,
+        ADD COLUMN IF NOT EXISTS teaching_style TEXT,
+        ADD COLUMN IF NOT EXISTS demo_video_url TEXT
+    `);
+    console.log("✅ DB migration: booking teaching_method + session info columns ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (booking teaching_method) warning:", err.message);
   }
 
   // Auto-migrate: cert_type, issuer, issue_year on tutor_certificates
@@ -7730,7 +11179,11 @@ async function startServer() {
     console.error("⚠️  DB migration (wishlists) warning:", err.message);
   }
 
+  let courseSchemaEnsured = false;
   async function ensureCourseSchema() {
+    if (courseSchemaEnsured) return;
+    courseSchemaEnsured = true;
+    try {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS courses (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -7892,12 +11345,15 @@ async function startServer() {
   } catch (error) {
     console.warn("[Courses] Could not create unique progress index. Existing duplicate progress rows may need cleanup.", error.message);
   }
+  } catch(e) {
+    courseSchemaEnsured = false;
+    throw e;
+  }
 }
 
 
-app.get("/api/tutor/courses", verifyToken, async (req, res) => {
+app.get("/api/tutor/courses", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
     await ensureCourseSchema();
     const courses = await pool.query(
       `SELECT c.*,
@@ -7988,7 +11444,7 @@ async function saveCourseLessons(client, courseId, lessons = []) {
 }
 
 async function upsertTutorCourse(req, res, courseId = null) {
-  if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
+  // Role is already checked by requireTutor in the route handler
   await ensureCourseSchema();
   const { title, description, subject, level, price, thumbnailUrl, status, lessons, learningOutcomes, requirements } = req.body || {};
   const cleanTitle = String(title || "").trim();
@@ -8038,7 +11494,7 @@ async function upsertTutorCourse(req, res, courseId = null) {
   }
 }
 
-app.post("/api/tutor/courses", verifyToken, async (req, res) => {
+app.post("/api/tutor/courses", verifyToken, requireTutor, async (req, res) => {
   try {
     return await upsertTutorCourse(req, res);
   } catch (error) {
@@ -8047,7 +11503,7 @@ app.post("/api/tutor/courses", verifyToken, async (req, res) => {
   }
 });
 
-app.patch("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+app.patch("/api/tutor/courses/:id", verifyToken, requireTutor, async (req, res) => {
   try {
     return await upsertTutorCourse(req, res, req.params.id);
   } catch (error) {
@@ -8056,9 +11512,8 @@ app.patch("/api/tutor/courses/:id", verifyToken, async (req, res) => {
   }
 });
 
-app.delete("/api/tutor/courses/:id", verifyToken, async (req, res) => {
+app.delete("/api/tutor/courses/:id", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") return res.status(403).json({ message: "Tutor access only." });
     await ensureCourseSchema();
     const result = await pool.query(
       "UPDATE courses SET status = 'archived', updated_at = NOW() WHERE id = $1 AND tutor_id = $2 RETURNING id",
@@ -8072,11 +11527,8 @@ app.delete("/api/tutor/courses/:id", verifyToken, async (req, res) => {
   }
 });
 
-app.get("/api/tutor/students", verifyToken, async (req, res) => {
+app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
 
     const tutorId = req.user.userId;
     const result = await pool.query(
@@ -8095,7 +11547,8 @@ app.get("/api/tutor/students", verifyToken, async (req, res) => {
          b.status AS "bookingStatus",
          a.status AS "attendanceStatus",
          a.note AS "attendanceNote",
-         a.marked_at AS "markedAt"
+         a.marked_at AS "markedAt",
+         b.tutor_check_in_at AS "tutorCheckInAt"
        FROM bookings b
        LEFT JOIN users s ON s.id = b.student_id
        LEFT JOIN attendance a ON a.booking_id = b.id
@@ -8129,6 +11582,9 @@ app.get("/api/tutor/students", verifyToken, async (req, res) => {
       const marked = approvedLessons.filter((lesson) => lesson.attendanceStatus);
       const absences = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'absent');
       const present = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'present');
+      const excused = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'excused');
+      const rateBase = marked.length - excused.length;
+      
       const upcoming = approvedLessons
         .filter((lesson) => new Date(`${lesson.date}T00:00:00`) >= new Date(new Date().toDateString()))
         .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.timeSlot).localeCompare(String(b.timeSlot)))[0] || null;
@@ -8141,7 +11597,8 @@ app.get("/api/tutor/students", verifyToken, async (req, res) => {
         markedLessons: marked.length,
         absentCount: absences.length,
         presentCount: present.length,
-        attendanceRate: marked.length ? Math.round((present.length / marked.length) * 100) : null,
+        excusedCount: excused.length,
+        attendanceRate: rateBase > 0 ? Math.round((present.length / rateBase) * 100) : null,
         nextLesson: upcoming,
       };
     });
@@ -8153,17 +11610,67 @@ app.get("/api/tutor/students", verifyToken, async (req, res) => {
   }
 });
 
+// POST /api/tutor/bookings/:id/checkin
+app.post("/api/tutor/bookings/:id/checkin", verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const bookingId = req.params.id;
+
+    // Verify booking belongs to tutor and is approved
+    const checkResult = await pool.query(
+      `SELECT id, lesson_date, time_slot FROM bookings WHERE id = $1 AND tutor_id = $2 AND status = 'Approved'`,
+      [bookingId, tutorId]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: "Lesson not found or not approved." });
+    }
+
+    // Check-in chỉ có giá trị làm bằng chứng có mặt khi được thực hiện QUANH giờ
+    // học (server-side — UI cũng giới hạn nhưng không tin client). Cửa sổ:
+    // từ 30 phút trước giờ bắt đầu đến 60 phút sau giờ kết thúc.
+    // Dữ liệu cũ không parse được giờ học thì bỏ qua guard (không chặn oan).
+    const b = checkResult.rows[0];
+    const winStart = lessonStartFrom(b.lesson_date, b.time_slot);
+    const winEnd = lessonEndFrom(b.lesson_date, b.time_slot);
+    if (winStart && Date.now() < winStart.getTime() - 30 * 60000) {
+      return res.status(400).json({ message: "Chưa đến giờ check-in. Bạn có thể check-in từ 30 phút trước giờ học." });
+    }
+    if (winEnd && Date.now() > winEnd.getTime() + 60 * 60000) {
+      return res.status(400).json({ message: "Đã quá thời gian check-in cho buổi học này (60 phút sau giờ kết thúc)." });
+    }
+
+    const updateResult = await pool.query(
+      `UPDATE bookings SET tutor_check_in_at = NOW() WHERE id = $1 AND tutor_check_in_at IS NULL RETURNING tutor_check_in_at`,
+      [bookingId]
+    );
+
+    if (updateResult.rows.length === 0) {
+      return res.status(400).json({ message: "Lesson already checked in or not found." });
+    }
+
+    return res.json({ message: "Checked in successfully.", tutorCheckInAt: updateResult.rows[0].tutor_check_in_at });
+  } catch (error) {
+    console.error("Tutor check-in error:", error);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+
 // GET /api/bookings — danh sách lịch học của user hiện tại
 app.get("/api/bookings", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT b.id, b.tutor_id, b.tutor_name, b.student_id, b.subject, b.lesson_date,
-              b.time_slot, b.note, b.child_name, b.status, b.created_at,
+              b.time_slot, b.note, b.child_name, b.status, b.created_at, b.package_id,
               b.lesson_fee, b.escrow_tx_id, b.escrow_released_at, b.auto_release_at,
+              b.teaching_method, b.meeting_link, b.meeting_password, b.location, b.location_note,
+              b.session_topic, b.session_duration, b.session_materials, b.session_homework,
+              b.method_change_requested, b.method_change_reason, b.method_change_status,
               u_tutor.picture AS tutor_picture,
               u_student.picture AS student_picture, u_student.full_name AS "studentName",
               a.status AS attendance_status,
-              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS has_open_dispute
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute
        FROM bookings b
        LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
        LEFT JOIN users u_student ON u_student.id = b.student_id
@@ -8192,8 +11699,15 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
     const tutorFilter = req.query.tutor || 'All Tutors';
 
     const result = await pool.query(
-      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date_str, b.time_slot, b.status
+      `SELECT b.id, b.tutor_id, b.tutor_name, b.subject, to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date_str, b.time_slot, b.status,
+              b.teaching_method, b.meeting_link, b.location, b.location_note,
+              b.session_topic, b.session_duration, b.duration_mins,
+              b.method_change_requested, b.method_change_status,
+              tp.teaching_methods AS tutor_teaching_methods,
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute,
+              (SELECT d.id FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL LIMIT 1) AS open_dispute_id
        FROM bookings b
+       LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
        WHERE b.student_id = $1`,
        [studentId]
     );
@@ -8221,29 +11735,31 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
       const timeParts = (row.time_slot || '').split('-').map(t => t.trim());
       
       let startMatch = timeParts[0] ? timeParts[0].match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/) : null;
+      // time_slot chỉ lưu 1 mốc giờ bắt đầu (vd "10:00 AM"), không phải khoảng "start-end" —
+      // chỉ có timeParts[1] khi dữ liệu cũ dùng đúng định dạng "HH:MM-HH:MM".
       let endMatch = timeParts[1] ? timeParts[1].match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/) : null;
 
-      let sh = 0, sm = 0, eh = 1, em = 0;
+      let sh = 0, sm = 0;
       if (startMatch) {
          sh = parseInt(startMatch[1], 10);
          sm = parseInt(startMatch[2], 10);
          if (startMatch[3] && startMatch[3].toUpperCase() === 'PM' && sh !== 12) sh += 12;
          if (startMatch[3] && startMatch[3].toUpperCase() === 'AM' && sh === 12) sh = 0;
       }
+
+      const startDate = new Date(`${row.lesson_date_str}T${sh.toString().padStart(2, '0')}:${sm.toString().padStart(2, '0')}:00+07:00`);
+
+      let endDate;
       if (endMatch) {
-         eh = parseInt(endMatch[1], 10);
-         em = parseInt(endMatch[2], 10);
+         let eh = parseInt(endMatch[1], 10);
+         let em = parseInt(endMatch[2], 10);
          if (endMatch[3] && endMatch[3].toUpperCase() === 'PM' && eh !== 12) eh += 12;
          if (endMatch[3] && endMatch[3].toUpperCase() === 'AM' && eh === 12) eh = 0;
+         endDate = new Date(`${row.lesson_date_str}T${eh.toString().padStart(2, '0')}:${em.toString().padStart(2, '0')}:00+07:00`);
+      } else {
+         // Không có mốc kết thúc tường minh -> tính từ duration_mins thật của booking.
+         endDate = new Date(startDate.getTime() + (Number(row.duration_mins) || 60) * 60000);
       }
-
-      sh = sh.toString().padStart(2, '0');
-      sm = sm.toString().padStart(2, '0');
-      eh = eh.toString().padStart(2, '0');
-      em = em.toString().padStart(2, '0');
-      
-      const startDate = new Date(`${row.lesson_date_str}T${sh}:${sm}:00+07:00`);
-      const endDate = new Date(`${row.lesson_date_str}T${eh}:${em}:00+07:00`);
 
       let status = row.status ? row.status.toLowerCase() : 'pending';
       if (status === 'accepted' || status === 'approved') {
@@ -8265,17 +11781,31 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
          if (status === 'completed') weeklyCompleted++;
       }
 
+      const methodSupport = parseMethodSupport(row.tutor_teaching_methods);
       sessions.push({
         id: row.id,
+        booking_id: row.id,
+        tutor_id: row.tutor_id,
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
         status: status,
         title: `Buổi học ${row.subject}`,
         tutor_name: row.tutor_name || 'Gia sư',
         xp_earned: status === 'completed' ? 80 : 0,
-        meeting_platform: 'Google Meet',
-        meeting_url: '',
-        subject: row.subject || 'Khác'
+        teaching_method: row.teaching_method || null,
+        meeting_platform: row.teaching_method === 'offline' ? 'Offline' : 'Google Meet',
+        meeting_url: row.meeting_link || '',
+        location: row.location || '',
+        location_note: row.location_note || '',
+        session_topic: row.session_topic || '',
+        session_duration: row.session_duration || null,
+        method_change_requested: row.method_change_requested || null,
+        method_change_status: row.method_change_status || null,
+        tutor_supports_online: methodSupport.online,
+        tutor_supports_offline: methodSupport.offline,
+        subject: row.subject || 'Khác',
+        has_open_dispute: row.has_open_dispute,
+        open_dispute_id: row.open_dispute_id || null
       });
     });
 
@@ -8331,11 +11861,13 @@ app.get("/api/student/bookings", verifyToken, async (req, res) => {
               to_char(b.lesson_date, 'YYYY-MM-DD') AS lesson_date,
               b.time_slot, b.note, b.child_name, b.status, b.created_at,
               b.lesson_fee, b.escrow_tx_id, b.escrow_released_at, b.auto_release_at,
+              b.teaching_method, b.meeting_link, b.location, b.location_note,
+              b.method_change_requested, b.method_change_status,
               u_tutor.full_name AS tutor_full_name,
               u_tutor.picture AS tutor_picture,
               tp.reputation_score, tp.subjects AS tutor_subjects,
               a.status AS attendance_status,
-              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS has_open_dispute
+              EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute
        FROM bookings b
        LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
        LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
@@ -8357,7 +11889,8 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT d.id, d.reason, d.status, d.admin_note, d.created_at, d.resolved_at,
-             d.booking_id, d.target_type, d.course_id, d.tutor_id AS d_tutor_id, d.severity, d.penalty_type, d.raised_by_parent, d.evidence_url,
+             d.booking_id, d.target_type, d.course_id, d.tutor_id AS d_tutor_id, d.severity, d.penalty_type, d.raised_by_parent, d.evidence_urls,
+             d.tutor_response, d.tutor_response_at, d.student_requested_resolution, d.withdrawn_at,
              b.subject, to_char(b.lesson_date,'YYYY-MM-DD') AS lesson_date,
              b.lesson_fee, b.tutor_name,
              c.title AS course_title,
@@ -8371,7 +11904,7 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
       LEFT JOIN users u_tutor ON u_tutor.id = COALESCE(b.tutor_id, c.tutor_id, d.tutor_id)
       LEFT JOIN users u_student ON u_student.id = COALESCE(b.student_id, d.raised_by)
       ORDER BY
-        CASE d.status WHEN 'OPEN' THEN 0 ELSE 1 END,
+        CASE WHEN d.status = 'OPEN' AND d.withdrawn_at IS NULL THEN 0 ELSE 1 END,
         d.created_at DESC
       LIMIT 100
     `);
@@ -8382,17 +11915,172 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Lấy chuỗi YYYY-MM-DD từ cột DATE của pg.
+// LƯU Ý: pg trả DATE thành JS Date ở local-midnight → toISOString() bị lùi 1 ngày (múi +07).
+// Phải đọc bằng getFullYear/getMonth/getDate (giờ local) để giữ đúng ngày.
+  // lessonDateStr / lessonStartFrom / lessonEndFrom / parseMethodSupport → utils/businessRules.js
+
 // POST /api/bookings — tạo lịch học mới
 // Hỗ trợ cả định dạng cũ (lessonDate, timeSlot, tutorName) và mới (sessions, notes, childName)
+// POST /api/bookings/instant
+app.post('/api/bookings/instant', verifyToken, async (req, res) => {
+  try {
+    const { tutor_id, tutor_name, subject, time_slot, note, child_name, duration_mins } = req.body;
+    
+    if (!tutor_id) return res.status(400).json({ message: 'Thiếu tutor_id.' });
+
+    // ── Rate Limit / Cooldown chống spam ──
+    // Kiểm tra xem học sinh có vừa tạo yêu cầu Học Ngay nào trong vòng 2 phút qua không
+    const recentRes = await pool.query(
+      `SELECT created_at FROM bookings 
+       WHERE student_id = $1 AND booking_type = 'Instant' 
+       ORDER BY created_at DESC LIMIT 1`,
+      [req.user.userId]
+    );
+    if (recentRes.rows.length > 0) {
+      const lastBookingTime = new Date(recentRes.rows[0].created_at).getTime();
+      const elapsedMs = Date.now() - lastBookingTime;
+      const cooldownMs = 2 * 60 * 1000; // 2 phút
+      if (elapsedMs < cooldownMs) {
+        const waitSec = Math.ceil((cooldownMs - elapsedMs) / 1000);
+        return res.status(429).json({ message: `Vui lòng đợi thêm ${waitSec} giây trước khi gửi yêu cầu Học Ngay mới.` });
+      }
+    }
+    
+    const tRes = await pool.query('SELECT instant_price, availability_status FROM tutor_profiles WHERE user_id = $1', [tutor_id]);
+    if (!tRes.rows.length) {
+      return res.status(404).json({ message: 'Không tìm thấy gia sư.' });
+    }
+    if (!tRes.rows[0].instant_price) {
+      return res.status(400).json({ message: 'Gia sư chưa cấu hình giá Học ngay.' });
+    }
+    if (tRes.rows[0].availability_status !== 'Online') {
+      return res.status(400).json({ message: 'Gia sư hiện không trực tuyến.' });
+    }
+    
+    const price = tRes.rows[0].instant_price;
+    const student_name = req.user.fullName || req.user.full_name || 'Học viên';
+    
+    let response;
+    try {
+      const result = await pool.query(
+        `SELECT process_instant_booking($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) AS response`,
+        [req.user.userId, tutor_id, price, time_slot || null, note || null, child_name || null, student_name, tutor_name || null, subject || 'Môn học', duration_mins || 30]
+      );
+      response = result.rows[0].response;
+    } catch (fnErr) {
+      // Nếu function chưa tồn tại (chưa chạy migration), fallback thủ công
+      console.warn('process_instant_booking function not found, falling back:', fnErr.message);
+
+      const fbClient = await pool.connect();
+      try {
+        await fbClient.query('BEGIN');
+
+        // Kiểm tra ví học sinh (lock để tránh race condition)
+        const walletRes = await fbClient.query(
+          'SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE',
+          [req.user.userId]
+        );
+        if (!walletRes.rows.length) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Không tìm thấy ví học sinh.' });
+        }
+        const { id: walletId, balance } = walletRes.rows[0];
+        if (Number(balance) < Number(price)) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Số dư không đủ. Vui lòng nạp thêm tiền.' });
+        }
+
+        // Kiểm tra pending
+        const pendingStudentRes = await fbClient.query(
+          `SELECT COUNT(*) FROM bookings WHERE student_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
+          [req.user.userId]
+        );
+        if (parseInt(pendingStudentRes.rows[0].count) > 0) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Bạn đã có một yêu cầu Học ngay đang chờ xử lý.' });
+        }
+
+        const pendingTutorRes = await fbClient.query(
+          `SELECT COUNT(*) FROM bookings WHERE tutor_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
+          [tutor_id]
+        );
+        if (parseInt(pendingTutorRes.rows[0].count) > 0) {
+          await fbClient.query('ROLLBACK');
+          return res.status(400).json({ message: 'Gia sư vừa nhận một buổi học khác.' });
+        }
+
+        // Trừ ví (trong cùng transaction)
+        await fbClient.query(
+          `UPDATE wallets SET balance = balance - $1, frozen_balance = COALESCE(frozen_balance, 0) + $1 WHERE id = $2`,
+          [price, walletId]
+        );
+
+        // Tạo booking — nếu INSERT lỗi, transaction sẽ ROLLBACK hoàn tiền tự động
+        const resolved_time_slot = time_slot || null;
+        const bookingRes = await fbClient.query(
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, child_name, student_name, booking_type, lesson_fee, duration_mins, payer_wallet_id, created_at)
+           VALUES ($1,$2,$3,$4,CURRENT_DATE,COALESCE($5, to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI')),$6,'Pending',$7,$8,'Instant',$9,$10,$11,NOW()) RETURNING id`,
+          [req.user.userId, tutor_id, tutor_name || null, subject || 'Môn học', resolved_time_slot, note || null, child_name || null, student_name, price, duration_mins || 30, walletId]
+        );
+
+        await fbClient.query('COMMIT');
+        response = { success: true, booking_id: bookingRes.rows[0].id };
+      } catch (fbErr) {
+        await fbClient.query('ROLLBACK');
+        // Transaction đã rollback → tiền học sinh được hoàn tự động
+        throw new Error(fbErr.message || 'Lỗi khi tạo yêu cầu Học Ngay. Tiền của bạn chưa bị trừ.');
+      } finally {
+        fbClient.release();
+      }
+    }
+    
+    if (!response.success) {
+      return res.status(400).json({ message: response.message });
+    }
+    
+    // Emit SignalR / Realtime notification tới Tutor
+    const bookingId = response.booking_id || response.bookingId;
+    
+    // Notify tutor via Socket.io nếu có
+    if (req.app && req.app.get('io')) {
+      req.app.get('io').to(`user-${tutor_id}`).emit('instantBookingRequest', {
+        booking_id: bookingId,
+        student_id: req.user.userId,
+        student_name,
+        subject: subject || 'Môn học',
+        price,
+        note
+      });
+    }
+    
+    res.json({ success: true, booking: { id: bookingId }, booking_id: bookingId });
+  } catch (err) {
+    console.error('POST /api/bookings/instant error:', err);
+    res.status(500).json({ message: err.message || 'Internal server error' });
+  }
+});
+
 app.post("/api/bookings", verifyToken, async (req, res) => {
   try {
-    const { tutorId, tutorName, subject, lessonDate, timeSlot, note, sessions, date, notes, childName } = req.body || {};
+    const body = req.body || {};
+    // Chấp nhận cả camelCase (tutorId, lessonDate, timeSlot) lẫn snake_case (tutor_id, lesson_date, time_slot)
+    const tutorId    = body.tutorId    || body.tutor_id;
+    const tutorName  = body.tutorName  || body.tutor_name;
+    const lessonDate = body.lessonDate || body.lesson_date;
+    const timeSlot   = body.timeSlot   || body.time_slot;
+    const childName  = body.childName  || body.child_name;
+    const { subject, note, sessions, date, notes } = body;
+    let teachingMethod = String(body.teachingMethod || body.teaching_method || '').toLowerCase() || null;
+    if (teachingMethod && !['online', 'offline'].includes(teachingMethod)) {
+      return res.status(400).json({ message: "teaching_method phải là 'online' hoặc 'offline'." });
+    }
 
-    const bookingSessions = sessions && sessions.length > 0 
-      ? sessions 
+    const bookingSessions = sessions && sessions.length > 0
+      ? sessions
       : [{ date: lessonDate || date, timeSlot }];
 
-    if (!bookingSessions[0] || !bookingSessions[0].date || !bookingSessions[0].timeSlot) {
+    if (!bookingSessions[0] || !bookingSessions[0].date || !(bookingSessions[0].timeSlot || bookingSessions[0].time_slot)) {
       return res.status(400).json({ message: "Thiếu thông tin: cần lessonDate, timeSlot (hoặc mảng sessions)." });
     }
 
@@ -8401,8 +12089,8 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     // Nếu có tutorId, kiểm tra gia sư đó đã được duyệt và lấy tên nếu chưa truyền
     if (tutorId) {
       const tutorCheck = await pool.query(
-        `SELECT u.full_name FROM tutor_profiles tp 
-         JOIN users u ON tp.user_id = u.id 
+        `SELECT u.full_name, tp.teaching_methods FROM tutor_profiles tp
+         JOIN users u ON tp.user_id = u.id
          WHERE tp.user_id = $1 AND tp.status = 'approved'`,
         [tutorId]
       );
@@ -8411,6 +12099,19 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       }
       if (!finalTutorName) {
         finalTutorName = tutorCheck.rows[0].full_name;
+      }
+
+      // Hình thức học: validate theo hình thức gia sư hỗ trợ; nếu HS không chọn mà
+      // gia sư chỉ dạy 1 hình thức thì tự gán hình thức đó
+      const support = parseMethodSupport(tutorCheck.rows[0].teaching_methods);
+      if (teachingMethod && !support[teachingMethod]) {
+        return res.status(400).json({
+          message: `Gia sư này không dạy ${teachingMethod === 'online' ? 'online' : 'offline'}. Vui lòng chọn hình thức khác.`,
+        });
+      }
+      if (!teachingMethod) {
+        if (support.online && !support.offline) teachingMethod = 'online';
+        else if (!support.online && support.offline) teachingMethod = 'offline';
       }
     }
 
@@ -8422,21 +12123,42 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     const finalNote = notes || note || null;
     const createdBookings = [];
 
-    // Lấy hourly_rate của gia sư để set lesson_fee ngay từ đầu
+    // Lấy hourly_rate và slot_duration_mins của gia sư để tính lesson_fee theo thời lượng
     let lessonFeeForBooking = 0;
+    let slotDurationMins = 60;
     if (tutorId) {
-      const rateRes = await pool.query('SELECT hourly_rate FROM tutor_profiles WHERE user_id=$1 LIMIT 1', [tutorId]);
-      lessonFeeForBooking = Number(rateRes.rows[0]?.hourly_rate || 0);
+      const rateRes = await pool.query(
+        'SELECT hourly_rate, slot_duration_mins FROM tutor_profiles WHERE user_id=$1 LIMIT 1',
+        [tutorId]
+      );
+      const hourlyRate = Number(rateRes.rows[0]?.hourly_rate || 0);
+      slotDurationMins = Number(rateRes.rows[0]?.slot_duration_mins || 60);
+      // Tính học phí = giá/giờ × số giờ của slot
+      lessonFeeForBooking = Math.round(hourlyRate * (slotDurationMins / 60));
     }
+
+    const totalFee = lessonFeeForBooking * bookingSessions.length;
 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
       
+      let studentWalletId = null;
+      if (tutorId && totalFee > 0) {
+        const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id=$1', [req.user.userId]);
+        if (walletRes.rowCount === 0 || walletRes.rows[0].balance < totalFee) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ message: "Số dư ví không đủ để đặt lịch. Vui lòng nạp thêm tiền." });
+        }
+        studentWalletId = walletRes.rows[0].id;
+      }
+      
+      const packageId = bookingSessions.length > 1 ? crypto.randomUUID() : null;
+
       // Chèn từng session
       for (const session of bookingSessions) {
-        const sessionDate = session.date || session.lessonDate;
-        const sessionTimeSlot = session.timeSlot;
+        const sessionDate = session.date || session.lessonDate || session.lesson_date;
+        const sessionTimeSlot = session.timeSlot || session.time_slot;
 
         if (!sessionDate || !sessionTimeSlot) continue;
 
@@ -8457,14 +12179,41 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         }
 
         const result = await client.query(
-          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, created_at`,
-          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking]
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at, package_id`,
+          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId]
         );
-        createdBookings.push(result.rows[0]);
+        const booking = result.rows[0];
+
+        // Tạm giữ tiền ngay lập tức
+        if (tutorId && lessonFeeForBooking > 0 && studentWalletId) {
+          const holdRes = await client.query(
+            'SELECT hold_money_for_lesson($1, $2, $3) AS tx_id',
+            [studentWalletId, lessonFeeForBooking, booking.id]
+          );
+          const txId = holdRes.rows[0].tx_id;
+          
+          await client.query(`
+            UPDATE bookings
+            SET escrow_tx_id=$1, payer_wallet_id=$2
+            WHERE id=$3
+          `, [txId, studentWalletId, booking.id]);
+          
+          booking.escrow_tx_id = txId;
+          booking.payer_wallet_id = studentWalletId;
+        }
+
+        createdBookings.push(booking);
       }
       
+      if (tutorId && totalFee > 0 && studentWalletId) {
+        await client.query(`
+          INSERT INTO notifications (user_id, type, title, body, icon, ref_type)
+          VALUES ($1,'escrow_hold','Lịch học đang chờ xác nhận — Tiền tạm giữ',$2,'lock','booking')
+        `, [req.user.userId, `Bạn đã gửi yêu cầu đặt ${bookingSessions.length} buổi học. Tổng ${totalFee.toLocaleString('vi-VN')}đ đã được tạm giữ.`]);
+      }
+
       await client.query("COMMIT");
     } catch (dbErr) {
       await client.query("ROLLBACK");
@@ -8477,11 +12226,31 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Không thể tạo lịch hẹn." });
     }
 
-    return res.status(201).json({ 
-      message: "Đặt lịch thành công.", 
+    // Báo gia sư có lịch mới chờ duyệt — in-app + email (ngoài transaction,
+    // lỗi thông báo không được phép ảnh hưởng tới booking đã tạo)
+    if (tutorId) {
+      const first = createdBookings[0];
+      await safeNotifyUser(pool, {
+        userId: tutorId, type: 'booking_request',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'booking_new_request', eventType: 'booking_new_request',
+        refId: first.id, refType: 'booking',
+        idempotencyKey: `booking_new_request:${first.id}`,
+        data: {
+          studentName: req.user.name || 'Học sinh',
+          subject: subject || '',
+          timeSlot: first.time_slot,
+          date: lessonDateStr(first.lesson_date),
+          method: teachingMethod,
+        },
+      });
+    }
+
+    return res.status(201).json({
+      message: "Đặt lịch thành công.",
       bookings: createdBookings,
       // Trả về bản ghi đầu tiên để tương thích ngược với API cũ
-      ...createdBookings[0] 
+      ...createdBookings[0]
     });
   } catch (error) {
     console.error("[bookings] POST error:", error.code, error.message, error.detail || "");
@@ -8499,6 +12268,280 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Foreign key không hợp lệ (gia sư hoặc học sinh không tồn tại)." });
     }
     return res.status(500).json({ message: `DB error [${error.code || "?"}]: ${error.message}` });
+  }
+});
+
+// ─── Hình thức học & thông tin buổi học ─────────────────────────────────────
+
+// PATCH /api/bookings/:id/session-info — gia sư điền thông tin buổi học
+// (hình thức, link Meet/Zoom, địa điểm, chủ đề...) và thông báo cho học sinh
+app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const bookingRes = await pool.query(
+      `SELECT * FROM bookings WHERE id = $1 AND tutor_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    const booking = bookingRes.rows[0];
+    if (!["Pending", "Approved"].includes(booking.status)) {
+      return res.status(400).json({ message: "Chỉ điền thông tin cho buổi học đang chờ hoặc đã xác nhận." });
+    }
+
+    const mode = String(b.mode || '').toLowerCase();
+    const newMethod = ['online', 'offline'].includes(mode) ? mode : booking.teaching_method;
+    const finalLink = b.meetLink !== undefined ? (String(b.meetLink).trim() || null) : booking.meeting_link;
+    if (newMethod === 'online' && !finalLink) {
+      return res.status(400).json({ message: "Buổi học online cần link phòng học (Meet/Zoom)." });
+    }
+
+    const result = await pool.query(
+      `UPDATE bookings SET
+         teaching_method = $1, meeting_link = $2, meeting_password = $3,
+         location = $4, location_note = $5, session_topic = $6,
+         session_duration = $7, session_materials = $8, session_homework = $9
+       WHERE id = $10
+       RETURNING *`,
+      [
+        newMethod,
+        finalLink,
+        b.meetPassword !== undefined ? (b.meetPassword || null) : booking.meeting_password,
+        b.location !== undefined ? (b.location || null) : booking.location,
+        b.locationNote !== undefined ? (b.locationNote || null) : booking.location_note,
+        b.topic !== undefined ? (b.topic || null) : booking.session_topic,
+        b.duration !== undefined ? (parseInt(b.duration) || null) : booking.session_duration,
+        b.materials !== undefined ? (b.materials || null) : booking.session_materials,
+        b.homework !== undefined ? (b.homework || null) : booking.session_homework,
+        booking.id,
+      ]
+    );
+
+    if (b.notifyStudent !== false && booking.student_id) {
+      const dateStr = lessonDateStr(booking.lesson_date);
+      await safeNotifyUser(pool, {
+        userId: booking.student_id, type: 'session_info',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'session_info_updated', eventType: 'session_info_updated',
+        refId: booking.id, refType: 'booking',
+        data: {
+          tutorName: booking.tutor_name || '',
+          subject: booking.subject || '',
+          date: `${dateStr} (${booking.time_slot})`,
+          mode: newMethod,
+          meetLink: newMethod === 'online' ? (finalLink || null) : null,
+          location: newMethod === 'offline' ? (result.rows[0].location || null) : null,
+          topic: result.rows[0].session_topic || null,
+        },
+      });
+    }
+
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("[session-info] PATCH error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// POST /api/bookings/:id/request-method-change — học sinh xin đổi hình thức học
+// (vd: hôm nay ốm không đến được, xin chuyển buổi offline sang online)
+app.post("/api/bookings/:id/request-method-change", verifyToken, async (req, res) => {
+  try {
+    const { requestedMethod, reason } = req.body || {};
+    const method = String(requestedMethod || '').toLowerCase();
+    if (!['online', 'offline'].includes(method)) {
+      return res.status(400).json({ message: "requestedMethod phải là 'online' hoặc 'offline'." });
+    }
+
+    const bookingRes = await pool.query(
+      `SELECT b.*, tp.teaching_methods
+       FROM bookings b
+       LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
+       WHERE b.id = $1 AND b.student_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    const booking = bookingRes.rows[0];
+
+    if (!["Pending", "Approved"].includes(booking.status)) {
+      return res.status(400).json({ message: "Chỉ đổi hình thức cho buổi học đang chờ hoặc đã xác nhận." });
+    }
+    if (booking.lesson_date && new Date(booking.lesson_date) < new Date(new Date().toDateString())) {
+      return res.status(400).json({ message: "Buổi học đã qua, không thể đổi hình thức." });
+    }
+    if ((booking.teaching_method || '') === method) {
+      return res.status(400).json({ message: "Buổi học đã ở hình thức này rồi." });
+    }
+    if (booking.method_change_status === 'pending') {
+      return res.status(409).json({ message: "Bạn đã gửi yêu cầu đổi hình thức, vui lòng chờ gia sư phản hồi." });
+    }
+    const support = parseMethodSupport(booking.teaching_methods);
+    if (!support[method]) {
+      return res.status(400).json({ message: `Gia sư này không hỗ trợ dạy ${method}. Bạn có thể nhắn tin trao đổi thêm với gia sư.` });
+    }
+
+    await pool.query(
+      `UPDATE bookings SET method_change_requested = $1, method_change_reason = $2, method_change_status = 'pending' WHERE id = $3`,
+      [method, String(reason || '').trim() || null, booking.id]
+    );
+
+    if (booking.tutor_id) {
+      const dateStr = lessonDateStr(booking.lesson_date);
+      await safeNotifyUser(pool, {
+        userId: booking.tutor_id, type: 'method_change',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'method_change_requested', eventType: 'method_change_requested',
+        refId: booking.id, refType: 'booking',
+        data: {
+          studentName: req.user.name || 'Học sinh',
+          date: `${dateStr} (${booking.time_slot})`,
+          requested: method,
+          reason: String(reason || '').trim() || null,
+        },
+      });
+    }
+    return res.json({
+      message: "Đã gửi yêu cầu đổi hình thức. Gia sư sẽ phản hồi sớm.",
+      method_change_requested: method,
+      method_change_status: 'pending',
+    });
+  } catch (error) {
+    console.error("[method-change] POST error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// PATCH /api/bookings/:id/method-change — gia sư chấp nhận / từ chối yêu cầu đổi hình thức
+app.patch("/api/bookings/:id/method-change", verifyToken, async (req, res) => {
+  try {
+    const { decision } = req.body || {};
+    if (!['accepted', 'declined'].includes(decision)) {
+      return res.status(400).json({ message: "decision phải là 'accepted' hoặc 'declined'." });
+    }
+    const bookingRes = await pool.query(
+      `SELECT * FROM bookings WHERE id = $1 AND tutor_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    const booking = bookingRes.rows[0];
+    if (booking.method_change_status !== 'pending' || !booking.method_change_requested) {
+      return res.status(400).json({ message: "Không có yêu cầu đổi hình thức nào đang chờ." });
+    }
+
+    const newMethod = booking.method_change_requested;
+    let result;
+    if (decision === 'accepted') {
+      result = await pool.query(
+        `UPDATE bookings SET teaching_method = $1, method_change_status = 'accepted' WHERE id = $2 RETURNING *`,
+        [newMethod, booking.id]
+      );
+    } else {
+      result = await pool.query(
+        `UPDATE bookings SET method_change_status = 'declined' WHERE id = $1 RETURNING *`,
+        [booking.id]
+      );
+    }
+
+    if (booking.student_id) {
+      const dateStr = lessonDateStr(booking.lesson_date);
+      await safeNotifyUser(pool, {
+        userId: booking.student_id, type: 'method_change',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'method_change_resolved', eventType: 'method_change_resolved',
+        refId: booking.id, refType: 'booking',
+        data: {
+          accepted: decision === 'accepted',
+          requested: newMethod,
+          date: `${dateStr} (${booking.time_slot})`,
+        },
+      });
+    }
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("[method-change] PATCH error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// POST /api/tutor/bookings/:id/instant-accept
+app.post('/api/tutor/bookings/:id/instant-accept', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const bRes = await client.query(
+      'SELECT status, booking_type, student_id, subject, lesson_fee FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE',
+      [req.params.id, req.user.userId]
+    );
+    if (!bRes.rows.length) throw new Error('Booking not found');
+    if (bRes.rows[0].status !== 'Pending') throw new Error('Yêu cầu không còn ở trạng thái chờ.');
+    if (bRes.rows[0].booking_type !== 'Instant') throw new Error('Not an instant booking');
+
+    const { student_id, subject } = bRes.rows[0];
+
+    await client.query("UPDATE bookings SET status = 'InProgress', updated_at = NOW() WHERE id = $1", [req.params.id]);
+    await client.query("UPDATE tutor_profiles SET availability_status = 'Busy', updated_at = NOW() WHERE user_id = $1", [req.user.userId]);
+
+    // Thông báo cho học sinh biết gia sư đã chấp nhận
+    await safeNotifyUser(client, {
+      userId: student_id, type: 'instant_accepted', channels: ['IN_APP'],
+      templateKey: 'instant_accepted', eventType: 'instant_accepted',
+      title: 'Gia sư đã chấp nhận!',
+      body: `Gia sư đã chấp nhận yêu cầu Học Ngay môn ${subject || ''}. Hãy vào phòng học ngay!`,
+      icon: 'bolt', refId: req.params.id, refType: 'booking',
+      sourceType: 'booking', sourceId: req.params.id, priority: 'high',
+      idempotencyKey: `instant_accept:${req.params.id}:${student_id}`,
+    });
+
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Accept instant error:', err);
+    res.status(400).json({ message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/tutor/bookings/:id/instant-reject
+app.post('/api/tutor/bookings/:id/instant-reject', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const bRes = await client.query(
+      'SELECT student_id, lesson_fee, status, payer_wallet_id FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE',
+      [req.params.id, req.user.userId]
+    );
+    if (!bRes.rows.length) throw new Error('Booking not found');
+    if (bRes.rows[0].status !== 'Pending') throw new Error('Booking is not Pending');
+
+    const { student_id, lesson_fee } = bRes.rows[0];
+    let { payer_wallet_id } = bRes.rows[0];
+
+    // Fallback: nếu payer_wallet_id NULL, tìm ví qua student_id
+    if (!payer_wallet_id) {
+      const wRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [student_id]);
+      if (!wRes.rows.length) throw new Error('Không tìm thấy ví để hoàn tiền.');
+      payer_wallet_id = wRes.rows[0].id;
+      // Cập nhật lại booking để đồng bộ
+      await client.query('UPDATE bookings SET payer_wallet_id = $1 WHERE id = $2', [payer_wallet_id, req.params.id]);
+    }
+
+    await client.query("UPDATE bookings SET status = 'Declined', updated_at = NOW() WHERE id = $1", [req.params.id]);
+    await client.query(
+      'UPDATE wallets SET balance = balance + $1, frozen_balance = GREATEST(frozen_balance - $1, 0) WHERE id = $2',
+      [lesson_fee, payer_wallet_id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Reject instant error:', err);
+    res.status(400).json({ message: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -8525,44 +12568,7 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // REFUND POLICY V2.1 — helpers (Batch 16). Pure decision helpers + audit utils.
 // ═══════════════════════════════════════════════════════════════════════════
-const REFUND_POLICY_VERSION = "REFUND_POLICY_V2_1";
-
-// Course purchase: 48h window, progress-tiered refund rate.
-function getCourseRefundDecision(hoursSincePurchase, progressPercent) {
-  if (hoursSincePurchase > 48)
-    return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "COURSE_AFTER_48H_ADMIN_REVIEW" };
-  if (progressPercent <= 20)
-    return { eligible: true, mode: "AUTO_FULL", refundRate: 1.0, reasonCode: "COURSE_WITHIN_48H_PROGRESS_LE_20" };
-  if (progressPercent <= 40)
-    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.7, reasonCode: "COURSE_WITHIN_48H_PROGRESS_21_40" };
-  if (progressPercent <= 60)
-    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.4, reasonCode: "COURSE_WITHIN_48H_PROGRESS_41_60" };
-  if (progressPercent <= 80)
-    return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.2, reasonCode: "COURSE_WITHIN_48H_PROGRESS_61_80" };
-  return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "COURSE_PROGRESS_GT_80_ADMIN_REVIEW" };
-}
-
-// Lesson/booking: tutor fault = full; student cancel = hours-before-lesson tiered.
-function getLessonRefundDecision(hoursBeforeLesson, reasonCode) {
-  if (["TUTOR_CANCELLED", "TUTOR_NO_SHOW", "TUTOR_FAULT"].includes(reasonCode))
-    return { eligible: true, mode: "AUTO_FULL", refundRate: 1.0, reasonCode };
-  if (reasonCode === "STUDENT_CANCELLED") {
-    if (hoursBeforeLesson >= 6) return { eligible: true, mode: "AUTO_FULL",    refundRate: 1.0,  reasonCode: "STUDENT_CANCEL_GE_6H" };
-    if (hoursBeforeLesson >= 3) return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.5,  reasonCode: "STUDENT_CANCEL_3_TO_6H" };
-    if (hoursBeforeLesson >= 1) return { eligible: true, mode: "AUTO_PARTIAL", refundRate: 0.25, reasonCode: "STUDENT_CANCEL_1_TO_3H" };
-    return { eligible: false, mode: "NO_REFUND", refundRate: 0, reasonCode: "STUDENT_CANCEL_LT_1H_NO_REFUND" };
-  }
-  if (reasonCode === "STUDENT_NO_SHOW")
-    return { eligible: false, mode: "NO_REFUND", refundRate: 0, reasonCode: "STUDENT_NO_SHOW_NO_REFUND" };
-  return { eligible: false, mode: "ADMIN_REVIEW", refundRate: 0, reasonCode: "UNKNOWN_REASON_ADMIN_REVIEW" };
-}
-
-// Combine booking.lesson_date (date) + booking.time_slot ('HH:MM') into a Date.
-function parseBookingStartDateTime(booking) {
-  const d = String(booking.lesson_date).slice(0, 10);
-  const t = (booking.time_slot || '00:00').slice(0, 5);
-  return new Date(`${d}T${t}:00`);
-}
+// Refund decision helpers + parseBookingStartDateTime → utils/businessRules.js
 
 async function getAdminWalletId(client) {
   if (process.env.ADMIN_WALLET_ID) return process.env.ADMIN_WALLET_ID;
@@ -8590,65 +12596,8 @@ async function createRefundLog(client, log) {
   return r.rows.length ? r.rows[0].id : null;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// WALLET LEDGER (Batch 17) — set transaction-local context so the wallets
-// trigger records meaningful reason codes. MUST be called on the same `client`
-// inside an active transaction (set_config is_local=true => auto-cleared on
-// COMMIT/ROLLBACK, never leaks across requests). Safe to call multiple times.
-// ═══════════════════════════════════════════════════════════════════════════
-async function setLedgerContext(client, context) {
-  await client.query("SELECT set_config('app.ledger_context', $1, true)", [JSON.stringify(context || {})]);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// COMMISSION POLICY V1 (Batch 18) — business-level audit of platform earnings.
-// commission_logs is append-only; wallet_ledger remains the low-level audit.
-// ═══════════════════════════════════════════════════════════════════════════
-const PLATFORM_COMMISSION_RATE = 0.10;
-const COMMISSION_POLICY_VERSION = "COMMISSION_POLICY_V1";
-
-function calculateCommissionSplit(grossAmount, rate = PLATFORM_COMMISSION_RATE) {
-  const gross = Math.max(0, Math.round(Number(grossAmount || 0)));
-  const commissionAmount = gross - Math.floor(gross * (1 - rate));
-  const tutorAmount = gross - commissionAmount;
-  return { grossAmount: gross, commissionRate: rate, commissionAmount, tutorAmount };
-}
-
-// Idempotent commission log insert. Returns new row id or null on duplicate.
-// Must be called inside caller's transaction so rollback covers the log too.
-async function createCommissionLog(client, log) {
-  try {
-    const r = await client.query(
-      `INSERT INTO commission_logs
-         (source_type, source_id, booking_id, course_id, dispute_id, transaction_id,
-          student_id, tutor_id, gross_amount, commission_rate, commission_amount, tutor_amount,
-          event_type, reason_code, policy_version, decision_by, actor_id, idempotency_key, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
-       ON CONFLICT (idempotency_key) DO NOTHING
-       RETURNING id`,
-      [
-        log.source_type, log.source_id,
-        log.booking_id   || null,
-        log.course_id    || null,
-        log.dispute_id   || null,
-        log.transaction_id || null,
-        log.student_id   || null,
-        log.tutor_id     || null,
-        log.gross_amount, log.commission_rate ?? PLATFORM_COMMISSION_RATE,
-        log.commission_amount, log.tutor_amount,
-        log.event_type, log.reason_code,
-        log.policy_version || COMMISSION_POLICY_VERSION,
-        log.decision_by || 'system',
-        log.actor_id    || null,
-        log.idempotency_key || null,
-        JSON.stringify(log.metadata || {}),
-      ]
-    );
-    return r.rows.length ? r.rows[0].id : null;
-  } catch (e) {
-    throw e;
-  }
-}
+// (setLedgerContext + commission helpers đã chuyển lên top-level — phía trên
+// route /api/cart/checkout — để route ngoài startServer() cũng gọi được.)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WITHDRAWAL POLICY V1 (Batch 19) — tutor manual payout. Money is HELD when a
@@ -8661,23 +12610,7 @@ async function createCommissionLog(client, log) {
 // maps to 'SUCCESS', cancel/reject map to 'FAILED'. wallets has CHECK
 // balance>=0 / held_balance>=0, enforced by SELECT ... FOR UPDATE + guards.
 // ═══════════════════════════════════════════════════════════════════════════
-const WITHDRAWAL_POLICY_VERSION = "WITHDRAWAL_POLICY_V1";
-const MIN_WITHDRAWAL_AMOUNT = 50000;
-
-// Return a rounded non-negative integer VND amount, or 0 if invalid.
-function normalizeWithdrawalAmount(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.floor(n);
-}
-
-// Trim, strip control chars, collapse whitespace, cap length. Null-safe.
-function sanitizeBankText(value, maxLength = 120) {
-  if (value == null) return null;
-  let s = String(value).replace(/[\x00-\x1F\x7F]/g, '').replace(/\s+/g, ' ').trim();
-  if (!s) return null;
-  return s.slice(0, maxLength);
-}
+// normalizeWithdrawalAmount / sanitizeBankText + hằng số rút tiền → utils/businessRules.js
 
 // Lock the tutor's wallet row FOR UPDATE (prevents concurrent balance races).
 async function getTutorWalletForUpdate(client, tutorId) {
@@ -8687,6 +12620,17 @@ async function getTutorWalletForUpdate(client, tutorId) {
   );
   return r.rows.length ? r.rows[0] : null;
 }
+
+// GET /api/bookings/:id/status — API siêu nhẹ để polling status của booking
+app.get('/api/bookings/:id/status', verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT status FROM bookings WHERE id = $1', [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json({ status: result.rows[0].status });
+  } catch (err) {
+    res.status(500).json({ message: 'Error' });
+  }
+});
 
 // PATCH /api/bookings/:id — cập nhật trạng thái lịch học (duyệt, từ chối, hủy)
 // Logic escrow:
@@ -8720,8 +12664,8 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
 
     await client.query('BEGIN');
 
-    // ── APPROVE: hold escrow ──────────────────────────────────────────────────
-    if (status === 'Approved' && booking.status === 'Pending') {
+    // ── APPROVE: tiền đã được hold từ lúc đặt lịch ──────────────────────────
+    if (status === 'Approved' && (booking.status === 'Pending' || booking.status === 'pending')) {
       // Chỉ gia sư mới được approve
       if (req.user.userId !== booking.tutor_id) {
         await client.query('ROLLBACK');
@@ -8746,9 +12690,9 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             WHERE id=$5
           `, [status, txId, booking.payer_wallet_id_val, lessonFee, booking.id]);
 
-          // Notify học sinh: tiền đã bị hold (Batch 20)
+          // Notify học sinh: tiền đã bị hold (Batch 20) — kèm email xác nhận
           await safeNotifyUser(client, {
-            userId: booking.student_id, channels: ['IN_APP'],
+            userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
             templateKey: 'booking_approved', eventType: 'booking_approved',
             data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
             sourceType: 'booking', sourceId: booking.id,
@@ -8761,6 +12705,15 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
       } else {
         // Không có ví hoặc fee = 0: approve bình thường
         await client.query(`UPDATE bookings SET status=$1 WHERE id=$2`, [status, booking.id]);
+
+        // Notify học sinh: gia sư đã duyệt — kèm email xác nhận
+        await safeNotifyUser(client, {
+          userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'booking_approved', eventType: 'booking_approved',
+          data: { amount: lessonFee }, refId: booking.id, refType: 'booking',
+          sourceType: 'booking', sourceId: booking.id,
+          idempotencyKey: `booking:${booking.id}:approved:${booking.student_id}`,
+        });
       }
     }
 
@@ -8859,7 +12812,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             : `Không hoàn tiền theo chính sách (${decision.reasonCode}).`;
 
         await safeNotifyUser(client, {
-          userId: booking.student_id, channels: ['IN_APP'],
+          userId: booking.student_id, channels: ['IN_APP', 'EMAIL'],
           templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
           data: { message: refundMsg }, refId: booking.id, refType: 'booking',
           sourceType: 'booking', sourceId: booking.id,
@@ -8872,7 +12825,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
             ? `Học sinh đã hủy buổi học. Bạn nhận phí hủy ${Math.floor(nonRefunded * 0.9).toLocaleString('vi-VN')}đ.`
             : `Học sinh đã hủy buổi học và được hoàn tiền theo chính sách.`;
           await safeNotifyUser(client, {
-            userId: booking.tutor_id, channels: ['IN_APP'],
+            userId: booking.tutor_id, channels: ['IN_APP', 'EMAIL'],
             templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
             title: 'Học sinh đã hủy lịch học', data: { message: tutorMsg },
             refId: booking.id, refType: 'booking',
@@ -8946,7 +12899,7 @@ async function callGeminiModel(model, prompt) {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+              body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.7,
@@ -8960,11 +12913,116 @@ async function callGeminiModel(model, prompt) {
     if (!res.ok) {
       return { ok: false, status: res.status, errText: await res.text() };
     }
-    return { ok: true, data: await res.json() };
-  } catch (err) {
-    return { ok: false, status: 0, errText: err.message };
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
   }
 }
+
+const rawGroqKeys = process.env.GROQ_API_KEYS || "";
+const GROQ_API_KEYS = rawGroqKeys.split(',').map(k => k.trim()).filter(Boolean);
+let currentGroqKeyIndex = 0;
+
+async function callGroqModel(prompt, jsonMode = false) {
+  const apiKey = GROQ_API_KEYS[currentGroqKeyIndex];
+  currentGroqKeyIndex = (currentGroqKeyIndex + 1) % GROQ_API_KEYS.length;
+  
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const body = {
+    model: "llama-3.3-70b-versatile",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.7,
+    max_tokens: 2048,
+  };
+  
+  if (jsonMode) {
+    body.response_format = { type: "json_object" };
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(body),
+    });
+    
+    if (!res.ok) {
+      return { ok: false, status: res.status, errText: await res.text() };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
+  }
+}
+
+
+// 2. Tạo URL Nạp Tiền VNPAY
+app.post('/api/payment/create-url', verifyToken, async (req, res) => {
+  try {
+      const { amount, returnUrl } = req.body;
+      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
+      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'Ví không tồn tại' });
+      const wId = String(walletRes.rows[0].id);
+
+      const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
+      const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
+      const vnpUrl = process.env.VNPAY_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
+      
+      let rawIp = req.headers['x-forwarded-for'] || (req.socket ? req.socket.remoteAddress : null) || '127.0.0.1';
+      if (typeof rawIp === 'string' && rawIp.includes(',')) rawIp = rawIp.split(',')[0].trim();
+      if (typeof rawIp === 'string' && rawIp.startsWith('::ffff:')) rawIp = rawIp.slice(7);
+      if (rawIp === '::1') rawIp = '127.0.0.1';
+      const ipAddr = rawIp || '127.0.0.1';
+
+      const date = new Date();
+      const createDate = moment(date).format('YYYYMMDDHHmmss');
+      const orderId = moment(date).format('DDHHmmss'); 
+
+      // Tất cả value PHẢI là String
+      let vnp_Params = {};
+      vnp_Params['vnp_Version']    = '2.1.0';
+      vnp_Params['vnp_Command']    = 'pay';
+      vnp_Params['vnp_TmnCode']    = tmnCode;
+      vnp_Params['vnp_Locale']     = 'vn';
+      vnp_Params['vnp_CurrCode']   = 'VND';
+      vnp_Params['vnp_TxnRef']     = orderId;
+      vnp_Params['vnp_OrderInfo']  = wId;
+      vnp_Params['vnp_OrderType']  = 'topup';
+      vnp_Params['vnp_Amount']     = String(amount * 100);
+      vnp_Params['vnp_ReturnUrl']  = returnUrl;
+      vnp_Params['vnp_IpAddr']     = ipAddr;
+      vnp_Params['vnp_CreateDate'] = createDate;
+
+      // Sắp xếp key theo alphabet rồi tự build signData
+      const sortedKeys = Object.keys(vnp_Params).sort();
+      const signParts = [];
+      for (const key of sortedKeys) {
+          const encKey = encodeURIComponent(key);
+          const encVal = encodeURIComponent(String(vnp_Params[key])).replace(/%20/g, '+');
+          signParts.push(encKey + '=' + encVal);
+      }
+      const signData = signParts.join('&');
+
+      const hmac = crypto.createHmac('sha512', secretKey);
+      const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest('hex');
+
+      vnp_Params['vnp_SecureHash'] = signed;
+
+      const queryString = new URLSearchParams(vnp_Params).toString();
+      const redirectUrl = `${vnpUrl}?${queryString}`;
+
+      // Trả về vnpUrl, params (để form redirect), và redirectUrl ( fallback)
+      res.json({ success: true, vnpUrl, params: vnp_Params, redirectUrl });
+  } catch (e) {
+      console.error('Create VNPAY URL Error:', e);
+      res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
 const askAiHandler = async (req, res) => {
   try {
@@ -9048,38 +13106,21 @@ ${JSON.stringify(tutorSummary, null, 2)}
 
 TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
 
-    // Thử lần lượt các model — fallback khi gặp 429 (hết quota) hoặc 503 (quá tải)
-    let data = null;
-    let lastErr = { status: 0, errText: "Không có model khả dụng" };
-    let usedModel = null;
-
-    for (const model of GEMINI_MODELS) {
-      const result = await callGeminiModel(model, systemPrompt);
-      if (result.ok) {
-        data = result.data;
-        usedModel = model;
-        break;
-      }
-      lastErr = result;
-      console.warn(`[Gemini] Model ${model} lỗi ${result.status} — thử model tiếp theo`);
-      // Chỉ fallback khi lỗi tạm thời (quota/quá tải). Lỗi khác (400, 401) thì dừng luôn.
-      if (result.status !== 429 && result.status !== 503 && result.status !== 0) break;
+    const result = await callGroqModel(systemPrompt, true);
+    if (!result.ok) {
+      console.error("[Groq] Lỗi API:", result.status, result.errText);
+      return res.status(502).json({ error: "Lỗi từ AI API", detail: result.errText });
     }
 
-    if (!data) {
-      console.error("[Gemini] Tất cả model đều lỗi:", lastErr.status, lastErr.errText);
-      return res.status(502).json({ error: "Lỗi từ Gemini API", detail: lastErr.errText });
-    }
+    console.log(`[Groq] ✓ Trả lời thành công`);
 
-    console.log(`[Gemini] ✓ Trả lời bằng model: ${usedModel}`);
-
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const rawText = result.data?.choices?.[0]?.message?.content;
     if (!rawText) {
-      console.error("[Gemini] Empty response", data);
-      return res.status(502).json({ error: "Gemini trả phản hồi rỗng" });
+      console.error("[Groq] Empty response", result.data);
+      return res.status(502).json({ error: "AI trả phản hồi rỗng" });
     }
 
-    // Bóc markdown nếu Gemini lỡ trả ```json ... ```
+    // Bóc markdown nếu lỡ trả ```json ... ```
     let cleaned = rawText
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
@@ -9097,18 +13138,18 @@ TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
         try {
           parsed = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
         } catch (e2) {
-          console.error("[Gemini] JSON parse error:", e2.message, "raw:", rawText);
-          return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+          console.error("[Groq] JSON parse error:", e2.message, "raw:", rawText);
+          return res.status(502).json({ error: "AI trả JSON không hợp lệ" });
         }
       } else {
-        console.error("[Gemini] JSON parse error:", e.message, "raw:", rawText);
-        return res.status(502).json({ error: "Gemini trả JSON không hợp lệ" });
+        console.error("[Groq] JSON parse error:", e.message, "raw:", rawText);
+        return res.status(502).json({ error: "AI trả JSON không hợp lệ" });
       }
     }
 
     if (typeof parsed.reply !== "string" || !Array.isArray(parsed.tutorIds)) {
-      console.error("[Gemini] Invalid schema", parsed);
-      return res.status(502).json({ error: "Gemini trả format không hợp lệ" });
+      console.error("[Groq] Invalid schema", parsed);
+      return res.status(502).json({ error: "AI trả format không hợp lệ" });
     }
 
     return res.json(parsed);
@@ -9124,6 +13165,32 @@ TIN NHẮN CỦA NGƯỜI DÙNG: "${userMessage}"`;
 app.post("/api/ai-suggest", askAiHandler);
 app.post("/api/ask-ai", askAiHandler);
 
+// ── POST /api/course-ai-chat ── AI Chat cho không gian học tập ───────────────
+app.post("/api/course-ai-chat", async (req, res) => {
+  try {
+    const { message, lessonTitle } = req.body;
+    if (!message) return res.status(400).json({ error: "Thiếu tin nhắn." });
+
+    const systemPrompt = `Bạn là EduX AI Tutor, một trợ lý học tập xuất sắc và tận tình.
+Bạn đang trợ giúp học sinh trong bài học: "${lessonTitle || 'Bài học chung'}".
+Nhiệm vụ của bạn là giải đáp các thắc mắc của học sinh về nội dung bài học một cách thân thiện, súc tích và dễ hiểu.
+Tuyệt đối không dùng markdown phức tạp (chỉ dùng chữ thường). Trả lời bằng tiếng Việt.
+TIN NHẮN CỦA HỌC SINH: "${message}"`;
+
+    const result = await callGroqModel(systemPrompt, false);
+    if (!result.ok) {
+      console.error("[Groq] Lỗi AI:", result.status, result.errText);
+      return res.status(502).json({ error: "Lỗi kết nối máy chủ AI" });
+    }
+
+    const rawText = result.data?.choices?.[0]?.message?.content;
+    return res.json({ reply: rawText || "Xin lỗi, tôi không thể đưa ra câu trả lời lúc này." });
+  } catch (error) {
+    console.error("POST /api/course-ai-chat error:", error);
+    return res.status(500).json({ error: "Lỗi hệ thống AI." });
+  }
+});
+
 // ─── Start server ─────────────────────────────────────────────────────────────
 
   // ==========================================
@@ -9133,19 +13200,35 @@ app.post("/api/ask-ai", askAiHandler);
   // [POST] /api/feedbacks - Gia sư submit đánh giá
   app.post('/api/feedbacks', verifyToken, requireTutor, async (req, res) => {
     try {
-      const tutorId = req.user.id;
-      const { lesson_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note } = req.body;
+      const tutorId = req.user.id || req.user.userId;
+      const { lesson_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note, milestone_id } = req.body;
 
       // Validate data
       if (!student_id || !focus_rating || !understanding_level || !homework_status) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      // Insert feedback
+      // 1. Validate Time / Status (Micro-feedback constraint)
+      if (lesson_id) {
+        // Assume lesson_id refers to tutor_sessions or bookings
+        const sessionCheck = await pool.query(
+          `SELECT scheduled_at, duration_mins, status FROM tutor_sessions WHERE id = $1`,
+          [lesson_id]
+        );
+        if (sessionCheck.rows.length > 0) {
+          const session = sessionCheck.rows[0];
+          const endTime = new Date(new Date(session.scheduled_at).getTime() + session.duration_mins * 60000);
+          if (new Date() < endTime && session.status !== 'completed') {
+             return res.status(403).json({ error: "Chỉ được đánh giá sau khi buổi học kết thúc." });
+          }
+        }
+      }
+
+      // 2. Insert feedback
       const query = `
         INSERT INTO lesson_feedbacks 
-        (lesson_id, tutor_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (lesson_id, tutor_id, student_id, subject_name, focus_rating, understanding_level, homework_status, tutor_note, milestone_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *
       `;
       const values = [
@@ -9156,11 +13239,37 @@ app.post("/api/ask-ai", askAiHandler);
         focus_rating, 
         understanding_level, 
         homework_status, 
-        tutor_note
+        tutor_note,
+        milestone_id || null
       ];
       
       const result = await pool.query(query, values);
       const data = result.rows[0];
+
+      // 3. Logic Early Warning
+      const recentFeedbacks = await pool.query(`
+        SELECT understanding_level, homework_status FROM lesson_feedbacks
+        WHERE student_id = $1 AND tutor_id = $2
+        ORDER BY created_at DESC LIMIT 3
+      `, [student_id, tutorId]);
+
+      if (recentFeedbacks.rows.length >= 2) {
+        const kemCount = recentFeedbacks.rows.filter(f => f.understanding_level === 'Kém').length;
+        const noHomeworkCount = recentFeedbacks.rows.filter(f => f.homework_status === 'Không').length;
+
+        if (kemCount >= 2 || noHomeworkCount >= 2) {
+           // Insert notification alert
+           await pool.query(`
+             INSERT INTO notifications (user_id, title, message, type)
+             VALUES (
+                (SELECT parent_id FROM parent_children WHERE child_id = $1 LIMIT 1),
+                'Cảnh báo kết quả học tập',
+                'Học sinh có dấu hiệu sa sút trong các buổi học gần đây. Vui lòng kiểm tra timeline!',
+                'alert'
+             )
+           `, [student_id]).catch(e => console.error('Early warning notification failed', e.message));
+        }
+      }
 
       res.status(201).json({ message: "Feedback submitted successfully", data });
     } catch (err) {
@@ -9191,17 +13300,11 @@ app.post("/api/ask-ai", askAiHandler);
   });
 
 
-  app.listen(port, () => {
-  console.log(`🚀 Server is running on http://localhost:${port}`);
-});
 
 
-app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
+app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req, res) => {
   const client = await pool.connect();
   try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
 
     const tutorId = req.user.userId;
     const { id } = req.params;
@@ -9213,10 +13316,11 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
     }
 
     const bookingResult = await client.query(
-      `SELECT b.id, b.tutor_id, b.student_id, b.escrow_tx_id,
-              b.payer_wallet_id, b.lesson_fee, b.subject, b.lesson_date
+      `SELECT b.id, b.tutor_id, b.student_id, b.escrow_tx_id, b.escrow_released_at,
+              b.payer_wallet_id, b.lesson_fee, b.subject, b.lesson_date, b.time_slot,
+              b.booking_type, b.tutor_check_in_at
        FROM bookings b
-       WHERE b.id = $1 AND b.tutor_id = $2 AND b.status = 'Approved'
+       WHERE b.id = $1 AND b.tutor_id = $2 AND b.status IN ('Approved', 'InProgress')
        LIMIT 1`,
       [id, tutorId]
     );
@@ -9226,6 +13330,21 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
     }
     const booking = bookingResult.rows[0];
     const lessonFee = Number(booking.lesson_fee || 0);
+
+    // ── ATTENDANCE_SETTLEMENT_V1: quyết định dòng tiền TRƯỚC khi ghi bất cứ gì ──
+    // (xem utils/businessRules.js — 'absent' cần bằng chứng: sau giờ học + check-in)
+    const lessonStart = lessonStartFrom(booking.lesson_date, booking.time_slot);
+    const minutesSinceStart = lessonStart ? (Date.now() - lessonStart.getTime()) / 60000 : null;
+    const settlement = getAttendanceSettlement(status, {
+      minutesSinceStart,
+      tutorCheckedIn: !!booking.tutor_check_in_at,
+    });
+
+    if (settlement.action === 'REJECT_TOO_EARLY') {
+      return res.status(400).json({
+        message: `Chỉ có thể đánh dấu vắng mặt sau khi buổi học bắt đầu ít nhất ${ATTENDANCE_ABSENT_GRACE_MINUTES} phút. Vui lòng chờ học sinh.`,
+      });
+    }
 
     await client.query('BEGIN');
 
@@ -9239,19 +13358,81 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
       [booking.id, booking.tutor_id, booking.student_id, status, note?.trim() || null]
     );
 
-    // ── PRESENT: Set auto-release timer (24h window cho student khiếu nại) ──
-    if (status === 'present' && booking.escrow_tx_id && lessonFee > 0) {
-      await client.query(`
-        UPDATE bookings SET auto_release_at = NOW() + INTERVAL '24 hours'
-        WHERE id = $1 AND escrow_released_at IS NULL
-      `, [booking.id]);
+    // ── PRESENT: Giải ngân ngay lập tức vào ví gia sư (Chỉ nếu chưa giải ngân) ──
+    if (status === 'present' && booking.escrow_tx_id && lessonFee > 0 && !booking.escrow_released_at) {
+      // Lấy ví gia sư và admin
+      const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+      const tutorWalletId = tw.rows[0]?.id || null;
+      let adminWalletId = process.env.ADMIN_WALLET_ID;
+      if (!adminWalletId) {
+        const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
+        if (aw.rows.length) adminWalletId = aw.rows[0].id;
+      }
 
-      // Notify học sinh: có 24h để khiếu nại (Batch 20.1: safeNotifyUser, same client)
+      if (tutorWalletId && adminWalletId) {
+        // Kiểm tra logic cọc ảo: 2 buổi đầu → held_balance gia sư
+        const completedRes = await client.query(
+          'SELECT completed_lessons_count FROM tutor_profiles WHERE user_id=$1', [booking.tutor_id]
+        );
+        const completedCount = completedRes.rows[0]?.completed_lessons_count || 0;
+        const tutorAmount = Math.floor(lessonFee * 0.9);
+        const adminAmount = lessonFee - tutorAmount;
+
+        await setLedgerContext(client, {
+          reason_code: 'INSTANT_RELEASE_ON_PRESENT',
+          source: 'api', reference_type: 'booking', reference_id: booking.id,
+          transaction_id: booking.escrow_tx_id, actor_id: req.user.userId,
+        });
+
+        if (completedCount < 2) {
+          // Cọc ảo: tiền vào held_balance gia sư (chưa rút được)
+          await client.query('UPDATE wallets SET held_balance=held_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query('UPDATE wallets SET held_balance=held_balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId]);
+          if (adminWalletId) await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
+          await client.query('UPDATE transactions SET status=\'RELEASED\', updated_at=NOW() WHERE id=$1', [booking.escrow_tx_id]);
+        } else {
+          // Buổi 3+: giải ngân thẳng vào balance khả dụng
+          await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+            booking.escrow_tx_id, booking.payer_wallet_id, tutorWalletId, adminWalletId, lessonFee, 0.1
+          ]);
+        }
+
+        // Commission log
+        const _split = calculateCommissionSplit(lessonFee);
+        await createCommissionLog(client, {
+          source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+          transaction_id: booking.escrow_tx_id,
+          student_id: booking.student_id, tutor_id: booking.tutor_id,
+          gross_amount: _split.grossAmount, commission_rate: _split.commissionRate,
+          commission_amount: _split.commissionAmount, tutor_amount: _split.tutorAmount,
+          event_type: 'EARNED', reason_code: 'INSTANT_RELEASE_ON_PRESENT',
+          decision_by: 'tutor', actor_id: req.user.userId,
+          idempotency_key: `commission:booking:${booking.id}:INSTANT_RELEASE_ON_PRESENT`,
+          metadata: { virtual_deposit: completedCount < 2, completed_count: completedCount },
+        });
+
+        await client.query(
+          `UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`,
+          [booking.id]
+        );
+        await client.query(
+          `UPDATE tutor_profiles SET completed_lessons_count=completed_lessons_count+1 WHERE user_id=$1`,
+          [booking.tutor_id]
+        );
+      } else {
+        // Fallback nếu thiếu ví: đặt auto_release_at = NOW() (cron sẽ xử lý ngay)
+        await client.query(
+          `UPDATE bookings SET auto_release_at = NOW() WHERE id=$1 AND escrow_released_at IS NULL`,
+          [booking.id]
+        );
+      }
+
+      // Notify học sinh
       await safeNotifyUser(client, {
         userId: booking.student_id, type: 'lesson_completed', channels: ['IN_APP'],
-        templateKey: 'escrow_auto_release_pending', eventType: 'escrow_auto_release_pending',
+        templateKey: 'escrow_released', eventType: 'escrow_released',
         title: 'Buổi học đã hoàn thành',
-        body: `Gia sư đã xác nhận hoàn thành buổi học ${booking.subject || ''}. Tiền sẽ tự động giải ngân sau 24h nếu bạn không có khiếu nại.`,
+        body: `Gia sư đã xác nhận hoàn thành buổi học ${booking.subject || ''}. Học phí đã được thanh toán cho gia sư.`,
         icon: 'task_alt', refId: booking.id, refType: 'booking',
         sourceType: 'booking', sourceId: booking.id, priority: 'normal',
         idempotencyKey: `booking:${booking.id}:lesson_completed:${booking.student_id}`,
@@ -9259,49 +13440,247 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
 
       // Notify gia sư
       await safeNotifyUser(client, {
-        userId: booking.tutor_id, type: 'lesson_completed', channels: ['IN_APP'],
-        templateKey: 'escrow_auto_release_pending', eventType: 'escrow_auto_release_pending',
-        title: 'Đã ghi nhận hoàn thành buổi học',
-        body: `Buổi học ${booking.subject || ''} đã được ghi nhận hoàn thành. Tiền sẽ được giải ngân vào ví sau 24h.`,
-        icon: 'how_to_reg', refId: booking.id, refType: 'booking',
+        userId: booking.tutor_id, type: 'lesson_completed', channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'escrow_released', eventType: 'escrow_released',
+        title: 'Học phí đã vào ví!',
+        body: `Buổi học ${booking.subject || ''} hoàn thành. ${Math.floor(lessonFee * 0.9).toLocaleString('vi-VN')}đ đã được chuyển vào ví của bạn.`,
+        data: { amount: Math.floor(lessonFee * 0.9) },
+        icon: 'account_balance_wallet', refId: booking.id, refType: 'booking',
         sourceType: 'booking', sourceId: booking.id, priority: 'normal',
         idempotencyKey: `booking:${booking.id}:lesson_completed:${booking.tutor_id}`,
       });
     }
 
-    // ── ABSENT / EXCUSED: Hoàn tiền 100% cho học sinh (Batch 16.1: refund_logs) ──
-    if (['absent', 'excused'].includes(status) && booking.escrow_tx_id && lessonFee > 0) {
-      const reasonCode = status === 'absent' ? 'ATTENDANCE_ABSENT' : 'ATTENDANCE_EXCUSED';
+    // ── ABSENT / EXCUSED: ATTENDANCE_SETTLEMENT_V1 (xem utils/businessRules.js) ──
+    // excused → hoàn 100% (gia sư tự nguyện). absent + check-in + sau grace →
+    // học sinh no-show mất phí, gia sư nhận 90% (như iTalki/Wyzant). absent mà
+    // gia sư KHÔNG check-in → không có bằng chứng → vẫn hoàn học sinh 100%.
+    // Học sinh/phụ huynh luôn còn 48h khiếu nại qua /api/bookings/:id/report.
+    if (['absent', 'excused'].includes(status) && booking.escrow_tx_id && lessonFee > 0 && !booking.escrow_released_at) {
 
-      // Idempotency guard (UNIQUE(target,student)) — skip if already refunded
-      const logId = await createRefundLog(client, {
-        target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
-        tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 1.0,
-        refund_amount: lessonFee, non_refunded_amount: 0, reason_code: reasonCode,
-        decision_by: 'tutor',
-        metadata: { source: 'attendance', attendance_status: status },
-      });
-
-      if (logId) {
-        await setLedgerContext(client, { reason_code: reasonCode, source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId });
-        await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, lessonFee]);
-        await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
-
-        const notifTitle = status === 'absent' ? 'Hoàn tiền — buổi học vắng mặt' : 'Hoàn tiền — nghỉ có phép';
-        const notifBody = status === 'absent'
-          ? `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`
-          : `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`;
-        // Batch 20.1: safeNotifyUser, same client. logId (refund_logs) is the
-        // natural idempotency anchor — one notification per refund event.
-        await safeNotifyUser(client, {
-          userId: booking.student_id, type: 'refund', channels: ['IN_APP'],
-          templateKey: 'refund_resolved', eventType: 'refund_resolved',
-          title: notifTitle, body: notifBody, icon: 'undo',
-          refId: booking.id, refType: 'booking',
-          sourceType: 'booking', sourceId: booking.id, priority: 'normal',
-          idempotencyKey: `refund_log:${logId}`,
+      if (settlement.action === 'REFUND_STUDENT') {
+        // Idempotency guard (UNIQUE(target,student)) — skip if already refunded
+        const logId = await createRefundLog(client, {
+          target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
+          tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 1.0,
+          refund_amount: lessonFee, non_refunded_amount: 0, reason_code: settlement.reasonCode,
+          decision_by: 'tutor',
+          metadata: { source: 'attendance', attendance_status: status, policy_version: ATTENDANCE_POLICY_VERSION },
         });
+
+        if (logId) {
+          await setLedgerContext(client, { reason_code: settlement.reasonCode, source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId, policy_version: ATTENDANCE_POLICY_VERSION });
+          await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, lessonFee]);
+          await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
+
+          const notifTitle = status === 'excused' ? 'Hoàn tiền — nghỉ có phép' : 'Hoàn tiền — buổi học vắng mặt';
+          const notifBody = status === 'excused'
+            ? `Buổi học được ghi nhận nghỉ có phép. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại.`
+            : `Buổi học bị đánh dấu vắng mặt. ${lessonFee.toLocaleString('vi-VN')}đ đã được hoàn lại vào ví bạn.`;
+          // logId (refund_logs) is the natural idempotency anchor
+          await safeNotifyUser(client, {
+            userId: booking.student_id, type: 'refund', channels: ['IN_APP'],
+            templateKey: 'refund_resolved', eventType: 'refund_resolved',
+            title: notifTitle, body: notifBody, icon: 'undo',
+            refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+            idempotencyKey: `refund_log:${logId}`,
+          });
+
+          // Gia sư tố vắng mặt nhưng thiếu check-in → giải thích vì sao không được bồi hoàn
+          if (settlement.reasonCode === 'ATTENDANCE_ABSENT_NO_CHECKIN') {
+            await safeNotifyUser(client, {
+              userId: booking.tutor_id, type: 'attendance', channels: ['IN_APP'],
+              templateKey: 'generic', eventType: 'attendance_no_checkin',
+              title: 'Không đủ điều kiện nhận bồi hoàn vắng mặt',
+              body: `Bạn chưa check-in buổi học ${booking.subject || ''} nên không có bằng chứng có mặt — học phí đã được hoàn cho học sinh. Lần sau hãy bấm "Check-in" khi bắt đầu buổi học để được bảo vệ quyền lợi khi học sinh vắng mặt.`,
+              icon: 'info', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+              idempotencyKey: `booking:${booking.id}:absent_no_checkin:${booking.tutor_id}`,
+            });
+          }
+        }
       }
+
+      else if (settlement.action === 'COMPENSATE_TUTOR') {
+        // Học sinh no-show (có bằng chứng check-in) → gia sư nhận 90%, nền tảng 10%.
+        // refund_logs với refund_amount=0 vừa là audit vừa là khóa chống xử lý trùng
+        // (cùng pattern với phí hủy <1h ở luồng Cancelled).
+        const logId = await createRefundLog(client, {
+          target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
+          tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 0,
+          refund_amount: 0, non_refunded_amount: lessonFee, reason_code: settlement.reasonCode,
+          decision_by: 'tutor',
+          metadata: {
+            source: 'attendance', attendance_status: status, policy_version: ATTENDANCE_POLICY_VERSION,
+            tutor_check_in_at: booking.tutor_check_in_at,
+            minutes_since_start: minutesSinceStart == null ? null : Math.round(minutesSinceStart),
+          },
+        });
+
+        if (logId) {
+          const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+          const tutorWalletId = tw.rows[0]?.id || null;
+          const adminWalletId = await getAdminWalletId(client);
+
+          if (tutorWalletId && adminWalletId) {
+            const tutorAmount = Math.floor(lessonFee * 0.9);
+            const adminAmount = lessonFee - tutorAmount;
+
+            await setLedgerContext(client, {
+              reason_code: settlement.reasonCode, source: 'api',
+              reference_type: 'booking', reference_id: booking.id,
+              transaction_id: booking.escrow_tx_id, actor_id: req.user.userId,
+              policy_version: ATTENDANCE_POLICY_VERSION,
+            });
+
+            // Cọc ảo như buổi dạy thường: gia sư <2 buổi hoàn thành → tiền vào
+            // held_balance (chưa rút được) — chặn kịch bản gia sư mới tự tạo
+            // học sinh ảo rồi tố no-show để rút tiền. KHÔNG cộng
+            // completed_lessons_count vì đây không phải buổi đã dạy.
+            const completedRes = await client.query(
+              'SELECT completed_lessons_count FROM tutor_profiles WHERE user_id=$1', [booking.tutor_id]
+            );
+            const completedCount = completedRes.rows[0]?.completed_lessons_count || 0;
+
+            if (completedCount < 2) {
+              await client.query('UPDATE wallets SET held_balance=held_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+              await client.query('UPDATE wallets SET held_balance=held_balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId]);
+              await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
+              await client.query("UPDATE transactions SET status='RELEASED', updated_at=NOW() WHERE id=$1", [booking.escrow_tx_id]);
+            } else {
+              await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+                booking.escrow_tx_id, booking.payer_wallet_id, tutorWalletId, adminWalletId, lessonFee, 0.1,
+              ]);
+            }
+
+            const _nsSplit = calculateCommissionSplit(lessonFee);
+            await createCommissionLog(client, {
+              source_type: 'booking', source_id: booking.id, booking_id: booking.id,
+              transaction_id: booking.escrow_tx_id,
+              student_id: booking.student_id, tutor_id: booking.tutor_id,
+              gross_amount: _nsSplit.grossAmount, commission_rate: _nsSplit.commissionRate,
+              commission_amount: _nsSplit.commissionAmount, tutor_amount: _nsSplit.tutorAmount,
+              event_type: 'EARNED', reason_code: settlement.reasonCode,
+              decision_by: 'tutor', actor_id: req.user.userId,
+              idempotency_key: `commission:booking:${booking.id}:${settlement.reasonCode}`,
+              metadata: { virtual_deposit: completedCount < 2, attendance_status: status },
+            });
+
+            await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
+
+            // Học sinh: nêu rõ chính sách + quyền khiếu nại 48h.
+            // (title/body lặp trong data để template 'generic' render đúng cả kênh EMAIL)
+            const noShowTitle = 'Buổi học ghi nhận vắng mặt không phép';
+            const noShowBody = `Bạn được ghi nhận vắng mặt không báo trước ở buổi học ${booking.subject || ''}. Theo chính sách, học phí ${lessonFee.toLocaleString('vi-VN')}đ không được hoàn vì gia sư đã giữ chỗ và có mặt (đã check-in). Nếu thông tin không đúng, bạn có 48 giờ để khiếu nại trong mục "Lịch học của tôi".`;
+            await safeNotifyUser(client, {
+              userId: booking.student_id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+              templateKey: 'generic', eventType: 'student_no_show_charged',
+              title: noShowTitle, body: noShowBody,
+              data: { title: noShowTitle, body: noShowBody },
+              icon: 'event_busy', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'high',
+              idempotencyKey: `refund_log:${logId}:student`,
+            });
+
+            // Phụ huynh liên kết: cần biết con vắng học không phép
+            const parentsRes = await client.query(
+              'SELECT parent_id FROM parent_children WHERE student_id=$1', [booking.student_id]
+            );
+            for (const p of parentsRes.rows) {
+              await safeNotifyUser(client, {
+                userId: p.parent_id, type: 'attendance', channels: ['IN_APP'],
+                templateKey: 'generic', eventType: 'child_no_show',
+                title: 'Con bạn vắng buổi học không phép',
+                body: `Học sinh vắng mặt không báo trước ở buổi học ${booking.subject || ''} ngày ${lessonDateStr(booking.lesson_date)}. Học phí ${lessonFee.toLocaleString('vi-VN')}đ không được hoàn theo chính sách. Nếu có nhầm lẫn, vui lòng khiếu nại trong vòng 48 giờ.`,
+                icon: 'family_restroom', refId: booking.id, refType: 'booking',
+                sourceType: 'booking', sourceId: booking.id, priority: 'high',
+                idempotencyKey: `refund_log:${logId}:parent:${p.parent_id}`,
+              });
+            }
+
+            // Gia sư: xác nhận bồi hoàn
+            await safeNotifyUser(client, {
+              userId: booking.tutor_id, type: 'attendance', channels: ['IN_APP'],
+              templateKey: 'generic', eventType: 'no_show_compensated',
+              title: 'Bồi hoàn buổi học vắng mặt',
+              body: completedCount < 2
+                ? `Học sinh vắng mặt không phép. ${tutorAmount.toLocaleString('vi-VN')}đ bồi hoàn đã vào ví (tạm giữ theo chính sách 2 buổi đầu).`
+                : `Học sinh vắng mặt không phép. ${tutorAmount.toLocaleString('vi-VN')}đ bồi hoàn đã được chuyển vào ví của bạn.`,
+              icon: 'account_balance_wallet', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'normal',
+              idempotencyKey: `refund_log:${logId}:tutor`,
+            });
+          } else {
+            // Thiếu ví gia sư/admin: để cron auto-release xử lý sau (an toàn, không nuốt tiền)
+            await client.query(
+              `UPDATE bookings SET auto_release_at = NOW() WHERE id=$1 AND escrow_released_at IS NULL`,
+              [booking.id]
+            );
+          }
+        }
+      }
+    }
+
+    // ── INSTANT LEARNING: Handle money and status ──
+    if (booking.booking_type === 'Instant' && lessonFee > 0 && !booking.escrow_released_at) {
+      if (status === 'present') {
+        const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+        const tutorWalletId = tw.rows[0]?.id || null;
+        let adminWalletId = process.env.ADMIN_WALLET_ID;
+        if (!adminWalletId) {
+          const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
+          if (aw.rows.length) adminWalletId = aw.rows[0].id;
+        }
+        
+        if (tutorWalletId && adminWalletId) {
+          const tutorAmount = Math.floor(lessonFee * 0.9);
+          const adminAmount = lessonFee - tutorAmount;
+          
+          await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
+          
+          await client.query("UPDATE bookings SET status='Completed', escrow_released_at=NOW() WHERE id=$1", [booking.id]);
+        }
+      } else if (status === 'excused') {
+        // Gia sư châm chước → hoàn toàn bộ từ frozen_balance
+        await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1, balance=balance+$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+        await client.query("UPDATE bookings SET status='Completed', updated_at=NOW() WHERE id=$1", [booking.id]);
+      } else if (status === 'absent') {
+        // ATTENDANCE_SETTLEMENT_V1 cho Học Ngay: học sinh no-show → gia sư nhận 90%.
+        // Không yêu cầu check-in như booking thường vì với Instant, việc gia sư
+        // bấm chấp nhận yêu cầu ngay tại thời điểm đó đã là bằng chứng có mặt
+        // (guard "sau giờ bắt đầu + 15 phút" vẫn áp dụng ở đầu handler).
+        const tw2 = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
+        const tutorWalletId2 = tw2.rows[0]?.id || null;
+        const adminWalletId2 = await getAdminWalletId(client);
+        if (tutorWalletId2 && adminWalletId2) {
+          const tutorAmount = Math.floor(lessonFee * 0.9);
+          const adminAmount = lessonFee - tutorAmount;
+          await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId2]);
+          await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId2]);
+          await client.query("UPDATE bookings SET status='Completed', escrow_released_at=NOW() WHERE id=$1", [booking.id]);
+
+          await safeNotifyUser(client, {
+            userId: booking.student_id, type: 'attendance', channels: ['IN_APP'],
+            templateKey: 'generic', eventType: 'student_no_show_charged',
+            title: 'Buổi Học Ngay ghi nhận vắng mặt',
+            body: `Bạn được ghi nhận vắng mặt ở buổi Học Ngay ${booking.subject || ''}. Học phí ${lessonFee.toLocaleString('vi-VN')}đ không được hoàn theo chính sách. Nếu thông tin không đúng, bạn có 48 giờ để khiếu nại.`,
+            icon: 'event_busy', refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id, priority: 'high',
+            idempotencyKey: `booking:${booking.id}:instant_no_show:${booking.student_id}`,
+          });
+        } else {
+          // Thiếu ví: hoàn học sinh (an toàn hơn là treo tiền trong frozen_balance)
+          await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1, balance=balance+$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
+          await client.query("UPDATE bookings SET status='Completed', updated_at=NOW() WHERE id=$1", [booking.id]);
+        }
+      }
+      
+      // Tutor becomes Online again if they were Busy
+      await client.query("UPDATE tutor_profiles SET availability_status = 'Online' WHERE user_id = $1 AND availability_status = 'Busy'", [booking.tutor_id]);
     }
 
     await client.query('COMMIT');
@@ -9315,11 +13694,8 @@ app.patch("/api/bookings/:id/attendance", verifyToken, async (req, res) => {
   }
 });
 
-app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
+app.get("/api/tutor/earnings", verifyToken, requireTutor, async (req, res) => {
   try {
-    if (req.user.role !== "tutor") {
-      return res.status(403).json({ message: "Tutor access only." });
-    }
 
     const tutorId = req.user.userId;
     const [profileResult, walletResult] = await Promise.all([
@@ -9345,7 +13721,7 @@ app.get("/api/tutor/earnings", verifyToken, async (req, res) => {
          a.status AS "attendanceStatus",
          a.note AS "attendanceNote",
          a.marked_at AS "markedAt",
-         EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN') AS "hasOpenDispute"
+         EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS "hasOpenDispute"
        FROM bookings b
        LEFT JOIN users s ON s.id = b.student_id
        LEFT JOIN attendance a ON a.booking_id = b.id
@@ -9520,6 +13896,20 @@ app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) =
       sourceType: 'withdrawal', sourceId: request.id,
       idempotencyKey: `withdrawal:${request.id}:created:${req.user.userId}`,
     });
+
+    // Báo admin có yêu cầu rút tiền mới cần xử lý (chuông + email)
+    const wdAdmins = await client.query(
+      `SELECT id FROM users WHERE role = 'admin' AND COALESCE(is_banned, FALSE) = FALSE`
+    );
+    for (const admin of wdAdmins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, type: 'admin_alert', channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'admin_new_withdrawal', eventType: 'admin_new_withdrawal',
+        refId: request.id, refType: 'withdrawal',
+        idempotencyKey: `admin_new_withdrawal:${request.id}:${admin.id}`,
+        data: { tutorName: req.user.name || '', amount },
+      });
+    }
 
     await client.query('COMMIT');
     return res.status(201).json({ success: true, request });
@@ -9798,11 +14188,11 @@ app.patch("/api/admin/withdrawal-requests/:id/mark-paid", verifyToken, requireAd
 // ==================== PAYMENT & ESCROW ROUTES ============================
 // =========================================================================
 
-// 1. Lấy th?�ng tin V?�
+// 1. Lấy thông tin ví
 app.get('/api/payment/wallet', verifyToken, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM wallets WHERE user_id = $1', [req.user.userId]);
-    if (rows.length === 0) return res.status(404).json({ message: 'V?� kh?�ng tồn tại' });
+    if (rows.length === 0) return res.status(404).json({ message: 'Ví không tồn tại.' });
     res.json({ wallet: rows[0] });
   } catch (err) {
     console.error(err);
@@ -9810,72 +14200,11 @@ app.get('/api/payment/wallet', verifyToken, async (req, res) => {
   }
 });
 
-// 2. Tạo URL Nạp Tiền VNPAY
-app.post('/api/payment/create-url', verifyToken, async (req, res) => {
-  try {
-      const { amount, returnUrl } = req.body;
-      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
-      const wId = walletRes.rows[0].id;
-
-      const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
-      const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
-      let vnpUrl = process.env.VNPAY_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
-      
-      const ipAddr = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.socket.remoteAddress || req.connection.socket.remoteAddress || '127.0.0.1';
-
-      let date = new Date();
-      let createDate = moment(date).format('YYYYMMDDHHmmss');
-      let orderId = moment(date).format('DDHHmmss'); 
-
-      let vnp_Params = {
-          'vnp_Version': '2.1.0',
-          'vnp_Command': 'pay',
-          'vnp_TmnCode': tmnCode,
-          'vnp_Locale': 'vn',
-          'vnp_CurrCode': 'VND',
-          'vnp_TxnRef': orderId,
-          'vnp_OrderInfo': wId, 
-          'vnp_OrderType': 'topup',
-          'vnp_Amount': amount * 100, 
-          'vnp_ReturnUrl': returnUrl,
-          'vnp_IpAddr': ipAddr,
-          'vnp_CreateDate': createDate
-      };
-
-      function sortObject(obj) {
-          let sorted = {};
-          let str = [];
-          let key;
-          for (key in obj){
-              if (Object.prototype.hasOwnProperty.call(obj, key)) { str.push(encodeURIComponent(key)); }
-          }
-          str.sort();
-          for (key = 0; key < str.length; key++) {
-              sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+");
-          }
-          return sorted;
-      }
-
-      vnp_Params = sortObject(vnp_Params);
-      const signData = querystring.stringify(vnp_Params, { encode: false });
-      const hmac = crypto.createHmac("sha512", secretKey);
-      const signed = hmac.update(new Buffer.from(signData, 'utf-8')).digest("hex"); 
-      
-      vnp_Params['vnp_SecureHash'] = signed;
-      vnpUrl += '?' + querystring.stringify(vnp_Params, { encode: false });
-
-      res.json({ success: true, url: vnpUrl });
-  } catch (e) {
-      console.error('Create VNPAY URL Error:', e);
-      res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
 
 // 3. VNPAY IPN Webhook
 app.get('/api/payment/vnpay-ipn', async (req, res) => {
   try {
-      let vnp_Params = req.query;
+      let vnp_Params = { ...req.query };
       const secureHash = vnp_Params['vnp_SecureHash'];
       const amount = vnp_Params['vnp_Amount'] / 100;
       const orderId = vnp_Params['vnp_TxnRef'];
@@ -9885,21 +14214,22 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
       delete vnp_Params['vnp_SecureHash'];
       delete vnp_Params['vnp_SecureHashType'];
 
-      function sortObject(obj) {
-          let sorted = {};
-          let str = [];
-          let key;
-          for (key in obj){ if (Object.prototype.hasOwnProperty.call(obj, key)) { str.push(encodeURIComponent(key)); } }
-          str.sort();
-          for (key = 0; key < str.length; key++) { sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+"); }
-          return sorted;
+      // Sắp xếp key theo alphabet rồi tự build query string
+      const sortedKeys = Object.keys(vnp_Params).sort();
+      const signParts = [];
+      for (const key of sortedKeys) {
+          const encKey = encodeURIComponent(key);
+          const encVal = encodeURIComponent(String(vnp_Params[key])).replace(/%20/g, '+');
+          signParts.push(encKey + '=' + encVal);
       }
+      const signData = signParts.join('&');
 
-      vnp_Params = sortObject(vnp_Params);
       const secretKey = process.env.VNPAY_SECRET_KEY || 'DEMOSECRETKEY1234567890';
-      const signData = querystring.stringify(vnp_Params, { encode: false });
-      const hmac = crypto.createHmac("sha512", secretKey);
-      const signed = hmac.update(new Buffer.from(signData, 'utf-8')).digest("hex");     
+      const hmac = crypto.createHmac('sha512', secretKey);
+      const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest('hex');
+
+      console.log('[VNPAY IPN] signData:', signData);
+      console.log('[VNPAY IPN] signed:', signed, '| secureHash:', secureHash);
 
       if (secureHash !== signed) {
           return res.status(200).json({ RspCode: '97', Message: 'Checksum failed' });
@@ -9930,6 +14260,23 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
            return res.status(200).json({ RspCode: '02', Message: 'Order already confirmed' });
       }
 
+      // Email biên nhận nạp tiền (idempotent theo orderId — IPN có thể gọi lại)
+      try {
+        const owner = await pool.query('SELECT user_id FROM wallets WHERE id = $1', [walletId]);
+        if (owner.rows[0]?.user_id) {
+          await safeNotifyUser(pool, {
+            userId: owner.rows[0].user_id, type: 'wallet_topup',
+            channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'wallet_topup_success', eventType: 'wallet_topup_success',
+            refId: null, refType: 'wallet',
+            idempotencyKey: `wallet_topup:${orderId}`,
+            data: { amount, provider: 'VNPAY', txnRef: orderId },
+          });
+        }
+      } catch (notifyErr) {
+        console.error('[vnpay-ipn] notify error (non-fatal):', notifyErr.message);
+      }
+
       res.status(200).json({ RspCode: '00', Message: 'Confirm Success' });
   } catch (err) {
       console.error('IPN Error:', err);
@@ -9937,70 +14284,6 @@ app.get('/api/payment/vnpay-ipn', async (req, res) => {
   }
 });
 
-// 4. Hold Money (Book Lesson)
-app.post('/api/escrow/hold', verifyToken, async (req, res) => {
-  const { amount, lessonId } = req.body;
-  try {
-      const walletRes = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [req.user.userId]);
-      if (walletRes.rowCount === 0) return res.status(404).json({ success: false, message: 'V?� kh?�ng tồn tại' });
-      const payerWalletId = walletRes.rows[0].id;
-
-      const { rows } = await pool.query('SELECT hold_money_for_lesson($1, $2, $3) AS tx_id', [payerWalletId, amount, lessonId]);
-      
-      res.json({ success: true, transactionId: rows[0].tx_id });
-  } catch (err) {
-      // Trigger error from CHECK (balance >= amount)
-      res.status(400).json({ success: false, message: 'Số dư kh?�ng đủ để thanh to?�n hoặc lỗi hệ thống.' });
-  }
-});
-
-// 5. Release Escrow (Giải ng?�n cho Gia sư)
-app.post('/api/escrow/release', verifyToken, async (req, res) => {
-    const { transactionId, payerWalletId, tutorWalletId, amount } = req.body;
-    // Lấy admin_wallet_id từ m?�i trường hoặc truy vấn user admin đầu ti?�n
-    try {
-        let adminWalletId = process.env.ADMIN_WALLET_ID;
-        if (!adminWalletId) {
-            const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
-            if (rows.length > 0) adminWalletId = rows[0].id;
-            else return res.status(500).json({ success: false, message: 'Lỗi hệ thống: Chưa cấu h?�nh v?� Admin.' });
-        }
-
-        const commissionRate = 0.1; // 10%
-        const { error } = await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [
-            transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, commissionRate
-        ]);
-        res.json({ success: true, message: 'Đ?� giải ng?�n cho Gia sư' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 6. Resolve Dispute (Xử l?� khiếu nại - Admin)
-app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
-    
-    const { disputeId, transactionId, payerWalletId, tutorWalletId, amount, decision, adminNote } = req.body;
-    
-    try {
-        if (decision === 'REFUND_TO_STUDENT') {
-            await pool.query('SELECT refund_escrow($1, $2, $3)', [transactionId, payerWalletId, amount]);
-            await pool.query("UPDATE disputes SET status = 'RESOLVED_REFUND', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
-        } 
-        else if (decision === 'RELEASE_TO_TUTOR') {
-            let adminWalletId = process.env.ADMIN_WALLET_ID;
-            if (!adminWalletId) {
-                const { rows } = await pool.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id = u.id WHERE u.role='admin' LIMIT 1");
-                adminWalletId = rows[0].id;
-            }
-            await pool.query('SELECT release_escrow($1, $2, $3, $4, $5, $6)', [transactionId, payerWalletId, tutorWalletId, adminWalletId, amount, 0.1]);
-            await pool.query("UPDATE disputes SET status = 'RESOLVED_RELEASE', admin_note = $1, resolved_at = NOW() WHERE id = $2", [adminNote, disputeId]);
-        }
-        res.json({ success: true, message: 'Đ?� xử l?� khiếu nại th?�nh c?�ng' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  ESCROW EXTENDED — Report, Manual Release, Wallet History
@@ -10010,8 +14293,9 @@ app.post('/api/escrow/resolve-dispute', verifyToken, async (req, res) => {
 app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const { reason, severity = 'medium', evidenceUrl = null } = req.body;
+    const { reason, severity = 'medium', evidenceUrls, requestedResolution } = req.body;
     if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do báo cáo.' });
+    if (!Array.isArray(evidenceUrls) || evidenceUrls.length === 0) return res.status(400).json({ message: 'Vui lòng đính kèm bằng chứng hình ảnh trước khi gửi báo cáo.' });
 
     let bookingQuery;
     let queryParams;
@@ -10033,20 +14317,30 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     const bookingRes = await client.query(bookingQuery, queryParams);
     if (!bookingRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy lịch học hoặc bạn không có quyền truy cập.' });
     const booking = bookingRes.rows[0];
-    
+
+    const sessionStart = lessonStartFrom(booking.lesson_date, booking.time_slot);
+    const sessionEnd = lessonEndFrom(booking.lesson_date, booking.time_slot);
+    const now = new Date();
+    if (sessionStart && now < sessionStart) {
+      return res.status(400).json({ message: 'Buổi học chưa diễn ra.' });
+    }
+    if (sessionEnd && (now - sessionEnd) > 48 * 3600000) {
+      return res.status(400).json({ message: 'Đã quá thời hạn báo cáo buổi học này (48 giờ sau khi kết thúc).' });
+    }
+
     if (!booking.escrow_tx_id) return res.status(400).json({ message: 'Lịch học này không có giao dịch escrow để khiếu nại.' });
 
     const existingDispute = await client.query(
-      "SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN'", [booking.id]
+      "SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN' AND withdrawn_at IS NULL", [booking.id]
     );
     if (existingDispute.rows.length) return res.status(409).json({ message: 'Bạn đã gửi khiếu nại cho buổi học này rồi.' });
 
     await client.query('BEGIN');
 
     const dispute = await client.query(`
-      INSERT INTO disputes (transaction_id, raised_by, reason, status, booking_id, target_type, tutor_id, severity, raised_by_parent, evidence_url)
-      VALUES ($1, $2, $3, 'OPEN', $4, 'booking', $5, $6, $7, $8) RETURNING id
-    `, [booking.escrow_tx_id, req.user.userId, reason.trim(), booking.id, booking.tutor_id, severity, isParent, evidenceUrl]);
+      INSERT INTO disputes (transaction_id, raised_by, reason, status, booking_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls, student_requested_resolution)
+      VALUES ($1, $2, $3, 'OPEN', $4, 'booking', $5, $6, $7, $8, $9) RETURNING id
+    `, [booking.escrow_tx_id, req.user.userId, reason.trim(), booking.id, booking.tutor_id, severity, isParent, evidenceUrls, requestedResolution?.trim() || null]);
 
     // Pause auto-release
     await client.query(`UPDATE bookings SET auto_release_at=NULL WHERE id=$1`, [booking.id]);
@@ -10055,7 +14349,7 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
       await safeNotifyUser(client, {
-        userId: admin.id, channels: ['IN_APP'],
+        userId: admin.id, channels: ['IN_APP', 'EMAIL'],
         templateKey: 'dispute_opened', eventType: 'dispute_opened',
         data: { forAdmin: true, reporterName, reason: `báo cáo vi phạm buổi học ID: ${booking.id}. Lý do: ${reason}` },
         refId: dispute.rows[0].id, refType: 'dispute',
@@ -10085,12 +14379,134 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
   }
 });
 
+// PATCH /api/bookings/disputes/:disputeId/tutor-response — gia sư giải trình cho 1 dispute liên quan tới mình
+app.patch('/api/bookings/disputes/:disputeId/tutor-response', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { response } = req.body;
+    if (!response?.trim()) return res.status(400).json({ message: 'Vui lòng nhập nội dung giải trình.' });
+
+    const dRes = await client.query('SELECT * FROM disputes WHERE id=$1', [req.params.disputeId]);
+    if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const dispute = dRes.rows[0];
+
+    if (dispute.tutor_id !== req.user.userId) {
+      return res.status(403).json({ message: 'Bạn không có quyền phản hồi khiếu nại này.' });
+    }
+    if (dispute.withdrawn_at) {
+      return res.status(409).json({ message: 'Khiếu nại này đã được học sinh rút, không thể xử lý/phản hồi.' });
+    }
+    if (dispute.status !== 'OPEN') {
+      return res.status(409).json({ message: 'Khiếu nại đã được xử lý, không thể phản hồi.' });
+    }
+
+    await client.query('BEGIN');
+    const updated = await client.query(
+      `UPDATE disputes SET tutor_response=$1, tutor_response_at=NOW() WHERE id=$2 RETURNING *`,
+      [response.trim(), req.params.disputeId]
+    );
+
+    const admins = await client.query("SELECT id FROM users WHERE role='admin'");
+    for (const admin of admins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_tutor_responded', eventType: 'dispute_tutor_responded',
+        data: { forAdmin: true, disputeId: req.params.disputeId },
+        refId: req.params.disputeId, refType: 'dispute',
+        sourceType: 'dispute', sourceId: req.params.disputeId,
+        idempotencyKey: `dispute:${req.params.disputeId}:tutor_responded:${admin.id}`,
+      });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, dispute: updated.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('PATCH tutor-response error:', e);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/bookings/disputes/:disputeId/withdraw — học sinh tự rút đơn khiếu nại (không sửa nội dung)
+app.patch('/api/bookings/disputes/:disputeId/withdraw', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const dRes = await client.query('SELECT * FROM disputes WHERE id=$1', [req.params.disputeId]);
+    if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    const dispute = dRes.rows[0];
+
+    if (dispute.raised_by !== req.user.userId) {
+      return res.status(403).json({ message: 'Bạn không có quyền rút khiếu nại này.' });
+    }
+    if (dispute.status !== 'OPEN' || dispute.withdrawn_at) {
+      return res.status(409).json({ message: 'Khiếu nại đã được xử lý hoặc đã rút trước đó.' });
+    }
+
+    await client.query('BEGIN');
+    const updated = await client.query(
+      `UPDATE disputes SET withdrawn_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.disputeId]
+    );
+
+    // Booking dispute: khôi phục luồng tự động giải ngân bình thường (auto_release_at
+    // chỉ từng bị đặt về NOW() khi thiếu ví lúc điểm danh — không có mốc "lessonEnd + Nh"
+    // nào khác trong hệ thống — nên đặt lại NOW() để cron auto-release xử lý ở lượt kế tiếp).
+    if (dispute.booking_id) {
+      await client.query(
+        `UPDATE bookings SET auto_release_at=NOW() WHERE id=$1 AND escrow_released_at IS NULL`,
+        [dispute.booking_id]
+      );
+    }
+
+    const admins = await client.query("SELECT id FROM users WHERE role='admin'");
+    const reporterRes = await client.query('SELECT full_name FROM users WHERE id=$1', [dispute.raised_by]);
+    const reporterName = reporterRes.rows[0]?.full_name || 'Học sinh';
+    for (const admin of admins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP'],
+        templateKey: 'dispute_withdrawn', eventType: 'dispute_withdrawn',
+        data: { forAdmin: true, reporterName },
+        refId: req.params.disputeId, refType: 'dispute',
+        sourceType: 'dispute', sourceId: req.params.disputeId,
+        idempotencyKey: `dispute:${req.params.disputeId}:withdrawn:${admin.id}`,
+      });
+    }
+    if (dispute.tutor_id) {
+      await safeNotifyUser(client, {
+        userId: dispute.tutor_id, channels: ['IN_APP'],
+        templateKey: 'dispute_withdrawn', eventType: 'dispute_withdrawn',
+        data: { forAdmin: false },
+        refId: req.params.disputeId, refType: 'dispute',
+        sourceType: 'dispute', sourceId: req.params.disputeId,
+        idempotencyKey: `dispute:${req.params.disputeId}:withdrawn:${dispute.tutor_id}`,
+      });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, dispute: updated.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('PATCH withdraw dispute error:', e);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/courses/:id/report — Học sinh / Phụ huynh báo cáo khóa học
 app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const { reason, severity = 'medium', evidenceUrl = null } = req.body;
+    const { reason, severity = 'medium', requestedResolution } = req.body;
     if (!reason?.trim()) return res.status(400).json({ message: 'Vui lòng cung cấp lý do báo cáo.' });
+    // Tương thích ngược tạm thời: route này chưa có caller frontend nào tính tới thời điểm audit Bước 8a.0,
+    // nhưng vẫn chấp nhận cả evidenceUrl (string, dạng cũ) lẫn evidenceUrls (mảng, dạng mới) để không phá caller ngoài nếu có.
+    const evidenceUrls = Array.isArray(req.body.evidenceUrls)
+      ? req.body.evidenceUrls
+      : (req.body.evidenceUrl ? [req.body.evidenceUrl] : null);
+    const studentRequestedResolution = requestedResolution?.trim() || null;
 
     let enrollmentQuery;
     let queryParams;
@@ -10123,7 +14539,7 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
     if (enrollment.status === 'refunded') return res.status(400).json({ message: 'Khóa học này đã được hoàn tiền.' });
 
     const existingDispute = await client.query(
-      "SELECT id FROM disputes WHERE course_id=$1 AND raised_by=$2 AND status='OPEN'", [enrollment.course_id, req.user.userId]
+      "SELECT id FROM disputes WHERE course_id=$1 AND raised_by=$2 AND status='OPEN' AND withdrawn_at IS NULL", [enrollment.course_id, req.user.userId]
     );
     if (existingDispute.rows.length) return res.status(409).json({ message: 'Bạn đã gửi khiếu nại cho khóa học này rồi.' });
 
@@ -10196,10 +14612,11 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
         `, [sw.rows[0].id, refundAmount, enrollment.course_id, `Hoàn tiền khóa học ${Math.round(decision.refundRate * 100)}% — ${decision.reasonCode}`]);
 
         await client.query(`
-          INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url, admin_note, resolved_at)
-          VALUES (NULL, $1, $2, 'RESOLVED_REFUND', $3, 'course', $4, $5, $6, $7, $8, NOW())
-        `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
-            `Tự động hoàn ${Math.round(decision.refundRate * 100)}% theo ${REFUND_POLICY_VERSION} (tiến độ ${Math.round(progressPercent)}%, ${Math.round(hoursSincePurchase)}h).`]);
+          INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls, admin_note, resolved_at, student_requested_resolution)
+          VALUES (NULL, $1, $2, 'RESOLVED_REFUND', $3, 'course', $4, $5, $6, $7, $8, NOW(), $9)
+        `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrls,
+            `Tự động hoàn ${Math.round(decision.refundRate * 100)}% theo ${REFUND_POLICY_VERSION} (tiến độ ${Math.round(progressPercent)}%, ${Math.round(hoursSincePurchase)}h).`,
+            studentRequestedResolution]);
 
         await safeNotifyUser(client, {
           userId: enrollment.student_id, channels: ['IN_APP', 'EMAIL'],
@@ -10221,16 +14638,17 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
 
     // ── ADMIN_REVIEW (>80% progress, >48h, or auto-settle unsafe) → OPEN dispute
     const dispute = await client.query(`
-      INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_url, admin_note)
-      VALUES (NULL, $1, $2, 'OPEN', $3, 'course', $4, $5, $6, $7, $8) RETURNING id
-    `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrl,
-        `Chuyển admin xét duyệt theo ${REFUND_POLICY_VERSION}: ${decision.reasonCode}.`]);
+      INSERT INTO disputes (transaction_id, raised_by, reason, status, course_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls, admin_note, student_requested_resolution)
+      VALUES (NULL, $1, $2, 'OPEN', $3, 'course', $4, $5, $6, $7, $8, $9) RETURNING id
+    `, [req.user.userId, reason.trim(), enrollment.course_id, enrollment.tutor_id, severity, isParent, evidenceUrls,
+        `Chuyển admin xét duyệt theo ${REFUND_POLICY_VERSION}: ${decision.reasonCode}.`,
+        studentRequestedResolution]);
 
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
     for (const admin of admins.rows) {
       await safeNotifyUser(client, {
-        userId: admin.id, channels: ['IN_APP'],
+        userId: admin.id, channels: ['IN_APP', 'EMAIL'],
         templateKey: 'dispute_opened', eventType: 'dispute_opened',
         data: { forAdmin: true, reporterName, reason: `khiếu nại khóa học ID: ${enrollment.course_id}. Lý do: ${reason}` },
         refId: dispute.rows[0].id, refType: 'dispute',
@@ -10511,6 +14929,450 @@ app.get('/api/admin/copilot/history/:id', verifyToken, requireAdmin, async (req,
   }
 });
 
+// ═══ Semantic Moderation endpoints (Batch 27 — advisory only) ═══════════════
+
+// POST /api/admin/semantic-moderation/analyze — analyze one item / manual text.
+app.post('/api/admin/semantic-moderation/analyze', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { sourceType, sourceId, text, tutorId, studentId } = req.body || {};
+    const type = String(sourceType || 'TEXT').toUpperCase();
+    const allowed = ['REVIEW', 'CHAT_MESSAGE', 'CHAT_THREAD', 'TUTOR_PROFILE', 'TEXT'];
+    if (!allowed.includes(type)) return res.status(400).json({ message: 'sourceType không hợp lệ.' });
+
+    let analyzeText = typeof text === 'string' ? text : '';
+    let resolvedTutorId = asUuidOrNull(tutorId);
+    let resolvedStudentId = asUuidOrNull(studentId);
+    let targetUserId = null;
+
+    if ((!analyzeText || !analyzeText.trim()) && sourceId) {
+      if (type === 'REVIEW') {
+        const r = await copilotSafeRows(`SELECT COALESCE(comment, content) AS text, tutor_id FROM reviews WHERE id=$1 LIMIT 1`, [sourceId]);
+        if (r.length) {
+          analyzeText = r[0].text || '';
+          const tp = await copilotSafeRows(`SELECT user_id FROM tutor_profiles WHERE id=$1 LIMIT 1`, [r[0].tutor_id]);
+          if (tp.length) resolvedTutorId = resolvedTutorId || asUuidOrNull(tp[0].user_id);
+        }
+      } else if (type === 'CHAT_MESSAGE') {
+        const r = await copilotSafeRows(`SELECT content, sender_id FROM chat_messages WHERE id=$1 LIMIT 1`, [sourceId]);
+        if (r.length) { analyzeText = r[0].content || ''; targetUserId = asUuidOrNull(r[0].sender_id); }
+      } else if (type === 'TUTOR_PROFILE') {
+        const r = await copilotSafeRows(`SELECT bio, headline FROM tutor_profiles WHERE user_id=$1 LIMIT 1`, [sourceId]);
+        if (r.length) analyzeText = [r[0].headline, r[0].bio].filter(Boolean).join('. ');
+        resolvedTutorId = resolvedTutorId || asUuidOrNull(sourceId);
+      }
+    }
+
+    if (!analyzeText || !analyzeText.trim()) return res.status(400).json({ message: 'Không có nội dung để phân tích.' });
+
+    const base = classifyTextModeration(analyzeText, { sourceType: type });
+    const llm = await maybeSemanticLLMRewrite(base, analyzeText);
+    base.summary = llm.summary; base.model_used = llm.model_used;
+
+    const report = {
+      ...base, source_type: type, source_id: sourceId || null,
+      tutor_id: resolvedTutorId, student_id: resolvedStudentId, target_user_id: targetUserId,
+      input_hash: hashModerationInput(analyzeText, type, sourceId),
+    };
+    const id = await saveSemanticModerationReport(report);
+    if (resolvedTutorId) { try { await upsertTutorReputationSemanticScore(resolvedTutorId, { days: 90 }); } catch { /* best-effort */ } }
+
+    return res.json({ id, created_at: new Date().toISOString(), ...report });
+  } catch (err) {
+    console.error('POST /api/admin/semantic-moderation/analyze error:', err.message);
+    return res.status(500).json({ message: 'Không thể phân tích nội dung.' });
+  }
+});
+
+// POST /api/admin/semantic-moderation/run-pending — scan recent reviews/chat.
+app.post('/api/admin/semantic-moderation/run-pending', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(200, Math.max(1, parseInt(req.body?.limit, 10) || SEMANTIC_MODERATION_BATCH_LIMIT));
+    const result = await runPendingSemanticModeration({ limit, triggeredBy: 'admin' });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('POST /api/admin/semantic-moderation/run-pending error:', err.message);
+    return res.status(500).json({ message: 'Không thể chạy quét kiểm duyệt.' });
+  }
+});
+
+// GET /api/admin/semantic-moderation/reports — list (filters + pagination).
+app.get('/api/admin/semantic-moderation/reports', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.sourceType) { params.push(String(req.query.sourceType).toUpperCase()); where.push(`s.source_type=$${params.length}`); }
+    if (req.query.severity)   { params.push(String(req.query.severity).toUpperCase());   where.push(`s.severity=$${params.length}`); }
+    if (req.query.status)     { params.push(String(req.query.status).toUpperCase());     where.push(`s.status=$${params.length}`); }
+    if (req.query.category)   { params.push(String(req.query.category).toUpperCase());   where.push(`s.categories ? $${params.length}`); }
+    if (req.query.tutorId && asUuidOrNull(req.query.tutorId)) { params.push(asUuidOrNull(req.query.tutorId)); where.push(`s.tutor_id=$${params.length}`); }
+    if (req.query.from)       { params.push(req.query.from); where.push(`s.created_at >= $${params.length}`); }
+    if (req.query.to)         { params.push(req.query.to);   where.push(`s.created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports s ${whereSql}`, params);
+    const rows = await copilotSafeRows(
+      `SELECT s.id, s.source_type, s.source_id, s.tutor_id, s.target_user_id, s.severity, s.status,
+              s.categories, s.summary, s.model_used, s.created_at,
+              tu.full_name AS tutor_name, xu.full_name AS target_name
+         FROM semantic_moderation_reports s
+         LEFT JOIN users tu ON tu.id = s.tutor_id
+         LEFT JOIN users xu ON xu.id = s.target_user_id
+         ${whereSql}
+         ORDER BY s.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    const summary = {
+      open:             await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE status='OPEN'`),
+      high_risk:        await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE severity IN ('HIGH','CRITICAL')`),
+      external_payment: await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE categories ? 'EXTERNAL_PAYMENT_ATTEMPT'`),
+      toxic_spam:       await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE categories ? 'TOXIC_LANGUAGE' OR categories ? 'SPAM_OR_SCAM'`),
+      handled:          await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM semantic_moderation_reports WHERE status <> 'OPEN'`),
+    };
+    return res.json({ items: rows, pagination: { page, limit, total }, summary });
+  } catch (err) {
+    console.error('GET /api/admin/semantic-moderation/reports error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách báo cáo.' });
+  }
+});
+
+// GET /api/admin/semantic-moderation/reports/:id — detail.
+app.get('/api/admin/semantic-moderation/reports/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const rows = await copilotSafeRows(
+      `SELECT s.*, tu.full_name AS tutor_name, tu.email AS tutor_email, xu.full_name AS target_name
+         FROM semantic_moderation_reports s
+         LEFT JOIN users tu ON tu.id = s.tutor_id
+         LEFT JOIN users xu ON xu.id = s.target_user_id
+        WHERE s.id=$1`, [idNum]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    const r = rows[0];
+    if (r.tutor_email) r.tutor_email = maskEmail(r.tutor_email); // never expose raw email
+    return res.json(r);
+  } catch (err) {
+    console.error('GET /api/admin/semantic-moderation/reports/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết báo cáo.' });
+  }
+});
+
+// PATCH /api/admin/semantic-moderation/reports/:id/status — status + admin note only.
+app.patch('/api/admin/semantic-moderation/reports/:id/status', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, adminNote } = req.body || {};
+    const st = String(status || '').toUpperCase();
+    if (!['REVIEWED', 'DISMISSED', 'ACTION_REQUIRED'].includes(st)) return res.status(400).json({ message: 'status không hợp lệ.' });
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const note = adminNote ? sanitizeModerationText(adminNote, 2000) : null;
+    const upd = await pool.query(
+      `UPDATE semantic_moderation_reports
+          SET status=$1, admin_note=$2, reviewed_at=NOW(), reviewed_by=$3
+        WHERE id=$4 RETURNING id, status, reviewed_at`,
+      [st, note, asUuidOrNull(req.user.id), idNum]
+    );
+    if (!upd.rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    return res.json({ ok: true, ...upd.rows[0] });
+  } catch (err) {
+    console.error('PATCH /api/admin/semantic-moderation/reports/:id/status error:', err.message);
+    return res.status(500).json({ message: 'Không thể cập nhật trạng thái.' });
+  }
+});
+
+// GET /api/admin/tutors/:id/semantic-reputation — latest score + radar data.
+app.get('/api/admin/tutors/:id/semantic-reputation', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const uid = asUuidOrNull(req.params.id);
+    if (!uid) return res.status(400).json({ message: 'ID gia sư không hợp lệ.' });
+    let latest = (await copilotSafeRows(
+      `SELECT * FROM tutor_reputation_semantic_scores WHERE tutor_id=$1 ORDER BY period_end DESC, updated_at DESC LIMIT 1`, [uid]))[0] || null;
+    if (!latest) {
+      const rep = await analyzeTutorSemanticReputation(uid, { days: 90 });
+      latest = { ...rep, period_start: null, period_end: null, computed_on_the_fly: true };
+    }
+    const radar = [
+      { label: 'Kiên nhẫn',              value: Number(latest.patience_score ?? 0) },
+      { label: 'Thân thiện',             value: Number(latest.friendliness_score ?? 0) },
+      { label: 'Sư phạm',                value: Number(latest.teaching_quality_score ?? 0) },
+      { label: 'Chuyên nghiệp',          value: Number(latest.professionalism_score ?? 0) },
+      { label: 'Rủi ro giao dịch ngoài', value: Number(latest.external_payment_risk_score ?? 0) },
+      { label: 'Rủi ro toxic',           value: Number(latest.toxicity_risk_score ?? 0) },
+    ];
+    return res.json({ tutor_id: uid, latest_score: latest, radar });
+  } catch (err) {
+    console.error('GET /api/admin/tutors/:id/semantic-reputation error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải điểm uy tín.' });
+  }
+});
+
+// ═══ Safe NL Analytics endpoints (Batch 29A — template allowlist, SELECT-only) ═
+
+// POST /api/admin/analytics/ask — map question -> vetted template -> run SELECT.
+app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const question = String(req.body?.question || '').trim();
+    const params = req.body?.params || {};
+    if (!question) return res.status(400).json({ message: 'Vui lòng nhập câu hỏi.' });
+    if (question.length > ADMIN_ANALYTICS_MAX_QUESTION_CHARS) return res.status(400).json({ message: `Câu hỏi quá dài (tối đa ${ADMIN_ANALYTICS_MAX_QUESTION_CHARS} ký tự).` });
+    if (params.limit != null && parseInt(params.limit, 10) > ADMIN_ANALYTICS_MAX_LIMIT) return res.status(400).json({ message: `limit tối đa là ${ADMIN_ANALYTICS_MAX_LIMIT}.` });
+
+    const normalized = normalizeAnalyticsQuestion(question);
+
+    // Secondary guard: reject dangerous SQL keywords / sensitive-data requests.
+    if (ANALYTICS_BLOCKED_RE.test(question)) {
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'BLOCKED', summary: 'Câu hỏi chứa từ khóa bị chặn.', safety_flags: ['BLOCKED_SQL_KEYWORD'], created_by: req.user.id });
+      return res.json({ status: 'BLOCKED', intent: null, summary: 'Câu hỏi chứa từ khóa không được phép. Hệ thống chỉ chạy các mẫu phân tích an toàn (chỉ đọc).', safety_flags: ['BLOCKED_SQL_KEYWORD'], limitations: [], columns: [], rows: [], chart: {}, sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().slice(0, 6).map(t => t.exampleQuestions[0]) });
+    }
+    if (ANALYTICS_SENSITIVE_RE.test(normalized)) {
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'BLOCKED', summary: 'Yêu cầu dữ liệu nhạy cảm bị từ chối.', safety_flags: ['SENSITIVE_REQUEST'], created_by: req.user.id });
+      return res.json({ status: 'BLOCKED', intent: null, summary: 'Không thể truy xuất dữ liệu nhạy cảm (mật khẩu/token/OTP/IP...). Vui lòng dùng câu hỏi phân tích an toàn.', safety_flags: ['SENSITIVE_REQUEST'], limitations: [], columns: [], rows: [], chart: {}, sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().slice(0, 6).map(t => t.exampleQuestions[0]) });
+    }
+
+    // Intent detection: rule-based first, optional LLM classify as fallback.
+    let intent = detectAnalyticsIntent(question);
+    let modelUsed = 'TEMPLATE_RULE_BASED';
+    if (!intent) { const llm = await maybeAnalyticsLLMIntent(question); if (llm) { intent = llm; modelUsed = 'LLM_INTENT_' + ADMIN_ANALYTICS_PROVIDER.toUpperCase(); } }
+
+    if (!intent) {
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'NO_MATCH', summary: 'Không có mẫu phân tích phù hợp.', model_used: modelUsed, created_by: req.user.id });
+      return res.json({ status: 'NO_MATCH', intent: null, summary: 'Hiện hệ thống chưa hỗ trợ câu hỏi này ở chế độ an toàn.', columns: [], rows: [], chart: {}, limitations: [], safety_flags: [], sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().map(t => t.exampleQuestions[0]) });
+    }
+
+    const result = await runAnalyticsTemplate(intent.key, params, req.user.id);
+    const auditId = await saveAnalyticsAuditLog({
+      question, normalized_question: normalized, detected_intent: intent.key, template_key: intent.key,
+      status: result.status, summary: result.summary, sql_preview: result.sql_preview, parameters: result.params,
+      result_count: (result.rows || []).length, result_preview: result.rows, chart_data: result.chart,
+      limitations: result.limitations, safety_flags: result.safety_flags || [], model_used: modelUsed,
+      created_by: req.user.id, error_message: result.error_message,
+    });
+
+    return res.json({
+      status: result.status, template_key: intent.key, intent: intent.key, summary: result.summary,
+      columns: result.columns || [], rows: result.rows || [], chart: result.chart || {},
+      sql_preview: result.sql_preview, limitations: result.limitations || [], safety_flags: result.safety_flags || [],
+      model_used: modelUsed, audit_id: auditId,
+    });
+  } catch (err) {
+    console.error('POST /api/admin/analytics/ask error:', err.message);
+    return res.status(500).json({ message: 'Không thể xử lý câu hỏi phân tích.' });
+  }
+});
+
+// GET /api/admin/analytics/templates — list supported templates.
+app.get('/api/admin/analytics/templates', verifyToken, requireAdmin, async (req, res) => {
+  try { return res.json({ items: listAnalyticsTemplates() }); }
+  catch (err) { console.error('GET /api/admin/analytics/templates error:', err.message); return res.status(500).json({ message: 'Không thể tải danh sách mẫu.' }); }
+});
+
+// GET /api/admin/analytics/history — previous queries (filters + pagination).
+app.get('/api/admin/analytics/history', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.status) { params.push(String(req.query.status).toUpperCase()); where.push(`status=$${params.length}`); }
+    if (req.query.templateKey) { params.push(String(req.query.templateKey)); where.push(`template_key=$${params.length}`); }
+    if (req.query.from) { params.push(req.query.from); where.push(`created_at >= $${params.length}`); }
+    if (req.query.to) { params.push(req.query.to); where.push(`created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_analytics_queries ${whereSql}`, params);
+    const items = await copilotSafeRows(
+      `SELECT id, question, template_key, detected_intent, status, result_count, summary, model_used, created_at
+         FROM admin_analytics_queries ${whereSql} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]);
+    return res.json({ items, pagination: { page, limit, total } });
+  } catch (err) {
+    console.error('GET /api/admin/analytics/history error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải lịch sử.' });
+  }
+});
+
+// GET /api/admin/analytics/history/:id — detail audit log.
+app.get('/api/admin/analytics/history/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const rows = await copilotSafeRows(`SELECT * FROM admin_analytics_queries WHERE id=$1`, [idNum]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy.' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/analytics/history/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
+// POST /api/admin/analytics/explain-template — describe a template (no query run).
+app.post('/api/admin/analytics/explain-template', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const t = getAnalyticsTemplate(String(req.body?.templateKey || ''));
+    if (!t) return res.status(404).json({ message: 'Không tìm thấy mẫu.' });
+    return res.json({
+      key: t.key, label: t.label,
+      calculates: t.description,
+      data_sources: t.requiredTables,
+      example_questions: t.exampleQuestions,
+      params: ['days (1-365)', `limit (<= ${ADMIN_ANALYTICS_MAX_LIMIT})`],
+      chart_type: t.chartType,
+      sql_preview: t.sql,
+      safety_notes: [
+        'Chỉ chạy truy vấn SELECT đã được kiểm duyệt trong allowlist.',
+        'Tham số hóa hoàn toàn — không ghép chuỗi đầu vào người dùng.',
+        'Có LIMIT và giới hạn theo khoảng ngày; timeout 8 giây.',
+        'Chỉ đọc — không thay đổi bất kỳ dữ liệu nào.',
+      ],
+    });
+  } catch (err) {
+    console.error('POST /api/admin/analytics/explain-template error:', err.message);
+    return res.status(500).json({ message: 'Không thể giải thích mẫu.' });
+  }
+});
+
+// ═══ AI Fraud Intel endpoints (Batch 28 — advisory only) ════════════════════
+
+// POST /api/admin/fraud-intel/run — run bounded fraud detection.
+app.post('/api/admin/fraud-intel/run', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { periodDays, limit, dryRun, analyzers } = req.body || {};
+    const result = await runFraudRingDetection({
+      periodDays: Number(periodDays) || FRAUD_INTEL_PERIOD_DAYS,
+      limit: Number(limit) || FRAUD_INTEL_BATCH_LIMIT,
+      dryRun: !!dryRun,
+      analyzers: Array.isArray(analyzers) ? analyzers : null,
+      triggeredBy: 'admin',
+    });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('POST /api/admin/fraud-intel/run error:', err.message);
+    return res.status(500).json({ message: 'Không thể chạy phân tích gian lận.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/reports — list (filters + pagination + KPIs).
+app.get('/api/admin/fraud-intel/reports', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const where = []; const params = [];
+    if (req.query.reportType) { params.push(String(req.query.reportType).toUpperCase()); where.push(`f.report_type=$${params.length}`); }
+    if (req.query.severity)   { params.push(String(req.query.severity).toUpperCase());   where.push(`f.severity=$${params.length}`); }
+    if (req.query.status)     { params.push(String(req.query.status).toUpperCase());     where.push(`f.status=$${params.length}`); }
+    if (req.query.riskFlag)   { params.push(String(req.query.riskFlag).toUpperCase());   where.push(`f.risk_flags ? $${params.length}`); }
+    if (req.query.tutorId && asUuidOrNull(req.query.tutorId))     { params.push(asUuidOrNull(req.query.tutorId));   where.push(`f.tutor_id=$${params.length}`); }
+    if (req.query.studentId && asUuidOrNull(req.query.studentId)) { params.push(asUuidOrNull(req.query.studentId)); where.push(`f.student_id=$${params.length}`); }
+    if (req.query.from) { params.push(req.query.from); where.push(`f.created_at >= $${params.length}`); }
+    if (req.query.to)   { params.push(req.query.to);   where.push(`f.created_at <= $${params.length}`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports f ${whereSql}`, params);
+    const items = await copilotSafeRows(
+      `SELECT f.id, f.report_type, f.severity, f.status, f.risk_score, f.confidence,
+              f.tutor_id, f.student_id, f.primary_user_id, f.title, f.summary, f.risk_flags,
+              f.model_used, f.created_at,
+              pu.full_name AS primary_name, tu.full_name AS tutor_name
+         FROM fraud_intel_reports f
+         LEFT JOIN users pu ON pu.id = f.primary_user_id
+         LEFT JOIN users tu ON tu.id = f.tutor_id
+         ${whereSql}
+         ORDER BY f.risk_score DESC, f.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+    const summary = {
+      open:             await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE status='OPEN'`),
+      critical:         await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE severity='CRITICAL'`),
+      high:             await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE severity='HIGH'`),
+      external_payment: await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE report_type='EXTERNAL_PAYMENT_COLLUSION'`),
+      withdrawal_risk:  await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE report_type='WITHDRAWAL_RISK'`),
+      reviewed:         await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_intel_reports WHERE status <> 'OPEN'`),
+    };
+    return res.json({ items, summary, pagination: { page, limit, total } });
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/reports error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách báo cáo gian lận.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/reports/:id — detail.
+app.get('/api/admin/fraud-intel/reports/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const rows = await copilotSafeRows(
+      `SELECT f.*, pu.full_name AS primary_name, tu.full_name AS tutor_name, su.full_name AS student_name
+         FROM fraud_intel_reports f
+         LEFT JOIN users pu ON pu.id = f.primary_user_id
+         LEFT JOIN users tu ON tu.id = f.tutor_id
+         LEFT JOIN users su ON su.id = f.student_id
+        WHERE f.id=$1`, [idNum]);
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/reports/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải chi tiết.' });
+  }
+});
+
+// PATCH /api/admin/fraud-intel/reports/:id/status — status + note only.
+app.patch('/api/admin/fraud-intel/reports/:id/status', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, adminNote } = req.body || {};
+    const st = String(status || '').toUpperCase();
+    if (!['REVIEWED', 'DISMISSED', 'ACTION_REQUIRED', 'ESCALATED'].includes(st)) return res.status(400).json({ message: 'status không hợp lệ.' });
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    const note = adminNote ? sanitizeModerationText(adminNote, 2000) : null;
+    const upd = await pool.query(
+      `UPDATE fraud_intel_reports SET status=$1, admin_note=$2, reviewed_at=NOW(), reviewed_by=$3, updated_at=NOW()
+        WHERE id=$4 RETURNING id, status, reviewed_at`,
+      [st, note, asUuidOrNull(req.user.id), idNum]);
+    if (!upd.rows.length) return res.status(404).json({ message: 'Không tìm thấy báo cáo.' });
+    return res.json({ ok: true, ...upd.rows[0] });
+  } catch (err) {
+    console.error('PATCH /api/admin/fraud-intel/reports/:id/status error:', err.message);
+    return res.status(500).json({ message: 'Không thể cập nhật trạng thái.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/entity/:entityType/:entityId — reports + fresh risk.
+app.get('/api/admin/fraud-intel/entity/:entityType/:entityId', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const uid = asUuidOrNull(req.params.entityId);
+    if (!uid) return res.status(400).json({ message: 'entityId không hợp lệ.' });
+    const type = String(req.params.entityType || '').toLowerCase();
+    const reports = await copilotSafeRows(
+      `SELECT id, report_type, severity, status, risk_score, confidence, title, summary, risk_flags, created_at
+         FROM fraud_intel_reports
+        WHERE primary_user_id=$1 OR secondary_user_id=$1 OR tutor_id=$1 OR student_id=$1
+        ORDER BY created_at DESC LIMIT 50`, [uid]);
+    const period = buildFraudPeriod(90);
+    let risk = null;
+    try {
+      if (type === 'tutor') risk = await analyzeTutorFraudSignals(uid, period);
+      else if (type === 'student') risk = await analyzeStudentFraudSignals(uid, period);
+      else risk = { tutor: await analyzeTutorFraudSignals(uid, period), student: await analyzeStudentFraudSignals(uid, period) };
+    } catch { risk = null; }
+    return res.json({ entity_type: type, entity_id: uid, reports, risk_summary: risk });
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/entity error:', err.message);
+    return res.status(500).json({ message: 'Không thể tra cứu rủi ro người dùng.' });
+  }
+});
+
+// GET /api/admin/fraud-intel/run-logs — recent run logs.
+app.get('/api/admin/fraud-intel/run-logs', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const rows = await copilotSafeRows(`SELECT * FROM fraud_intel_run_logs ORDER BY started_at DESC LIMIT 30`);
+    return res.json({ items: rows });
+  } catch (err) {
+    console.error('GET /api/admin/fraud-intel/run-logs error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải nhật ký chạy.' });
+  }
+});
+
 // POST /api/escrow/resolve-dispute-v2 — Admin xử lý khiếu nại
 app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
@@ -10522,6 +15384,9 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
     if (!dRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
     const dispute = dRes.rows[0];
 
+    if (dispute.withdrawn_at) {
+      return res.status(409).json({ message: 'Khiếu nại này đã được học sinh rút, không thể xử lý/phản hồi.' });
+    }
     // Idempotency: only an OPEN dispute can be resolved (Batch 16)
     if (dispute.status !== 'OPEN') {
       return res.status(409).json({ message: 'Khiếu nại đã được xử lý.' });
@@ -10743,7 +15608,7 @@ app.post('/api/escrow/manual-release/:bookingId', verifyToken, async (req, res) 
     const booking = bookingRes.rows[0];
     const lessonFee = Number(booking.lesson_fee || 0);
 
-    const openDispute = await client.query("SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN'", [booking.id]);
+    const openDispute = await client.query("SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN' AND withdrawn_at IS NULL", [booking.id]);
     if (openDispute.rows.length) return res.status(400).json({ message: 'Đang có khiếu nại mở, không thể xác nhận.' });
 
     const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [booking.tutor_id]);
@@ -10876,6 +15741,10 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS escrow_released_at TIMESTAMPTZ`);
     // bookings: thêm auto_release_at (thời điểm tự động giải ngân nếu không khiếu nại)
     await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS auto_release_at TIMESTAMPTZ`);
+    // bookings: thêm duration_mins (thời lượng slot học — 60/120/180)
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS duration_mins INT NOT NULL DEFAULT 60`);
+    // tutor_profiles: thêm slot_duration_mins (thời lượng mỗi slot gia sư đăng ký — 60/120/180)
+    await pool.query(`ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS slot_duration_mins INT NOT NULL DEFAULT 60`);
     // tutor_profiles: reputation_score
     await pool.query(`ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS reputation_score INT NOT NULL DEFAULT 100`);
     // tutor_profiles: completed_lessons_count (cho logic cọc ảo)
@@ -11409,6 +16278,309 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.error('⚠️  DB migration (admin_copilot_reports Batch 26) warning:', err.message);
   }
 
+  // ── Auto-migrate: semantic moderation (Batch 27, advisory-only) ─────────────
+  // User-id columns are UUID (matches users.id). No FK to stay decoupled and to
+  // allow storing analysis for manual/edge cases; values validated in code.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS semantic_moderation_reports (
+        id             BIGSERIAL PRIMARY KEY,
+        source_type    TEXT NOT NULL CHECK (source_type IN ('REVIEW','CHAT_MESSAGE','CHAT_THREAD','TUTOR_PROFILE','TEXT','MIXED')),
+        source_id      TEXT,
+        tutor_id       UUID,
+        student_id     UUID,
+        target_user_id UUID,
+        severity       TEXT CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')) DEFAULT 'LOW',
+        status         TEXT CHECK (status IN ('OPEN','REVIEWED','DISMISSED','ACTION_REQUIRED')) DEFAULT 'OPEN',
+        categories        JSONB NOT NULL DEFAULT '[]'::jsonb,
+        scores            JSONB NOT NULL DEFAULT '{}'::jsonb,
+        summary           TEXT,
+        evidence          JSONB NOT NULL DEFAULT '[]'::jsonb,
+        highlighted_text  JSONB NOT NULL DEFAULT '[]'::jsonb,
+        suggested_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        limitations       JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used     TEXT DEFAULT 'RULE_BASED',
+        rule_version   TEXT NOT NULL DEFAULT 'SEMANTIC_MODERATION_V1',
+        input_hash     TEXT,
+        created_at     TIMESTAMPTZ DEFAULT NOW(),
+        reviewed_at    TIMESTAMPTZ,
+        reviewed_by    UUID,
+        admin_note     TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_source   ON semantic_moderation_reports(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_tutor    ON semantic_moderation_reports(tutor_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_target   ON semantic_moderation_reports(target_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_sev      ON semantic_moderation_reports(severity, status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_hash     ON semantic_moderation_reports(input_hash);
+      CREATE INDEX IF NOT EXISTS idx_sem_reports_cat      ON semantic_moderation_reports USING GIN (categories);
+
+      CREATE TABLE IF NOT EXISTS tutor_reputation_semantic_scores (
+        id                          BIGSERIAL PRIMARY KEY,
+        tutor_id                    UUID,
+        period_start                DATE NOT NULL,
+        period_end                  DATE NOT NULL,
+        patience_score              NUMERIC(5,2),
+        friendliness_score          NUMERIC(5,2),
+        teaching_quality_score      NUMERIC(5,2),
+        professionalism_score       NUMERIC(5,2),
+        external_payment_risk_score NUMERIC(5,2),
+        toxicity_risk_score         NUMERIC(5,2),
+        spam_risk_score             NUMERIC(5,2),
+        overall_reputation_score    NUMERIC(5,2),
+        summary                     TEXT,
+        evidence                    JSONB NOT NULL DEFAULT '[]'::jsonb,
+        report_count                INTEGER DEFAULT 0,
+        created_at                  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at                  TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (tutor_id, period_start, period_end)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tutor_rep_sem_tutor ON tutor_reputation_semantic_scores(tutor_id, period_end);
+    `);
+    console.log('✅ DB migration: semantic_moderation_reports + tutor_reputation_semantic_scores ready (Batch 27)');
+  } catch (err) {
+    console.error('⚠️  DB migration (semantic moderation Batch 27) warning:', err.message);
+  }
+
+  // ── Auto-migrate: fraud intel (Batch 28, advisory-only) ─────────────────────
+  // User-id columns UUID (matches users.id), no FK. detection_window_key gives
+  // per-(type+entity+day) idempotency via ON CONFLICT upsert.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS fraud_intel_reports (
+        id                   BIGSERIAL PRIMARY KEY,
+        report_type          TEXT NOT NULL CHECK (report_type IN ('USER_PAIR','TUTOR_CLUSTER','STUDENT_CLUSTER','TRANSACTION_RING','VOUCHER_ABUSE','REFUND_ABUSE','WITHDRAWAL_RISK','EXTERNAL_PAYMENT_COLLUSION','MIXED')),
+        status               TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','REVIEWED','DISMISSED','ACTION_REQUIRED','ESCALATED')),
+        severity             TEXT NOT NULL DEFAULT 'LOW' CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+        risk_score           NUMERIC(5,2) DEFAULT 0,
+        confidence           NUMERIC(5,2) DEFAULT 0,
+        primary_user_id      UUID,
+        secondary_user_id    UUID,
+        tutor_id             UUID,
+        student_id           UUID,
+        entity_key           TEXT NOT NULL,
+        detection_window_key TEXT UNIQUE,
+        title                TEXT,
+        summary              TEXT,
+        reason_summary       TEXT,
+        risk_flags           JSONB NOT NULL DEFAULT '[]'::jsonb,
+        evidence             JSONB NOT NULL DEFAULT '[]'::jsonb,
+        timeline             JSONB NOT NULL DEFAULT '[]'::jsonb,
+        related_entities     JSONB NOT NULL DEFAULT '[]'::jsonb,
+        financial_trace      JSONB NOT NULL DEFAULT '{}'::jsonb,
+        suggested_actions    JSONB NOT NULL DEFAULT '[]'::jsonb,
+        limitations          JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used           TEXT DEFAULT 'RULE_BASED',
+        rule_version         TEXT DEFAULT 'FRAUD_INTEL_V1',
+        period_start         TIMESTAMPTZ,
+        period_end           TIMESTAMPTZ,
+        reviewed_at          TIMESTAMPTZ,
+        reviewed_by          UUID,
+        admin_note           TEXT,
+        created_at           TIMESTAMPTZ DEFAULT NOW(),
+        updated_at           TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_fraud_status   ON fraud_intel_reports(status, severity, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_type     ON fraud_intel_reports(report_type, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_entity   ON fraud_intel_reports(entity_key, period_start, period_end);
+      CREATE INDEX IF NOT EXISTS idx_fraud_tutor    ON fraud_intel_reports(tutor_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_student  ON fraud_intel_reports(student_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_primary  ON fraud_intel_reports(primary_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_secondary ON fraud_intel_reports(secondary_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fraud_flags    ON fraud_intel_reports USING GIN (risk_flags);
+
+      CREATE TABLE IF NOT EXISTS fraud_intel_run_logs (
+        id                   BIGSERIAL PRIMARY KEY,
+        triggered_by         TEXT,
+        scanned_pairs        INTEGER DEFAULT 0,
+        scanned_users        INTEGER DEFAULT 0,
+        scanned_transactions INTEGER DEFAULT 0,
+        reports_created      INTEGER DEFAULT 0,
+        reports_updated      INTEGER DEFAULT 0,
+        skipped              INTEGER DEFAULT 0,
+        failed               INTEGER DEFAULT 0,
+        limitations          JSONB DEFAULT '[]'::jsonb,
+        started_at           TIMESTAMPTZ DEFAULT NOW(),
+        finished_at          TIMESTAMPTZ,
+        error_message        TEXT
+      );
+    `);
+    console.log('✅ DB migration: fraud_intel_reports + fraud_intel_run_logs ready (Batch 28)');
+  } catch (err) {
+    console.error('⚠️  DB migration (fraud intel Batch 28) warning:', err.message);
+  }
+
+  // ── Auto-migrate: admin_analytics_queries (Batch 29A audit log) ─────────────
+  // created_by UUID (matches users.id), no FK. Stores only capped result preview.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_analytics_queries (
+        id                  BIGSERIAL PRIMARY KEY,
+        question            TEXT NOT NULL,
+        normalized_question TEXT,
+        detected_intent     TEXT,
+        template_key        TEXT,
+        status              TEXT CHECK (status IN ('SUCCESS','NO_MATCH','BLOCKED','FAILED')) DEFAULT 'SUCCESS',
+        summary             TEXT,
+        sql_preview         TEXT,
+        parameters          JSONB NOT NULL DEFAULT '{}'::jsonb,
+        result_count        INTEGER DEFAULT 0,
+        result_preview      JSONB NOT NULL DEFAULT '[]'::jsonb,
+        chart_data          JSONB NOT NULL DEFAULT '{}'::jsonb,
+        limitations         JSONB NOT NULL DEFAULT '[]'::jsonb,
+        safety_flags        JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_used          TEXT DEFAULT 'TEMPLATE_RULE_BASED',
+        created_by          UUID,
+        created_at          TIMESTAMPTZ DEFAULT NOW(),
+        error_message       TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_author   ON admin_analytics_queries(created_by, created_at);
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_intent   ON admin_analytics_queries(detected_intent, created_at);
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_template ON admin_analytics_queries(template_key, created_at);
+      CREATE INDEX IF NOT EXISTS idx_analytics_q_status   ON admin_analytics_queries(status, created_at);
+    `);
+    console.log('✅ DB migration: admin_analytics_queries ready (Batch 29A)');
+  } catch (err) {
+    console.error('⚠️  DB migration (admin_analytics_queries Batch 29A) warning:', err.message);
+  }
+
+  // ── Auto-migrate: subjects as first-class entities (Batch 32) ───────────────
+  // Until now subjects existed only as the hardcoded CANONICAL_SUBJECTS array
+  // plus free-text strings on courses/quizzes/tutor_profiles. That left admins
+  // with no row to edit, so create/edit/archive were impossible. This table
+  // gives each subject an identity; the free-text columns stay authoritative
+  // for counts and are still reconciled through normaliseSubject().
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS subjects (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name        TEXT NOT NULL UNIQUE,
+        slug        TEXT NOT NULL UNIQUE,
+        description TEXT,
+        icon        TEXT NOT NULL DEFAULT 'school',
+        color       TEXT NOT NULL DEFAULT 'bg-gray-100 text-gray-600',
+        levels      TEXT[] NOT NULL DEFAULT '{}',
+        status      TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active','draft','archived','disabled')),
+        sort_order  INT NOT NULL DEFAULT 0,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW(),
+        archived_at TIMESTAMPTZ,
+        created_by  UUID REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_subjects_status ON subjects(status);
+      CREATE INDEX IF NOT EXISTS idx_subjects_slug   ON subjects(slug);
+      CREATE INDEX IF NOT EXISTS idx_subjects_order  ON subjects(sort_order, name);
+    `);
+
+    // Seed the canonical ten, preserving the icons/colors the admin UI already
+    // shows so the redesign does not visually re-theme existing subjects.
+    // ON CONFLICT DO NOTHING keeps this safe to re-run and never clobbers an
+    // admin's later edits to icon/color/status.
+    await pool.query(`
+      INSERT INTO subjects (name, slug, icon, color, levels, sort_order) VALUES
+        ('Toán',       'toan',       'calculate',    'bg-blue-100 text-blue-700',       ARRAY['Tiểu học','THCS','THPT'], 1),
+        ('Tiếng Việt', 'tieng-viet', 'menu_book',    'bg-rose-100 text-rose-700',       ARRAY['Tiểu học'],               2),
+        ('Ngữ văn',    'ngu-van',    'auto_stories', 'bg-pink-100 text-pink-700',       ARRAY['THCS','THPT'],            3),
+        ('Tiếng Anh',  'tieng-anh',  'translate',    'bg-green-100 text-green-700',     ARRAY['Tiểu học','THCS','THPT'], 4),
+        ('Vật lý',     'vat-ly',     'bolt',         'bg-cyan-100 text-cyan-700',       ARRAY['THCS','THPT'],            5),
+        ('Hóa học',    'hoa-hoc',    'biotech',      'bg-purple-100 text-purple-700',   ARRAY['THCS','THPT'],            6),
+        ('Sinh học',   'sinh-hoc',   'grass',        'bg-emerald-100 text-emerald-700', ARRAY['THCS','THPT'],            7),
+        ('Lịch sử',    'lich-su',    'history_edu',  'bg-amber-100 text-amber-700',     ARRAY['THCS','THPT'],            8),
+        ('Địa lý',     'dia-ly',     'public',       'bg-teal-100 text-teal-700',       ARRAY['THCS','THPT'],            9),
+        ('Tin học',    'tin-hoc',    'code',         'bg-indigo-100 text-indigo-700',   ARRAY['Tiểu học','THCS','THPT'], 10)
+      ON CONFLICT (name) DO NOTHING
+    `);
+    console.log('✅ DB migration: subjects table + canonical seed ready (Batch 32)');
+  } catch (err) {
+    console.error('⚠️  DB migration (subjects Batch 32) warning:', err.message);
+  }
+
+  // ── Auto-migrate: fraud investigation tables (Batch 35) ─────────────────────
+  // fraud-alerts are computed live (see GET /api/admin/fraud-alerts, CAP-4.2) and
+  // are never persisted — alert_id is deterministic ("disp-<user_id>" /
+  // "dep-<transaction_id>") so investigation state can key off it safely.
+  // fraud_investigations is the anchor row; notes/audit_logs hang off alert_id.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS fraud_investigations (
+        alert_id         TEXT PRIMARY KEY,
+        status            TEXT NOT NULL DEFAULT 'OPEN',
+        subject_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+        assigned_to       UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS fraud_investigation_notes (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        alert_id    TEXT NOT NULL REFERENCES fraud_investigations(alert_id) ON DELETE CASCADE,
+        admin_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content     TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_fraud_notes_alert ON fraud_investigation_notes(alert_id);
+
+      CREATE TABLE IF NOT EXISTS fraud_audit_logs (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        alert_id         TEXT NOT NULL,
+        action           TEXT NOT NULL,
+        admin_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+        previous_status  TEXT,
+        new_status       TEXT,
+        reason           TEXT,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_fraud_audit_alert ON fraud_audit_logs(alert_id);
+    `);
+    console.log('✅ DB migration: fraud_investigations + fraud_investigation_notes + fraud_audit_logs ready (Batch 35)');
+  } catch (err) {
+    console.error('⚠️  DB migration (fraud investigations Batch 35) warning:', err.message);
+  }
+
+  // ── Auto-migrate: wallet deposit/withdraw requests (Batch 36 — bug fix) ─────
+  // These tables previously only existed via a standalone .sql file that was
+  // never actually run by startServer(), so create them here for consistency.
+  // Bug fix: admin approve for withdraw_requests sets status='APPROVED' as an
+  // intermediate step (tutor must self-confirm receipt before COMPLETED — see
+  // adminWalletRoutes.js / walletRoutes.js), but the live status CHECK
+  // constraint only allowed PENDING/COMPLETED/REJECTED, so every approval
+  // attempt failed and requests were stuck at PENDING forever. Widen it.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS deposit_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        wallet_id UUID NOT NULL REFERENCES wallets(id),
+        amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+        method TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'COMPLETED', 'REJECTED')),
+        admin_note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS withdraw_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        wallet_id UUID NOT NULL REFERENCES wallets(id),
+        amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+        method TEXT NOT NULL,
+        account_details JSONB,
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'COMPLETED', 'REJECTED')),
+        admin_note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await pool.query(`ALTER TABLE withdraw_requests DROP CONSTRAINT IF EXISTS withdraw_requests_status_check`);
+    await pool.query(`ALTER TABLE withdraw_requests ADD CONSTRAINT withdraw_requests_status_check CHECK (status IN ('PENDING', 'APPROVED', 'COMPLETED', 'REJECTED'))`);
+    console.log('✅ DB migration: deposit_requests + withdraw_requests ready, APPROVED status allowed (Batch 36)');
+  } catch (err) {
+    console.error('⚠️  DB migration (wallet deposit/withdraw requests Batch 36) warning:', err.message);
+  }
+
+  // Prime the dynamic subject index so admin-created subjects resolve from the
+  // first request onward, not only after the next mutation (Batch 33).
+  await refreshSubjectIndex();
+
   // ── Cron: Email outbox processor (Batch 20) ─────────────────────────────────
   // Runs every minute; processNotificationOutbox() guards against overlap and
   // never throws, so this interval can never crash the server.
@@ -11431,7 +16603,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
           AND b.auto_release_at IS NOT NULL
           AND b.auto_release_at <= NOW()
           AND NOT EXISTS (
-            SELECT 1 FROM disputes d WHERE d.booking_id = b.id AND d.status = 'OPEN'
+            SELECT 1 FROM disputes d WHERE d.booking_id = b.id AND d.status = 'OPEN' AND d.withdrawn_at IS NULL
           )
       `);
 
@@ -11494,6 +16666,85 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     } catch (err) {
       if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
         console.error('❌ Cron auto-release error:', err.message);
+      }
+    }
+  }, 5 * 60 * 1000); // chạy mỗi 5 phút
+
+
+  // ── Cron: Nhắc lịch trước buổi học (mốc 24h và 1h, cho cả 2 phía) ────────
+  setInterval(async () => {
+    try {
+      const due = await pool.query(`
+        SELECT b.id, b.student_id, b.tutor_id, b.tutor_name, b.subject,
+               b.lesson_date, b.time_slot, b.teaching_method, b.meeting_link, b.location,
+               b.reminded_24h_at, b.reminded_1h_at,
+               u.full_name AS student_name
+        FROM bookings b
+        LEFT JOIN users u ON u.id = b.student_id
+        WHERE b.status = 'Approved'
+          AND b.lesson_date BETWEEN CURRENT_DATE - 1 AND CURRENT_DATE + 2
+          AND (b.reminded_24h_at IS NULL OR b.reminded_1h_at IS NULL)
+      `);
+
+      const now = new Date();
+      for (const b of due.rows) {
+        const start = lessonStartFrom(b.lesson_date, b.time_slot);
+        if (!start || start <= now) continue;
+        const msLeft = start - now;
+        const dateStr = lessonDateStr(b.lesson_date);
+        const methodTxt = b.teaching_method === 'online'
+          ? (b.meeting_link ? `Học Online — link: ${b.meeting_link}` : 'Học Online — gia sư sẽ gửi link phòng học trước giờ.')
+          : b.teaching_method === 'offline'
+            ? (b.location ? `Học Offline tại: ${b.location}.` : 'Học Offline — địa điểm xem trong ghi chú hoặc tin nhắn.')
+            : '';
+        const missingLinkWarn = b.teaching_method === 'online' && !b.meeting_link;
+
+        // In-app + email qua notifyUser; idempotency theo booking+mốc giờ+người
+        // nhận (claim UPDATE bên dưới vẫn là hàng rào chính chống gửi trùng)
+        const send = (userId, hoursLeft, forTutor, message, meetLink) => safeNotifyUser(pool, {
+          userId, type: 'lesson_reminder',
+          channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'lesson_reminder', eventType: 'lesson_reminder',
+          refId: b.id, refType: 'booking',
+          idempotencyKey: `lesson_reminder:${b.id}:${hoursLeft}h:${userId}`,
+          data: { hoursLeft, forTutor, message, meetLink: meetLink || null },
+        });
+
+        // Claim TRƯỚC khi gửi (UPDATE có điều kiện) — chống gửi trùng khi có
+        // 2 process cùng chạy (nodemon restart race / bind trùng cổng trên Windows)
+        if (!b.reminded_1h_at && msLeft <= 60 * 60 * 1000) {
+          const claim = await pool.query(
+            `UPDATE bookings SET reminded_1h_at = NOW(), reminded_24h_at = COALESCE(reminded_24h_at, NOW())
+             WHERE id = $1 AND reminded_1h_at IS NULL RETURNING id`,
+            [b.id]
+          );
+          if (!claim.rowCount) continue;
+          if (b.student_id) await send(b.student_id, 1, false,
+            `Buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'} lúc ${b.time_slot} ngày ${dateStr}. ${methodTxt}`.trim(),
+            b.teaching_method === 'online' ? b.meeting_link : null);
+          if (b.tutor_id) await send(b.tutor_id, 1, true,
+            `Buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''} lúc ${b.time_slot} ngày ${dateStr}.${missingLinkWarn ? ' ⚠️ Chưa gắn link phòng học — hãy vào Lịch trình gắn ngay!' : ''}`,
+            b.teaching_method === 'online' ? b.meeting_link : null);
+          console.log(`🔔 Reminder 1h sent for booking ${b.id}`);
+        } else if (!b.reminded_24h_at && msLeft <= 24 * 60 * 60 * 1000) {
+          const claim = await pool.query(
+            `UPDATE bookings SET reminded_24h_at = NOW()
+             WHERE id = $1 AND reminded_24h_at IS NULL RETURNING id`,
+            [b.id]
+          );
+          if (!claim.rowCount) continue;
+          if (b.student_id) await send(b.student_id, 24, false,
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi học ${b.subject || ''} với ${b.tutor_name || 'gia sư'}. ${methodTxt}`.trim(),
+            b.teaching_method === 'online' ? b.meeting_link : null);
+          if (b.tutor_id) await send(b.tutor_id, 24, true,
+            `Ngày ${dateStr} lúc ${b.time_slot} bạn có buổi dạy ${b.subject || ''} với học sinh ${b.student_name || ''}.${missingLinkWarn ? ' Nhớ gắn link phòng học trong Lịch trình → bấm vào buổi học.' : ''}`,
+            b.teaching_method === 'online' ? b.meeting_link : null);
+          console.log(`🔔 Reminder 24h sent for booking ${b.id}`);
+        }
+      }
+    } catch (err) {
+      if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
+        console.error('❌ Cron lesson-reminder error:', err.message);
       }
     }
   }, 5 * 60 * 1000); // chạy mỗi 5 phút
@@ -11589,10 +16840,595 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('⏸️  AI case cron disabled (AUTO_AI_CRON_ENABLED=false).');
   }
 
+  // ── Worker: Semantic moderation (Batch 27) — gated OFF by default ───────────
+  // Uses the SAME runPendingSemanticModeration() as POST run-pending. Only writes
+  // moderation reports + tutor semantic scores; never emails/bans/changes money.
+  if (SEMANTIC_MODERATION_WORKER_ENABLED) {
+    setInterval(() => {
+      runPendingSemanticModeration({ limit: SEMANTIC_MODERATION_BATCH_LIMIT, triggeredBy: 'worker' })
+        .catch(err => console.error('[semantic worker] error:', err.message));
+    }, Math.max(5, SEMANTIC_MODERATION_INTERVAL_MINUTES) * 60 * 1000);
+    console.log(`🕐 Semantic moderation worker ENABLED (every ${SEMANTIC_MODERATION_INTERVAL_MINUTES}m).`);
+  } else {
+    console.log('⏸️  Semantic moderation worker disabled (SEMANTIC_MODERATION_WORKER_ENABLED=false).');
+  }
+
+  // ── Worker: Fraud intel (Batch 28) — gated OFF by default ───────────────────
+  // Same runFraudRingDetection() as POST run. Only writes fraud reports + run
+  // logs; never emails/bans/moves money/changes account or transaction status.
+  if (FRAUD_INTEL_WORKER_ENABLED) {
+    setInterval(() => {
+      runFraudRingDetection({ periodDays: FRAUD_INTEL_PERIOD_DAYS, limit: FRAUD_INTEL_BATCH_LIMIT, triggeredBy: 'worker' })
+        .catch(err => console.error('[fraud worker] error:', err.message));
+    }, Math.max(10, FRAUD_INTEL_INTERVAL_MINUTES) * 60 * 1000);
+    console.log(`🕐 Fraud intel worker ENABLED (every ${FRAUD_INTEL_INTERVAL_MINUTES}m).`);
+  } else {
+    console.log('⏸️  Fraud intel worker disabled (FRAUD_INTEL_WORKER_ENABLED=false).');
+  }
+
+  // ==========================================
+  // ADVANCED FEATURES APIs
+  // ==========================================
+
+  // --- Milestones ---
+  app.post('/api/milestones', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const { class_id, title, target_date } = req.body;
+      const result = await pool.query(
+        `INSERT INTO milestones (class_id, tutor_id, title, target_date) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [class_id, req.user.userId || req.user.id, title, target_date]
+      );
+      res.json({ message: "Milestone created", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/milestones/:class_id', verifyToken, async (req, res) => {
+    try {
+      const result = await pool.query(`SELECT * FROM milestones WHERE class_id = $1 ORDER BY created_at ASC`, [req.params.class_id]);
+      res.json({ data: result.rows });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put('/api/milestones/:id/complete', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const evidenceCheck = await pool.query(`SELECT count(*) FROM evidences WHERE milestone_id = $1`, [id]);
+      if (parseInt(evidenceCheck.rows[0].count) === 0) {
+        return res.status(400).json({ error: "Bắt buộc phải có ít nhất 1 minh chứng (evidence) để hoàn thành chặng này." });
+      }
+      const result = await pool.query(`UPDATE milestones SET status = 'done', updated_at = NOW() WHERE id = $1 RETURNING *`, [id]);
+      res.json({ message: "Milestone marked as done", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Evidences ---
+  app.post('/api/evidences', verifyToken, requireTutor, async (req, res) => {
+    try {
+      const { milestone_id, file_url, file_type, description } = req.body;
+      const result = await pool.query(
+        `INSERT INTO evidences (milestone_id, file_url, file_type, description) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [milestone_id, file_url, file_type, description]
+      );
+      res.json({ message: "Evidence uploaded", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Predictive Trend ---
+  app.get('/api/students/:id/predictive-trend', verifyToken, async (req, res) => {
+    try {
+      const studentId = req.params.id;
+      const result = await pool.query(`
+        SELECT understanding_level FROM lesson_feedbacks
+        WHERE student_id = $1 ORDER BY created_at DESC LIMIT 5
+      `, [studentId]);
+      
+      const feedbacks = result.rows;
+      if (feedbacks.length < 3) {
+        return res.json({ data: { status: 'Gathering Data', score: null, message: 'Đang thu thập dữ liệu. Cần ít nhất 3 buổi học.' } });
+      }
+
+      // Time-weighted: latest is most heavily weighted
+      let score = 0;
+      let totalWeight = 0;
+      feedbacks.forEach((fb, index) => {
+         const weight = 5 - index; // Latest = 5, oldest = 1
+         totalWeight += weight;
+         if (fb.understanding_level === 'Tốt') score += weight * 1;
+         else if (fb.understanding_level === 'Tạm') score += weight * 0.5;
+         else score += weight * 0;
+      });
+      const trendScore = score / totalWeight; // 0.0 to 1.0
+
+      let status = 'Green';
+      let message = 'Đúng tiến độ, con đang học rất tốt!';
+      if (trendScore < 0.5) {
+         status = 'Red';
+         message = 'Cần can thiệp! Tốc độ học hiện tại chưa đạt yêu cầu.';
+      } else if (trendScore < 0.75) {
+         status = 'Yellow';
+         message = 'Chậm nhẹ. Cần cố gắng hơn ở các bài tiếp theo.';
+      }
+
+      res.json({ data: { status, score: trendScore, message } });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Parent Pulse Check ---
+  app.post('/api/parent-feedbacks', verifyToken, async (req, res) => {
+    try {
+      const { student_id, tutor_id, course_id, evaluation } = req.body;
+      const result = await pool.query(
+        `INSERT INTO parent_feedbacks (student_id, tutor_id, course_id, evaluation) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [student_id, tutor_id, course_id, evaluation]
+      );
+
+      if (evaluation === 'Không đổi' || evaluation === 'Kém đi') {
+        const tutorFbs = await pool.query(`
+          SELECT understanding_level FROM lesson_feedbacks 
+          WHERE student_id = $1 AND tutor_id = $2 
+          ORDER BY created_at DESC LIMIT 4
+        `, [student_id, tutor_id]);
+        
+        const totCount = tutorFbs.rows.filter(f => f.understanding_level === 'Tốt').length;
+        if (tutorFbs.rows.length > 0 && (totCount / tutorFbs.rows.length) > 0.75) {
+           await pool.query(`
+             INSERT INTO notifications (user_id, title, message, type)
+             VALUES ((SELECT id FROM users WHERE role = 'admin' LIMIT 1), 'Cảnh báo Lệch Pha', 'Phụ huynh báo Kém nhưng Gia sư báo Tốt.', 'alert')
+           `).catch(console.error);
+        }
+      }
+      res.json({ message: "Cảm ơn bạn đã đánh giá!", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Dispute Center ---
+  app.post('/api/disputes', verifyToken, async (req, res) => {
+    try {
+      const { session_id, reason } = req.body;
+      const parent_id = req.user.userId || req.user.id;
+      const result = await pool.query(
+        `INSERT INTO disputes (session_id, parent_id, reason) VALUES ($1, $2, $3) RETURNING *`,
+        [session_id, parent_id, reason]
+      );
+      res.json({ message: "Báo cáo sự cố thành công. Chúng tôi đang tạm giữ tiền và sẽ liên hệ lại.", data: result.rows[0] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+
   app.listen(port, () => {
     console.log(`🚀 Server is running on http://localhost:${port}`);
   });
 }
 
-startServer();
+// ══════════════════════════════════════════════════════════════════════════════
+//  SESSION EVALUATION APIs  (Tab 2 — Review & Grade)
+// ══════════════════════════════════════════════════════════════════════════════
 
+// Auto-create session_evaluations table if it doesn't exist
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS session_evaluations (
+        id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id            UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        tutor_id              UUID NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+        student_id            UUID NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+        score_attendance      SMALLINT CHECK (score_attendance  BETWEEN 1 AND 5),
+        score_attitude        SMALLINT CHECK (score_attitude    BETWEEN 1 AND 5),
+        score_comprehension   SMALLINT CHECK (score_comprehension BETWEEN 1 AND 5),
+        score_focus           SMALLINT CHECK (score_focus       BETWEEN 1 AND 5),
+        score_homework        SMALLINT CHECK (score_homework    BETWEEN 1 AND 5),
+        comments              TEXT,
+        parent_recommendation TEXT,
+        status                TEXT NOT NULL DEFAULT 'submitted'
+                              CHECK (status IN ('draft', 'submitted', 'locked')),
+        created_at            TIMESTAMPTZ DEFAULT NOW(),
+        updated_at            TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (booking_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_evals_tutor   ON session_evaluations(tutor_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_evals_student ON session_evaluations(student_id)`);
+    console.log('✅ session_evaluations table ready');
+  } catch (e) {
+    console.error('session_evaluations table error:', e.message);
+  }
+})();
+
+// ── GET /api/tutor/session-evaluations
+// Danh sách buổi học Approved của gia sư, kèm trạng thái đánh giá
+app.get('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const { search = '', status = 'all', page = '1', limit = '20' } = req.query;
+    const pageNum  = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+    const offset   = (pageNum - 1) * limitNum;
+
+    const conditions = [`b.tutor_id = $1`, `b.status = 'Approved'`, `b.lesson_date <= CURRENT_DATE`];
+    const params = [tutorId];
+    let idx = 2;
+
+    if (search.trim()) {
+      conditions.push(`u.full_name ILIKE $${idx}`);
+      params.push(`%${search.trim()}%`);
+      idx++;
+    }
+
+    if (status === 'pending') {
+      conditions.push(`se.id IS NULL`);
+    } else if (status === 'evaluated') {
+      conditions.push(`se.id IS NOT NULL`);
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM bookings b
+       JOIN users u ON u.id = b.student_id
+       LEFT JOIN session_evaluations se ON se.booking_id = b.id
+       ${where}`,
+      params
+    );
+    const total = parseInt(countRes.rows[0].count);
+
+    const result = await pool.query(
+      `SELECT
+         b.id            AS booking_id,
+         b.subject,
+         b.lesson_date,
+         b.time_slot,
+         b.status        AS booking_status,
+         u.id            AS student_id,
+         u.full_name     AS student_name,
+         u.picture       AS student_picture,
+         se.id           AS evaluation_id,
+         se.status       AS eval_status,
+         se.score_attendance,
+         se.score_attitude,
+         se.score_comprehension,
+         se.score_focus,
+         se.score_homework,
+         se.comments,
+         se.parent_recommendation,
+         se.created_at   AS evaluated_at
+       FROM bookings b
+       JOIN users u ON u.id = b.student_id
+       LEFT JOIN session_evaluations se ON se.booking_id = b.id
+       ${where}
+       ORDER BY b.lesson_date DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...params, limitNum, offset]
+    );
+
+    return res.json({
+      sessions: result.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    });
+  } catch (e) {
+    console.error('GET /api/tutor/session-evaluations error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── GET /api/tutor/session-evaluations/:bookingId
+// Chi tiết 1 buổi học để đánh giá
+app.get('/api/tutor/session-evaluations/:bookingId', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const { bookingId } = req.params;
+
+    const bookingRes = await pool.query(
+      `SELECT b.*, u.full_name AS student_name, u.picture AS student_picture, u.email AS student_email
+       FROM bookings b
+       JOIN users u ON u.id = b.student_id
+       WHERE b.id = $1 AND b.tutor_id = $2`,
+      [bookingId, tutorId]
+    );
+    if (!bookingRes.rows.length) {
+      return res.status(404).json({ message: 'Booking not found or not authorized.' });
+    }
+
+    const booking = bookingRes.rows[0];
+
+    if (booking.status !== 'Approved') {
+      return res.status(400).json({ message: 'Chỉ có thể đánh giá buổi học đã hoàn thành (Approved).' });
+    }
+
+    const evalRes = await pool.query(
+      `SELECT * FROM session_evaluations WHERE booking_id = $1`,
+      [bookingId]
+    );
+
+    return res.json({
+      booking,
+      evaluation: evalRes.rows[0] || null,
+    });
+  } catch (e) {
+    console.error('GET /api/tutor/session-evaluations/:bookingId error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── POST /api/tutor/session-evaluations
+// Tạo mới đánh giá cho 1 buổi học
+app.post('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const {
+      booking_id,
+      score_attendance,
+      score_attitude,
+      score_comprehension,
+      score_focus,
+      score_homework,
+      comments,
+      parent_recommendation,
+    } = req.body;
+
+    // Validation
+    if (!booking_id) return res.status(400).json({ message: 'booking_id là bắt buộc.' });
+
+    const scores = { score_attendance, score_attitude, score_comprehension, score_focus, score_homework };
+    for (const [key, val] of Object.entries(scores)) {
+      if (val !== undefined && val !== null && (isNaN(val) || val < 1 || val > 5)) {
+        return res.status(400).json({ message: `${key} phải từ 1 đến 5.` });
+      }
+    }
+
+    // Kiểm tra booking thuộc tutor và đã Approved
+    const bookingRes = await pool.query(
+      `SELECT id, student_id, status, lesson_date FROM bookings WHERE id = $1 AND tutor_id = $2`,
+      [booking_id, tutorId]
+    );
+    if (!bookingRes.rows.length) {
+      return res.status(404).json({ message: 'Booking không tìm thấy hoặc không thuộc quyền của bạn.' });
+    }
+    const booking = bookingRes.rows[0];
+    if (booking.status !== 'Approved') {
+      return res.status(400).json({ message: 'Chỉ đánh giá được buổi học đã hoàn thành (Approved).' });
+    }
+    if (new Date(booking.lesson_date) > new Date()) {
+      return res.status(400).json({ message: 'Không thể đánh giá buổi học chưa diễn ra.' });
+    }
+
+    // Kiểm tra đã đánh giá chưa
+    const existCheck = await pool.query(
+      `SELECT id, status FROM session_evaluations WHERE booking_id = $1`,
+      [booking_id]
+    );
+    if (existCheck.rows.length > 0) {
+      if (existCheck.rows[0].status === 'locked') {
+        return res.status(400).json({ message: 'Đánh giá này đã bị khoá, không thể sửa.' });
+      }
+      return res.status(409).json({
+        message: 'Buổi học này đã được đánh giá. Dùng PUT để cập nhật.',
+        evaluation_id: existCheck.rows[0].id,
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO session_evaluations
+         (booking_id, tutor_id, student_id,
+          score_attendance, score_attitude, score_comprehension, score_focus, score_homework,
+          comments, parent_recommendation, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'submitted')
+       RETURNING *`,
+      [
+        booking_id, tutorId, booking.student_id,
+        score_attendance || null, score_attitude || null,
+        score_comprehension || null, score_focus || null, score_homework || null,
+        comments || null, parent_recommendation || null,
+      ]
+    );
+
+    return res.status(201).json({ evaluation: result.rows[0], message: 'Đánh giá đã được lưu thành công.' });
+  } catch (e) {
+    console.error('POST /api/tutor/session-evaluations error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── PUT /api/tutor/session-evaluations/:evaluationId
+// Cập nhật đánh giá (chỉ khi status != 'locked')
+app.put('/api/tutor/session-evaluations/:evaluationId', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const { evaluationId } = req.params;
+    const {
+      score_attendance,
+      score_attitude,
+      score_comprehension,
+      score_focus,
+      score_homework,
+      comments,
+      parent_recommendation,
+    } = req.body;
+
+    // Kiểm tra evaluation thuộc tutor
+    const existing = await pool.query(
+      `SELECT * FROM session_evaluations WHERE id = $1 AND tutor_id = $2`,
+      [evaluationId, tutorId]
+    );
+    if (!existing.rows.length) {
+      return res.status(404).json({ message: 'Evaluation không tìm thấy hoặc không thuộc quyền của bạn.' });
+    }
+    if (existing.rows[0].status === 'locked') {
+      return res.status(400).json({ message: 'Đánh giá đã bị khoá, không thể chỉnh sửa.' });
+    }
+
+    const scores = { score_attendance, score_attitude, score_comprehension, score_focus, score_homework };
+    for (const [key, val] of Object.entries(scores)) {
+      if (val !== undefined && val !== null && (isNaN(val) || val < 1 || val > 5)) {
+        return res.status(400).json({ message: `${key} phải từ 1 đến 5.` });
+      }
+    }
+
+    const result = await pool.query(
+      `UPDATE session_evaluations
+       SET score_attendance=$1, score_attitude=$2, score_comprehension=$3,
+           score_focus=$4, score_homework=$5, comments=$6,
+           parent_recommendation=$7, updated_at=NOW()
+       WHERE id=$8 RETURNING *`,
+      [
+        score_attendance || null, score_attitude || null,
+        score_comprehension || null, score_focus || null, score_homework || null,
+        comments || null, parent_recommendation || null,
+        evaluationId,
+      ]
+    );
+
+    return res.json({ evaluation: result.rows[0], message: 'Cập nhật thành công.' });
+  } catch (e) {
+    console.error('PUT /api/tutor/session-evaluations/:id error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── GET /api/tutor/session-evaluations/stats
+// Thống kê nhanh: bao nhiêu buổi chờ đánh giá
+app.get('/api/tutor/session-eval-stats', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const tutorId = req.user.userId;
+    const result = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE se.id IS NULL) AS pending_count,
+         COUNT(*) FILTER (WHERE se.id IS NOT NULL) AS evaluated_count,
+         COUNT(*) AS total_count
+       FROM bookings b
+       LEFT JOIN session_evaluations se ON se.booking_id = b.id
+       WHERE b.tutor_id = $1 AND b.status = 'Approved' AND b.lesson_date <= CURRENT_DATE`,
+      [tutorId]
+    );
+    return res.json(result.rows[0]);
+  } catch (e) {
+    console.error('GET /api/tutor/session-eval-stats error:', e);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  END SESSION EVALUATION APIs
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Start a background job to check for upcoming lessons and notify tutors
+setInterval(async () => {
+  try {
+    const query = `
+      SELECT b.id, b.tutor_id, b.student_id, b.child_name, b.subject, b.lesson_date, b.time_slot, u.full_name as student_name
+      FROM bookings b
+      LEFT JOIN users u ON u.id = b.student_id
+      WHERE b.status = 'Approved'
+        AND b.notified_tutor_before_lesson = false
+        AND ((b.lesson_date + b.time_slot::time) AT TIME ZONE 'Asia/Ho_Chi_Minh') BETWEEN NOW() AND NOW() + INTERVAL '30 minutes'
+    `;
+    const result = await pool.query(query);
+    if (result.rows.length > 0) {
+      for (const booking of result.rows) {
+        const studentName = booking.child_name || booking.student_name || 'Học viên';
+        const subject = booking.subject || 'General';
+        const time = booking.time_slot;
+        
+        // Create notification
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, ref_id, ref_type)
+           VALUES ($1, 'upcoming_lesson', 'Sắp đến giờ dạy', $2, $3, 'booking')`,
+          [
+            booking.tutor_id,
+            `Bạn sắp có slot dạy vào lúc ${time}, dạy ${studentName}, môn ${subject}.`,
+            booking.id
+          ]
+        );
+        
+        // Mark as notified
+        await pool.query(
+          `UPDATE bookings SET notified_tutor_before_lesson = true WHERE id = $1`,
+          [booking.id]
+        );
+      }
+      console.log(`Sent ${result.rows.length} upcoming lesson notifications to tutors.`);
+    }
+  } catch (err) {
+    console.error("Cron check upcoming lessons error:", err);
+  }
+}, 60 * 1000); // Check every minute
+
+// Background job to timeout instant bookings
+setInterval(async () => {
+  try {
+    const result = await pool.query(`
+      SELECT id, student_id, tutor_id, lesson_fee, payer_wallet_id
+      FROM bookings
+      WHERE booking_type = 'Instant' AND status = 'Pending'
+        AND created_at < NOW() - INTERVAL '60 seconds'
+    `);
+
+    for (const b of result.rows) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Re-check status with lock
+        const bRes = await client.query(
+          'SELECT status, lesson_fee, payer_wallet_id, student_id FROM bookings WHERE id = $1 FOR UPDATE',
+          [b.id]
+        );
+        if (!bRes.rows.length || bRes.rows[0].status !== 'Pending') {
+          await client.query('COMMIT');
+          continue;
+        }
+
+        const { lesson_fee, student_id } = bRes.rows[0];
+        let { payer_wallet_id } = bRes.rows[0];
+
+        // Fallback: nếu payer_wallet_id NULL, tìm ví qua student_id
+        if (!payer_wallet_id) {
+          const wRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [student_id]);
+          if (wRes.rows.length) {
+            payer_wallet_id = wRes.rows[0].id;
+            await client.query('UPDATE bookings SET payer_wallet_id = $1 WHERE id = $2', [payer_wallet_id, b.id]);
+          }
+        }
+
+        await client.query("UPDATE bookings SET status = 'Timeout', updated_at = NOW() WHERE id = $1", [b.id]);
+
+        // Chỉ hoàn tiền nếu có ví hợp lệ
+        if (payer_wallet_id) {
+          await client.query(
+            'UPDATE wallets SET balance = balance + $1, frozen_balance = GREATEST(frozen_balance - $1, 0) WHERE id = $2',
+            [lesson_fee, payer_wallet_id]
+          );
+        }
+
+        await client.query('COMMIT');
+        console.log(`Timed out instant booking ${b.id}, refunded ${lesson_fee} to wallet ${payer_wallet_id}`);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Instant booking timeout transaction error:', err);
+      } finally {
+        client.release();
+      }
+    }
+  } catch (err) {
+    console.error('Cron check instant timeout error:', err);
+  }
+}, 5 * 1000); // Check every 5 seconds
+
+startServer();

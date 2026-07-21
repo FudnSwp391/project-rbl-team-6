@@ -1,4 +1,5 @@
 import React from 'react';
+import CartButton from './components/CartButton';
 
 export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
 
@@ -41,9 +42,7 @@ export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
           {/* Auth Buttons */}
           <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
-              <a href="#/cart" className="text-[#00288e] flex items-center" title="Giỏ hàng">
-                <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>shopping_cart</span>
-              </a>
+              <CartButton />
             )}
              {user ? (
                <button

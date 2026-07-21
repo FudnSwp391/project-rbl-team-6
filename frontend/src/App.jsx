@@ -4,6 +4,7 @@
  */
 import { useEffect, useState, useRef } from 'react'
 import './App.css'
+import { methodSupport } from './utils/teachingMethod'
 import SignIn from './SignIn'
 import SignUp from './SignUp'
 import AdminDashboard from './AdminDashboard'
@@ -33,6 +34,7 @@ import CartPage from './pages/CartPage'
 import CompleteStudentProfile from './pages/CompleteStudentProfile'
 import MyAiCases from './pages/MyAiCases'
 import { useAuth } from './AuthContext'
+import { API_BASE_URL } from './config';
 
 const subjects = [
   { name: 'Toán Học', icon: 'calculate' },
@@ -227,7 +229,7 @@ const feedbackData = [
   }
 ];
 // ─── Home Page ────────────────────────────────────────────────────────────────
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API_BASE = API_BASE_URL
 
 function formatTimeAgo(dateStr) {
   if (!dateStr) return ''
@@ -236,6 +238,14 @@ function formatTimeAgo(dateStr) {
   if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`
   if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`
   return `${Math.floor(diff / 86400)} ngày trước`
+}
+
+// Giá/giờ: >=1000 coi là VND, <1000 là data test USD cũ, 0/null = thỏa thuận
+function fmtHourlyRate(val) {
+  const n = Number(val)
+  if (!n) return 'Thỏa thuận'
+  if (n >= 1000) return new Intl.NumberFormat('vi-VN').format(n) + 'đ'
+  return `$${n}`
 }
 
 // Map 1 dòng gia sư từ /api/tutors → shape mà card "Gia Sư Nổi Bật" cần
@@ -247,6 +257,7 @@ function mapApiTutor(t) {
     rating: Number(t.avg_r || 0).toFixed(1),
     reviews: t.review_count || 0,
     rate: t.hourly_rate || 0,
+    methods: Array.isArray(t.teaching_methods) ? t.teaching_methods : [],
     description: t.bio || '',
     avatar: t.profile_photo_url || t.picture
       || `https://ui-avatars.com/api/?name=${encodeURIComponent(t.full_name || 'Tutor')}&background=00288e&color=fff&size=128`,
@@ -289,6 +300,34 @@ function HomePage({ onGoSignIn }) {
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Hiệu ứng xuất hiện khi cuộn tới (fade + slide up, stagger cho grid).
+  // Dùng scroll + getBoundingClientRect thay vì IntersectionObserver để
+  // chạy được cả trong webview/iframe không phát intersection event.
+  useEffect(() => {
+    const els = Array.from(document.querySelectorAll('.reveal'))
+    if (els.length === 0) return
+    // Check trực tiếp (không rAF — rAF bị throttle trong webview/tab nền)
+    const check = () => {
+      const vh = window.innerHeight
+      els.forEach(el => {
+        if (el.classList.contains('is-visible')) return
+        if (el.getBoundingClientRect().top < vh - 60) el.classList.add('is-visible')
+      })
+    }
+    check() // hiện ngay những phần đã nằm trong viewport khi tải trang
+    // Check lại sau khi data async (gia sư nổi bật, review) về làm đổi layout
+    const t1 = setTimeout(check, 600)
+    const t2 = setTimeout(check, 1800)
+    window.addEventListener('scroll', check, { passive: true })
+    window.addEventListener('resize', check)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+      window.removeEventListener('scroll', check)
+      window.removeEventListener('resize', check)
+    }
   }, [])
 
   const reviewsToShow = liveReviews.length > 0 ? liveReviews : feedbackData
@@ -468,8 +507,11 @@ function HomePage({ onGoSignIn }) {
 
         <section className="section section-subjects">
           <div className="container">
-            <h2>Môn Học Phổ Biến</h2>
-            <div className="subject-grid">
+            <div className="reveal">
+              <p className="section-eyebrow">Khám phá</p>
+              <h2>Môn Học Phổ Biến</h2>
+            </div>
+            <div className="subject-grid reveal reveal-stagger">
               {subjects.map((item) => (
                 <a href="#" onClick={(e) => e.preventDefault()} className="subject-card" key={item.name}>
                   <span className="subject-icon material-symbols-outlined">
@@ -484,15 +526,18 @@ function HomePage({ onGoSignIn }) {
 
         <section className="section section-tutors">
           <div className="container">
-            <div className="section-head">
-              <h2>Gia Sư Nổi Bật</h2>
+            <div className="section-head reveal">
+              <div>
+                <p className="section-eyebrow">Đội ngũ hàng đầu</p>
+                <h2>Gia Sư Nổi Bật</h2>
+              </div>
               <a href="#/find-tutors" className="see-all">
                 Xem tất cả
                 <span className="material-symbols-outlined">arrow_forward</span>
               </a>
             </div>
 
-            <div className="tutor-grid">
+            <div className="tutor-grid reveal reveal-stagger">
               {featuredToShow.map((tutor) => (
                 <article className="tutor-card" key={tutor.id}>
                   <div className="tutor-top">
@@ -515,14 +560,29 @@ function HomePage({ onGoSignIn }) {
                         {subject}
                       </span>
                     ))}
+                    {(() => {
+                      const ms = methodSupport(tutor.methods)
+                      if (!ms.declared) return null
+                      return (
+                        <>
+                          {ms.online && <span className="chip" style={{ background: '#e0f2fe', color: '#0369a1' }}>Online</span>}
+                          {ms.offline && <span className="chip" style={{ background: '#dcfce7', color: '#15803d' }}>Offline</span>}
+                        </>
+                      )
+                    })()}
                   </div>
 
                   <p className="desc">{tutor.description}</p>
                   <div className="tutor-foot">
-                    <p className="price">
-                      <strong>${tutor.rate}</strong>
-                      <span>/giờ</span>
-                    </p>
+                    {(() => {
+                      const rate = fmtHourlyRate(tutor.rate)
+                      return (
+                        <p className="price">
+                          <strong>{rate}</strong>
+                          {rate !== 'Thỏa thuận' && <span>/giờ</span>}
+                        </p>
+                      )
+                    })()}
                     <button
                       type="button"
                       className="btn btn-outline"
@@ -536,6 +596,7 @@ function HomePage({ onGoSignIn }) {
                       }}
                     >
                       Xem Hồ Sơ
+                      <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
                     </button>
                   </div>
                 </article>
@@ -567,7 +628,8 @@ function HomePage({ onGoSignIn }) {
                 animation-play-state: paused;
             }
           `}</style>
-          <div className="max-w-[1280px] mx-auto px-6 mb-10">
+          <div className="max-w-[1280px] mx-auto px-6 mb-10 reveal">
+            <p className="section-eyebrow">Phản hồi thật</p>
             <h2 className="text-3xl font-bold text-[#191c1e]">Cộng đồng chúng tôi nói gì</h2>
             <p className="text-[#444653] mt-2">Trải nghiệm thực tế từ học sinh và phụ huynh trên toàn thế giới.</p>
           </div>
@@ -620,6 +682,32 @@ function HomePage({ onGoSignIn }) {
                   </div>
                 )
               })}
+            </div>
+          </div>
+        </section>
+
+        {/* CTA cuối trang */}
+        <section className="section cta-band">
+          <div className="container">
+            <div className="cta-inner reveal">
+              <span className="cta-glow cta-glow-1" aria-hidden="true" />
+              <span className="cta-glow cta-glow-2" aria-hidden="true" />
+              <div className="cta-copy">
+                <h2>Sẵn sàng chinh phục mục tiêu học tập?</h2>
+                <p>
+                  Hàng trăm gia sư đã được xác minh đang chờ đồng hành cùng bạn —
+                  buổi học đầu tiên có thể bắt đầu ngay tuần này.
+                </p>
+              </div>
+              <div className="cta-actions">
+                <button type="button" className="btn cta-btn-light" onClick={() => { window.location.hash = '/find-tutors' }}>
+                  Tìm gia sư ngay
+                  <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+                </button>
+                <button type="button" className="btn cta-btn-ghost" onClick={() => { window.location.hash = '/become-tutor' }}>
+                  Trở thành gia sư
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -710,7 +798,13 @@ function App() {
   if (routeName === 'dashboard') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
     if (user.role === 'admin') return <AdminDashboard />
-    if (user.role === 'tutor') return <TutorDashboard />
+    if (user.role === 'tutor') {
+      if (user.tutor_status === 'pending' || user.tutor_status === 'rejected' || !user.tutor_status) {
+        window.location.hash = '/tutor';
+        return null;
+      }
+      return <TutorDashboard />
+    }
     if (user.role === 'parent') return <ParentDashboard />
     return <StudentDashboard />
   }
@@ -718,6 +812,118 @@ function App() {
   // ── Route: Tutor Dashboard ──
   if (routeName === 'tutor') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
+    
+    // Gia sư đang chờ duyệt
+    if (user.role === 'tutor' && user.tutor_status === 'pending') {
+      return (
+        <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div style={{ maxWidth: 520, width: '100%', background: 'white', borderRadius: 20, boxShadow: '0 20px 60px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)', padding: '40px 32px', textAlign: 'center' }}>
+              <div style={{ width: 80, height: 80, background: 'rgba(255,255,255,0.2)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 36 }}>
+                ⏳
+              </div>
+              <h1 style={{ color: 'white', fontSize: 24, fontWeight: 700, margin: 0 }}>Hồ Sơ Đang Chờ Duyệt</h1>
+              <p style={{ color: 'rgba(255,255,255,0.85)', marginTop: 8, fontSize: 15 }}>
+                Cảm ơn bạn đã đăng ký làm gia sư tại EduX!
+              </p>
+            </div>
+            {/* Body */}
+            <div style={{ padding: '32px' }}>
+              <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 12, padding: '16px 20px', marginBottom: 24 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <span style={{ fontSize: 20, flexShrink: 0 }}>📋</span>
+                  <div>
+                    <p style={{ fontWeight: 600, color: '#0369a1', margin: '0 0 4px' }}>Trạng thái: Đang chờ xét duyệt</p>
+                    <p style={{ color: '#0c4a6e', fontSize: 14, margin: 0, lineHeight: 1.6 }}>
+                      Hồ sơ của bạn đã được ghi nhận và đang trong hàng đợi xem xét. Quản trị viên sẽ xét duyệt trong <strong>3–5 ngày làm việc</strong>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 28 }}>
+                {[
+                  { icon: '✅', text: 'Hồ sơ đã được nộp thành công' },
+                  { icon: '🔍', text: 'Quản trị viên đang xem xét tài liệu của bạn' },
+                  { icon: '📧', text: 'Bạn sẽ nhận email thông báo kết quả duyệt' },
+                  { icon: '🚀', text: 'Sau khi được duyệt, bạn có thể bắt đầu dạy học' },
+                ].map((item, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#f8fafc', borderRadius: 8, padding: '10px 14px' }}>
+                    <span style={{ fontSize: 18 }}>{item.icon}</span>
+                    <span style={{ color: '#374151', fontSize: 14 }}>{item.text}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={() => { window.location.hash = '/tutor-profile' }}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10, border: '2px solid #1e40af', background: 'white', color: '#1e40af', fontWeight: 600, cursor: 'pointer', fontSize: 14, transition: 'all 0.2s' }}
+                  onMouseEnter={e => e.target.style.background = '#eff6ff'}
+                  onMouseLeave={e => e.target.style.background = 'white'}
+                >
+                  Cập Nhật Hồ Sơ
+                </button>
+                <button
+                  onClick={() => { localStorage.removeItem('token'); localStorage.removeItem('user'); window.location.hash = '/' }}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10, border: 'none', background: '#1e40af', color: 'white', fontWeight: 600, cursor: 'pointer', fontSize: 14, transition: 'all 0.2s' }}
+                  onMouseEnter={e => e.target.style.background = '#1d4ed8'}
+                  onMouseLeave={e => e.target.style.background = '#1e40af'}
+                >
+                  Về Trang Chủ
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // Gia sư bị từ chối
+    if (user.role === 'tutor' && user.tutor_status === 'rejected') {
+      return (
+        <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div style={{ maxWidth: 520, width: '100%', background: 'white', borderRadius: 20, boxShadow: '0 20px 60px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            <div style={{ background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)', padding: '40px 32px', textAlign: 'center' }}>
+              <div style={{ width: 80, height: 80, background: 'rgba(255,255,255,0.2)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 36 }}>
+                ❌
+              </div>
+              <h1 style={{ color: 'white', fontSize: 24, fontWeight: 700, margin: 0 }}>Hồ Sơ Bị Từ Chối</h1>
+              <p style={{ color: 'rgba(255,255,255,0.85)', marginTop: 8, fontSize: 15 }}>Rất tiếc, hồ sơ của bạn chưa đáp ứng yêu cầu lần này.</p>
+            </div>
+            <div style={{ padding: '32px' }}>
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '16px 20px', marginBottom: 24 }}>
+                <p style={{ fontWeight: 600, color: '#dc2626', margin: '0 0 4px' }}>Lý do từ chối:</p>
+                <p style={{ color: '#7f1d1d', fontSize: 14, margin: 0 }}>Vui lòng cập nhật lại hồ sơ và nộp lại để được xem xét.</p>
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={() => { window.location.hash = '/tutor-profile' }}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10, border: 'none', background: '#dc2626', color: 'white', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}
+                >
+                  Nộp Lại Hồ Sơ
+                </button>
+                <button
+                  onClick={() => { localStorage.removeItem('token'); localStorage.removeItem('user'); window.location.hash = '/' }}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10, border: '2px solid #dc2626', background: 'white', color: '#dc2626', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}
+                >
+                  Về Trang Chủ
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    if (user.role !== 'tutor' && user.role !== 'admin') {
+      return <AccessDenied isLoggedIn={true} />
+    }
+    
+    if (user.role === 'tutor' && !user.tutor_status) {
+      window.location.hash = '/tutor-profile';
+      return null;
+    }
+
     return <TutorDashboard />
   }
 
@@ -789,9 +995,7 @@ function App() {
 
   // ── Route: Tutor Profile (protected) ──
   if (routeName === 'tutor-profile') {
-    const hasPendingReg = !!sessionStorage.getItem('pendingTutorReg')
-    // Cho phép truy cập nếu: đã đăng nhập (tutor cũ) HOẶC đang trong luồng đăng ký mới
-    if (!user && !hasPendingReg) {
+    if (!user) {
       return (
         <AccessDenied
           isLoggedIn={false}
@@ -804,7 +1008,7 @@ function App() {
         <header className="bg-surface-container-lowest shadow-sm sticky top-0 z-50">
           <div className="flex justify-between items-center w-full px-6 md:px-10 max-w-[1280px] mx-auto h-16">
             <div className="font-bold text-2xl text-primary tracking-tight">EduX</div>
-            {user && !hasPendingReg && (
+            {user && (
               <button
                 onClick={() => window.location.hash = '/tutor'}
                 className="text-on-surface-variant font-semibold text-sm hover:bg-surface-container px-3 py-2 rounded-lg transition-all duration-200"
@@ -910,7 +1114,7 @@ function App() {
   // ── Route: Course Detail (protected) ──
   if (routeName === 'courseplayer') {
     if (!user) return <AccessDenied isLoggedIn={false} onGoSignIn={() => navigateTo('signin')} />
-    return <CoursePlayer courseId={route.id} onGoHome={() => navigateTo('home')} />
+    return <CoursePlayer courseId={route.id} onGoHome={() => navigateTo('mycourses')} />
   }
 
   if (routeName === 'coursedetail') {

@@ -23,7 +23,7 @@ router.get("/api/student/my-courses", requireAuth, async (req, res) => {
        FROM course_enrollments ce
        JOIN courses c ON ce.course_id = c.id
        LEFT JOIN users u ON c.tutor_id = u.id
-       WHERE ce.student_id = $1
+       WHERE ce.student_id = $1 AND ce.status = 'active'
        ORDER BY ce.created_at DESC`,
       [studentId]
     );

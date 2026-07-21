@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { useAuth } from '../AuthContext'
-import { enrollCourse, getCourseDetail, updateCourseProgress } from '../services/api'
+import { enrollCourse, getCourseDetail, updateCourseProgress, askCourseAI } from '../services/api'
 
 function money(value) {
   return new Intl.NumberFormat('vi-VN', {
@@ -19,13 +19,86 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const [buying, setBuying] = useState(false)
   const [savingProgress, setSavingProgress] = useState(false)
 
+  // Advanced feature states
+  const [activeTab, setActiveTab] = useState('overview')
+  const [cinematic, setCinematic] = useState(false)
+  const [notes, setNotes] = useState({})
+  const [newNote, setNewNote] = useState('')
+  const videoRef = useRef(null)
+
+  // AI Chat states
+  const [aiMessages, setAiMessages] = useState([])
+  const [aiInput, setAiInput] = useState('')
+  const [isAiLoading, setIsAiLoading] = useState(false)
+  const chatScrollRef = useRef(null)
+
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [aiMessages, isAiLoading])
+
+  // Smart Notes & Auto Resume Load
+  useEffect(() => {
+    if (courseId && user) {
+      const savedNotes = localStorage.getItem(`course_notes_${user.id}_${courseId}`);
+      if (savedNotes) {
+        try { setNotes(JSON.parse(savedNotes)) } catch(e) {}
+      }
+    }
+  }, [courseId, user])
+
+  const formatTime = (secs) => {
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m < 10 ? '0'+m : m}:${s < 10 ? '0'+s : s}`;
+  }
+
+  const saveNote = () => {
+    if (!newNote.trim() || !selectedLesson) return;
+    const time = videoRef.current ? videoRef.current.currentTime : -1;
+    const updatedNotes = { ...notes };
+    if (!updatedNotes[selectedLesson.id]) updatedNotes[selectedLesson.id] = [];
+    updatedNotes[selectedLesson.id].push({ text: newNote, time, id: Date.now() });
+    
+    setNotes(updatedNotes);
+    setNewNote('');
+    if (user) localStorage.setItem(`course_notes_${user.id}_${courseId}`, JSON.stringify(updatedNotes));
+  }
+
+  const jumpToTime = (time) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      videoRef.current.play().catch(e=>console.log(e));
+    }
+  }
+
+  // Auto-Resume handler
+  const handleTimeUpdate = () => {
+    if (videoRef.current && selectedLesson && user) {
+      const time = videoRef.current.currentTime;
+      if (Math.floor(time) % 5 === 0) {
+         localStorage.setItem(`video_progress_${user.id}_${selectedLesson.id}`, time);
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (selectedId && videoRef.current && user) {
+      const savedTime = localStorage.getItem(`video_progress_${user.id}_${selectedId}`);
+      if (savedTime && Number(savedTime) > 2) {
+         videoRef.current.currentTime = Number(savedTime);
+      }
+    }
+  }, [selectedId, user])
+
   const loadCourse = async () => {
     setLoading(true)
     setError('')
     try {
       const data = await getCourseDetail(courseId)
       setCourse(data)
-      const firstPlayable = data.lessons?.find((lesson) => !lesson.isLocked && lesson.videoUrl) || data.lessons?.[0]
+      const firstPlayable = data.lessons?.find((lesson) => !lesson.isCompleted && !lesson.isLocked && lesson.videoUrl) || data.lessons?.find((lesson) => !lesson.isLocked && lesson.videoUrl) || data.lessons?.[0]
       setSelectedId((current) => current || firstPlayable?.id || '')
     } catch (err) {
       setError(err.message || 'Could not load course.')
@@ -45,10 +118,16 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const completed = course?.lessons?.filter((lesson) => lesson.isCompleted).length || 0
   const totalLessons = course?.lessons?.length || 0
   const progress = totalLessons ? Math.round((completed / totalLessons) * 100) : 0
+  const canBuyCourse = user && ['student', 'parent'].includes(user.role)
+  const isStaffView = user?.role === 'tutor' || user?.role === 'admin'
 
   const handleEnroll = async () => {
     if (!user) {
       window.location.hash = '/signin'
+      return
+    }
+    if (!canBuyCourse) {
+      setError('Tài khoản gia sư/quản trị không cần mua khóa học. Vui lòng quay lại trang quản lý khóa học.')
       return
     }
     setBuying(true)
@@ -59,7 +138,7 @@ export default function CoursePlayer({ courseId, onGoHome }) {
       })
       await loadCourse()
     } catch (err) {
-      setError(err.message || 'Could not buy course.')
+      setError(err.message || 'Không thể đăng ký khóa học.')
     } finally {
       setBuying(false)
     }
@@ -73,13 +152,42 @@ export default function CoursePlayer({ courseId, onGoHome }) {
         watchedSeconds: Math.max(Number(selectedLesson.watchedSeconds || 0), 1),
         isCompleted: !selectedLesson.isCompleted,
       })
+
+      // Gamification Confetti
+      if (!selectedLesson.isCompleted) {
+         const newlyCompletedCount = completed + 1;
+         if (newlyCompletedCount === totalLessons) {
+            import('canvas-confetti').then((module) => {
+               const confetti = module.default;
+               confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 } });
+            });
+         }
+      }
+
       await loadCourse()
     } catch (err) {
-      setError(err.message || 'Could not update progress.')
+      setError(err.message || 'Không thể cập nhật tiến độ.')
     } finally {
       setSavingProgress(false)
     }
   }
+
+  const handleAiSubmit = async () => {
+    if (!aiInput.trim() || isAiLoading) return;
+    const msg = aiInput.trim();
+    setAiInput('');
+    setAiMessages(prev => [...prev, { role: 'user', text: msg }]);
+    setIsAiLoading(true);
+
+    try {
+      const res = await askCourseAI(msg, selectedLesson?.title || '');
+      setAiMessages(prev => [...prev, { role: 'ai', text: res.reply || 'Mình chưa tìm được câu trả lời phù hợp.' }]);
+    } catch (err) {
+      setAiMessages(prev => [...prev, { role: 'ai', text: 'Xin lỗi, hiện không kết nối được. Vui lòng thử lại sau.' }]);
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -107,23 +215,25 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   }
 
   return (
-    <div style={S.page}>
-      <Header onBack={onGoHome} />
-      <main style={S.main}>
-        <section style={S.topbar}>
-          <div>
-            <div style={S.kicker}>
-              {course.subject || 'Online course'}
-              {course.isNewTutor && <span style={S.newBadge}>NEW Tutor</span>}
+    <div style={{...S.page, ...(cinematic ? S.pageCinematic : {})}}>
+      {!cinematic && <Header onBack={onGoHome} />}
+      <main style={{...S.main, ...(cinematic ? S.mainCinematic : {})}}>
+        {!cinematic && (
+          <section style={S.topbar}>
+            <div>
+              <div style={S.kicker}>
+                {course.subject || 'Online course'}
+                {course.isNewTutor && <span style={S.newBadge}>NEW Tutor</span>}
+              </div>
+              <h1 style={S.title}>{course.title}</h1>
+              <p style={S.subtitle}>Bởi {course.tutorName || course.tutor?.name || 'Giảng viên'} • {totalLessons} bài học • {course.level || 'Mọi cấp độ'}</p>
             </div>
-            <h1 style={S.title}>{course.title}</h1>
-            <p style={S.subtitle}>By {course.tutorName} • {totalLessons} lessons • {course.level || 'All levels'}</p>
-          </div>
-          <div style={S.progressBox}>
-            <span style={S.progressValue}>{progress}%</span>
-            <span style={S.progressLabel}>completed</span>
-          </div>
-        </section>
+            <div style={S.progressBox}>
+              <span style={S.progressValue}>{progress}%</span>
+              <span style={S.progressLabel}>hoàn thành</span>
+            </div>
+          </section>
+        )}
 
         {error && <div style={S.noticeError}>{error}</div>}
 
@@ -133,68 +243,204 @@ export default function CoursePlayer({ courseId, onGoHome }) {
               {selectedLesson?.isLocked ? (
                 <div style={S.locked}>
                   <span className="material-symbols-outlined" style={{ fontSize: 54 }}>lock</span>
-                  <h2>This lesson is locked</h2>
-                  <p>Buy the course to unlock every lesson, documents, and progress tracking.</p>
-                  <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
-                    {buying ? 'Processing...' : `Buy course ${money(course.price)}`}
-                  </button>
+                  <h2>Bài học này đã bị khóa</h2>
+                  {canBuyCourse ? (
+                    <>
+                      <p>Đăng ký khóa học để mở khóa toàn bộ bài học, tài liệu và theo dõi tiến độ.</p>
+                      <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
+                        {buying ? 'Đang xử lý...' : `Mua khóa học ${money(course.price)}`}
+                      </button>
+                    </>
+                  ) : (
+                    <p>{isStaffView ? 'Đây là chế độ xem quản lý. Chức năng mua chỉ dành cho học viên và phụ huynh.' : 'Vui lòng đăng nhập với tư cách học viên hoặc phụ huynh để mua khóa học này.'}</p>
+                  )}
                 </div>
               ) : selectedLesson?.videoUrl ? (
-                <video src={selectedLesson.videoUrl} controls preload="metadata" style={S.video} />
+                (() => {
+                  const url = selectedLesson.videoUrl;
+                  const ytMatch = url.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/);
+                  const ytId = ytMatch && ytMatch[2].length === 11 ? ytMatch[2] : null;
+                  
+                  if (ytId) {
+                    return (
+                      <iframe 
+                        key={selectedLesson.id}
+                        src={`https://www.youtube.com/embed/${ytId}`}
+                        style={{...S.video, border: 'none'}}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    );
+                  }
+                  
+                  const isValidUrl = url.startsWith('http') || url.startsWith('/');
+                  if (!isValidUrl) {
+                    return (
+                      <div style={S.locked}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 54, color: '#e53935' }}>link_off</span>
+                        <h2>Đường dẫn video không hợp lệ</h2>
+                        <p>Link: "{url}" không phải là link video hợp lệ.</p>
+                      </div>
+                    );
+                  }
+
+                  return <video ref={videoRef} onTimeUpdate={handleTimeUpdate} key={selectedLesson.id} src={url} controls controlsList="nodownload" onContextMenu={(e) => e.preventDefault()} preload="metadata" style={S.video} />;
+                })()
               ) : (
                 <div style={S.locked}>
                   <span className="material-symbols-outlined" style={{ fontSize: 54 }}>play_disabled</span>
-                  <h2>No video attached</h2>
-                  <p>The tutor has not uploaded a video for this lesson yet.</p>
+                  <h2>Chưa có video</h2>
+                  <p>Giảng viên chưa tải lên video cho bài học này.</p>
                 </div>
               )}
             </div>
 
-            <div style={S.lessonInfo}>
-              <div>
-                <p style={S.lessonIndex}>Lesson {selectedLesson?.position || 1}</p>
-                <h2 style={S.lessonTitle}>{selectedLesson?.title || 'Select a lesson'}</h2>
-                <p style={S.lessonDesc}>{selectedLesson?.description || course.description || 'No description yet.'}</p>
+            <div style={S.lessonContentArea}>
+              <div style={S.lessonTabs}>
+                <button style={{...S.tabBtn, ...(activeTab==='overview' ? S.tabActive : {})}} onClick={() => setActiveTab('overview')} type="button">Tổng quan</button>
+                <button style={{...S.tabBtn, ...(activeTab==='notes' ? S.tabActive : {})}} onClick={() => setActiveTab('notes')} type="button">Ghi chú</button>
+                <button style={{...S.tabBtn, ...(activeTab==='ai' ? S.tabActive : {})}} onClick={() => setActiveTab('ai')} type="button">Hỏi AI</button>
               </div>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                {selectedLesson?.materialUrl && (
-                  <a href={selectedLesson.materialUrl} target="_blank" rel="noreferrer" style={S.secondaryBtn}>
-                    <span className="material-symbols-outlined">attach_file</span>
-                    Materials
-                  </a>
+              
+              <div style={S.tabContent}>
+                {activeTab === 'overview' && (
+                  <div style={S.lessonInfo}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                         <p style={S.lessonIndex}>Bài học {selectedLesson?.position || 1}</p>
+                         <button onClick={()=>setCinematic(!cinematic)} style={S.cinematicBtn}>
+                           <span className="material-symbols-outlined">{cinematic ? 'light_mode' : 'dark_mode'}</span>
+                           {cinematic ? 'Tắt rạp chiếu' : 'Bật rạp chiếu'}
+                         </button>
+                      </div>
+                      <h2 style={S.lessonTitle}>{selectedLesson?.title || 'Chọn một bài học'}</h2>
+                      <p style={S.lessonDesc}>{selectedLesson?.description || course.description || 'Chưa có mô tả chi tiết.'}</p>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', flexDirection: 'column', alignItems: 'flex-end' }}>
+                      {course.isEnrolled && !selectedLesson?.isLocked && (
+                        <button style={selectedLesson?.isCompleted ? S.doneBtn : S.primaryBtn} onClick={handleComplete} disabled={savingProgress}>
+                          <span className="material-symbols-outlined">{selectedLesson?.isCompleted ? 'check_circle' : 'task_alt'}</span>
+                          {selectedLesson?.isCompleted ? 'Bỏ đánh dấu xong' : 'Đánh dấu hoàn thành'}
+                        </button>
+                      )}
+                      {selectedLesson?.materialUrl && (
+                        <a href={selectedLesson.materialUrl} target="_blank" rel="noreferrer" style={{...S.secondaryBtn, marginTop: 8}}>
+                          <span className="material-symbols-outlined">attach_file</span>
+                          Tài liệu đính kèm
+                        </a>
+                      )}
+                    </div>
+                  </div>
                 )}
-                {course.isEnrolled && !selectedLesson?.isLocked && (
-                  <button style={selectedLesson?.isCompleted ? S.doneBtn : S.primaryBtn} onClick={handleComplete} disabled={savingProgress}>
-                    <span className="material-symbols-outlined">{selectedLesson?.isCompleted ? 'check_circle' : 'task_alt'}</span>
-                    {selectedLesson?.isCompleted ? 'Mark not done' : 'Mark completed'}
-                  </button>
+
+                {activeTab === 'notes' && (
+                  <div style={{padding: '22px'}}>
+                     <h3 style={{fontSize: 18, marginBottom: 12}}>Ghi chú thông minh</h3>
+                     <p style={{fontSize: 14, color: '#6b7280', marginBottom: 16}}>Ghi chú sẽ tự động đính kèm thời gian hiện tại của video để bạn dễ dàng tua lại khi ôn tập.</p>
+                     <div style={{display: 'flex', gap: 10, marginBottom: 20}}>
+                        <input 
+                           type="text" 
+                           value={newNote} 
+                           onChange={(e) => setNewNote(e.target.value)} 
+                           placeholder="Ví dụ: Đoạn này thầy giảng rất kỹ về vòng lặp..." 
+                           style={S.noteInput}
+                           onKeyDown={(e) => e.key === 'Enter' && saveNote()}
+                        />
+                        <button style={S.primaryBtn} onClick={saveNote}>Lưu ghi chú</button>
+                     </div>
+                     <div style={{display:'flex', flexDirection:'column', gap: 10}}>
+                        {(!notes[selectedLesson?.id] || notes[selectedLesson?.id].length === 0) ? (
+                           <p style={{color: '#9ca3af', fontSize: 14, textAlign:'center', padding: '20px 0'}}>Chưa có ghi chú nào cho bài học này.</p>
+                        ) : (
+                           notes[selectedLesson?.id].map(n => (
+                              <div key={n.id} style={S.noteItem}>
+                                 {n.time >= 0 ? (
+                                    <button onClick={() => jumpToTime(n.time)} style={S.timeBadge}>[{formatTime(n.time)}]</button>
+                                 ) : (
+                                    <span style={{...S.timeBadge, background: '#e5e7eb', color: '#6b7280', cursor: 'default'}}>[Ghi chú]</span>
+                                 )}
+                                 <span style={{flex: 1, fontSize: 15}}>{n.text}</span>
+                              </div>
+                           ))
+                        )}
+                     </div>
+                  </div>
+                )}
+
+                {activeTab === 'ai' && (
+                  <div style={{padding: '22px', minHeight: 400, display: 'flex', flexDirection: 'column'}}>
+                     <h3 style={{fontSize: 18, marginBottom: 12}}>Trợ lý AI (EduX Tutor)</h3>
+                     <div ref={chatScrollRef} style={{flex: 1, background: '#f8fafc', borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto', maxHeight: 300, marginBottom: 16, border: '1px solid #e2e8f0'}}>
+                        <div style={{display: 'flex', gap: 10, alignSelf: 'flex-start', background: '#fff', padding: '10px 14px', borderRadius: '12px 12px 12px 0', border: '1px solid #e2e8f0', maxWidth: '85%'}}>
+                           <span className="material-symbols-outlined" style={{color: '#1d4ed8', fontSize: 20}}>smart_toy</span>
+                           <span style={{fontSize: 14}}>Chào bạn, tôi là EduX AI Tutor. Bạn đang học bài "{selectedLesson?.title || ''}". Bạn có câu hỏi nào cần giải đáp không?</span>
+                        </div>
+                        {aiMessages.map((m, i) => (
+                           <div key={i} style={{
+                             display: 'flex', gap: 10, 
+                             alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                             background: m.role === 'user' ? '#00288e' : '#fff', 
+                             color: m.role === 'user' ? '#fff' : '#000',
+                             padding: '10px 14px', 
+                             borderRadius: m.role === 'user' ? '12px 12px 0 12px' : '12px 12px 12px 0', 
+                             border: m.role === 'user' ? 'none' : '1px solid #e2e8f0', 
+                             maxWidth: '85%'
+                           }}>
+                             {m.role === 'ai' && <span className="material-symbols-outlined" style={{color: '#1d4ed8', fontSize: 20}}>smart_toy</span>}
+                             <span style={{fontSize: 14, whiteSpace: 'pre-wrap'}}>{m.text}</span>
+                           </div>
+                        ))}
+                        {isAiLoading && (
+                           <div style={{display: 'flex', gap: 10, alignSelf: 'flex-start', background: '#fff', padding: '10px 14px', borderRadius: '12px 12px 12px 0', border: '1px solid #e2e8f0', maxWidth: '85%'}}>
+                              <span className="material-symbols-outlined" style={{color: '#1d4ed8', fontSize: 20}}>smart_toy</span>
+                              <span style={{fontSize: 14}} className="typing-indicator">...</span>
+                           </div>
+                        )}
+                     </div>
+                     <div style={{display: 'flex', gap: 10}}>
+                        <input 
+                           type="text" 
+                           value={aiInput}
+                           onChange={(e) => setAiInput(e.target.value)}
+                           placeholder="Nhập câu hỏi của bạn..." 
+                           style={S.noteInput}
+                           onKeyDown={(e) => e.key === 'Enter' && handleAiSubmit()}
+                           disabled={isAiLoading}
+                        />
+                        <button style={{...S.primaryBtn, opacity: isAiLoading ? 0.7 : 1}} onClick={handleAiSubmit} disabled={isAiLoading}>
+                           <span className="material-symbols-outlined" style={{fontSize: 20}}>send</span>
+                        </button>
+                     </div>
+                  </div>
                 )}
               </div>
             </div>
           </section>
 
-          <aside style={S.sidebar}>
-            <div style={S.purchaseCard}>
-              <div>
-                <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>Course price</p>
-                <strong style={{ fontSize: 28, color: '#00288e' }}>{money(course.price)}</strong>
+          <aside style={{...S.sidebar, ...(cinematic ? S.sidebarCinematic : {})}}>
+            {!course.isEnrolled && !isStaffView && (
+              <div style={S.purchaseCard}>
+                <div>
+                  <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>Giá khóa học</p>
+                  <strong style={{ fontSize: 28, color: '#00288e' }}>{money(course.price)}</strong>
+                </div>
+                {canBuyCourse ? (
+                  <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
+                    <span className="material-symbols-outlined">shopping_cart</span>
+                    {buying ? 'Đang xử lý...' : 'Đăng ký và học ngay'}
+                  </button>
+                ) : (
+                  <span style={S.staffBadge}>
+                    <span className="material-symbols-outlined">visibility</span>
+                    Đăng nhập để mua
+                  </span>
+                )}
               </div>
-              {course.isEnrolled ? (
-                <span style={S.enrolledBadge}>
-                  <span className="material-symbols-outlined icon-fill">verified</span>
-                  Enrolled
-                </span>
-              ) : (
-                <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
-                  <span className="material-symbols-outlined">shopping_cart</span>
-                  {buying ? 'Processing...' : 'Buy and start learning'}
-                </button>
-              )}
-            </div>
+            )}
 
             <div style={S.contentPanel}>
               <div style={S.contentHead}>
-                <h2>Course content</h2>
+                <h2>Nội dung khóa học</h2>
                 <span>{completed}/{totalLessons}</span>
               </div>
               <div style={S.progressTrack}>
@@ -217,7 +463,7 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                     </span>
                     <span style={{ flex: 1 }}>
                       <strong>{index + 1}. {lesson.title}</strong>
-                      <small>{lesson.durationLabel || (lesson.isPreview ? 'Preview' : 'Video lesson')}</small>
+                      <small>{lesson.durationLabel || (lesson.isPreview ? 'Học thử miễn phí' : 'Bài học video')}</small>
                     </span>
                   </button>
                 ))}
@@ -240,7 +486,7 @@ function Header({ onBack }) {
         </a>
         <button type="button" onClick={onBack} style={S.backBtn}>
           <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
-          Back
+          Quay lại
         </button>
       </div>
     </header>
@@ -248,8 +494,10 @@ function Header({ onBack }) {
 }
 
 const S = {
-  page: { minHeight: '100vh', background: '#f7f8fb', color: '#1f2430' },
-  main: { width: '100%', maxWidth: 1260, margin: '0 auto', padding: '28px 24px 64px' },
+  page: { minHeight: '100vh', background: '#f7f8fb', color: '#1f2430', transition: 'all 0.3s' },
+  pageCinematic: { background: '#020617', color: '#f8fafc' },
+  main: { width: '100%', maxWidth: 1260, margin: '0 auto', padding: '28px 24px 64px', transition: 'all 0.3s' },
+  mainCinematic: { padding: '16px 24px', maxWidth: 1400 },
   center: { minHeight: 420, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280' },
   topbar: { display: 'flex', justifyContent: 'space-between', gap: 18, alignItems: 'flex-end', marginBottom: 22, flexWrap: 'wrap' },
   kicker: { display: 'flex', alignItems: 'center', gap: 8, color: '#00288e', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' },
@@ -268,7 +516,17 @@ const S = {
   lessonIndex: { margin: 0, color: '#00288e', fontSize: 12, fontWeight: 900, textTransform: 'uppercase' },
   lessonTitle: { margin: '4px 0 8px', fontSize: 22, fontWeight: 900 },
   lessonDesc: { margin: 0, color: '#4b5563', lineHeight: 1.6, maxWidth: 720 },
-  sidebar: { display: 'flex', flexDirection: 'column', gap: 16, position: 'sticky', top: 86 },
+  lessonContentArea: { background: '#fff', display: 'flex', flexDirection: 'column' },
+  lessonTabs: { display: 'flex', borderBottom: '1px solid #e5e7eb', padding: '0 22px' },
+  tabBtn: { background: 'none', border: 'none', padding: '16px 24px', fontSize: 15, color: '#6b7280', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, borderBottom: '2px solid transparent', transition: 'all 0.2s' },
+  tabActive: { borderBottom: '2px solid #00288e', color: '#00288e', fontWeight: 'bold' },
+  tabContent: { minHeight: 200 },
+  cinematicBtn: { background: '#f1f5f9', border: 'none', padding: '6px 12px', borderRadius: 8, color: '#334155', fontSize: 13, fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' },
+  noteInput: { flex: 1, padding: '12px 16px', borderRadius: 12, border: '1px solid #cbd5e1', outline: 'none', fontSize: 15, fontFamily: 'inherit' },
+  noteItem: { display: 'flex', gap: 12, padding: '14px 16px', background: '#f8fafc', borderRadius: 12, border: '1px solid #f1f5f9', alignItems: 'flex-start' },
+  timeBadge: { background: '#dbeafe', color: '#1d4ed8', border: 'none', padding: '4px 8px', borderRadius: 6, fontWeight: 'bold', cursor: 'pointer', fontSize: 13 },
+  sidebar: { display: 'flex', flexDirection: 'column', gap: 16, position: 'sticky', top: 86, transition: 'all 0.3s' },
+  sidebarCinematic: { opacity: 0.3, pointerEvents: 'none' },
   purchaseCard: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 22, padding: 18, display: 'flex', flexDirection: 'column', gap: 14, boxShadow: '0 12px 32px rgba(15,23,42,0.07)' },
   contentPanel: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 22, overflow: 'hidden', boxShadow: '0 12px 32px rgba(15,23,42,0.07)' },
   contentHead: { padding: '16px 18px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
@@ -282,6 +540,7 @@ const S = {
   secondaryBtn: { height: 44, padding: '0 16px', borderRadius: 13, border: '1px solid #cbd5e1', color: '#334155', background: '#fff', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none' },
   doneBtn: { height: 48, padding: '0 18px', border: '1px solid #86efac', borderRadius: 14, background: '#dcfce7', color: '#15803d', fontWeight: 900, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer', fontFamily: 'inherit' },
   enrolledBadge: { height: 44, borderRadius: 14, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontWeight: 900 },
+  staffBadge: { minHeight: 44, borderRadius: 14, background: '#eef3ff', color: '#00288e', border: '1px solid #c8d6ff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontWeight: 900, padding: '0 14px', textAlign: 'center' },
   noticeError: { background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 14, padding: '12px 14px', marginBottom: 16, fontWeight: 800 },
   errorCard: { background: '#fff', borderRadius: 22, border: '1px solid #e5e7eb', padding: 32, textAlign: 'center', maxWidth: 420, boxShadow: '0 16px 40px rgba(15,23,42,0.08)' },
   backBtn: { display: 'flex', alignItems: 'center', gap: 6, height: 40, padding: '0 16px', background: 'transparent', color: '#4b5563', border: '1px solid #d1d5db', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },

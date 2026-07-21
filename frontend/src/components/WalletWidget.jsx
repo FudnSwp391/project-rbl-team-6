@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { API_BASE_URL } from '../config';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_BASE = API_BASE_URL;
 
 export default function WalletWidget({ token }) {
     const [wallet, setWallet] = useState(null);
@@ -55,8 +56,20 @@ export default function WalletWidget({ token }) {
                 body: JSON.stringify({ amount: Number(amount), returnUrl, walletId: wallet?.id })
             });
             const data = await res.json();
-            if (data.success && data.url) {
-                window.location.href = data.url;
+            if (data.success && data.vnpUrl && data.params) {
+                // Dùng form redirect để tránh browser re-encode URL (gây sai chữ ký VNPAY)
+                const form = document.createElement('form');
+                form.method = 'GET';
+                form.action = data.vnpUrl;
+                for (const [key, value] of Object.entries(data.params)) {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = key;
+                    input.value = value;
+                    form.appendChild(input);
+                }
+                document.body.appendChild(form);
+                form.submit();
             } else {
                 alert(data.message || 'Có lỗi xảy ra');
                 setLoading(false);
@@ -74,7 +87,8 @@ export default function WalletWidget({ token }) {
         if (type === 'REFUND') return { label: 'Hoàn tiền', icon: 'undo', color: 'text-blue-600' };
         if (type === 'COMMISSION') return { label: 'Hoa hồng', icon: 'percent', color: 'text-red-500' };
         if (status === 'HELD_IN_ESCROW') return { label: 'Tạm giữ', icon: 'lock', color: 'text-amber-600' };
-        if (status === 'RELEASED' || (type === 'PAYMENT' && status === 'SUCCESS')) return { label: 'Giải ngân', icon: 'payments', color: 'text-green-600' };
+        if (status === 'RELEASED') return { label: 'Giải ngân', icon: 'payments', color: 'text-green-600' };
+        if (type === 'PAYMENT') return { label: 'Thanh toán', icon: 'shopping_cart', color: 'text-red-500' };
         return { label: type, icon: 'swap_horiz', color: 'text-on-surface-variant' };
     };
 
@@ -147,12 +161,9 @@ export default function WalletWidget({ token }) {
                         <button
                             onClick={handleTopUp}
                             disabled={loading}
-                            className="w-full h-12 bg-[#00288e] text-white rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-[#00288e]/90 disabled:opacity-50"
+                            className="w-full h-12 bg-primary text-white font-bold rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
                         >
-                            {loading
-                                ? <span className="material-symbols-outlined animate-spin">refresh</span>
-                                : <><span className="material-symbols-outlined">payments</span>Thanh Toán VNPAY</>
-                            }
+                            {loading ? 'Đang tạo thanh toán...' : 'Thanh Toán VNPAY'}
                         </button>
                     </div>
                 </div>,
@@ -191,11 +202,11 @@ export default function WalletWidget({ token }) {
                             ) : (
                                 transactions.map(tx => {
                                     const cfg = txTypeConfig(tx.type, tx.status);
-                                    const isIn = ['DEPOSIT', 'REFUND'].includes(tx.type) || (tx.type === 'PAYMENT' && tx.status === 'SUCCESS');
+                                    const isIn = Number(tx.amount) > 0;
                                     return (
                                         <div key={tx.id} className="flex items-center gap-3 p-4 hover:bg-gray-50">
                                             <div className={`w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center shrink-0`}>
-                                                <span className={`material-symbols-outlined text-[18px] ${cfg.color}`}>{cfg.icon}</span>
+                                                <span className={`material-symbols-outlined text-[18px] ${isIn ? 'text-green-600' : 'text-red-500'}`}>{cfg.icon}</span>
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-sm font-medium text-gray-800 truncate">{cfg.label}</p>
@@ -204,7 +215,7 @@ export default function WalletWidget({ token }) {
                                             </div>
                                             <div className="text-right shrink-0">
                                                 <p className={`font-bold text-sm ${isIn ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {isIn ? '+' : '-'}{fmtMoney(tx.amount)}
+                                                    {isIn ? '+' : '-'}{fmtMoney(Math.abs(tx.amount))}
                                                 </p>
                                                 <p className="text-xs text-gray-400">{tx.status}</p>
                                             </div>

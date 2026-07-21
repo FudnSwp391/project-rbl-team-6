@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { icon: 'assignment', label: 'Kiểm tra & Đề thi', href: '#/dashboard/assessments', id: 'assessments' },
   { icon: 'psychology', label: 'Luyện tập AI', href: '#/dashboard/practice', id: 'practice' },
   { icon: 'family_restroom', label: 'Mã chia sẻ', href: '#/dashboard/parent-link', id: 'parent-link' },
+  { icon: 'report_problem', label: 'Khiếu nại', href: '#/dashboard/complaints', id: 'complaints' },
 ]
 
 export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRoute, logout }) {

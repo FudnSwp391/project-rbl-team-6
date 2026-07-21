@@ -22,7 +22,7 @@ const TutorFeedbackModal = ({ isOpen, onClose, lessonData, onSubmit }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm transition-opacity">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[95vh]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
           <div>
@@ -39,7 +39,7 @@ const TutorFeedbackModal = ({ isOpen, onClose, lessonData, onSubmit }) => {
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-6">
+        <div className="px-6 py-5 space-y-6 flex-1 overflow-y-auto">
           {/* Mức độ tập trung */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -84,27 +84,27 @@ const TutorFeedbackModal = ({ isOpen, onClose, lessonData, onSubmit }) => {
               </button>
               <button
                 type="button"
-                onClick={() => setUnderstandingLevel('Khá')}
+                onClick={() => setUnderstandingLevel('Tạm')}
                 className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all ${
-                  understandingLevel === 'Khá'
+                  understandingLevel === 'Tạm'
                     ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
                     : 'border-gray-100 bg-white text-gray-500 hover:border-yellow-200 hover:bg-yellow-50/50'
                 }`}
               >
                 <AlertCircle size={24} className="mb-1" />
-                <span className="text-sm font-medium">Khá</span>
+                <span className="text-sm font-medium">Tạm</span>
               </button>
               <button
                 type="button"
-                onClick={() => setUnderstandingLevel('Cần cố gắng')}
+                onClick={() => setUnderstandingLevel('Kém')}
                 className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all ${
-                  understandingLevel === 'Cần cố gắng'
+                  understandingLevel === 'Kém'
                     ? 'border-red-500 bg-red-50 text-red-700'
                     : 'border-gray-100 bg-white text-gray-500 hover:border-red-200 hover:bg-red-50/50'
                 }`}
               >
                 <XCircle size={24} className="mb-1" />
-                <span className="text-sm font-medium">Cần cố gắng</span>
+                <span className="text-sm font-medium">Kém</span>
               </button>
             </div>
           </div>
@@ -115,7 +115,7 @@ const TutorFeedbackModal = ({ isOpen, onClose, lessonData, onSubmit }) => {
               Bài tập về nhà <span className="text-red-500">*</span>
             </label>
             <div className="space-y-2">
-              {['Đã hoàn thành', 'Chưa hoàn thành', 'Không có bài tập'].map((status) => (
+              {['Có', 'Làm một nửa', 'Không', 'Không có bài tập'].map((status) => (
                 <label
                   key={status}
                   className={`flex items-center p-3 rounded-xl border-2 cursor-pointer transition-all ${

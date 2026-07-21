@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { API_BASE_URL } from './config';
 
 // ─── Timer component ──────────────────────────────────────────────────────────
 function CountdownTimer({ seconds, totalSeconds, onExpire, onTick }) {
@@ -133,8 +134,8 @@ function ConfirmModal({ unanswered, onConfirm, onCancel }) {
 }
 
 // ─── Main QuizTaking component ────────────────────────────────────────────────
-export default function QuizTaking({ quizId, token, isPractice = false, practiceSessionId = null, isExamPaper = false, examPaperId = null }) {
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+export default function QuizTaking({ quizId, token, isPractice = false, practiceSessionId = null, isExamPaper = false, examPaperId = null, isTutorExam = false, tutorExamId = null }) {
+  const apiBaseUrl = API_BASE_URL
 
   const [quiz, setQuiz] = useState(null)
   const [questions, setQuestions] = useState([])
@@ -190,11 +191,13 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [questions, currentIndex, isPractice, isExamPaper])
+  }, [questions, currentIndex, isPractice, isExamPaper, isTutorExam])
 
   // ── Load quiz data ──
   useEffect(() => {
-    if (isExamPaper) {
+    if (isTutorExam) {
+      fetchTutorExam()
+    } else if (isExamPaper) {
       fetchExamPaper()
     } else if (isPractice) {
       // Always fetch from backend to ensure latest time and state, avoiding stale sessionStorage from tab restores
@@ -202,10 +205,11 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
     } else if (quizId) {
       fetchQuizData()
     }
-  }, [quizId, isPractice, practiceSessionId, isExamPaper, examPaperId])
+  }, [quizId, isPractice, practiceSessionId, isExamPaper, examPaperId, isTutorExam, tutorExamId])
 
   // ── Auto-save draft every 10s + save on page hide / close / unmount ──
   useEffect(() => {
+    if (isTutorExam) return // Tutor exams do not support save draft yet
     if (!isPractice && !isExamPaper && !attemptId) return
     if (isPractice && !practiceSessionId) return
     if (isExamPaper && !attemptId) return
@@ -244,7 +248,57 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
       // Save one last time when unmounting (SPA navigation)
       doSave()
     }
-  }, [attemptId, practiceSessionId, isPractice, isExamPaper, examPaperId])
+  }, [attemptId, practiceSessionId, isPractice, isExamPaper, examPaperId, isTutorExam])
+
+  async function fetchTutorExam() {
+    try {
+      setLoading(true)
+      const res = await fetch(`${apiBaseUrl}/api/student/assessments/exams/${tutorExamId}?_t=${Date.now()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Failed to load tutor exam')
+      const data = await res.json()
+      setQuiz({
+        title: data.exam.title,
+        subject: data.exam.course || 'Tutor Exam',
+        total_questions: data.questions.length,
+        duration_minutes: data.exam.duration_minutes,
+      })
+      
+      const formattedQuestions = data.questions.map(q => {
+        let mapped = { ...q }
+        if (q.question_type === 'MCQ' && q.options) {
+           mapped.option_a = q.options[0]?.text || ''
+           mapped.option_b = q.options[1]?.text || ''
+           mapped.option_c = q.options[2]?.text || ''
+           mapped.option_d = q.options[3]?.text || ''
+        } else if (q.question_type === 'Essay') {
+           mapped.question_type = 'essay' 
+        }
+        return mapped
+      })
+      
+      setQuestions(formattedQuestions)
+      setAttemptId(data.submission?.id || 'tutor_attempt_temp')
+      
+      // format existing answers back from {question_id, student_answer} array if any
+      const existingAnswers = {}
+      if (data.submission && data.submission.answers) {
+         // but wait, does GET /api/student/assessments/exams/:id return submission.answers?
+         // No, in backend it only returns `submission` row.
+      }
+      setAnswers(existingAnswers)
+
+      if (data.exam.duration_minutes) {
+        setTimeRemaining(data.exam.duration_minutes * 60)
+        setTotalSeconds(data.exam.duration_minutes * 60)
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   async function fetchExamPaper() {
     try {
@@ -397,6 +451,18 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
         })
         if (!res.ok) throw new Error('Submit failed')
         window.location.hash = `/exam-result/${attemptId}`
+      } else if (isTutorExam) {
+        const answerArray = Object.keys(answers).map(qId => ({
+          question_id: qId,
+          student_answer: answers[qId]
+        }));
+        const res = await fetch(`${apiBaseUrl}/api/student/assessments/exams/${tutorExamId}/submit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ answers: answerArray }),
+        })
+        if (!res.ok) throw new Error('Submit failed')
+        window.location.hash = `/tutor-exam-result/${tutorExamId}`
       } else if (isPractice) {
         const res = await fetch(`${apiBaseUrl}/api/practice/${sessionId}/submit`, {
           method: 'POST',
@@ -420,7 +486,7 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
       setError(err.message)
       setSubmitting(false)
     }
-  }, [answers, attemptId, quizId, sessionId, isPractice, isExamPaper, examPaperId, token, timeRemaining, questions])
+  }, [answers, attemptId, quizId, sessionId, isPractice, isExamPaper, examPaperId, isTutorExam, tutorExamId, token, timeRemaining, questions])
 
   // For practice: key by index; for formal quiz and exam paper: key by question id
   function getAnswerKey(q, idx) {
@@ -526,8 +592,8 @@ export default function QuizTaking({ quizId, token, isPractice = false, practice
               onTick={(s) => setTimeRemaining(s)}
             />
           ) : (
-            // Show elapsed time for practice and exam paper (no-limit or no duration set)
-            (isPractice || isExamPaper) && <ElapsedTimer />
+            // Show elapsed time for practice, exam paper, and tutor exam (no-limit or no duration set)
+            (isPractice || isExamPaper || isTutorExam) && <ElapsedTimer />
           )}
 
           {/* Submit button */}
