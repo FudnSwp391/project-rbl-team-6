@@ -6144,6 +6144,48 @@ app.get("/api/admin/financial/reconciliation/findings/:key/logs", verifyToken, r
   }
 });
 
+// PATCH .../findings/:key/status — Module 9 (Mark Reviewed / Investigating /
+// Resolved / Reopen). Only ever writes to reconciliation_investigations +
+// reconciliation_audit_logs — never touches wallets/transactions.
+const RECON_STATUS_VALUES = ['OPEN', 'INVESTIGATING', 'RESOLVED', 'CLOSED'];
+app.patch("/api/admin/financial/reconciliation/findings/:key/status", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const findingKey = req.params.key;
+    const { status: newStatus, reason } = req.body || {};
+    if (!RECON_STATUS_VALUES.includes(newStatus)) {
+      return res.status(400).json({ message: `Trạng thái không hợp lệ. Cho phép: ${RECON_STATUS_VALUES.join(', ')}.` });
+    }
+
+    const currentRes = await pool.query(`SELECT * FROM reconciliation_investigations WHERE finding_key = $1`, [findingKey]);
+    if (!currentRes.rows.length) {
+      return res.status(404).json({ message: "Chưa có bản ghi điều tra cho mục này — hãy mở drawer trước." });
+    }
+    const previousStatus = currentRes.rows[0].status;
+
+    const updatedRes = await pool.query(
+      `UPDATE reconciliation_investigations
+       SET status = $2, reviewed_by = $3, reviewed_at = NOW(), updated_at = NOW()
+       WHERE finding_key = $1 RETURNING *`,
+      [findingKey, newStatus, req.user.userId]
+    );
+
+    let action = 'MARKED_REVIEWED';
+    if (newStatus === 'RESOLVED') action = 'RESOLVED';
+    else if (['RESOLVED', 'CLOSED'].includes(previousStatus) && ['OPEN', 'INVESTIGATING'].includes(newStatus)) action = 'REOPENED';
+
+    await pool.query(
+      `INSERT INTO reconciliation_audit_logs (finding_key, action, admin_id, previous_status, new_status, reason, ip_address)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [findingKey, action, req.user.userId, previousStatus, newStatus, reason || null, req.ip]
+    );
+
+    return res.json({ investigation: updatedRes.rows[0], action });
+  } catch (err) {
+    console.error("PATCH .../findings/:key/status error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật trạng thái điều tra." });
+  }
+});
+
 // ── GET /api/admin/notifications ─────────────────────────────────────────────
 // CAP-9.1: Read-only notification history from notifications table.
 // Source: notifications JOIN users (user_id=recipient). No writes/sends/deletes.

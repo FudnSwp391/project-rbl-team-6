@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { PageHeader, EmptyState } from './components'
+import InvestigationDrawer from './investigation/InvestigationDrawer'
 
 import { API_BASE_URL as API } from '../../config'
 
@@ -33,6 +34,7 @@ export default function Reconciliation({ token }) {
   const [data, setData]       = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
+  const [investigateKey, setInvestigateKey] = useState(null)
 
   useEffect(() => {
     if (!token) return
@@ -121,7 +123,7 @@ export default function Reconciliation({ token }) {
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
-                {['Kiểm Tra', 'Dự Kiến', 'Thực Tế', 'Chênh Lệch', 'Trạng Thái'].map(h => (
+                {['Kiểm Tra', 'Dự Kiến', 'Thực Tế', 'Chênh Lệch', 'Trạng Thái', ''].map(h => (
                   <th key={h} className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -139,6 +141,17 @@ export default function Reconciliation({ token }) {
                     {fmtMoney(c.difference)}
                   </td>
                   <td className="py-3 px-4"><CheckBadge status={c.status} /></td>
+                  <td className="py-3 px-4 whitespace-nowrap">
+                    {c.difference !== 0 && (
+                      <button
+                        onClick={() => setInvestigateKey(`check:${c.id}`)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">search</span>
+                        Điều tra
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -161,7 +174,7 @@ export default function Reconciliation({ token }) {
             <table className="w-full">
               <thead className="bg-gray-50">
                 <tr>
-                  {['Tiêu Đề', 'Loại', 'Mô Tả', 'Số Tiền', 'Mức Độ', 'Trạng Thái', 'Ngày'].map(h => (
+                  {['Tiêu Đề', 'Loại', 'Mô Tả', 'Số Tiền', 'Mức Độ', 'Trạng Thái', 'Ngày', ''].map(h => (
                     <th key={h} className="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -180,6 +193,15 @@ export default function Reconciliation({ token }) {
                     </td>
                     <td className="py-3 px-4"><CheckBadge status={it.status} /></td>
                     <td className="py-3 px-4 text-sm text-gray-500 whitespace-nowrap">{fmtDate(it.created_at)}</td>
+                    <td className="py-3 px-4 whitespace-nowrap">
+                      <button
+                        onClick={() => setInvestigateKey(`item:${it.id}`)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">search</span>
+                        Điều tra
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -187,6 +209,13 @@ export default function Reconciliation({ token }) {
           </div>
         )}
       </div>
+
+      <InvestigationDrawer
+        token={token}
+        findingKey={investigateKey}
+        open={!!investigateKey}
+        onClose={() => setInvestigateKey(null)}
+      />
     </div>
   )
 }
