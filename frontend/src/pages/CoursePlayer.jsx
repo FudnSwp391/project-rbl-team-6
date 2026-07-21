@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { useAuth } from '../AuthContext'
-import { enrollCourse, getCourseDetail, updateCourseProgress, askCourseAI } from '../services/api'
+import { enrollCourse, getCourseDetail, updateCourseProgress, askCourseAI, getParentChildren } from '../services/api'
 
 function money(value) {
   return new Intl.NumberFormat('vi-VN', {
@@ -18,6 +18,11 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const [error, setError] = useState('')
   const [buying, setBuying] = useState(false)
   const [savingProgress, setSavingProgress] = useState(false)
+
+  // Parent Delegation states
+  const [parentChildren, setParentChildren] = useState([])
+  const [showChildSelect, setShowChildSelect] = useState(false)
+  const [selectedChildId, setSelectedChildId] = useState('')
 
   // Advanced feature states
   const [activeTab, setActiveTab] = useState('overview')
@@ -40,6 +45,18 @@ export default function CoursePlayer({ courseId, onGoHome }) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [aiMessages, isAiLoading])
+
+  // Fetch parent children for delegation
+  useEffect(() => {
+    if (user?.role === 'parent') {
+      getParentChildren().then(data => {
+        if (data && data.children) {
+          setParentChildren(data.children)
+          if (data.children.length > 0) setSelectedChildId(data.children[0].student_id)
+        }
+      }).catch(err => console.error("Could not load children:", err))
+    }
+  }, [user])
 
   // Smart Notes & Auto Resume Load
   useEffect(() => {
@@ -142,7 +159,7 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const canBuyCourse = !user || ['student', 'parent'].includes(user.role)
   const isStaffView = user?.role === 'tutor' || user?.role === 'admin'
 
-  const handleEnroll = async () => {
+  const handleEnroll = async (targetStudentId = null) => {
     if (!user) {
       // Lưu đúng trang khóa học này để đăng nhập xong quay lại, không đá về trang chủ.
       try { sessionStorage.setItem('redirectAfterLogin', window.location.hash) } catch { /* noop */ }
@@ -153,13 +170,24 @@ export default function CoursePlayer({ courseId, onGoHome }) {
       setError('Tài khoản gia sư/quản trị không cần mua khóa học. Vui lòng quay lại trang quản lý khóa học.')
       return
     }
+    if (user.role === 'parent' && typeof targetStudentId !== 'number' && typeof targetStudentId !== 'string') {
+      if (parentChildren.length === 0) {
+        setError('Bạn chưa liên kết với tài khoản học sinh nào để mua khoá học.');
+        return;
+      }
+      setShowChildSelect(true);
+      return;
+    }
+
     setBuying(true)
     setError('')
     try {
       await enrollCourse(course.id, {
         studentName: user.name || user.email?.split('@')[0] || 'Student',
+        targetStudentId: targetStudentId || undefined
       })
       await loadCourse()
+      setShowChildSelect(false)
     } catch (err) {
       setError(err.message || 'Không thể đăng ký khóa học.')
     } finally {
@@ -508,6 +536,42 @@ export default function CoursePlayer({ courseId, onGoHome }) {
           </aside>
         </div>
       </main>
+
+      {/* PARENT BUY COURSE MODAL */}
+      {showChildSelect && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" style={{ zIndex: 9999, display: 'flex', position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 400, boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ fontSize: 20, fontWeight: 800, color: '#111827', margin: '0 0 16px 0' }}>Bạn muốn mua khóa học cho bé nào?</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
+              {parentChildren.map(child => (
+                <label key={child.student_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, border: selectedChildId === child.student_id ? '2px solid #00288e' : '1px solid #e5e7eb', background: selectedChildId === child.student_id ? '#eef4ff' : '#fff', borderRadius: 12, cursor: 'pointer' }}>
+                  <input type="radio" name="child" value={child.student_id} checked={selectedChildId === child.student_id} onChange={(e) => setSelectedChildId(e.target.value)} style={{ width: 18, height: 18, accentColor: '#00288e' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {child.student_picture ? (
+                       <img src={child.student_picture} alt="Avatar" style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover' }} />
+                    ) : (
+                       <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                          {child.student_name?.[0]?.toUpperCase()}
+                       </div>
+                    )}
+                    <div>
+                      <p style={{ margin: 0, fontWeight: 700, color: '#111827' }}>{child.student_name}</p>
+                      <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>{child.nickname || 'Chưa có biệt danh'}</p>
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button onClick={() => setShowChildSelect(false)} style={{ padding: '10px 16px', borderRadius: 10, border: 0, background: '#f3f4f6', color: '#374151', fontWeight: 'bold', cursor: 'pointer' }}>Hủy</button>
+              <button onClick={() => handleEnroll(selectedChildId)} disabled={buying || !selectedChildId} style={{ padding: '10px 16px', borderRadius: 10, border: 0, background: '#00288e', color: '#fff', fontWeight: 'bold', cursor: 'pointer', opacity: buying ? 0.6 : 1 }}>
+                {buying ? 'Đang xử lý...' : 'Xác nhận Mua'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

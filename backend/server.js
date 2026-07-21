@@ -7600,6 +7600,10 @@ app.post('/api/parent/link-child', verifyToken, async (req, res) => {
     const dup = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [parentId,studentId]);
     if (dup.rows.length) return res.status(409).json({ message: 'Học sinh này đã được liên kết rồi.' });
     await pool.query('INSERT INTO parent_children (parent_id,student_id,nickname) VALUES ($1,$2,$3)', [parentId,studentId,nickname?.trim()||null]);
+    
+    // --- Security Fix: Xoá mã liên kết sau khi sử dụng để tránh bị hack ---
+    await pool.query('DELETE FROM student_link_codes WHERE code=$1', [code.trim().toUpperCase()]);
+
     const student = await pool.query('SELECT id,full_name,email,picture FROM users WHERE id=$1', [studentId]);
     return res.status(201).json({ message: 'Liên kết thành công!', student: student.rows[0] });
   } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -9725,11 +9729,24 @@ app.get("/api/courses/:id/enrollment-status", verifyToken, async (req, res) => {
 // ── POST /api/courses/:id/enroll ── Đăng ký khóa học ────────────────────────
 app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
   const courseId = req.params.id;
-  const studentId = req.user.userId;
+  let studentId = req.user.userId;
+  const payerId = req.user.userId;
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN"); // Bắt đầu transaction
+
+    // --- PARENT DELEGATION SUPPORT ---
+    const targetStudentId = req.body?.targetStudentId;
+    if (req.user.role === 'parent' && targetStudentId) {
+      // Validate that the target student is actually linked to this parent
+      const checkLink = await client.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [payerId, targetStudentId]);
+      if (checkLink.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ message: "Học sinh không hợp lệ hoặc chưa được liên kết với bạn." });
+      }
+      studentId = targetStudentId; // Đứa bé được ghi danh
+    }
 
     // Kiểm tra khóa học tồn tại
     const courseRes = await client.query(
@@ -9768,15 +9785,15 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
     // XỬ LÝ THANH TOÁN NẾU KHÓA HỌC CÓ GIÁ > 0
     const price = Number(course.price);
     if (price > 0) {
-      // 1. Lock ví học sinh để tránh ghi đè
-      const studentWalletRes = await client.query(`SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [studentId]);
-      if (studentWalletRes.rowCount === 0) {
+      // 1. Lock ví người thanh toán để tránh ghi đè
+      const payerWalletRes = await client.query(`SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [payerId]);
+      if (payerWalletRes.rowCount === 0) {
         await client.query("ROLLBACK");
         return res.status(400).json({ message: "Không tìm thấy ví của bạn." });
       }
-      const studentWallet = studentWalletRes.rows[0];
+      const payerWallet = payerWalletRes.rows[0];
       
-      if (Number(studentWallet.balance) < price) {
+      if (Number(payerWallet.balance) < price) {
         await client.query("ROLLBACK");
         return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư trong ví không đủ. Vui lòng nạp thêm tiền." });
       }
@@ -9808,7 +9825,7 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       const tutorShare = price - adminShare;
 
       // Cập nhật số dư các ví
-      await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [price, studentWallet.id]);
+      await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [price, payerWallet.id]);
       await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [tutorShare, tutorWalletId]);
       await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [adminShare, adminWalletId]);
 
@@ -9825,11 +9842,11 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       });
 
       // 5. Ghi log Transactions
-      // Học viên trừ tiền mua khóa
+      // Người thanh toán bị trừ tiền mua khóa
       await client.query(`
         INSERT INTO transactions (wallet_id, amount, type, status, description)
         VALUES ($1, $2, 'PAYMENT', 'SUCCESS', $3)
-      `, [studentWallet.id, -price, `Thanh toán mua khóa học: ${course.title}`]);
+      `, [payerWallet.id, -price, `Thanh toán mua khóa học: ${course.title}`]);
 
       // Gia sư nhận doanh thu
       await client.query(`
