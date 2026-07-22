@@ -39,10 +39,17 @@ export default function SafeAnalytics({ token }) {
   )
 }
 
+function ConfidenceBadge({ confidence }) {
+  if (confidence == null) return null
+  const cls = confidence >= 75 ? 'bg-emerald-100 text-emerald-700' : confidence >= 45 ? 'bg-amber-100 text-amber-700' : 'bg-orange-100 text-orange-700'
+  return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>Độ tin cậy {confidence}%</span>
+}
+const SOURCE_LABEL = { manual: 'nhập tay', nlp: 'tự phát hiện từ câu hỏi', default: 'mặc định' }
+
 function AskPanel({ token }) {
   const [question, setQuestion] = useState('')
-  const [days, setDays] = useState(30)
-  const [limit, setLimit] = useState(10)
+  const [days, setDays] = useState('')
+  const [limit, setLimit] = useState('')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
 
@@ -52,9 +59,12 @@ function AskPanel({ token }) {
     if (q) setQuestion(q)
     setLoading(true); setResult(null)
     try {
+      const params = {}
+      if (days !== '') params.days = Number(days)
+      if (limit !== '') params.limit = Number(limit)
       const r = await fetch(`${API}/api/admin/analytics/ask`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ question: question0, params: { days: Number(days), limit: Number(limit) } }),
+        body: JSON.stringify({ question: question0, params }),
       })
       const j = await r.json().catch(() => ({}))
       if (!r.ok) { alert(j.message || `Thất bại (${r.status})`); return }
@@ -69,10 +79,11 @@ function AskPanel({ token }) {
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-        <textarea value={question} onChange={e => setQuestion(e.target.value)} rows={2} placeholder="Nhập câu hỏi về dữ liệu..." className="w-full border border-gray-200 rounded-lg p-3 text-sm resize-none focus:outline-none focus:border-primary" />
+        <textarea value={question} onChange={e => setQuestion(e.target.value)} rows={2} placeholder="Nhập câu hỏi về dữ liệu (VD: gia sư nào kiếm nhiều tiền nhất tháng trước?)..." className="w-full border border-gray-200 rounded-lg p-3 text-sm resize-none focus:outline-none focus:border-primary" />
         <div className="flex flex-wrap items-center gap-3 mt-3">
-          <label className="text-sm text-gray-600">Số ngày <input type="number" value={days} onChange={e => setDays(e.target.value)} className="w-20 ml-1 border border-gray-200 rounded-lg px-2 py-1.5" /></label>
-          <label className="text-sm text-gray-600">Giới hạn <input type="number" value={limit} onChange={e => setLimit(e.target.value)} className="w-20 ml-1 border border-gray-200 rounded-lg px-2 py-1.5" /></label>
+          <label className="text-sm text-gray-600">Số ngày <input type="number" value={days} onChange={e => setDays(e.target.value)} placeholder="Tự động" className="w-24 ml-1 border border-gray-200 rounded-lg px-2 py-1.5 placeholder:text-gray-300" /></label>
+          <label className="text-sm text-gray-600">Giới hạn <input type="number" value={limit} onChange={e => setLimit(e.target.value)} placeholder="Tự động" className="w-24 ml-1 border border-gray-200 rounded-lg px-2 py-1.5 placeholder:text-gray-300" /></label>
+          <span className="text-xs text-gray-400">Để trống để AI tự suy ra từ câu hỏi (VD: "tháng trước", "top 5")</span>
           <button onClick={() => ask()} disabled={loading} className="ml-auto flex items-center gap-2 px-5 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 disabled:opacity-50">
             <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin' : ''}`}>{loading ? 'progress_activity' : 'query_stats'}</span>{loading ? 'Đang hỏi...' : 'Hỏi dữ liệu'}
           </button>
@@ -87,11 +98,19 @@ function AskPanel({ token }) {
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
             <div className="flex items-center gap-2 flex-wrap mb-2">
               <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${st.cls}`}>{st.label}</span>
+              {result.intent_code && <span className="text-xs text-gray-400">Ý định: <b className="text-gray-600 font-mono">{result.intent_code}</b></span>}
+              <ConfidenceBadge confidence={result.confidence} />
               {result.template_key && <span className="text-xs text-gray-400">Mẫu: <b className="text-gray-600">{result.template_key}</b></span>}
               {result.model_used && <span className="text-xs text-gray-400">· {result.model_used}</span>}
               {asArray(result.safety_flags).map((f, i) => <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-semibold">{f}</span>)}
             </div>
             <p className="text-sm text-gray-800">{result.summary}</p>
+            {result.param_sources && (
+              <p className="mt-2 text-xs text-gray-400">
+                Khoảng thời gian: <b className="text-gray-600">{result.days_label || `${result.params?.days ?? '—'} ngày`}</b> ({SOURCE_LABEL[result.param_sources.days] || result.param_sources.days})
+                {' · '}Giới hạn: <b className="text-gray-600">{result.params?.limit ?? '—'}</b> ({SOURCE_LABEL[result.param_sources.limit] || result.param_sources.limit})
+              </p>
+            )}
             {asArray(result.limitations).length > 0 && <div className="mt-2 text-xs text-amber-600">{asArray(result.limitations).map((l, i) => <div key={i}>• {l}</div>)}</div>}
           </div>
 
@@ -156,7 +175,7 @@ function TemplatesPanel({ token }) {
       {items.map(t => (
         <div key={t.key} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
           <p className="text-sm font-bold text-gray-900">{t.label}</p>
-          <p className="text-xs font-mono text-gray-400 mb-2">{t.key}</p>
+          <p className="text-xs font-mono text-gray-400 mb-2">{t.key}{t.intentCode ? ` · ${t.intentCode}` : ''}</p>
           <p className="text-sm text-gray-600 mb-3">{t.description}</p>
           <div className="flex flex-wrap gap-1.5">{asArray(t.exampleQuestions).map((q, i) => <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{q}</span>)}</div>
         </div>

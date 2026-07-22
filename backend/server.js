@@ -2157,10 +2157,10 @@ function maskAnalyticsRow(row) { const out = {}; for (const k of Object.keys(row
 // ── Template registry (the primary security boundary). Static, parameterized. ─
 const ANALYTICS_TEMPLATES = [
   {
-    key: 'top_refund_tutors_30d', label: 'Top gia sư bị hoàn tiền nhiều nhất',
+    key: 'top_refund_tutors_30d', label: 'Top gia sư bị hoàn tiền nhiều nhất', intentCode: 'REFUND_TOP_TUTORS',
     description: 'Xếp hạng gia sư theo số lần và tổng tiền bị hoàn trong N ngày.',
-    exampleQuestions: ['Top gia sư có nhiều refund nhất 30 ngày', 'Gia sư nào bị hoàn tiền nhiều nhất tháng này'],
-    keywords: [['refund', 2], ['hoan tien', 2], ['gia su', 1], ['tutor', 1], ['nhieu nhat', 1], ['top', 1], ['most', 1]],
+    exampleQuestions: ['Top gia sư có nhiều refund nhất 30 ngày', 'Gia sư nào bị hoàn tiền nhiều nhất tháng này', 'Which tutors get the most refunds'],
+    keywords: [['refund', 2], ['refunded', 2], ['hoan tien', 2], ['hoan tra', 2], ['bi hoan', 2], ['gia su', 1], ['tutor', 1], ['tutors', 1], ['nhieu nhat', 1], ['top', 1], ['most', 1], ['highest refund', 2]],
     requiredTables: ['refund_logs', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'refund_count',
     columns: ['tutor_id', 'tutor_name', 'refund_count', 'refund_amount', 'dispute_count'],
     sql: `SELECT rl.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS refund_count,
@@ -2172,10 +2172,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, gia sư bị hoàn tiền nhiều nhất là ${rows[0].tutor_name || 'N/A'} với ${rows[0].refund_count} lần (${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ). Tổng ${rows.length} gia sư có hoàn tiền.` : `Không có gia sư nào bị hoàn tiền trong ${p.days} ngày.`,
   },
   {
-    key: 'top_dispute_students_30d', label: 'Top học sinh khiếu nại nhiều nhất',
+    key: 'top_dispute_students_30d', label: 'Top học sinh khiếu nại nhiều nhất', intentCode: 'TOP_COMPLAINTS',
     description: 'Xếp hạng học sinh theo số khiếu nại đã mở trong N ngày.',
-    exampleQuestions: ['Học sinh nào khiếu nại nhiều nhất', 'Top học sinh tạo dispute nhiều nhất tháng này'],
-    keywords: [['hoc sinh', 2], ['student', 2], ['khieu nai', 2], ['dispute', 2], ['nhieu nhat', 1], ['top', 1]],
+    exampleQuestions: ['Học sinh nào khiếu nại nhiều nhất', 'Top học sinh tạo dispute nhiều nhất tháng này', 'Which students complain the most'],
+    keywords: [['hoc sinh', 2], ['student', 2], ['students', 2], ['khieu nai', 2], ['complaint', 2], ['complaints', 2], ['dispute', 2], ['disputes', 2], ['nhieu nhat', 1], ['top', 1], ['most', 1]],
     requiredTables: ['disputes', 'users'], chartType: 'bar', labelKey: 'student_name', valueKey: 'dispute_count',
     columns: ['student_id', 'student_name', 'dispute_count', 'refund_count'],
     sql: `SELECT d.raised_by AS student_id, u.full_name AS student_name, COUNT(*)::int AS dispute_count,
@@ -2186,10 +2186,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows, p) => rows.length ? `Học sinh mở nhiều khiếu nại nhất trong ${p.days} ngày: ${rows[0].student_name || 'N/A'} (${rows[0].dispute_count} khiếu nại).` : `Không có khiếu nại nào trong ${p.days} ngày.`,
   },
   {
-    key: 'fraud_high_risk_tutors', label: 'Gia sư rủi ro gian lận cao',
+    key: 'fraud_high_risk_tutors', label: 'Gia sư rủi ro gian lận cao', intentCode: 'FRAUD_RISK',
     description: 'Gia sư có báo cáo gian lận mức HIGH/CRITICAL (Batch 28).',
-    exampleQuestions: ['Gia sư nào có rủi ro gian lận cao nhất', 'Top fraud tutor high risk'],
-    keywords: [['gian lan', 2], ['fraud', 2], ['rui ro', 1], ['gia su', 1], ['tutor', 1], ['cao nhat', 1], ['high risk', 2]],
+    exampleQuestions: ['Gia sư nào có rủi ro gian lận cao nhất', 'Top fraud tutor high risk', 'Who has the highest fraud risk'],
+    keywords: [['gian lan', 2], ['fraud', 2], ['fraudulent', 2], ['rui ro', 1], ['risk', 1], ['risky', 1], ['gia su', 1], ['tutor', 1], ['tutors', 1], ['cao nhat', 1], ['highest', 1], ['high risk', 2]],
     requiredTables: ['fraud_intel_reports', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'max_risk_score',
     columns: ['tutor_id', 'tutor_name', 'report_count', 'max_risk_score', 'latest_summary'],
     sql: `SELECT f.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS report_count,
@@ -2200,10 +2200,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư bị gắn cờ gian lận cao trong ${p.days} ngày. Cao nhất: ${rows[0].tutor_name || 'N/A'} (điểm ${Math.round(Number(rows[0].max_risk_score))}).` : `Không có báo cáo gian lận mức cao trong ${p.days} ngày.`,
   },
   {
-    key: 'external_payment_signals', label: 'Dấu hiệu giao dịch ngoài nền tảng',
+    key: 'external_payment_signals', label: 'Dấu hiệu giao dịch ngoài nền tảng', intentCode: 'EXTERNAL_PAYMENT_SIGNALS',
     description: 'Người dùng có báo cáo kiểm duyệt EXTERNAL_PAYMENT_ATTEMPT (Batch 27).',
-    exampleQuestions: ['Ai có dấu hiệu giao dịch ngoài nền tảng', 'Top gia sư rủ chuyển khoản ngoài app'],
-    keywords: [['giao dich ngoai', 3], ['ngoai nen tang', 2], ['ngoai app', 2], ['chuyen khoan', 2], ['external payment', 3], ['off platform', 2], ['ne phi', 1]],
+    exampleQuestions: ['Ai có dấu hiệu giao dịch ngoài nền tảng', 'Top gia sư rủ chuyển khoản ngoài app', 'Who shows signs of off-platform payment'],
+    keywords: [['giao dich ngoai', 3], ['ngoai nen tang', 2], ['ngoai app', 2], ['chuyen khoan', 2], ['external payment', 3], ['off platform', 2], ['off-platform', 2], ['ne phi', 1], ['tron phi', 1]],
     requiredTables: ['semantic_moderation_reports', 'users'], chartType: 'bar', labelKey: 'user_name', valueKey: 'semantic_report_count',
     columns: ['user_id', 'user_name', 'semantic_report_count', 'fraud_report_count', 'latest_summary'],
     sql: `SELECT s.tutor_id AS user_id, u.full_name AS user_name, COUNT(*)::int AS semantic_report_count,
@@ -2215,10 +2215,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows, p) => rows.length ? `Phát hiện ${rows.length} người dùng có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.` : `Không có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.`,
   },
   {
-    key: 'withdrawal_pending_risk', label: 'Gia sư chờ rút tiền có rủi ro',
+    key: 'withdrawal_pending_risk', label: 'Gia sư chờ rút tiền có rủi ro', intentCode: 'WITHDRAWAL_RISK',
     description: 'Yêu cầu rút tiền PENDING kèm khiếu nại/gian lận/giao dịch ngoài.',
-    exampleQuestions: ['Gia sư đang chờ rút tiền có rủi ro cao', 'Withdrawal pending risky tutors'],
-    keywords: [['rut tien', 3], ['withdrawal', 3], ['cho rut', 2], ['pending', 1], ['rui ro', 1]],
+    exampleQuestions: ['Gia sư đang chờ rút tiền có rủi ro cao', 'Withdrawal pending risky tutors', 'Which pending withdrawals are risky'],
+    keywords: [['rut tien', 3], ['withdrawal', 3], ['withdrawals', 3], ['cho rut', 2], ['pending', 1], ['rui ro', 1], ['risky', 1]],
     requiredTables: ['withdrawal_requests', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'pending_amount',
     columns: ['tutor_id', 'tutor_name', 'pending_amount', 'active_disputes', 'fraud_reports', 'external_payment_reports'],
     sql: `SELECT w.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(w.amount),0)::numeric AS pending_amount,
@@ -2231,10 +2231,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư đang chờ rút tiền; ưu tiên rà soát: ${rows[0].tutor_name || 'N/A'} (${Number(rows[0].pending_amount).toLocaleString('vi-VN')}đ, ${rows[0].active_disputes} khiếu nại mở).` : `Không có yêu cầu rút tiền đang chờ.`,
   },
   {
-    key: 'monthly_revenue_summary', label: 'Doanh thu theo tháng',
+    key: 'monthly_revenue_summary', label: 'Doanh thu theo tháng', intentCode: 'REVENUE_TREND',
     description: 'Tổng hoa hồng/doanh thu ghi nhận (commission_logs EARNED) theo tháng.',
-    exampleQuestions: ['Doanh thu theo tháng', 'Revenue by month'],
-    keywords: [['doanh thu', 3], ['revenue', 3], ['theo thang', 2], ['by month', 2], ['thang', 1]],
+    exampleQuestions: ['Doanh thu theo tháng', 'Revenue by month', 'Revenue trend'],
+    keywords: [['doanh thu', 3], ['revenue', 3], ['theo thang', 2], ['by month', 2], ['monthly', 2], ['thang', 1], ['xu huong', 1], ['trend', 1]],
     requiredTables: ['commission_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'gross_revenue',
     columns: ['month', 'gross_revenue', 'commission_amount', 'transaction_count'],
     sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month,
@@ -2245,10 +2245,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows) => rows.length ? `Doanh thu ghi nhận theo ${rows.length} tháng gần nhất. Tháng mới nhất (${rows[0].month}): ${Number(rows[0].gross_revenue).toLocaleString('vi-VN')}đ (hoa hồng ${Number(rows[0].commission_amount).toLocaleString('vi-VN')}đ).` : `Chưa có dữ liệu doanh thu (commission_logs EARNED).`,
   },
   {
-    key: 'monthly_refund_summary', label: 'Hoàn tiền theo tháng',
+    key: 'monthly_refund_summary', label: 'Hoàn tiền theo tháng', intentCode: 'REFUND_TREND',
     description: 'Số lần và tổng tiền hoàn theo tháng.',
-    exampleQuestions: ['Refund theo tháng', 'Hoàn tiền theo tháng'],
-    keywords: [['refund', 2], ['hoan tien', 2], ['theo thang', 3], ['by month', 3], ['thang', 1]],
+    exampleQuestions: ['Refund theo tháng', 'Hoàn tiền theo tháng', 'Refund trend'],
+    keywords: [['refund', 2], ['refunds', 2], ['hoan tien', 2], ['xu huong hoan tien', 3], ['refund trend', 3], ['theo thang', 3], ['by month', 3], ['thang', 1], ['xu huong', 1], ['trend', 1]],
     requiredTables: ['refund_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'refund_amount',
     columns: ['month', 'refund_count', 'refund_amount'],
     sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month, COUNT(*)::int AS refund_count,
@@ -2258,10 +2258,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows) => rows.length ? `Hoàn tiền theo ${rows.length} tháng. Tháng mới nhất (${rows[0].month}): ${rows[0].refund_count} lần, ${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ.` : `Chưa có dữ liệu hoàn tiền.`,
   },
   {
-    key: 'dispute_status_summary', label: 'Khiếu nại theo trạng thái',
+    key: 'dispute_status_summary', label: 'Khiếu nại theo trạng thái', intentCode: 'DISPUTE_STATUS',
     description: 'Phân bố khiếu nại theo trạng thái trong N ngày.',
-    exampleQuestions: ['Thống kê khiếu nại theo trạng thái', 'Dispute status summary'],
-    keywords: [['khieu nai', 2], ['dispute', 2], ['trang thai', 3], ['status', 2], ['thong ke', 1]],
+    exampleQuestions: ['Thống kê khiếu nại theo trạng thái', 'Dispute status summary', 'Disputes by status'],
+    keywords: [['khieu nai', 2], ['dispute', 2], ['disputes', 2], ['trang thai', 3], ['status', 2], ['thong ke', 1], ['summary', 1], ['breakdown', 1]],
     requiredTables: ['disputes'], chartType: 'bar', labelKey: 'status', valueKey: 'count',
     columns: ['status', 'count', 'latest_created_at'],
     sql: `SELECT status, COUNT(*)::int AS count, MAX(created_at) AS latest_created_at
@@ -2270,10 +2270,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày có ${rows.reduce((s, r) => s + Number(r.count), 0)} khiếu nại; nhiều nhất ở trạng thái "${rows[0].status}" (${rows[0].count}).` : `Không có khiếu nại trong ${p.days} ngày.`,
   },
   {
-    key: 'semantic_high_risk_reports', label: 'Kiểm duyệt nội dung rủi ro cao',
+    key: 'semantic_high_risk_reports', label: 'Kiểm duyệt nội dung rủi ro cao', intentCode: 'CONTENT_RISK',
     description: 'Báo cáo kiểm duyệt ngữ nghĩa mức HIGH/CRITICAL theo mức độ.',
-    exampleQuestions: ['Nội dung kiểm duyệt rủi ro cao', 'Semantic moderation high risk'],
-    keywords: [['kiem duyet', 2], ['semantic', 2], ['noi dung', 1], ['rui ro cao', 2], ['high risk', 2]],
+    exampleQuestions: ['Nội dung kiểm duyệt rủi ro cao', 'Semantic moderation high risk', 'High risk content moderation reports'],
+    keywords: [['kiem duyet', 2], ['moderation', 2], ['semantic', 2], ['noi dung', 1], ['content', 1], ['rui ro cao', 2], ['high risk', 2]],
     requiredTables: ['semantic_moderation_reports'], chartType: 'bar', labelKey: 'severity', valueKey: 'report_count',
     columns: ['severity', 'report_count', 'latest_summary'],
     sql: `SELECT severity, COUNT(*)::int AS report_count, (ARRAY_AGG(summary ORDER BY created_at DESC))[1] AS latest_summary
@@ -2282,10 +2282,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows, p) => rows.length ? `Có ${rows.reduce((s, r) => s + Number(r.report_count), 0)} báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.` : `Không có báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.`,
   },
   {
-    key: 'fraud_critical_reports', label: 'Báo cáo gian lận CRITICAL',
+    key: 'fraud_critical_reports', label: 'Báo cáo gian lận CRITICAL', intentCode: 'FRAUD_CRITICAL',
     description: 'Danh sách báo cáo gian lận mức CRITICAL (Batch 28).',
-    exampleQuestions: ['Báo cáo gian lận critical', 'Fraud critical reports'],
-    keywords: [['gian lan', 2], ['fraud', 2], ['critical', 3], ['nghiem trong', 2]],
+    exampleQuestions: ['Báo cáo gian lận critical', 'Fraud critical reports', 'Most severe fraud reports'],
+    keywords: [['gian lan', 2], ['fraud', 2], ['critical', 3], ['nghiem trong', 2], ['severe', 2], ['nghiem trong nhat', 3]],
     requiredTables: ['fraud_intel_reports'], chartType: 'none', labelKey: 'report_type', valueKey: 'risk_score',
     columns: ['report_type', 'severity', 'risk_score', 'summary', 'status'],
     sql: `SELECT report_type, severity, risk_score::numeric AS risk_score, summary, status
@@ -2294,10 +2294,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows, p) => rows.length ? `Có ${rows.length} báo cáo gian lận CRITICAL trong ${p.days} ngày cần ưu tiên xử lý.` : `Không có báo cáo gian lận CRITICAL trong ${p.days} ngày.`,
   },
   {
-    key: 'ai_case_manual_review', label: 'AI case cần admin review',
+    key: 'ai_case_manual_review', label: 'AI case cần admin review', intentCode: 'AI_CASE_REVIEW',
     description: 'Các quyết định AI ở trạng thái NEED_HUMAN_REVIEW (Batch 25).',
-    exampleQuestions: ['AI case nào cần admin review', 'Khiếu nại AI cần xử lý thủ công'],
-    keywords: [['ai case', 3], ['case', 1], ['admin review', 2], ['xu ly thu cong', 2], ['manual review', 2], ['khieu nai ai', 2]],
+    exampleQuestions: ['AI case nào cần admin review', 'Khiếu nại AI cần xử lý thủ công', 'Which AI cases need human review'],
+    keywords: [['ai case', 3], ['case', 1], ['cases', 1], ['admin review', 2], ['human review', 2], ['xu ly thu cong', 2], ['manual review', 2], ['khieu nai ai', 2]],
     requiredTables: ['ai_case_resolutions'], chartType: 'none', labelKey: 'status', valueKey: 'confidence',
     columns: ['case_type', 'status', 'recommendation', 'confidence', 'reason_summary'],
     sql: `SELECT money_action AS case_type, status, recommendation, confidence::numeric AS confidence, reason_summary
@@ -2306,10 +2306,10 @@ const ANALYTICS_TEMPLATES = [
     summarize: (rows, p) => rows.length ? `Có ${rows.length} quyết định AI cần admin xem xét thủ công trong ${p.days} ngày.` : `Không có AI case nào cần review trong ${p.days} ngày.`,
   },
   {
-    key: 'tutor_quality_decline', label: 'Gia sư giảm chất lượng',
+    key: 'tutor_quality_decline', label: 'Gia sư giảm chất lượng', intentCode: 'TUTOR_QUALITY_DECLINE',
     description: 'Gia sư có báo cáo chất lượng thấp / khiếu nại / hoàn tiền tăng.',
-    exampleQuestions: ['Gia sư có dấu hiệu giảm chất lượng', 'Tutor quality decline'],
-    keywords: [['giam chat luong', 3], ['chat luong', 1], ['quality decline', 3], ['gia su', 1], ['tutor', 1]],
+    exampleQuestions: ['Gia sư có dấu hiệu giảm chất lượng', 'Tutor quality decline', 'Courses with abnormal ratings', 'Tutors with dropping ratings'],
+    keywords: [['giam chat luong', 3], ['chat luong', 1], ['quality decline', 3], ['declining quality', 3], ['abnormal rating', 3], ['danh gia bat thuong', 3], ['gia su', 1], ['tutor', 1], ['tutors', 1]],
     requiredTables: ['tutor_profiles', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'dispute_count',
     columns: ['tutor_id', 'tutor_name', 'avg_rating', 'low_teaching_reports', 'dispute_count', 'refund_count'],
     sql: `SELECT tp.user_id AS tutor_id, u.full_name AS tutor_name, COALESCE(tp.avg_rating,0)::numeric AS avg_rating,
@@ -2323,12 +2323,26 @@ const ANALYTICS_TEMPLATES = [
            ORDER BY dispute_count DESC, low_teaching_reports DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư có dấu hiệu giảm chất lượng trong ${p.days} ngày.` : `Không phát hiện gia sư giảm chất lượng rõ rệt trong ${p.days} ngày.`,
   },
+  {
+    key: 'top_tutor_revenue', label: 'Top gia sư theo doanh thu', intentCode: 'TOP_TUTOR_REVENUE',
+    description: 'Xếp hạng gia sư theo tổng thu nhập (tutor_amount) ghi nhận trong N ngày.',
+    exampleQuestions: ['Top gia sư theo doanh thu', 'Highest earning tutor', 'Tutor making the most money', 'Who earned the most', 'Best revenue tutor this month'],
+    keywords: [['doanh thu', 2], ['revenue', 2], ['gia su', 2], ['tutor', 2], ['tutors', 2], ['kiem tien', 3], ['kiem nhieu tien', 3], ['earning', 3], ['earnings', 3], ['earned', 3], ['thu nhap', 3], ['income', 3], ['most money', 3], ['nhieu tien nhat', 3], ['best revenue', 3], ['cao nhat', 1], ['nhieu nhat', 1], ['top', 2]],
+    requiredTables: ['commission_logs', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'tutor_revenue',
+    columns: ['tutor_id', 'tutor_name', 'tutor_revenue', 'transaction_count'],
+    sql: `SELECT cl.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(cl.tutor_amount),0)::numeric AS tutor_revenue,
+                 COUNT(*)::int AS transaction_count
+            FROM commission_logs cl LEFT JOIN users u ON u.id=cl.tutor_id
+           WHERE cl.event_type='EARNED' AND cl.tutor_id IS NOT NULL AND cl.created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY cl.tutor_id, u.full_name ORDER BY tutor_revenue DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, gia sư có doanh thu cao nhất là ${rows[0].tutor_name || 'N/A'} với ${Number(rows[0].tutor_revenue).toLocaleString('vi-VN')}đ (${rows[0].transaction_count} giao dịch). Tổng ${rows.length} gia sư có doanh thu.` : `Không có gia sư nào có doanh thu trong ${p.days} ngày.`,
+  },
 ];
 const ANALYTICS_TEMPLATE_MAP = Object.fromEntries(ANALYTICS_TEMPLATES.map(t => [t.key, t]));
 
 function getAnalyticsTemplate(key) { return ANALYTICS_TEMPLATE_MAP[key] || null; }
 function listAnalyticsTemplates() {
-  return ANALYTICS_TEMPLATES.map(t => ({ key: t.key, label: t.label, description: t.description, exampleQuestions: t.exampleQuestions, params: ['days', 'limit'], chartType: t.chartType, columns: t.columns }));
+  return ANALYTICS_TEMPLATES.map(t => ({ key: t.key, intentCode: t.intentCode, label: t.label, description: t.description, exampleQuestions: t.exampleQuestions, params: ['days', 'limit'], chartType: t.chartType, columns: t.columns }));
 }
 // Secondary defense: assert our own template SQL is a single bounded SELECT/WITH.
 function validateAnalyticsTemplate(t) {
@@ -2339,16 +2353,71 @@ function validateAnalyticsTemplate(t) {
   if (ANALYTICS_BLOCKED_RE.test(sql.replace(/\$\d+/g, '')) && /\b(insert|update|delete|drop|alter|truncate|grant|revoke)\b/i.test(sql)) return { ok: false, reason: 'BLOCKED_KEYWORD' };
   return { ok: true };
 }
-// Deterministic intent detection (rule-based). Returns { key, score } or null.
+// ── Fuzzy/synonym-tolerant intent matching (Step 3/4/14). Still fully rule-based
+// and deterministic — no ML model, no network call — so it stays auditable and
+// keeps the "never hallucinate" guarantee. Handles EN/VN synonyms (via expanded
+// keyword lists per template), plural forms, and single-typo tolerance.
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const al = a.length, bl = b.length;
+  if (al === 0) return bl; if (bl === 0) return al;
+  let prev = new Array(bl + 1); for (let j = 0; j <= bl; j++) prev[j] = j;
+  for (let i = 1; i <= al; i++) {
+    const cur = [i];
+    for (let j = 1; j <= bl; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[bl];
+}
+function singularize(w) {
+  if (w.length > 4 && w.endsWith('ies')) return w.slice(0, -3) + 'y';
+  if (w.length > 3 && w.endsWith('es')) return w.slice(0, -2);
+  if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+  return w;
+}
+// Exact substring match first (fast path, preserves prior exact behavior);
+// falls back to per-word fuzzy match (plural + single-typo tolerant) so
+// "highest earning tutors" still hits a keyword phrase like "earning tutor".
+function fuzzyPhraseMatch(questionNorm, questionWords, phrase) {
+  if (questionNorm.includes(phrase)) return true;
+  const phraseWords = phrase.split(' ').filter(Boolean);
+  return phraseWords.every(pw => {
+    const pwSing = singularize(pw);
+    return questionWords.some(qw => {
+      if (qw === pw) return true;
+      const qwSing = singularize(qw);
+      if (qwSing === pwSing) return true;
+      if (pw.length >= 4 && Math.abs(qw.length - pw.length) <= 1) return levenshtein(qwSing, pwSing) <= 1;
+      return false;
+    });
+  });
+}
+function analyticsTemplateMaxScore(t) {
+  const weights = t.keywords.map(k => k[1]).sort((a, b) => b - a);
+  return weights.slice(0, 3).reduce((s, w) => s + w, 0) || 3;
+}
+// Deterministic intent detection (rule-based, fuzzy/synonym-tolerant).
+// Returns { key, intentCode, score, confidence, matchedKeywords } or null.
 function detectAnalyticsIntent(question) {
   const q = normalizeAnalyticsQuestion(question);
-  let best = null, bestScore = 0;
+  const words = q.split(' ').filter(Boolean);
+  const scored = [];
   for (const t of ANALYTICS_TEMPLATES) {
-    let score = 0;
-    for (const [kw, w] of t.keywords) if (q.includes(kw)) score += w;
-    if (score > bestScore) { bestScore = score; best = t; }
+    let score = 0; const matched = [];
+    for (const [kw, w] of t.keywords) { if (fuzzyPhraseMatch(q, words, kw)) { score += w; matched.push(kw); } }
+    if (score > 0) scored.push({ t, score, matched });
   }
-  return best && bestScore >= 3 ? { key: best.key, score: bestScore } : null;
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  if (!best || best.score < 3) return null;
+  const runnerUp = scored[1];
+  let confidence = Math.round(Math.min(1, best.score / analyticsTemplateMaxScore(best.t)) * 100);
+  if (runnerUp && runnerUp.score >= best.score * 0.75) confidence = confidence - 20; // ambiguous vs runner-up
+  confidence = Math.max(15, Math.min(99, confidence));
+  return { key: best.t.key, intentCode: best.t.intentCode, score: best.score, confidence, matchedKeywords: best.matched };
 }
 // Optional LLM intent classification (never writes SQL; must return a known key).
 async function maybeAnalyticsLLMIntent(question) {
@@ -2361,12 +2430,54 @@ async function maybeAnalyticsLLMIntent(question) {
         const r = await callGeminiModel(model, prompt);
         if (r.ok) {
           const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          try { const p = JSON.parse(t); if (p && ANALYTICS_TEMPLATE_MAP[p.template_key]) return { key: p.template_key, score: 99 }; } catch { /* ignore */ }
+          try {
+            const p = JSON.parse(t);
+            const matchedTemplate = p && ANALYTICS_TEMPLATE_MAP[p.template_key];
+            if (matchedTemplate) return { key: p.template_key, intentCode: matchedTemplate.intentCode, score: 99, confidence: 70, matchedKeywords: ['LLM_CLASSIFIED'] };
+          } catch { /* ignore */ }
         }
       }
     }
     return null;
   } catch { return null; }
+}
+
+// ── NL parameter extraction (Step 5): time period + limit from the question
+// text itself. Templates only support a trailing N-day window (no offset
+// ranges like "the month before last"), so period phrases map to a window
+// length, not a calendar-aligned range — `label` communicates that to the UI.
+const ANALYTICS_PERIOD_PATTERNS = [
+  { re: /\bhom nay\b|\btoday\b/, days: 1, label: 'Hôm nay' },
+  { re: /\bhom qua\b|\byesterday\b/, days: 2, label: 'Hôm qua' },
+  { re: /\btuan nay\b|\bthis week\b/, days: 7, label: 'Tuần này' },
+  { re: /\btuan truoc\b|\btuan qua\b|\blast week\b/, days: 7, label: 'Tuần trước (7 ngày)' },
+  { re: /\bthang nay\b|\bthis month\b/, days: 30, label: 'Tháng này' },
+  { re: /\bthang truoc\b|\bthang qua\b|\blast month\b/, days: 30, label: 'Tháng trước (30 ngày)' },
+  { re: /\bquy nay\b|\bquy truoc\b|\bthis quarter\b|\blast quarter\b|\bquy\b/, days: 90, label: 'Theo quý (90 ngày)' },
+  { re: /\bnam nay\b|\bnam ngoai\b|\bnam truoc\b|\bthis year\b|\blast year\b/, days: 365, label: 'Theo năm (365 ngày)' },
+];
+function extractAnalyticsPeriod(qNorm) {
+  let m = qNorm.match(/(\d{1,3})\s*(ngay|day)/);
+  if (m) { const n = Math.max(1, Math.min(365, parseInt(m[1], 10))); return { days: n, label: `${n} ngày` }; }
+  m = qNorm.match(/(\d{1,3})\s*(tuan|week)/);
+  if (m) { const n = Math.max(1, Math.min(365, parseInt(m[1], 10) * 7)); return { days: n, label: `${m[1]} tuần` }; }
+  m = qNorm.match(/(\d{1,3})\s*(thang|month)/);
+  if (m) { const n = Math.max(1, Math.min(365, parseInt(m[1], 10) * 30)); return { days: n, label: `${m[1]} tháng` }; }
+  for (const p of ANALYTICS_PERIOD_PATTERNS) if (p.re.test(qNorm)) return { days: p.days, label: p.label };
+  return null;
+}
+function extractAnalyticsLimit(qNorm) {
+  let m = qNorm.match(/\btop\s*(\d{1,3})\b/) || qNorm.match(/\b(?:dau tien|first)\s+(\d{1,3})\b/) || qNorm.match(/\b(\d{1,3})\s+(?:dau tien)\b/);
+  if (!m) m = qNorm.match(/\b(\d{1,3})\s+(?:gia su|hoc sinh|tutor|tutors|student|students|khoa hoc|course|courses)\b/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(ADMIN_ANALYTICS_MAX_LIMIT, n)) : null;
+}
+function extractAnalyticsParameters(question) {
+  const qNorm = normalizeAnalyticsQuestion(question);
+  const period = extractAnalyticsPeriod(qNorm);
+  const limit = extractAnalyticsLimit(qNorm);
+  return { days: period ? period.days : null, days_label: period ? period.label : null, limit };
 }
 
 function clampAnalyticsParams(params = {}) {
@@ -2428,8 +2539,9 @@ async function saveAnalyticsAuditLog(log) {
     const r = await pool.query(
       `INSERT INTO admin_analytics_queries
         (question, normalized_question, detected_intent, template_key, status, summary, sql_preview,
-         parameters, result_count, result_preview, chart_data, limitations, safety_flags, model_used, created_by, error_message)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16)
+         parameters, result_count, result_preview, chart_data, limitations, safety_flags, model_used, created_by, error_message,
+         confidence, intent_code, extracted_params)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16,$17,$18,$19::jsonb)
        RETURNING id`,
       [
         String(log.question || '').slice(0, ADMIN_ANALYTICS_MAX_QUESTION_CHARS), log.normalized_question || null,
@@ -2438,6 +2550,8 @@ async function saveAnalyticsAuditLog(log) {
         JSON.stringify((log.result_preview || []).slice(0, 20)), JSON.stringify(log.chart_data || {}),
         JSON.stringify(log.limitations || []), JSON.stringify(log.safety_flags || []),
         log.model_used || 'TEMPLATE_RULE_BASED', asUuidOrNull(log.created_by), log.error_message || null,
+        Number.isFinite(log.confidence) ? log.confidence : null, log.intent_code || null,
+        JSON.stringify(log.extracted_params || {}),
       ]
     );
     return r.rows[0].id;
@@ -17466,30 +17580,47 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
       return res.json({ status: 'BLOCKED', intent: null, summary: 'Không thể truy xuất dữ liệu nhạy cảm (mật khẩu/token/OTP/IP...). Vui lòng dùng câu hỏi phân tích an toàn.', safety_flags: ['SENSITIVE_REQUEST'], limitations: [], columns: [], rows: [], chart: {}, sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().slice(0, 6).map(t => t.exampleQuestions[0]) });
     }
 
-    // Intent detection: rule-based first, optional LLM classify as fallback.
+    // Intent detection: rule-based (fuzzy/synonym-tolerant) first, optional LLM classify as fallback.
     let intent = detectAnalyticsIntent(question);
     let modelUsed = 'TEMPLATE_RULE_BASED';
     if (!intent) { const llm = await maybeAnalyticsLLMIntent(question); if (llm) { intent = llm; modelUsed = 'LLM_INTENT_' + ADMIN_ANALYTICS_PROVIDER.toUpperCase(); } }
 
     if (!intent) {
       const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'NO_MATCH', summary: 'Không có mẫu phân tích phù hợp.', model_used: modelUsed, created_by: req.user.id });
-      return res.json({ status: 'NO_MATCH', intent: null, summary: 'Hiện hệ thống chưa hỗ trợ câu hỏi này ở chế độ an toàn.', columns: [], rows: [], chart: {}, limitations: [], safety_flags: [], sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().map(t => t.exampleQuestions[0]) });
+      return res.json({ status: 'NO_MATCH', intent: null, intent_code: null, confidence: 0, summary: 'Hiện hệ thống chưa hỗ trợ câu hỏi này ở chế độ an toàn.', columns: [], rows: [], chart: {}, limitations: [], safety_flags: [], sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().map(t => t.exampleQuestions[0]) });
     }
 
-    const result = await runAnalyticsTemplate(intent.key, params, req.user.id);
+    // Parameter extraction (Step 5): NL-extracted time period/limit fill in
+    // whatever the admin left blank in the form; explicit form values win.
+    const extracted = extractAnalyticsParameters(question);
+    const userDays = (params.days !== undefined && params.days !== null && params.days !== '') ? parseInt(params.days, 10) : null;
+    const userLimit = (params.limit !== undefined && params.limit !== null && params.limit !== '') ? parseInt(params.limit, 10) : null;
+    const paramSources = {
+      days: Number.isFinite(userDays) ? 'manual' : (extracted.days != null ? 'nlp' : 'default'),
+      limit: Number.isFinite(userLimit) ? 'manual' : (extracted.limit != null ? 'nlp' : 'default'),
+    };
+    const mergedParams = {
+      days: Number.isFinite(userDays) ? userDays : (extracted.days ?? undefined),
+      limit: Number.isFinite(userLimit) ? userLimit : (extracted.limit ?? undefined),
+    };
+
+    const result = await runAnalyticsTemplate(intent.key, mergedParams, req.user.id);
+    const extractedMeta = { days_label: extracted.days_label, param_sources: paramSources };
     const auditId = await saveAnalyticsAuditLog({
       question, normalized_question: normalized, detected_intent: intent.key, template_key: intent.key,
       status: result.status, summary: result.summary, sql_preview: result.sql_preview, parameters: result.params,
       result_count: (result.rows || []).length, result_preview: result.rows, chart_data: result.chart,
       limitations: result.limitations, safety_flags: result.safety_flags || [], model_used: modelUsed,
+      confidence: intent.confidence, intent_code: intent.intentCode, extracted_params: extractedMeta,
       created_by: req.user.id, error_message: result.error_message,
     });
 
     return res.json({
-      status: result.status, template_key: intent.key, intent: intent.key, summary: result.summary,
+      status: result.status, template_key: intent.key, intent: intent.key, intent_code: intent.intentCode || null,
+      confidence: intent.confidence ?? null, matched_keywords: intent.matchedKeywords || [], summary: result.summary,
       columns: result.columns || [], rows: result.rows || [], chart: result.chart || {},
       sql_preview: result.sql_preview, limitations: result.limitations || [], safety_flags: result.safety_flags || [],
-      model_used: modelUsed, audit_id: auditId,
+      model_used: modelUsed, audit_id: auditId, params: result.params, param_sources: paramSources, days_label: extracted.days_label,
     });
   } catch (err) {
     console.error('POST /api/admin/analytics/ask error:', err.message);
@@ -17547,7 +17678,7 @@ app.post('/api/admin/analytics/explain-template', verifyToken, requireAdmin, asy
     const t = getAnalyticsTemplate(String(req.body?.templateKey || ''));
     if (!t) return res.status(404).json({ message: 'Không tìm thấy mẫu.' });
     return res.json({
-      key: t.key, label: t.label,
+      key: t.key, intentCode: t.intentCode, label: t.label,
       calculates: t.description,
       data_sources: t.requiredTables,
       example_questions: t.exampleQuestions,
@@ -18774,7 +18905,14 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
       CREATE INDEX IF NOT EXISTS idx_analytics_q_template ON admin_analytics_queries(template_key, created_at);
       CREATE INDEX IF NOT EXISTS idx_analytics_q_status   ON admin_analytics_queries(status, created_at);
     `);
-    console.log('✅ DB migration: admin_analytics_queries ready (Batch 29A)');
+    // Batch 42: intent-engine confidence score + spec-named intent code + NL-extracted params.
+    await pool.query(`
+      ALTER TABLE admin_analytics_queries
+        ADD COLUMN IF NOT EXISTS confidence NUMERIC,
+        ADD COLUMN IF NOT EXISTS intent_code TEXT,
+        ADD COLUMN IF NOT EXISTS extracted_params JSONB NOT NULL DEFAULT '{}'::jsonb
+    `);
+    console.log('✅ DB migration: admin_analytics_queries ready (Batch 29A + 42)');
   } catch (err) {
     console.error('⚠️  DB migration (admin_analytics_queries Batch 29A) warning:', err.message);
   }
