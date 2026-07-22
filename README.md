@@ -135,10 +135,10 @@ Chi tiết quy trình demo: [docs/FINAL_DEMO_RUNBOOK.md](docs/FINAL_DEMO_RUNBOOK
 
 | Git handle | Họ tên | Vai trò / phần phụ trách |
 |---|---|---|
-| Linhle | _(điền)_ | _(điền)_ |
-| Khanh Trinh | Trịnh Nhật Khánh | _(điền)_ |
-| vantan123abc-wq | _(điền)_ | _(điền)_ |
-| Phan Thanh Trieu | _(điền)_ | _(điền)_ |
-| nvankien2k5 | _(điền)_ | _(điền)_ |
+| Linhle | Lê Văn Hùng Linh | Fullstack Dev|
+| Khanh Trinh | Trịnh Nhật Khánh | Fullstack Dev |
+| vantan123abc-wq | Phạm Văn Tân |Fullstack Dev |
+| Phan Thanh Trieu | Phan Thanh Triều | Fullstack Dev |
+| nvankien2k5 | Nguyễn Văn Kiên |Fullstack Dev |
 
 > ⚠️ Điền họ tên + phần phụ trách của từng thành viên trước khi nộp bài.
