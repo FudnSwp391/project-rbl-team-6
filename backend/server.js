@@ -2659,6 +2659,42 @@ async function buildAnalyticsInsightCards() {
   return cards;
 }
 
+// ── Step 15 (Performance): in-memory TTL cache + in-flight dedupe. Single
+// Node process, no Redis in this stack, so a Map is enough — this is a
+// low-traffic admin-only page. Only SUCCESS-shaped results get cached (a
+// transient FAILED shouldn't be repeatedly served); concurrent identical
+// requests share one in-flight promise instead of hitting Postgres twice.
+const ADMIN_ANALYTICS_CACHE_TTL_MS = Number(process.env.ADMIN_ANALYTICS_CACHE_TTL_MS || 60000);
+const analyticsCache = new Map();
+const analyticsInFlight = new Map();
+function analyticsCacheGet(key) {
+  const hit = analyticsCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.data;
+  if (hit) analyticsCache.delete(key);
+  return null;
+}
+async function withAnalyticsCache(key, ttlMs, fn) {
+  const cached = analyticsCacheGet(key);
+  if (cached) return { ...cached, served_from_cache: true };
+  if (analyticsInFlight.has(key)) {
+    const data = await analyticsInFlight.get(key);
+    return { ...data, served_from_cache: true };
+  }
+  const p = (async () => {
+    const data = await fn();
+    if (!data || !data.status || data.status === 'SUCCESS') {
+      analyticsCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+      if (analyticsCache.size > 500) analyticsCache.delete(analyticsCache.keys().next().value);
+    }
+    return data;
+  })();
+  analyticsInFlight.set(key, p);
+  try {
+    const data = await p;
+    return { ...data, served_from_cache: false };
+  } finally { analyticsInFlight.delete(key); }
+}
+
 // Run a vetted template with a transaction-scoped statement_timeout (read-only).
 async function runAnalyticsTemplate(templateKey, params, adminId) {
   const t = getAnalyticsTemplate(templateKey);
@@ -2674,27 +2710,30 @@ async function runAnalyticsTemplate(templateKey, params, adminId) {
     return { status: 'SUCCESS', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Không đủ dữ liệu: một số bảng chưa sẵn sàng.', insights: [], risk_level: 'LOW', risk_reason: 'Không đủ dữ liệu để đánh giá.', limitations, sql_preview: t.sql, params: { days, limit }, ...explain };
   }
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('SET LOCAL statement_timeout = 8000');
-    const r = await client.query(t.sql, [days, limit]);
-    await client.query('COMMIT');
-    const rows = r.rows.map(maskAnalyticsRow);
-    const insights = buildAnalyticsInsights(t, rows);
-    const risk = deriveAnalyticsRiskLevel(insights);
-    const baseSummary = t.summarize(rows, { days, limit });
-    const summary = await maybeRephraseAnalyticsSummary(baseSummary);
-    return {
-      status: 'SUCCESS', template_key: t.key, columns: t.columns, rows,
-      chart: buildChartData(t, rows), summary, insights, risk_level: risk.level, risk_reason: risk.reason,
-      limitations, sql_preview: t.sql, params: { days, limit }, ...explain,
-    };
-  } catch (e) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.warn(`[analytics] template ${t.key} failed:`, e.message);
-    return { status: 'FAILED', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Truy vấn thất bại.', insights: [], risk_level: 'LOW', risk_reason: null, limitations: ['QUERY_FAILED'], error_message: e.message, sql_preview: t.sql, params: { days, limit }, ...explain };
-  } finally { client.release(); }
+  const cacheKey = `tpl:${t.key}:${days}:${limit}`;
+  return withAnalyticsCache(cacheKey, ADMIN_ANALYTICS_CACHE_TTL_MS, async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL statement_timeout = 8000');
+      const r = await client.query(t.sql, [days, limit]);
+      await client.query('COMMIT');
+      const rows = r.rows.map(maskAnalyticsRow);
+      const insights = buildAnalyticsInsights(t, rows);
+      const risk = deriveAnalyticsRiskLevel(insights);
+      const baseSummary = t.summarize(rows, { days, limit });
+      const summary = await maybeRephraseAnalyticsSummary(baseSummary);
+      return {
+        status: 'SUCCESS', template_key: t.key, columns: t.columns, rows,
+        chart: buildChartData(t, rows), summary, insights, risk_level: risk.level, risk_reason: risk.reason,
+        limitations, sql_preview: t.sql, params: { days, limit }, ...explain,
+      };
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.warn(`[analytics] template ${t.key} failed:`, e.message);
+      return { status: 'FAILED', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Truy vấn thất bại.', insights: [], risk_level: 'LOW', risk_reason: null, limitations: ['QUERY_FAILED'], error_message: e.message, sql_preview: t.sql, params: { days, limit }, ...explain };
+    } finally { client.release(); }
+  });
 }
 
 function buildAnalyticsSummary(templateKey, rows, params, limitations) {
@@ -17793,6 +17832,7 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
       sql_preview: result.sql_preview, limitations: result.limitations || [], safety_flags: result.safety_flags || [],
       model_used: modelUsed, audit_id: auditId, params: result.params, param_sources: paramSources, days_label: extracted.days_label,
       data_sources: result.data_sources || [], rows_analyzed: (result.rows || []).length, generated_at: new Date().toISOString(),
+      cached: !!result.served_from_cache,
     });
   } catch (err) {
     console.error('POST /api/admin/analytics/ask error:', err.message);
@@ -17810,8 +17850,8 @@ app.get('/api/admin/analytics/templates', verifyToken, requireAdmin, async (req,
 // above the query results regardless of what the admin asked.
 app.get('/api/admin/analytics/insight-cards', verifyToken, requireAdmin, async (req, res) => {
   try {
-    const cards = await buildAnalyticsInsightCards();
-    return res.json({ cards, generated_at: new Date().toISOString() });
+    const data = await withAnalyticsCache('insight_cards_v1', ADMIN_ANALYTICS_CACHE_TTL_MS, async () => ({ cards: await buildAnalyticsInsightCards() }));
+    return res.json({ cards: data.cards, generated_at: new Date().toISOString(), cached: !!data.served_from_cache });
   } catch (err) {
     console.error('GET /api/admin/analytics/insight-cards error:', err.message);
     return res.status(500).json({ message: 'Không thể tải insight cards.' });
@@ -17829,6 +17869,7 @@ app.get('/api/admin/analytics/history', verifyToken, requireAdmin, async (req, r
     if (req.query.templateKey) { params.push(String(req.query.templateKey)); where.push(`template_key=$${params.length}`); }
     if (req.query.from) { params.push(req.query.from); where.push(`created_at >= $${params.length}`); }
     if (req.query.to) { params.push(req.query.to); where.push(`created_at <= $${params.length}`); }
+    if (req.query.mine === 'true') { params.push(req.user.id); where.push(`created_by=$${params.length}`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_analytics_queries ${whereSql}`, params);
     const items = await copilotSafeRows(
@@ -17879,6 +17920,95 @@ app.post('/api/admin/analytics/explain-template', verifyToken, requireAdmin, asy
   } catch (err) {
     console.error('POST /api/admin/analytics/explain-template error:', err.message);
     return res.status(500).json({ message: 'Không thể giải thích mẫu.' });
+  }
+});
+
+// ═══ Analytics favorites + pinned dashboard widgets (Batch 42 Phase 4 —
+// Steps 12/13). Scoped per-admin (admin_id = req.user.id); an admin can
+// never see or delete another admin's favorites/pins.
+
+// POST /api/admin/analytics/favorites — save a question for one-click re-ask.
+app.post('/api/admin/analytics/favorites', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const question = String(req.body?.question || '').trim();
+    if (!question) return res.status(400).json({ message: 'Thiếu câu hỏi.' });
+    const label = req.body?.label ? String(req.body.label).slice(0, 120) : null;
+    const params = req.body?.params && typeof req.body.params === 'object' ? req.body.params : {};
+    const r = await pool.query(
+      `INSERT INTO admin_analytics_favorites (admin_id, question, params, label) VALUES ($1,$2,$3::jsonb,$4) RETURNING *`,
+      [req.user.id, question.slice(0, ADMIN_ANALYTICS_MAX_QUESTION_CHARS), JSON.stringify(params), label]);
+    return res.json(r.rows[0]);
+  } catch (err) {
+    console.error('POST /api/admin/analytics/favorites error:', err.message);
+    return res.status(500).json({ message: 'Không thể lưu câu hỏi yêu thích.' });
+  }
+});
+// GET /api/admin/analytics/favorites — list mine.
+app.get('/api/admin/analytics/favorites', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT * FROM admin_analytics_favorites WHERE admin_id=$1 ORDER BY created_at DESC LIMIT 50`, [req.user.id]);
+    return res.json({ items: r.rows });
+  } catch (err) {
+    console.error('GET /api/admin/analytics/favorites error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách yêu thích.' });
+  }
+});
+// DELETE /api/admin/analytics/favorites/:id — remove mine only.
+app.delete('/api/admin/analytics/favorites/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    await pool.query(`DELETE FROM admin_analytics_favorites WHERE id=$1 AND admin_id=$2`, [idNum, req.user.id]);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE /api/admin/analytics/favorites/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể xoá.' });
+  }
+});
+
+const ADMIN_ANALYTICS_MAX_PINS = 8;
+// POST /api/admin/analytics/pins — pin a result's template+params as a live widget.
+app.post('/api/admin/analytics/pins', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const templateKey = String(req.body?.templateKey || '');
+    if (!getAnalyticsTemplate(templateKey)) return res.status(400).json({ message: 'Mẫu không hợp lệ.' });
+    const countRes = await pool.query(`SELECT COUNT(*)::int AS n FROM admin_analytics_pins WHERE admin_id=$1`, [req.user.id]);
+    if (countRes.rows[0].n >= ADMIN_ANALYTICS_MAX_PINS) return res.status(400).json({ message: `Tối đa ${ADMIN_ANALYTICS_MAX_PINS} mục ghim — hãy bỏ ghim bớt trước.` });
+    const label = req.body?.label ? String(req.body.label).slice(0, 120) : null;
+    const params = req.body?.params && typeof req.body.params === 'object' ? req.body.params : {};
+    const r = await pool.query(
+      `INSERT INTO admin_analytics_pins (admin_id, template_key, params, label) VALUES ($1,$2,$3::jsonb,$4) RETURNING *`,
+      [req.user.id, templateKey, JSON.stringify(params), label]);
+    return res.json(r.rows[0]);
+  } catch (err) {
+    console.error('POST /api/admin/analytics/pins error:', err.message);
+    return res.status(500).json({ message: 'Không thể ghim.' });
+  }
+});
+// GET /api/admin/analytics/pins — list mine, each re-run live for fresh data.
+app.get('/api/admin/analytics/pins', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const pins = (await pool.query(`SELECT * FROM admin_analytics_pins WHERE admin_id=$1 ORDER BY created_at DESC LIMIT $2`, [req.user.id, ADMIN_ANALYTICS_MAX_PINS])).rows;
+    const items = await Promise.all(pins.map(async pin => {
+      const result = await runAnalyticsTemplate(pin.template_key, pin.params, req.user.id);
+      return { pin, result };
+    }));
+    return res.json({ items });
+  } catch (err) {
+    console.error('GET /api/admin/analytics/pins error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải danh sách đã ghim.' });
+  }
+});
+// DELETE /api/admin/analytics/pins/:id — unpin mine only.
+app.delete('/api/admin/analytics/pins/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const idNum = parseInt(req.params.id, 10);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ message: 'ID không hợp lệ.' });
+    await pool.query(`DELETE FROM admin_analytics_pins WHERE id=$1 AND admin_id=$2`, [idNum, req.user.id]);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE /api/admin/analytics/pins/:id error:', err.message);
+    return res.status(500).json({ message: 'Không thể bỏ ghim.' });
   }
 });
 
@@ -19099,6 +19229,38 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: admin_analytics_queries ready (Batch 29A + 42)');
   } catch (err) {
     console.error('⚠️  DB migration (admin_analytics_queries Batch 29A) warning:', err.message);
+  }
+
+  // ── Auto-migrate: admin_analytics_favorites / admin_analytics_pins (Batch 42
+  // Phase 4 — Steps 12/13). Favorites store the raw question (re-run through
+  // the normal NL pipeline on click); pins store a resolved template_key so
+  // the pinned widget can be re-run live for fresh data instead of showing a
+  // stale snapshot.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_analytics_favorites (
+        id         BIGSERIAL PRIMARY KEY,
+        admin_id   UUID NOT NULL,
+        question   TEXT NOT NULL,
+        params     JSONB NOT NULL DEFAULT '{}'::jsonb,
+        label      TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_fav_admin ON admin_analytics_favorites(admin_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS admin_analytics_pins (
+        id           BIGSERIAL PRIMARY KEY,
+        admin_id     UUID NOT NULL,
+        template_key TEXT NOT NULL,
+        params       JSONB NOT NULL DEFAULT '{}'::jsonb,
+        label        TEXT,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_pins_admin ON admin_analytics_pins(admin_id, created_at DESC);
+    `);
+    console.log('✅ DB migration: admin_analytics_favorites + admin_analytics_pins ready (Batch 42 Phase 4)');
+  } catch (err) {
+    console.error('⚠️  DB migration (admin_analytics_favorites/pins) warning:', err.message);
   }
 
   // ── Auto-migrate: subjects as first-class entities (Batch 32) ───────────────

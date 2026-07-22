@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader, EmptyState } from '../transactions/components'
 import AnalyticsChart from './charts'
 import InsightCards from './InsightCards'
+import PinnedWidgets from './PinnedWidgets'
+import { exportAnalyticsCSV, exportAnalyticsExcel, exportAnalyticsPDF, copySummaryToClipboard, copyTableToClipboard, copyChartAsImage } from './exportUtils'
 
 import { API_BASE_URL as API } from '../../config'
 
@@ -55,12 +57,27 @@ function AskPanel({ token }) {
   const [limit, setLimit] = useState('')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [favorites, setFavorites] = useState([])
+  const [recent, setRecent] = useState([])
+  const [isFavorited, setIsFavorited] = useState(false)
+  const [pinRefreshKey, setPinRefreshKey] = useState(0)
+  const chartRef = useRef(null)
+
+  const loadFavorites = useCallback(() => {
+    fetch(`${API}/api/admin/analytics/favorites`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status))).then(d => setFavorites(d.items || [])).catch(() => {})
+  }, [token])
+  const loadRecent = useCallback(() => {
+    fetch(`${API}/api/admin/analytics/history?mine=true&limit=6`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status))).then(d => setRecent(d.items || [])).catch(() => {})
+  }, [token])
+  useEffect(() => { loadFavorites(); loadRecent() }, [loadFavorites, loadRecent])
 
   const ask = async (q) => {
     const question0 = (q ?? question).trim()
     if (!question0) { alert('Nhập câu hỏi.'); return }
     if (q) setQuestion(q)
-    setLoading(true); setResult(null)
+    setLoading(true); setResult(null); setIsFavorited(false)
     try {
       const params = {}
       if (days !== '') params.days = Number(days)
@@ -72,7 +89,32 @@ function AskPanel({ token }) {
       const j = await r.json().catch(() => ({}))
       if (!r.ok) { alert(j.message || `Thất bại (${r.status})`); return }
       setResult(j)
+      loadRecent()
     } catch { alert('Lỗi kết nối') } finally { setLoading(false) }
+  }
+
+  const toggleFavorite = async () => {
+    if (!result) return
+    await fetch(`${API}/api/admin/analytics/favorites`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ question, params: result.params, label: result.intent_code || question }),
+    })
+    setIsFavorited(true)
+    loadFavorites()
+  }
+  const removeFavorite = async (id) => {
+    await fetch(`${API}/api/admin/analytics/favorites/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+    loadFavorites()
+  }
+  const pinResult = async () => {
+    if (!result?.template_key) return
+    const r = await fetch(`${API}/api/admin/analytics/pins`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ templateKey: result.template_key, params: result.params, label: result.intent_code || result.template_key }),
+    })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) { alert(j.message || 'Không thể ghim.'); return }
+    setPinRefreshKey(k => k + 1)
   }
 
   const st = result ? (STATUS_CFG[result.status] || STATUS_CFG.FAILED) : null
@@ -80,6 +122,7 @@ function AskPanel({ token }) {
 
   return (
     <div className="space-y-6">
+      <PinnedWidgets token={token} refreshKey={pinRefreshKey} />
       <InsightCards token={token} />
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
         <textarea value={question} onChange={e => setQuestion(e.target.value)} rows={2} placeholder="Nhập câu hỏi về dữ liệu (VD: gia sư nào kiếm nhiều tiền nhất tháng trước?)..." className="w-full border border-gray-200 rounded-lg p-3 text-sm resize-none focus:outline-none focus:border-primary" />
@@ -94,6 +137,23 @@ function AskPanel({ token }) {
         <div className="flex flex-wrap gap-2 mt-4">
           {EXAMPLES.map(ex => <button key={ex} onClick={() => ask(ex)} className="text-xs px-3 py-1.5 rounded-full bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors">{ex}</button>)}
         </div>
+        {recent.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-50">
+            <span className="text-[11px] text-gray-400 font-semibold uppercase flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">history</span>Gần đây</span>
+            {recent.map(r => <button key={r.id} onClick={() => ask(r.question)} className="text-xs px-3 py-1.5 rounded-full bg-gray-50 text-gray-500 hover:bg-blue-50 hover:text-blue-700 transition-colors truncate max-w-[220px]" title={r.question}>{r.question}</button>)}
+          </div>
+        )}
+        {favorites.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-50">
+            <span className="text-[11px] text-gray-400 font-semibold uppercase flex items-center gap-1"><span className="material-symbols-outlined text-[14px] text-amber-400">star</span>Yêu thích</span>
+            {favorites.map(f => (
+              <span key={f.id} className="flex items-center gap-1 text-xs pl-3 pr-1.5 py-1 rounded-full bg-amber-50 text-amber-700">
+                <button onClick={() => ask(f.question)} className="truncate max-w-[200px]" title={f.question}>{f.label || f.question}</button>
+                <button onClick={() => removeFavorite(f.id)} className="text-amber-400 hover:text-red-500"><span className="material-symbols-outlined text-[14px]">close</span></button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {result && (
@@ -107,6 +167,17 @@ function AskPanel({ token }) {
               {result.template_key && <span className="text-xs text-gray-400">Mẫu: <b className="text-gray-600">{result.template_key}</b></span>}
               {result.model_used && <span className="text-xs text-gray-400">· {result.model_used}</span>}
               {asArray(result.safety_flags).map((f, i) => <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-semibold">{f}</span>)}
+              {result.cached && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-600 font-semibold flex items-center gap-0.5"><span className="material-symbols-outlined text-[12px]">bolt</span>cached</span>}
+              {result.status === 'SUCCESS' && (
+                <div className="ml-auto flex items-center gap-1">
+                  <button onClick={toggleFavorite} title="Lưu yêu thích" className={isFavorited ? 'text-amber-400' : 'text-gray-300 hover:text-amber-400'}>
+                    <span className="material-symbols-outlined text-[19px]">{isFavorited ? 'star' : 'star_outline'}</span>
+                  </button>
+                  <button onClick={pinResult} title="Ghim vào dashboard" className="text-gray-300 hover:text-primary">
+                    <span className="material-symbols-outlined text-[19px]">push_pin</span>
+                  </button>
+                </div>
+              )}
             </div>
             <p className="text-sm text-gray-800">{result.summary}</p>
             {asArray(result.insights).length > 0 && (
@@ -135,7 +206,7 @@ function AskPanel({ token }) {
           )}
 
           {chart && chart.type && (chart.values?.length > 0 || chart.matrix?.length > 0) && (
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+            <div ref={chartRef} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
               <p className="text-xs text-gray-400 uppercase font-semibold mb-3">Biểu đồ ({chart.value_label}) · {CHART_TYPE_LABEL[chart.type] || chart.type}</p>
               <AnalyticsChart chart={chart} />
             </div>
@@ -154,6 +225,10 @@ function AskPanel({ token }) {
                 </table>
               </div>
             </div>
+          )}
+
+          {result.status === 'SUCCESS' && asArray(result.rows).length > 0 && (
+            <ExportToolbar result={result} question={question} chartRef={chartRef} hasChart={!!(chart && chart.type && (chart.values?.length > 0 || chart.matrix?.length > 0))} />
           )}
 
           {asArray(result.follow_up_questions).length > 0 && (
@@ -177,6 +252,36 @@ function AskPanel({ token }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function ExportToolbar({ result, question, chartRef, hasChart }) {
+  const [busy, setBusy] = useState(null)
+  const columns = result.columns || (result.rows[0] ? Object.keys(result.rows[0]) : [])
+  const payload = { question, summary: result.summary, insights: result.insights, columns, rows: result.rows }
+
+  const run = async (key, fn) => {
+    setBusy(key)
+    try { await fn() } catch (e) { alert(e?.message || 'Không thể xuất.') } finally { setBusy(null) }
+  }
+  const btn = (key, icon, label, onClick) => (
+    <button onClick={() => run(key, onClick)} disabled={busy !== null} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+      <span className={`material-symbols-outlined text-[15px] ${busy === key ? 'animate-spin' : ''}`}>{busy === key ? 'progress_activity' : icon}</span>{label}
+    </button>
+  )
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-wrap gap-2">
+      {btn('csv', 'download', 'CSV', () => exportAnalyticsCSV(payload))}
+      {btn('excel', 'download', 'Excel', () => exportAnalyticsExcel(payload))}
+      {btn('pdf', 'picture_as_pdf', 'PDF', () => exportAnalyticsPDF(payload))}
+      {btn('copy-summary', 'content_copy', 'Sao chép tóm tắt', () => copySummaryToClipboard(result.summary, result.insights))}
+      {btn('copy-table', 'content_copy', 'Sao chép bảng', () => copyTableToClipboard({ columns, rows: result.rows }))}
+      {hasChart && btn('copy-chart', 'image', 'Sao chép biểu đồ', () => {
+        if (!chartRef.current) throw new Error('Biểu đồ chưa sẵn sàng.')
+        return copyChartAsImage(chartRef.current)
+      })}
     </div>
   )
 }
