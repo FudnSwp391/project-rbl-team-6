@@ -2557,6 +2557,27 @@ const NOTIFICATION_TEMPLATES = {
     body: `Bạn đã được hoàn ${fmtVnd(d.amount)}${d.rate != null ? ` (${Math.round(d.rate * 100)}%)` : ''} cho khóa học "${d.courseName || ''}".`,
     icon: 'undo', priority: 'normal',
   }),
+  // Batch 41: admin actions on a tutor's course, from Course Management.
+  course_created_by_admin: d => ({
+    subject: '[EduX] Admin đã tạo khóa học cho bạn', title: 'Khóa học mới được tạo',
+    body: `Admin đã tạo khóa học "${d.courseName || ''}" và gán cho bạn phụ trách. Vui lòng hoàn thiện nội dung trước khi đăng.`,
+    icon: 'add_circle', priority: 'normal',
+  }),
+  course_updated_by_admin: d => ({
+    subject: '[EduX] Khóa học của bạn đã được chỉnh sửa', title: 'Khóa học đã được admin cập nhật',
+    body: `Admin đã chỉnh sửa thông tin khóa học "${d.courseName || ''}". Vui lòng kiểm tra lại.`,
+    icon: 'edit', priority: 'normal',
+  }),
+  course_status_changed_by_admin: d => ({
+    subject: '[EduX] Trạng thái khóa học đã thay đổi', title: 'Trạng thái khóa học đã thay đổi',
+    body: `Admin đã chuyển khóa học "${d.courseName || ''}" sang trạng thái "${d.newStatusLabel || d.newStatus}".${d.reason ? ` Lý do: ${d.reason}` : ''}`,
+    icon: 'flag', priority: 'normal',
+  }),
+  course_deleted_by_admin: d => ({
+    subject: '[EduX] Khóa học đã bị xóa', title: 'Khóa học đã bị admin xóa',
+    body: `Admin đã xóa khóa học "${d.courseName || ''}" (chưa có học viên đăng ký).`,
+    icon: 'delete', priority: 'high',
+  }),
   tutor_profile_approved: d => ({
     subject: '[EduX] Hồ sơ gia sư đã được duyệt', title: 'Hồ sơ gia sư đã được duyệt',
     body: 'Hồ sơ đăng ký gia sư của bạn đã được chấp thuận. Tài khoản của bạn hiện đã hoạt động đầy đủ.',
@@ -5382,6 +5403,7 @@ app.get("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
           COALESCE(c.description, '')       AS desc,
           COALESCE(c.avg_rating, 0)        AS rating,
           COALESCE(c.enrollment_count, 0)  AS students,
+          c.thumbnail_url,
           c.created_at,
           c.updated_at,
           COUNT(DISTINCT cl.id)::int        AS lessons,
@@ -5437,6 +5459,7 @@ app.get("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
       desc:       row.desc,
       rating:     row.rating ? parseFloat(row.rating) : 0,
       students:   parseInt(row.students) || 0,
+      thumbnail_url: row.thumbnail_url || null,
       lessons:    parseInt(row.lessons) || 0,
       reviews:    parseInt(row.reviews) || 0,
       revenue:    Math.round(Number(row.revenue) || 0),
@@ -5462,18 +5485,33 @@ app.get("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Batch 41: mirrors writeFraudAuditLog (Batch 35) for course mutations.
+async function writeCourseAuditLog(courseId, action, adminId, previousStatus, newStatus, reason, metadata) {
+  await pool.query(
+    `INSERT INTO course_audit_logs (course_id, action, admin_id, previous_status, new_status, reason, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [courseId, action, adminId, previousStatus || null, newStatus || null, reason || null, JSON.stringify(metadata || {})]
+  );
+}
+
 // ── PATCH /api/admin/courses/:id — edit fields and/or change status ──────────
 // Same courses.status vocabulary the tutor-facing endpoints use (courses_status_check).
 // Used for both the edit form (title/description/price/subject) and the
 // archive/hide row actions (status only) — partial update, only sent fields change.
 const ADMIN_COURSE_STATUSES = new Set(['draft', 'pending_review', 'published', 'rejected', 'archived']);
+const COURSE_STATUS_LABEL_VI = { draft: 'Bản nháp', pending_review: 'Chờ duyệt', published: 'Hoạt động', rejected: 'Bị báo cáo', archived: 'Đã lưu trữ' };
 app.patch("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const { title, description, price, subject, status } = req.body || {};
+    const { title, description, price, subject, thumbnail_url, status, reason } = req.body || {};
+    const before = await pool.query(`SELECT title, status, tutor_id FROM courses WHERE id = $1`, [req.params.id]);
+    if (!before.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const prev = before.rows[0];
+
     const sets = [], params = [];
-    if (title !== undefined)       { params.push(String(title).trim());  sets.push(`title = $${params.length}`); }
-    if (description !== undefined) { params.push(String(description));   sets.push(`description = $${params.length}`); }
-    if (subject !== undefined)     { params.push(String(subject).trim());sets.push(`subject = $${params.length}`); }
+    if (title !== undefined)         { params.push(String(title).trim());  sets.push(`title = $${params.length}`); }
+    if (description !== undefined)   { params.push(String(description));   sets.push(`description = $${params.length}`); }
+    if (subject !== undefined)       { params.push(String(subject).trim());sets.push(`subject = $${params.length}`); }
+    if (thumbnail_url !== undefined) { params.push(String(thumbnail_url).trim() || null); sets.push(`thumbnail_url = $${params.length}`); }
     if (price !== undefined) {
       const p = Number(price);
       if (!Number.isFinite(p) || p < 0) return res.status(400).json({ message: "Giá không hợp lệ." });
@@ -5490,7 +5528,36 @@ app.patch("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) 
       `UPDATE courses SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id`,
       params
     );
-    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+
+    const statusChanged = status !== undefined && status !== prev.status;
+    await writeCourseAuditLog(
+      req.params.id, statusChanged ? 'STATUS_CHANGE' : 'UPDATE', req.user.userId,
+      statusChanged ? prev.status : null, statusChanged ? status : null, reason,
+      { fields: Object.keys(req.body || {}) }
+    );
+
+    // Best-effort: let the tutor know an admin touched their course. Never
+    // blocks or fails the request (safeNotifyUser swallows its own errors).
+    if (prev.tutor_id) {
+      if (statusChanged) {
+        await safeNotifyUser(pool, {
+          userId: prev.tutor_id, channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'course_status_changed_by_admin', eventType: 'course_status_changed_by_admin',
+          data: { courseName: prev.title, newStatus: status, newStatusLabel: COURSE_STATUS_LABEL_VI[status] || status, reason },
+          refId: req.params.id, refType: 'course', sourceType: 'course', sourceId: req.params.id,
+          idempotencyKey: `course:${req.params.id}:status:${status}:${Date.now()}`,
+        });
+      } else {
+        await safeNotifyUser(pool, {
+          userId: prev.tutor_id, channels: ['IN_APP'],
+          templateKey: 'course_updated_by_admin', eventType: 'course_updated_by_admin',
+          data: { courseName: prev.title },
+          refId: req.params.id, refType: 'course', sourceType: 'course', sourceId: req.params.id,
+          idempotencyKey: `course:${req.params.id}:updated:${Date.now()}`,
+        });
+      }
+    }
+
     return res.json({ ok: true, id: result.rows[0].id });
   } catch (err) {
     console.error("PATCH /api/admin/courses/:id error:", err);
@@ -5511,12 +5578,43 @@ app.delete("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res)
     if (enrolled[0].n > 0) {
       return res.status(409).json({ message: `Khóa học đã có ${enrolled[0].n} học viên đăng ký — không thể xóa. Hãy dùng "Lưu trữ" thay thế.` });
     }
+    const before = await pool.query(`SELECT title, status, tutor_id FROM courses WHERE id = $1`, [req.params.id]);
+    if (!before.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const prev = before.rows[0];
+
     const result = await pool.query(`DELETE FROM courses WHERE id = $1 RETURNING id`, [req.params.id]);
     if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+
+    await writeCourseAuditLog(req.params.id, 'DELETE', req.user.userId, prev.status, null, req.body?.reason, { title: prev.title });
+    if (prev.tutor_id) {
+      await safeNotifyUser(pool, {
+        userId: prev.tutor_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'course_deleted_by_admin', eventType: 'course_deleted_by_admin',
+        data: { courseName: prev.title },
+        refId: req.params.id, refType: 'course', sourceType: 'course', sourceId: req.params.id,
+        idempotencyKey: `course:${req.params.id}:deleted:${Date.now()}`,
+      });
+    }
     return res.json({ ok: true });
   } catch (err) {
     console.error("DELETE /api/admin/courses/:id error:", err);
     return res.status(500).json({ message: "Lỗi khi xóa khóa học." });
+  }
+});
+
+// ── GET /api/admin/courses/:id/audit-log ──────────────────────────────────────
+app.get("/api/admin/courses/:id/audit-log", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT l.id, l.action, l.admin_id, u.full_name AS admin_name, l.previous_status, l.new_status, l.reason, l.metadata, l.created_at
+       FROM course_audit_logs l LEFT JOIN users u ON u.id = l.admin_id
+       WHERE l.course_id = $1 ORDER BY l.created_at DESC`,
+      [req.params.id]
+    );
+    return res.json({ logs: rows });
+  } catch (err) {
+    console.error("GET /api/admin/courses/:id/audit-log error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nhật ký khóa học." });
   }
 });
 
@@ -5539,6 +5637,45 @@ app.get("/api/admin/courses/:id/students", verifyToken, requireAdmin, async (req
   }
 });
 
+// ── GET /api/admin/courses/:id/analytics — per-lesson drop-off ───────────────
+// Extends the drawer's course-level completion % (already computed in
+// GET /api/admin/courses) down to individual lessons: how many active
+// enrollees completed each lesson, and average watched_seconds, so admin can
+// see exactly where students drop off instead of only a single overall %.
+app.get("/api/admin/courses/:id/analytics", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const totalRes = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM course_enrollments WHERE course_id = $1 AND status = 'active'`,
+      [req.params.id]
+    );
+    const totalEnrolled = totalRes.rows[0].n;
+
+    const { rows } = await pool.query(
+      `SELECT cl.id AS lesson_id, cl.title, cl.position,
+              COUNT(cp.id) FILTER (WHERE cp.is_completed)::int AS completed_count,
+              COALESCE(AVG(cp.watched_seconds), 0)::int AS avg_watched_seconds
+       FROM course_lessons cl
+       LEFT JOIN course_enrollments ce ON ce.course_id = cl.course_id AND ce.status = 'active'
+       LEFT JOIN course_progress cp ON cp.lesson_id = cl.id AND cp.enrollment_id = ce.id
+       WHERE cl.course_id = $1
+       GROUP BY cl.id, cl.title, cl.position
+       ORDER BY cl.position, cl.created_at`,
+      [req.params.id]
+    );
+    const lessons = rows.map(r => ({
+      lesson_id: r.lesson_id,
+      title: r.title,
+      completed_count: r.completed_count,
+      completion_pct: totalEnrolled > 0 ? Math.round((r.completed_count / totalEnrolled) * 100) : 0,
+      avg_watched_seconds: r.avg_watched_seconds,
+    }));
+    return res.json({ total_enrolled: totalEnrolled, lessons });
+  } catch (err) {
+    console.error("GET /api/admin/courses/:id/analytics error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy phân tích chi tiết." });
+  }
+});
+
 // ── GET /api/admin/courses/:id/lessons — real course content list ────────────
 // Replaces the frontend's buildModules() fake-data generator for the drawer's
 // "Nội dung" tab.
@@ -5553,6 +5690,48 @@ app.get("/api/admin/courses/:id/lessons", verifyToken, requireAdmin, async (req,
   } catch (err) {
     console.error("GET /api/admin/courses/:id/lessons error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy nội dung khóa học." });
+  }
+});
+
+// ── PUT /api/admin/courses/:id/lessons — replace the full lesson list ────────
+// Reuses saveCourseLessons() (the exact function the tutor-facing course
+// editor already uses) so admin edits go through the same validation/shape,
+// not a second parallel implementation. Full-replace semantics: the whole
+// array is sent each save, same as the tutor flow.
+app.put("/api/admin/courses/:id/lessons", verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const courseCheck = await client.query(`SELECT title, tutor_id FROM courses WHERE id = $1`, [req.params.id]);
+    if (!courseCheck.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const { title: courseTitle, tutor_id } = courseCheck.rows[0];
+
+    await client.query('BEGIN');
+    await saveCourseLessons(client, req.params.id, req.body?.lessons || []);
+    await client.query('COMMIT');
+
+    const count = Array.isArray(req.body?.lessons) ? req.body.lessons.length : 0;
+    await writeCourseAuditLog(req.params.id, 'LESSONS_UPDATE', req.user.userId, null, null, null, { lesson_count: count });
+    if (tutor_id) {
+      await safeNotifyUser(pool, {
+        userId: tutor_id, channels: ['IN_APP'],
+        templateKey: 'course_updated_by_admin', eventType: 'course_updated_by_admin',
+        data: { courseName: courseTitle },
+        refId: req.params.id, refType: 'course', sourceType: 'course', sourceId: req.params.id,
+        idempotencyKey: `course:${req.params.id}:lessons:${Date.now()}`,
+      });
+    }
+    const { rows } = await pool.query(
+      `SELECT id, title, description, duration_label, is_preview, position
+       FROM course_lessons WHERE course_id = $1 ORDER BY position, created_at`,
+      [req.params.id]
+    );
+    return res.json({ lessons: rows });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error("PUT /api/admin/courses/:id/lessons error:", err);
+    return res.status(500).json({ message: "Lỗi khi lưu nội dung khóa học." });
+  } finally {
+    client.release();
   }
 });
 
@@ -5581,6 +5760,82 @@ app.get("/api/admin/courses/:id/reviews", verifyToken, requireAdmin, async (req,
   }
 });
 
+// ── Per-course coupons (Batch 41) ─────────────────────────────────────────────
+// coupons.course_id scopes a coupon to one course (see POST /api/cart/checkout
+// for how a scoped coupon's discount base is restricted at redemption time).
+app.get("/api/admin/courses/:id/coupons", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, code, description, discount_type, discount_value, max_discount, min_order, active, expires_at, created_at
+       FROM coupons WHERE course_id = $1 ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    return res.json({ coupons: rows });
+  } catch (err) {
+    console.error("GET /api/admin/courses/:id/coupons error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy mã giảm giá." });
+  }
+});
+
+app.post("/api/admin/courses/:id/coupons", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { code, description, discount_type, discount_value, max_discount, expires_at } = req.body || {};
+    const cleanCode = String(code || '').trim().toUpperCase();
+    if (!cleanCode) return res.status(400).json({ message: "Mã giảm giá không được để trống." });
+    const type = discount_type === 'fixed' ? 'fixed' : 'percent';
+    const value = Number(discount_value);
+    if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ message: "Giá trị giảm không hợp lệ." });
+    if (type === 'percent' && value > 100) return res.status(400).json({ message: "Giảm theo % không được vượt quá 100." });
+
+    const result = await pool.query(
+      `INSERT INTO coupons (code, description, discount_type, discount_value, max_discount, min_order, course_id, expires_at)
+       VALUES ($1, $2, $3, $4, $5, 0, $6, $7) RETURNING id`,
+      [cleanCode, String(description || '').trim() || null, type, value, max_discount != null ? Number(max_discount) : null, req.params.id, expires_at || null]
+    );
+    return res.status(201).json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ message: "Mã giảm giá đã tồn tại." });
+    console.error("POST /api/admin/courses/:id/coupons error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo mã giảm giá." });
+  }
+});
+
+app.patch("/api/admin/courses/:id/coupons/:couponId", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { active, discount_value, max_discount, expires_at } = req.body || {};
+    const sets = [], params = [];
+    if (active !== undefined)         { params.push(!!active); sets.push(`active = $${params.length}`); }
+    if (discount_value !== undefined) { params.push(Number(discount_value)); sets.push(`discount_value = $${params.length}`); }
+    if (max_discount !== undefined)   { params.push(max_discount != null ? Number(max_discount) : null); sets.push(`max_discount = $${params.length}`); }
+    if (expires_at !== undefined)     { params.push(expires_at || null); sets.push(`expires_at = $${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ message: "Không có trường nào để cập nhật." });
+    params.push(req.params.id, req.params.couponId);
+    const result = await pool.query(
+      `UPDATE coupons SET ${sets.join(', ')} WHERE course_id = $${params.length - 1} AND id = $${params.length} RETURNING id`,
+      params
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy mã giảm giá." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /api/admin/courses/:id/coupons/:couponId error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật mã giảm giá." });
+  }
+});
+
+app.delete("/api/admin/courses/:id/coupons/:couponId", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM coupons WHERE course_id = $1 AND id = $2 RETURNING id`,
+      [req.params.id, req.params.couponId]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy mã giảm giá." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/courses/:id/coupons/:couponId error:", err);
+    return res.status(500).json({ message: "Lỗi khi xóa mã giảm giá." });
+  }
+});
+
 // ── POST /api/admin/courses — create a new course on a tutor's behalf ────────
 // Always created as 'draft'; admin uses the existing Edit modal to set
 // status/other fields afterward, so this endpoint only needs the minimum to
@@ -5601,7 +5856,16 @@ app.post("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, 'draft') RETURNING id`,
       [tutor_id, cleanTitle, String(description || '').trim() || null, String(subject || '').trim() || null, p]
     );
-    return res.status(201).json({ ok: true, id: result.rows[0].id });
+    const newId = result.rows[0].id;
+    await writeCourseAuditLog(newId, 'CREATE', req.user.userId, null, 'draft', null, { title: cleanTitle, tutor_id });
+    await safeNotifyUser(pool, {
+      userId: tutor_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'course_created_by_admin', eventType: 'course_created_by_admin',
+      data: { courseName: cleanTitle },
+      refId: newId, refType: 'course', sourceType: 'course', sourceId: newId,
+      idempotencyKey: `course:${newId}:created`,
+    });
+    return res.status(201).json({ ok: true, id: newId });
   } catch (err) {
     console.error("POST /api/admin/courses error:", err);
     return res.status(500).json({ message: "Lỗi khi tạo khóa học." });
@@ -9852,12 +10116,19 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
         `SELECT * FROM coupons WHERE UPPER(code)=UPPER($1) AND active=TRUE AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1`, [couponCode]);
       if (cp.rowCount > 0) {
         const c = cp.rows[0];
-        if (sumPrices >= Number(c.min_order || 0)) {
+        // Batch 41: a course-scoped coupon (coupons.course_id set) only ever
+        // discounts that course's own price, and only when that course is in
+        // this cart. course_id is a new nullable column — every coupon that
+        // existed before this batch has it NULL, so discountBase === sumPrices
+        // for them and this is a no-op for existing behavior.
+        const scopedCourse = c.course_id ? toBuy.find(x => x.id === c.course_id) : null;
+        const discountBase = c.course_id ? Number(scopedCourse?.price || 0) : sumPrices;
+        if (discountBase > 0 && discountBase >= Number(c.min_order || 0)) {
           if (c.discount_type === "percent") {
-            discount = Math.floor((sumPrices * Number(c.discount_value)) / 100);
+            discount = Math.floor((discountBase * Number(c.discount_value)) / 100);
             if (c.max_discount != null) discount = Math.min(discount, Number(c.max_discount));
           } else discount = Number(c.discount_value) || 0;
-          discount = Math.min(discount, sumPrices);
+          discount = Math.min(discount, discountBase);
         }
       }
     }
@@ -11716,6 +11987,10 @@ async function startServer() {
       `);
       console.log("✅ DB seed: 4 sample coupons inserted");
     }
+    // Batch 41: nullable course_id — NULL means the existing cart-wide coupon
+    // behavior; set means the coupon only ever discounts that one course (see
+    // POST /api/cart/checkout, discountBase computation).
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS course_id UUID REFERENCES courses(id) ON DELETE CASCADE");
     console.log("✅ DB migration: coupons table ready");
   } catch (err) {
     console.error("⚠️  DB migration (coupons) warning:", err.message);
@@ -17142,6 +17417,31 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: fraud_investigations + fraud_investigation_notes + fraud_audit_logs ready (Batch 35)');
   } catch (err) {
     console.error('⚠️  DB migration (fraud investigations Batch 35) warning:', err.message);
+  }
+
+  // ── Auto-migrate: course audit log (Batch 41) ────────────────────────────────
+  // Mirrors fraud_audit_logs (Batch 35) — no generic admin-action audit table
+  // exists elsewhere in this codebase (see GET /api/admin/audit-logs comment:
+  // "No dedicated admin audit table exists; login_logs is the closest real
+  // source"), so course mutations get their own log keyed by course_id.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS course_audit_logs (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        course_id        UUID NOT NULL,
+        action           TEXT NOT NULL,
+        admin_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+        previous_status  TEXT,
+        new_status       TEXT,
+        reason           TEXT,
+        metadata         JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_course_audit_course ON course_audit_logs(course_id);
+    `);
+    console.log('✅ DB migration: course_audit_logs ready (Batch 41)');
+  } catch (err) {
+    console.error('⚠️  DB migration (course audit log Batch 41) warning:', err.message);
   }
 
   // ── Auto-migrate: wallet deposit/withdraw requests (Batch 36 — bug fix) ─────
