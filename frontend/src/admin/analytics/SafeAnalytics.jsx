@@ -103,11 +103,21 @@ function AskPanel({ token }) {
               <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${st.cls}`}>{st.label}</span>
               {result.intent_code && <span className="text-xs text-gray-400">Ý định: <b className="text-gray-600 font-mono">{result.intent_code}</b></span>}
               <ConfidenceBadge confidence={result.confidence} />
+              <RiskBadge level={result.risk_level} reason={result.risk_reason} />
               {result.template_key && <span className="text-xs text-gray-400">Mẫu: <b className="text-gray-600">{result.template_key}</b></span>}
               {result.model_used && <span className="text-xs text-gray-400">· {result.model_used}</span>}
               {asArray(result.safety_flags).map((f, i) => <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-semibold">{f}</span>)}
             </div>
             <p className="text-sm text-gray-800">{result.summary}</p>
+            {asArray(result.insights).length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {asArray(result.insights).map((ins, i) => (
+                  <li key={i} className="text-sm text-gray-700 flex items-start gap-1.5">
+                    <span className="material-symbols-outlined text-[15px] text-primary mt-0.5">insights</span>{ins}
+                  </li>
+                ))}
+              </ul>
+            )}
             {result.param_sources && (
               <p className="mt-2 text-xs text-gray-400">
                 Khoảng thời gian: <b className="text-gray-600">{result.days_label || `${result.params?.days ?? '—'} ngày`}</b> ({SOURCE_LABEL[result.param_sources.days] || result.param_sources.days})
@@ -146,6 +156,19 @@ function AskPanel({ token }) {
             </div>
           )}
 
+          {asArray(result.follow_up_questions).length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+              <p className="text-xs text-gray-400 uppercase font-semibold mb-3 flex items-center gap-1"><span className="material-symbols-outlined text-[15px] text-primary">arrow_forward</span>Câu hỏi gợi ý tiếp theo</p>
+              <div className="flex flex-wrap gap-2">
+                {asArray(result.follow_up_questions).map((q, i) => <button key={i} onClick={() => ask(q)} className="text-xs px-3 py-1.5 rounded-full bg-primary/5 border border-primary/20 text-primary hover:bg-primary/10">{q}</button>)}
+              </div>
+            </div>
+          )}
+
+          {result.status === 'SUCCESS' && (
+            <ExplainPanel result={result} />
+          )}
+
           {result.sql_preview && (
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
               <p className="text-xs text-gray-400 uppercase font-semibold mb-2 flex items-center gap-1"><span className="material-symbols-outlined text-[15px] text-emerald-500">verified</span>SQL an toàn đã kiểm duyệt (chỉ đọc)</p>
@@ -156,6 +179,38 @@ function AskPanel({ token }) {
       )}
     </div>
   )
+}
+
+function ExplainPanel({ result }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between px-5 py-3 text-xs font-semibold text-gray-500 uppercase hover:bg-gray-50">
+        <span className="flex items-center gap-1.5"><span className="material-symbols-outlined text-[15px] text-primary">fact_check</span>Giải thích kết quả</span>
+        <span className="material-symbols-outlined text-[18px]">{open ? 'expand_less' : 'expand_more'}</span>
+      </button>
+      {open && (
+        <div className="px-5 pb-4 grid sm:grid-cols-2 gap-x-6 gap-y-2 text-xs text-gray-600">
+          <p>Nguồn dữ liệu: <b className="text-gray-800">{asArray(result.data_sources).join(', ') || '—'}</b></p>
+          <p>Khoảng thời gian: <b className="text-gray-800">{result.days_label || `${result.params?.days ?? '—'} ngày`}</b></p>
+          <p>Giới hạn kết quả: <b className="text-gray-800">{result.params?.limit ?? '—'}</b></p>
+          <p>Số dòng đã phân tích: <b className="text-gray-800">{result.rows_analyzed ?? asArray(result.rows).length}</b></p>
+          <p className="sm:col-span-2">Thời điểm tạo: <b className="text-gray-800">{fmtDate(result.generated_at)}</b></p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const RISK_CFG = {
+  LOW: { label: 'Rủi ro thấp', cls: 'bg-emerald-100 text-emerald-700' },
+  MEDIUM: { label: 'Rủi ro trung bình', cls: 'bg-amber-100 text-amber-700' },
+  HIGH: { label: 'Rủi ro cao', cls: 'bg-red-100 text-red-700' },
+}
+function RiskBadge({ level, reason }) {
+  const cfg = level ? RISK_CFG[level] : null
+  if (!cfg) return null
+  return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cfg.cls}`} title={reason || ''}>{cfg.label}</span>
 }
 
 function TemplatesPanel({ token }) {

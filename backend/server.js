@@ -2170,6 +2170,7 @@ const ANALYTICS_TEMPLATES = [
            WHERE rl.tutor_id IS NOT NULL AND rl.created_at > NOW()-make_interval(days=>$1::int)
            GROUP BY rl.tutor_id, u.full_name ORDER BY refund_count DESC, refund_amount DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, gia sư bị hoàn tiền nhiều nhất là ${rows[0].tutor_name || 'N/A'} với ${rows[0].refund_count} lần (${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ). Tổng ${rows.length} gia sư có hoàn tiền.` : `Không có gia sư nào bị hoàn tiền trong ${p.days} ngày.`,
+    followUps: ['Hoàn tiền theo tháng', 'Gia sư nào có rủi ro gian lận cao nhất', 'Khiếu nại theo trạng thái'],
   },
   {
     key: 'top_dispute_students_30d', label: 'Top học sinh khiếu nại nhiều nhất', intentCode: 'TOP_COMPLAINTS',
@@ -2184,6 +2185,7 @@ const ANALYTICS_TEMPLATES = [
            WHERE d.raised_by IS NOT NULL AND d.created_at > NOW()-make_interval(days=>$1::int)
            GROUP BY d.raised_by, u.full_name ORDER BY dispute_count DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Học sinh mở nhiều khiếu nại nhất trong ${p.days} ngày: ${rows[0].student_name || 'N/A'} (${rows[0].dispute_count} khiếu nại).` : `Không có khiếu nại nào trong ${p.days} ngày.`,
+    followUps: ['Khiếu nại theo trạng thái', 'Hoàn tiền theo tháng', 'Gia sư nào có rủi ro gian lận cao nhất'],
   },
   {
     key: 'fraud_high_risk_tutors', label: 'Gia sư rủi ro gian lận cao', intentCode: 'FRAUD_RISK',
@@ -2198,6 +2200,7 @@ const ANALYTICS_TEMPLATES = [
            WHERE f.tutor_id IS NOT NULL AND f.severity IN ('HIGH','CRITICAL') AND f.created_at > NOW()-make_interval(days=>$1::int)
            GROUP BY f.tutor_id, u.full_name ORDER BY max_risk_score DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư bị gắn cờ gian lận cao trong ${p.days} ngày. Cao nhất: ${rows[0].tutor_name || 'N/A'} (điểm ${Math.round(Number(rows[0].max_risk_score))}).` : `Không có báo cáo gian lận mức cao trong ${p.days} ngày.`,
+    followUps: ['Báo cáo gian lận critical', 'Gia sư đang chờ rút tiền có rủi ro cao'],
   },
   {
     key: 'external_payment_signals', label: 'Dấu hiệu giao dịch ngoài nền tảng', intentCode: 'EXTERNAL_PAYMENT_SIGNALS',
@@ -2213,6 +2216,7 @@ const ANALYTICS_TEMPLATES = [
            WHERE s.tutor_id IS NOT NULL AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND s.created_at > NOW()-make_interval(days=>$1::int)
            GROUP BY s.tutor_id, u.full_name ORDER BY semantic_report_count DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Phát hiện ${rows.length} người dùng có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.` : `Không có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.`,
+    followUps: ['Gia sư nào có rủi ro gian lận cao nhất', 'Báo cáo gian lận critical'],
   },
   {
     key: 'withdrawal_pending_risk', label: 'Gia sư chờ rút tiền có rủi ro', intentCode: 'WITHDRAWAL_RISK',
@@ -2229,6 +2233,7 @@ const ANALYTICS_TEMPLATES = [
            WHERE w.status='PENDING'
            GROUP BY w.tutor_id, u.full_name ORDER BY pending_amount DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư đang chờ rút tiền; ưu tiên rà soát: ${rows[0].tutor_name || 'N/A'} (${Number(rows[0].pending_amount).toLocaleString('vi-VN')}đ, ${rows[0].active_disputes} khiếu nại mở).` : `Không có yêu cầu rút tiền đang chờ.`,
+    followUps: ['Gia sư nào có rủi ro gian lận cao nhất', 'Ai có dấu hiệu giao dịch ngoài nền tảng'],
   },
   {
     key: 'monthly_revenue_summary', label: 'Doanh thu theo tháng', intentCode: 'REVENUE_TREND',
@@ -2243,6 +2248,7 @@ const ANALYTICS_TEMPLATES = [
             FROM commission_logs WHERE event_type='EARNED' AND created_at > NOW()-make_interval(days=>$1::int)
            GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
     summarize: (rows) => rows.length ? `Doanh thu ghi nhận theo ${rows.length} tháng gần nhất. Tháng mới nhất (${rows[0].month}): ${Number(rows[0].gross_revenue).toLocaleString('vi-VN')}đ (hoa hồng ${Number(rows[0].commission_amount).toLocaleString('vi-VN')}đ).` : `Chưa có dữ liệu doanh thu (commission_logs EARNED).`,
+    followUps: ['Top gia sư theo doanh thu', 'Hoàn tiền theo tháng'],
   },
   {
     key: 'monthly_refund_summary', label: 'Hoàn tiền theo tháng', intentCode: 'REFUND_TREND',
@@ -2256,6 +2262,7 @@ const ANALYTICS_TEMPLATES = [
             FROM refund_logs WHERE created_at > NOW()-make_interval(days=>$1::int)
            GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
     summarize: (rows) => rows.length ? `Hoàn tiền theo ${rows.length} tháng. Tháng mới nhất (${rows[0].month}): ${rows[0].refund_count} lần, ${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ.` : `Chưa có dữ liệu hoàn tiền.`,
+    followUps: ['Doanh thu theo tháng', 'Top gia sư có nhiều refund nhất 30 ngày'],
   },
   {
     key: 'dispute_status_summary', label: 'Khiếu nại theo trạng thái', intentCode: 'DISPUTE_STATUS',
@@ -2268,6 +2275,7 @@ const ANALYTICS_TEMPLATES = [
             FROM disputes WHERE created_at > NOW()-make_interval(days=>$1::int)
            GROUP BY status ORDER BY count DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày có ${rows.reduce((s, r) => s + Number(r.count), 0)} khiếu nại; nhiều nhất ở trạng thái "${rows[0].status}" (${rows[0].count}).` : `Không có khiếu nại trong ${p.days} ngày.`,
+    followUps: ['Học sinh nào khiếu nại nhiều nhất', 'Hoàn tiền theo tháng'],
   },
   {
     key: 'semantic_high_risk_reports', label: 'Kiểm duyệt nội dung rủi ro cao', intentCode: 'CONTENT_RISK',
@@ -2280,6 +2288,7 @@ const ANALYTICS_TEMPLATES = [
             FROM semantic_moderation_reports WHERE severity IN ('HIGH','CRITICAL') AND created_at > NOW()-make_interval(days=>$1::int)
            GROUP BY severity ORDER BY report_count DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.reduce((s, r) => s + Number(r.report_count), 0)} báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.` : `Không có báo cáo kiểm duyệt rủi ro cao trong ${p.days} ngày.`,
+    followUps: ['Báo cáo gian lận critical', 'Ai có dấu hiệu giao dịch ngoài nền tảng'],
   },
   {
     key: 'fraud_critical_reports', label: 'Báo cáo gian lận CRITICAL', intentCode: 'FRAUD_CRITICAL',
@@ -2292,6 +2301,7 @@ const ANALYTICS_TEMPLATES = [
             FROM fraud_intel_reports WHERE severity='CRITICAL' AND created_at > NOW()-make_interval(days=>$1::int)
            ORDER BY risk_score DESC, created_at DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.length} báo cáo gian lận CRITICAL trong ${p.days} ngày cần ưu tiên xử lý.` : `Không có báo cáo gian lận CRITICAL trong ${p.days} ngày.`,
+    followUps: ['Gia sư nào có rủi ro gian lận cao nhất', 'AI case nào cần admin review'],
   },
   {
     key: 'ai_case_manual_review', label: 'AI case cần admin review', intentCode: 'AI_CASE_REVIEW',
@@ -2304,6 +2314,7 @@ const ANALYTICS_TEMPLATES = [
             FROM ai_case_resolutions WHERE status='NEED_HUMAN_REVIEW' AND created_at > NOW()-make_interval(days=>$1::int)
            ORDER BY created_at DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.length} quyết định AI cần admin xem xét thủ công trong ${p.days} ngày.` : `Không có AI case nào cần review trong ${p.days} ngày.`,
+    followUps: ['Khiếu nại theo trạng thái', 'Học sinh nào khiếu nại nhiều nhất'],
   },
   {
     key: 'tutor_quality_decline', label: 'Gia sư giảm chất lượng', intentCode: 'TUTOR_QUALITY_DECLINE',
@@ -2322,6 +2333,7 @@ const ANALYTICS_TEMPLATES = [
               OR (SELECT COUNT(*) FROM disputes d WHERE d.tutor_id=tp.user_id AND d.created_at > NOW()-make_interval(days=>$1::int)) >= 2)
            ORDER BY dispute_count DESC, low_teaching_reports DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư có dấu hiệu giảm chất lượng trong ${p.days} ngày.` : `Không phát hiện gia sư giảm chất lượng rõ rệt trong ${p.days} ngày.`,
+    followUps: ['Học sinh nào khiếu nại nhiều nhất', 'Top gia sư có nhiều refund nhất 30 ngày'],
   },
   {
     key: 'top_tutor_revenue', label: 'Top gia sư theo doanh thu', intentCode: 'TOP_TUTOR_REVENUE',
@@ -2336,6 +2348,7 @@ const ANALYTICS_TEMPLATES = [
            WHERE cl.event_type='EARNED' AND cl.tutor_id IS NOT NULL AND cl.created_at > NOW()-make_interval(days=>$1::int)
            GROUP BY cl.tutor_id, u.full_name ORDER BY tutor_revenue DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, gia sư có doanh thu cao nhất là ${rows[0].tutor_name || 'N/A'} với ${Number(rows[0].tutor_revenue).toLocaleString('vi-VN')}đ (${rows[0].transaction_count} giao dịch). Tổng ${rows.length} gia sư có doanh thu.` : `Không có gia sư nào có doanh thu trong ${p.days} ngày.`,
+    followUps: ['Doanh thu theo tháng', 'Top gia sư có nhiều refund nhất 30 ngày'],
   },
 ];
 const ANALYTICS_TEMPLATE_MAP = Object.fromEntries(ANALYTICS_TEMPLATES.map(t => [t.key, t]));
@@ -2509,6 +2522,80 @@ function buildChartData(t, rows) {
   return { type: t.chartType, labels, values, value_label: t.valueKey };
 }
 
+// ── AI Insight Engine (Step 7/8): analyzes the rows a template already
+// returned — concentration/top-contributor for rankings & distributions,
+// outlier detection (mean + 2*stddev) for any numeric valueKey, trend
+// (latest vs previous) for time-series templates. Purely computed from the
+// returned data, so it can't fabricate a number that isn't already there.
+function buildAnalyticsInsights(t, rows) {
+  const insights = [];
+  if (!t || !rows.length) return insights;
+  const values = rows.map(r => Number(r[t.valueKey])).filter(Number.isFinite);
+  if (values.length < 2) return insights;
+
+  if (t.chartType === 'line') {
+    const latest = values[0], previous = values[1];
+    if (previous > 0) {
+      const pct = Math.round(((latest - previous) / previous) * 1000) / 10;
+      insights.push(`${t.valueKey} ${pct >= 0 ? 'tăng' : 'giảm'} ${Math.abs(pct)}% so với kỳ trước (${rows[1][t.labelKey]} → ${rows[0][t.labelKey]}).`);
+    }
+    return insights.slice(0, 5);
+  }
+
+  const total = values.reduce((s, v) => s + v, 0);
+  if ((t.chartType === 'leaderboard' || t.chartType === 'bar' || t.chartType === 'pie') && total > 0) {
+    const topShare = Math.round((values[0] / total) * 100);
+    if (topShare >= 40) insights.push(`${rows[0][t.labelKey] || 'Mục đầu'} chiếm ${topShare}% tổng ${t.valueKey} — mức độ tập trung cao bất thường.`);
+  }
+
+  const mean = total / values.length;
+  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
+  const std = Math.sqrt(variance);
+  if (std > 0) {
+    rows.forEach((r, i) => {
+      if (values[i] == null || !Number.isFinite(values[i])) return;
+      if (values[i] > mean + 2 * std) insights.push(`${r[t.labelKey] || 'Một mục'} có ${t.valueKey} bất thường cao (${values[i].toLocaleString('vi-VN')}, trung bình ${Math.round(mean).toLocaleString('vi-VN')}).`);
+    });
+  }
+  return insights.slice(0, 5);
+}
+// Transparent, not pretending precision it doesn't have: risk level is
+// literally "how many anomaly signals did the insight engine find," stated
+// as the reason rather than implied certainty (Step 14 philosophy applied
+// to Step 8's risk display).
+function deriveAnalyticsRiskLevel(insights) {
+  const n = insights.length;
+  const level = n === 0 ? 'LOW' : n === 1 ? 'MEDIUM' : 'HIGH';
+  const reason = n === 0 ? 'Không phát hiện tín hiệu bất thường nào trong kết quả.' : `Phát hiện ${n} tín hiệu bất thường trong kết quả (xem AI Insights).`;
+  return { level, reason };
+}
+// Optional rephrase pass (off unless ADMIN_ANALYTICS_LLM_ENABLED): the LLM
+// only ever rewrites text that was already deterministically computed — it
+// never sees raw rows — and its output is discarded (falling back to the
+// deterministic text) if it introduces any number not already present in
+// the input, so a hallucinated figure can never reach the admin.
+function extractNumbers(s) { return (String(s).match(/\d+([.,]\d+)?/g) || []).map(n => n.replace(/[.,]/g, '')); }
+async function maybeRephraseAnalyticsSummary(baseText) {
+  if (!ADMIN_ANALYTICS_LLM_ENABLED || !baseText) return baseText;
+  try {
+    const prompt = `Viết lại đoạn tóm tắt phân tích dữ liệu sau cho admin, súc tích, tự nhiên, GIỮ NGUYÊN mọi con số và không thêm bất kỳ con số hay sự kiện nào không có trong bản gốc:\n${baseText}`;
+    if (ADMIN_ANALYTICS_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        const r = await callGeminiModel(model, prompt);
+        if (r.ok) {
+          const text = r.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (text) {
+            const baseNums = new Set(extractNumbers(baseText));
+            const outNums = extractNumbers(text);
+            if (outNums.every(n => baseNums.has(n))) return text;
+          }
+        }
+      }
+    }
+    return baseText;
+  } catch { return baseText; }
+}
+
 // ── AI Insight Cards (Step 2.2): fixed, safe, read-only KPI aggregates — no
 // user input reaches SQL, same safety posture as the template registry, just
 // unconditional (always the same 4 cards) rather than intent-routed. Each
@@ -2582,8 +2669,9 @@ async function runAnalyticsTemplate(templateKey, params, adminId) {
   const { days, limit } = clampAnalyticsParams(params);
   const limitations = [];
   for (const tbl of t.requiredTables) { if (!(await fraudTableExists(tbl))) limitations.push(`TABLE_NOT_FOUND:${tbl}`); }
+  const explain = { data_sources: t.requiredTables, follow_up_questions: t.followUps || [] };
   if (limitations.length) {
-    return { status: 'SUCCESS', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Không đủ dữ liệu: một số bảng chưa sẵn sàng.', limitations, sql_preview: t.sql, params: { days, limit } };
+    return { status: 'SUCCESS', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Không đủ dữ liệu: một số bảng chưa sẵn sàng.', insights: [], risk_level: 'LOW', risk_reason: 'Không đủ dữ liệu để đánh giá.', limitations, sql_preview: t.sql, params: { days, limit }, ...explain };
   }
 
   const client = await pool.connect();
@@ -2593,15 +2681,19 @@ async function runAnalyticsTemplate(templateKey, params, adminId) {
     const r = await client.query(t.sql, [days, limit]);
     await client.query('COMMIT');
     const rows = r.rows.map(maskAnalyticsRow);
+    const insights = buildAnalyticsInsights(t, rows);
+    const risk = deriveAnalyticsRiskLevel(insights);
+    const baseSummary = t.summarize(rows, { days, limit });
+    const summary = await maybeRephraseAnalyticsSummary(baseSummary);
     return {
       status: 'SUCCESS', template_key: t.key, columns: t.columns, rows,
-      chart: buildChartData(t, rows), summary: t.summarize(rows, { days, limit }),
-      limitations, sql_preview: t.sql, params: { days, limit },
+      chart: buildChartData(t, rows), summary, insights, risk_level: risk.level, risk_reason: risk.reason,
+      limitations, sql_preview: t.sql, params: { days, limit }, ...explain,
     };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     console.warn(`[analytics] template ${t.key} failed:`, e.message);
-    return { status: 'FAILED', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Truy vấn thất bại.', limitations: ['QUERY_FAILED'], error_message: e.message, sql_preview: t.sql, params: { days, limit } };
+    return { status: 'FAILED', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Truy vấn thất bại.', insights: [], risk_level: 'LOW', risk_reason: null, limitations: ['QUERY_FAILED'], error_message: e.message, sql_preview: t.sql, params: { days, limit }, ...explain };
   } finally { client.release(); }
 }
 
@@ -17695,9 +17787,12 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
     return res.json({
       status: result.status, template_key: intent.key, intent: intent.key, intent_code: intent.intentCode || null,
       confidence: intent.confidence ?? null, matched_keywords: intent.matchedKeywords || [], summary: result.summary,
+      insights: result.insights || [], risk_level: result.risk_level || null, risk_reason: result.risk_reason || null,
+      follow_up_questions: result.follow_up_questions || [],
       columns: result.columns || [], rows: result.rows || [], chart: result.chart || {},
       sql_preview: result.sql_preview, limitations: result.limitations || [], safety_flags: result.safety_flags || [],
       model_used: modelUsed, audit_id: auditId, params: result.params, param_sources: paramSources, days_label: extracted.days_label,
+      data_sources: result.data_sources || [], rows_analyzed: (result.rows || []).length, generated_at: new Date().toISOString(),
     });
   } catch (err) {
     console.error('POST /api/admin/analytics/ask error:', err.message);
