@@ -2121,13 +2121,24 @@ async function runFraudRingDetection({ periodDays = FRAUD_INTEL_PERIOD_DAYS, lim
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SAFE NATURAL-LANGUAGE ANALYTICS (Batch 29A) — template allowlist only.
-// Admin asks in VN/EN; deterministic intent detection maps to a VETTED,
-// parameterized, SELECT-only template. NEVER executes free-form or LLM-generated
-// SQL. Read-only; no mutation of any business table. Optional LLM only classifies
-// intent into an allowlisted template key (never writes SQL).
+// SAFE NATURAL-LANGUAGE ANALYTICS (Batch 29A, LLM-first as of Batch 42
+// Phase 8) — template allowlist only. Admin asks in VN/EN/mixed; an LLM is
+// asked FIRST to understand the full question (template + days/limit/subject
+// + whether it's a follow-up referencing the prior turn) in one call —
+// genuine semantic understanding rather than keyword pattern-matching.
+// Deterministic rule-based matching (detectAnalyticsIntent) is the fallback
+// ONLY when the LLM call itself fails/errors/is disabled — if the LLM
+// successfully responds and says no template fits, that's trusted as the
+// real answer, not silently overridden by a weaker keyword guess.
+// The LLM NEVER writes SQL and can only ever name one of the allowlisted
+// template keys below — this is still the same security boundary as
+// before, just consulted with real understanding instead of as a last
+// resort. Provider is swappable via ADMIN_ANALYTICS_PROVIDER (currently
+// only 'gemini' is implemented; adding another provider — e.g. Grok — means
+// implementing one function matching classifyAnalyticsWithLLM's contract
+// and adding a branch below, no other code changes needed).
 // ═══════════════════════════════════════════════════════════════════════════
-const ADMIN_ANALYTICS_LLM_ENABLED    = String(process.env.ADMIN_ANALYTICS_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const ADMIN_ANALYTICS_LLM_ENABLED    = String(process.env.ADMIN_ANALYTICS_LLM_ENABLED ?? 'true').toLowerCase() === 'true';
 const ADMIN_ANALYTICS_PROVIDER       = String(process.env.ADMIN_ANALYTICS_PROVIDER || 'gemini').toLowerCase();
 const ADMIN_ANALYTICS_MAX_QUESTION_CHARS = Number(process.env.ADMIN_ANALYTICS_MAX_QUESTION_CHARS || 1000);
 const ADMIN_ANALYTICS_DEFAULT_DAYS   = Number(process.env.ADMIN_ANALYTICS_DEFAULT_DAYS || 30);
@@ -2534,27 +2545,76 @@ function detectAnalyticsIntent(question) {
   confidence = Math.max(15, Math.min(99, confidence));
   return { key: best.t.key, intentCode: best.t.intentCode, score: best.score, confidence, matchedKeywords: best.matched };
 }
-// Optional LLM intent classification (never writes SQL; must return a known key).
-async function maybeAnalyticsLLMIntent(question) {
+// ── LLM-first intent + full-context understanding (Batch 42 Phase 8). Asked
+// on EVERY question (not just as a fallback): reads the question the way a
+// human would — synonyms, typos, colloquialisms, mixed VN/EN, an entire
+// sentence at once — and returns template + days/limit/subject + whether
+// this looks like a follow-up referencing the prior turn, all in one call.
+// Still bound by the exact same security boundary as the old fallback: the
+// only thing it's ever allowed to name is one of the allowlisted template
+// keys below, checked against ANALYTICS_TEMPLATE_MAP before being trusted
+// for anything; it is explicitly told never to produce SQL, and nothing it
+// returns is ever concatenated into a query — every field is validated
+// (numeric range, allowlisted subject, allowlisted key) exactly like the
+// rule-based extractor's output already was.
+//
+// Returns: null only on a hard failure (disabled/no key/network/parse
+// error) — the caller falls back to rule-based matching in that case only.
+// A structurally valid response with template_key=null means the LLM
+// looked at the question and genuinely concluded nothing fits; that is
+// trusted as the real answer, not silently second-guessed by the fallback.
+async function classifyAnalyticsWithLLM(question, priorContext) {
   if (!ADMIN_ANALYTICS_LLM_ENABLED) return null;
   try {
-    const keys = ANALYTICS_TEMPLATES.map(t => t.key).join(', ');
-    const prompt = `Bạn phân loại câu hỏi phân tích dữ liệu của admin nền tảng gia sư vào ĐÚNG MỘT template key trong danh sách sau (hoặc "NONE"): ${keys}. TUYỆT ĐỐI KHÔNG sinh SQL. Trả về JSON {"template_key":"..."}. Câu hỏi: ${String(question).slice(0, 500)}`;
-    if (ADMIN_ANALYTICS_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
-      for (const model of GEMINI_MODELS) {
-        const r = await callGeminiModel(model, prompt);
-        if (r.ok) {
-          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          try {
-            const p = JSON.parse(t);
-            const matchedTemplate = p && ANALYTICS_TEMPLATE_MAP[p.template_key];
-            if (matchedTemplate) return { key: p.template_key, intentCode: matchedTemplate.intentCode, score: 99, confidence: 70, matchedKeywords: ['LLM_CLASSIFIED'] };
-          } catch { /* ignore */ }
-        }
-      }
-    }
-    return null;
-  } catch { return null; }
+    if (ADMIN_ANALYTICS_PROVIDER === 'gemini') return await classifyAnalyticsWithGemini(question, priorContext);
+    return null; // unknown/unconfigured provider — caller falls back to rule-based
+  } catch (e) { console.warn('[analytics] LLM classify failed:', e.message); return null; }
+}
+async function classifyAnalyticsWithGemini(question, priorContext) {
+  if (typeof GEMINI_API_KEY !== 'string' || !GEMINI_API_KEY) return null;
+  const templateList = ANALYTICS_TEMPLATES.map(t => `${t.key}: ${t.label} — ${t.description}`).join('\n');
+  const subjectList = CANONICAL_SUBJECTS.join(', ');
+  const entityLabel = { tutor: 'gia sư', student: 'học sinh', course: 'khóa học' };
+  const contextNote = priorContext?.entityType
+    ? `Câu hỏi trước đó của admin đã trả về một danh sách các "${entityLabel[priorContext.entityType] || priorContext.entityType}". Nếu câu hỏi hiện tại ám chỉ rõ ràng đến nhóm đó (ví dụ: "trong số đó", "những người này", "among them", "of those"), đặt is_followup_reference=true.`
+    : 'Không có ngữ cảnh câu hỏi trước — is_followup_reference phải là false.';
+  const prompt = `Bạn là bộ phân loại ý định cho hệ thống phân tích dữ liệu AN TOÀN của nền tảng gia sư trực tuyến EduX, dành cho admin. Admin có thể hỏi bằng tiếng Việt, tiếng Anh, pha trộn, viết tắt, khẩu ngữ, hoặc gõ sai chính tả — nhiệm vụ của bạn là HIỂU Ý NGHĨA THẬT SỰ của câu hỏi, không chỉ khớp từ khóa.
+
+Các template được phép chọn — PHẢI chọn đúng 1 key dưới đây, hoặc null nếu không câu nào thực sự phù hợp về mặt ý nghĩa:
+${templateList}
+
+Danh sách môn học hợp lệ cho trường "subject" (chỉ điền nếu câu hỏi nhắc rõ một môn học cụ thể trong danh sách này, nếu không chắc thì để null): ${subjectList}
+
+${contextNote}
+
+Câu hỏi của admin: "${String(question).slice(0, 500)}"
+
+Trả về DUY NHẤT một object JSON theo đúng schema sau, không kèm lời giải thích, không kèm markdown code fence, không thêm trường nào khác:
+{"template_key": "<một key ở trên hoặc null>", "confidence": <số nguyên 0-100, mức độ chắc chắn THẬT của bạn>, "reason": "<lý do ngắn gọn bằng tiếng Việt, dưới 15 từ>", "days": <số nguyên 1-365 nếu câu hỏi nhắc khoảng thời gian như "tháng trước"/"30 ngày", ngược lại null>, "limit": <số nguyên 1-200 nếu câu hỏi nhắc số lượng như "top 5", ngược lại null>, "subject": "<một môn học ở trên hoặc null>", "is_followup_reference": <true hoặc false>}
+
+TUYỆT ĐỐI KHÔNG được sinh SQL hay bất kỳ nội dung nào ngoài schema JSON trên.`;
+
+  for (const model of GEMINI_MODELS) {
+    const r = await callGeminiModel(model, prompt);
+    if (!r.ok) continue;
+    const text = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    let parsed;
+    try { parsed = JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { continue; }
+    if (!parsed || typeof parsed !== 'object') continue;
+
+    const days = Number.isInteger(parsed.days) && parsed.days >= 1 && parsed.days <= 365 ? parsed.days : null;
+    const limit = Number.isInteger(parsed.limit) && parsed.limit >= 1 && parsed.limit <= ADMIN_ANALYTICS_MAX_LIMIT ? parsed.limit : null;
+    const subject = typeof parsed.subject === 'string' && CANONICAL_SUBJECTS.includes(parsed.subject) ? parsed.subject : null;
+    const confidence = Number.isFinite(parsed.confidence) ? Math.max(1, Math.min(99, Math.round(parsed.confidence))) : 60;
+    const reason = typeof parsed.reason === 'string' ? parsed.reason.slice(0, 200) : null;
+    const isFollowupReference = !!parsed.is_followup_reference;
+
+    if (parsed.template_key == null) return { key: null, days, limit, subject, confidence, reason, isFollowupReference };
+    const t = ANALYTICS_TEMPLATE_MAP[parsed.template_key];
+    if (!t) return { key: null, days, limit, subject, confidence, reason, isFollowupReference }; // invalid key named — treat as genuine no-match, not a parse failure
+    return { key: t.key, intentCode: t.intentCode, days, limit, subject, confidence, reason, isFollowupReference };
+  }
+  return null; // every model attempt failed — hard failure, caller falls back to rule-based
 }
 
 // ── NL parameter extraction (Step 5): time period + limit from the question
@@ -17952,44 +18012,69 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
       return res.json({ status: 'BLOCKED', intent: null, summary: 'Không thể truy xuất dữ liệu nhạy cảm (mật khẩu/token/OTP/IP...). Vui lòng dùng câu hỏi phân tích an toàn.', safety_flags: ['SENSITIVE_REQUEST'], limitations: [], columns: [], rows: [], chart: {}, sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().slice(0, 6).map(t => t.exampleQuestions[0]) });
     }
 
-    // Intent detection: rule-based (fuzzy/synonym-tolerant) first, optional LLM classify as fallback.
-    let intent = detectAnalyticsIntent(question);
-    let modelUsed = 'TEMPLATE_RULE_BASED';
-    if (!intent) { const llm = await maybeAnalyticsLLMIntent(question); if (llm) { intent = llm; modelUsed = 'LLM_INTENT_' + ADMIN_ANALYTICS_PROVIDER.toUpperCase(); } }
+    // Conversation memory context must be read before classification so the
+    // LLM can judge whether this question references the prior turn.
+    const context = req.body?.context && typeof req.body.context === 'object' ? req.body.context : null;
+
+    // LLM-first intent + full-context understanding (Step 3/5/6/14):
+    // template + days/limit/subject + follow-up judgment all in one call,
+    // real semantic understanding rather than keyword pattern-matching.
+    // Deterministic rule-based matching is the fallback ONLY on a hard LLM
+    // failure — see classifyAnalyticsWithLLM's own comment for why a
+    // genuine "no template fits" from the LLM is trusted as the real
+    // answer rather than silently second-guessed by a weaker keyword hit.
+    const llmResult = await classifyAnalyticsWithLLM(question, context);
+    let intent, modelUsed;
+    if (llmResult) {
+      modelUsed = 'LLM_' + ADMIN_ANALYTICS_PROVIDER.toUpperCase();
+      intent = llmResult.key
+        ? { key: llmResult.key, intentCode: llmResult.intentCode, confidence: llmResult.confidence, matchedKeywords: ['LLM'], reason: llmResult.reason }
+        : null;
+    } else {
+      modelUsed = 'TEMPLATE_RULE_BASED';
+      intent = detectAnalyticsIntent(question);
+    }
 
     if (!intent) {
-      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'NO_MATCH', summary: 'Không có mẫu phân tích phù hợp.', model_used: modelUsed, created_by: req.user.id });
-      return res.json({ status: 'NO_MATCH', intent: null, intent_code: null, confidence: 0, summary: 'Hiện hệ thống chưa hỗ trợ câu hỏi này ở chế độ an toàn.', columns: [], rows: [], chart: {}, limitations: [], safety_flags: [], sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().map(t => t.exampleQuestions[0]) });
+      const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'NO_MATCH', summary: llmResult?.reason || 'Không có mẫu phân tích phù hợp.', model_used: modelUsed, created_by: req.user.id });
+      return res.json({ status: 'NO_MATCH', intent: null, intent_code: null, confidence: 0, summary: llmResult?.reason || 'Hiện hệ thống chưa hỗ trợ câu hỏi này ở chế độ an toàn.', columns: [], rows: [], chart: {}, limitations: [], safety_flags: [], sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().map(t => t.exampleQuestions[0]) });
     }
     const matchedTemplate = getAnalyticsTemplate(intent.key);
 
-    // Parameter extraction (Step 5): NL-extracted time period/limit/subject
-    // fill in whatever the admin left blank in the form; explicit form
-    // values win for days/limit (there's no manual subject field).
-    const extracted = extractAnalyticsParameters(question);
+    // Parameter extraction (Step 5): the LLM's own reading of time
+    // period/limit/subject wins when present (it understood the whole
+    // sentence, not just isolated keywords); the deterministic rule-based
+    // extractor fills in anything the LLM didn't return, or everything if
+    // the LLM call failed entirely. Explicit form values from the admin
+    // still win over both.
+    const ruleExtracted = extractAnalyticsParameters(question);
+    const aiDays = llmResult?.days ?? null;
+    const aiLimit = llmResult?.limit ?? null;
+    const aiSubject = llmResult?.subject ?? null;
     const userDays = (params.days !== undefined && params.days !== null && params.days !== '') ? parseInt(params.days, 10) : null;
     const userLimit = (params.limit !== undefined && params.limit !== null && params.limit !== '') ? parseInt(params.limit, 10) : null;
     const paramSources = {
-      days: Number.isFinite(userDays) ? 'manual' : (extracted.days != null ? 'nlp' : 'default'),
-      limit: Number.isFinite(userLimit) ? 'manual' : (extracted.limit != null ? 'nlp' : 'default'),
+      days: Number.isFinite(userDays) ? 'manual' : (aiDays != null ? 'ai' : (ruleExtracted.days != null ? 'nlp' : 'default')),
+      limit: Number.isFinite(userLimit) ? 'manual' : (aiLimit != null ? 'ai' : (ruleExtracted.limit != null ? 'nlp' : 'default')),
     };
+    const daysLabel = aiDays != null ? `${aiDays} ngày (AI hiểu)` : ruleExtracted.days_label;
+    const subject = aiSubject || ruleExtracted.subject || null;
 
-    // Conversation memory (Step 6): only applies the previous turn's row IDs
-    // as a filter when the question itself reads as a follow-up reference
-    // ("trong số đó" / "among them" / "of those") AND the entity type
-    // matches (a tutor-id filter is meaningless on a student-scoped
-    // template) — matching entity type alone is not enough, since a fresh
-    // unrelated question ("gia sư nào có refund nhiều nhất") could easily
-    // reuse the same entity type as the prior turn by coincidence.
-    const context = req.body?.context && typeof req.body.context === 'object' ? req.body.context : null;
-    const isFollowUpReference = ANALYTICS_FOLLOWUP_REFERENCE_RE.test(normalized);
+    // Conversation memory (Step 6): the LLM directly judges whether this
+    // question references the prior turn — real understanding, not a
+    // regex; the regex is the fallback only if the LLM call failed. Either
+    // way, entity TYPE must still match the newly matched template — a
+    // tutor-id filter is meaningless on a student-scoped template, and a
+    // fresh unrelated question could coincidentally share the same entity
+    // type as the prior turn.
+    const isFollowUpReference = llmResult ? !!llmResult.isFollowupReference : ANALYTICS_FOLLOWUP_REFERENCE_RE.test(normalized);
     const contextApplies = !!(isFollowUpReference && context?.entityType && matchedTemplate?.entityType === context.entityType
       && Array.isArray(context.entityIds) && context.entityIds.length);
 
     const mergedParams = {
-      days: Number.isFinite(userDays) ? userDays : (extracted.days ?? undefined),
-      limit: Number.isFinite(userLimit) ? userLimit : (extracted.limit ?? undefined),
-      subject: extracted.subject || undefined,
+      days: Number.isFinite(userDays) ? userDays : (aiDays ?? ruleExtracted.days ?? undefined),
+      limit: Number.isFinite(userLimit) ? userLimit : (aiLimit ?? ruleExtracted.limit ?? undefined),
+      subject: subject || undefined,
       entityIds: contextApplies ? context.entityIds : undefined,
     };
 
@@ -17997,7 +18082,7 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
     const nextContext = (matchedTemplate?.entityType && matchedTemplate?.entityIdCol && result.status === 'SUCCESS')
       ? { entityType: matchedTemplate.entityType, entityIds: [...new Set((result.rows || []).map(r => r[matchedTemplate.entityIdCol]).filter(Boolean))] }
       : null;
-    const extractedMeta = { days_label: extracted.days_label, param_sources: paramSources, subject: extracted.subject, context_applied: contextApplies };
+    const extractedMeta = { days_label: daysLabel, param_sources: paramSources, subject, context_applied: contextApplies, ai_reason: llmResult?.reason || null };
     const auditId = await saveAnalyticsAuditLog({
       question, normalized_question: normalized, detected_intent: intent.key, template_key: intent.key,
       status: result.status, summary: result.summary, sql_preview: result.sql_preview, parameters: result.params,
@@ -18009,15 +18094,16 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
 
     return res.json({
       status: result.status, template_key: intent.key, intent: intent.key, intent_code: intent.intentCode || null,
-      confidence: intent.confidence ?? null, matched_keywords: intent.matchedKeywords || [], summary: result.summary,
+      confidence: intent.confidence ?? null, matched_keywords: intent.matchedKeywords || [], confidence_reason: intent.reason || null,
+      summary: result.summary,
       insights: result.insights || [], risk_level: result.risk_level || null, risk_reason: result.risk_reason || null,
       follow_up_questions: result.follow_up_questions || [],
       columns: result.columns || [], rows: result.rows || [], chart: result.chart || {},
       sql_preview: result.sql_preview, limitations: result.limitations || [], safety_flags: result.safety_flags || [],
-      model_used: modelUsed, audit_id: auditId, params: result.params, param_sources: paramSources, days_label: extracted.days_label,
+      model_used: modelUsed, audit_id: auditId, params: result.params, param_sources: paramSources, days_label: daysLabel,
       data_sources: result.data_sources || [], rows_analyzed: (result.rows || []).length, generated_at: new Date().toISOString(),
       cached: !!result.served_from_cache,
-      subject_filter: extracted.subject || null, context_applied: contextApplies, next_context: nextContext,
+      subject_filter: subject, context_applied: contextApplies, next_context: nextContext,
     });
   } catch (err) {
     console.error('POST /api/admin/analytics/ask error:', err.message);

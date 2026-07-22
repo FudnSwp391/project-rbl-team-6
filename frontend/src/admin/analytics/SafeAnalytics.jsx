@@ -43,12 +43,12 @@ export default function SafeAnalytics({ token }) {
   )
 }
 
-function ConfidenceBadge({ confidence }) {
+function ConfidenceBadge({ confidence, reason }) {
   if (confidence == null) return null
   const cls = confidence >= 75 ? 'bg-emerald-100 text-emerald-700' : confidence >= 45 ? 'bg-amber-100 text-amber-700' : 'bg-orange-100 text-orange-700'
-  return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>Độ tin cậy {confidence}%</span>
+  return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`} title={reason || ''}>Độ tin cậy {confidence}%</span>
 }
-const SOURCE_LABEL = { manual: 'nhập tay', nlp: 'tự phát hiện từ câu hỏi', default: 'mặc định' }
+const SOURCE_LABEL = { manual: 'nhập tay', ai: 'AI hiểu từ câu hỏi', nlp: 'tự phát hiện từ câu hỏi', default: 'mặc định' }
 const CHART_TYPE_LABEL = { bar: 'Cột', leaderboard: 'Bảng xếp hạng', line: 'Đường xu hướng', pie: 'Tròn', heatmap: 'Bản đồ nhiệt' }
 
 function AskPanel({ token }) {
@@ -210,10 +210,11 @@ function AskPanel({ token }) {
             <div className="flex items-center gap-2 flex-wrap mb-2">
               <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${st.cls}`}>{st.label}</span>
               {result.intent_code && <span className="text-xs text-gray-400">Ý định: <b className="text-gray-600 font-mono">{result.intent_code}</b></span>}
-              <ConfidenceBadge confidence={result.confidence} />
+              <ConfidenceBadge confidence={result.confidence} reason={result.confidence_reason} />
               <RiskBadge level={result.risk_level} reason={result.risk_reason} />
               {result.template_key && <span className="text-xs text-gray-400">Mẫu: <b className="text-gray-600">{result.template_key}</b></span>}
-              {result.model_used && <span className="text-xs text-gray-400">· {result.model_used}</span>}
+              {result.model_used?.startsWith('LLM_') && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-semibold flex items-center gap-0.5"><span className="material-symbols-outlined text-[12px]">auto_awesome</span>{result.model_used.replace('LLM_', '')}</span>}
+              {result.model_used === 'TEMPLATE_RULE_BASED' && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-semibold">rule-based (dự phòng)</span>}
               {asArray(result.safety_flags).map((f, i) => <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-semibold">{f}</span>)}
               {result.cached && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-600 font-semibold flex items-center gap-0.5"><span className="material-symbols-outlined text-[12px]">bolt</span>cached</span>}
               {result.status === 'SUCCESS' && (
