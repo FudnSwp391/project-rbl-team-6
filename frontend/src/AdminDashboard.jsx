@@ -645,7 +645,7 @@ export default function AdminDashboard() {
       `}</style>
 
       {/* ══ AI COPILOT (Batch 26 — advisory only) ══ */}
-      <AdminCopilot token={token} pageKey={activeView} />
+      <AdminCopilot token={token} pageKey={activeView} onNavigate={setActiveView} />
     </div>
   )
 }

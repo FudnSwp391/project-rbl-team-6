@@ -762,6 +762,78 @@ const COPILOT_ALLOWED_ACTIONS = new Set([
   'FREEZE_WALLET', 'REQUEST_VERIFICATION', 'MONITOR_7_DAYS',
 ]);
 
+// ── Copilot module registry (Batch 39) ───────────────────────────────────────
+// Maps each admin activeView (pageKey) to a canonical module so the Copilot
+// analyses only what the admin is actually looking at, and gives each module
+// its own workflow + navigation targets. Every `view` below is a REAL activeView
+// id from AdminDashboard.jsx — the Action Center reuses existing pages, never
+// invents routes.
+function copilotModuleForPageKey(pageKey) {
+  const map = {
+    'sm-complaints': 'complaints',
+    'tx-disputes': 'disputes',
+    'tx-reconciliation': 'reconciliation',
+    'tx-fraud': 'fraud',
+    'sm-fraud': 'fraud',
+    'tutor-approval': 'tutor-approval',
+    'wallet-management': 'wallet',
+    'tx-withdrawals': 'wallet',
+    'user-management': 'users',
+  };
+  return map[pageKey] || 'dashboard';
+}
+
+const COPILOT_MODULE_PROFILE = {
+  complaints: {
+    label: 'Khiếu nại khóa học',
+    impact: 'Khiếu nại tồn đọng làm giảm hài lòng học viên và có thể dẫn tới hoàn tiền/khiếu nại leo thang.',
+    workflow: ['Xem chi tiết khiếu nại', 'Mở khóa học/buổi học liên quan', 'Xem bằng chứng & mô tả', 'Xem phản hồi của gia sư', 'Giải quyết khiếu nại'],
+    nav: [{ label: 'Mở Khiếu nại', view: 'sm-complaints' }, { label: 'Mở Khóa học', view: 'lessons' }, { label: 'Mở Người dùng', view: 'user-management' }],
+  },
+  disputes: {
+    label: 'Tranh chấp buổi học',
+    impact: 'Tranh chấp mở giữ escrow chưa giải ngân, ảnh hưởng dòng tiền của gia sư và niềm tin học viên.',
+    workflow: ['Xem tranh chấp', 'Kiểm tra buổi học liên quan', 'Xem bằng chứng', 'Xem phản hồi gia sư', 'Quyết định giải ngân/hoàn tiền'],
+    nav: [{ label: 'Mở Tranh chấp', view: 'tx-disputes' }, { label: 'Mở Thanh toán buổi học', view: 'tx-lessons' }, { label: 'Mở Người dùng', view: 'user-management' }],
+  },
+  reconciliation: {
+    label: 'Đối soát tài chính',
+    impact: 'Chênh lệch chưa xử lý làm sai lệch báo cáo tài chính và có thể che giấu thất thoát.',
+    workflow: ['Xem chênh lệch', 'Kiểm tra giao dịch liên quan', 'Xem bằng chứng', 'Tạo sự cố điều tra', 'Chạy đối soát lại'],
+    nav: [{ label: 'Mở Đối soát', view: 'tx-reconciliation' }, { label: 'Mở Sổ cái ví', view: 'tx-wallet-ledger' }],
+  },
+  fraud: {
+    label: 'Cảnh báo gian lận',
+    impact: 'Bỏ sót cảnh báo rủi ro cao có thể gây thất thoát tiền nền tảng và lạm dụng hoàn tiền.',
+    workflow: ['Xem cảnh báo', 'Kiểm tra hoạt động người dùng', 'Xem bằng chứng liên quan', 'Quyết định hành động điều tra'],
+    nav: [{ label: 'Mở Cảnh báo gian lận', view: 'tx-fraud' }, { label: 'Mở Người dùng', view: 'user-management' }, { label: 'Mở Ví', view: 'wallet-management' }],
+  },
+  'tutor-approval': {
+    label: 'Duyệt gia sư',
+    impact: 'Hồ sơ tồn đọng làm chậm nguồn cung gia sư; duyệt sai làm giảm chất lượng nền tảng.',
+    workflow: ['Xem hồ sơ chờ duyệt', 'Kiểm tra chứng chỉ & thông tin', 'Xem lịch sử gia sư', 'Duyệt hoặc từ chối'],
+    nav: [{ label: 'Mở Duyệt gia sư', view: 'tutor-approval' }, { label: 'Mở Người dùng', view: 'user-management' }],
+  },
+  wallet: {
+    label: 'Giao dịch ví',
+    impact: 'Yêu cầu nạp/rút tồn đọng giữ tiền của người dùng và có thể là dấu hiệu gian lận.',
+    workflow: ['Xem yêu cầu nạp/rút', 'Đối chiếu số dư ví', 'Kiểm tra rủi ro người dùng', 'Duyệt hoặc từ chối'],
+    nav: [{ label: 'Mở Duyệt giao dịch Ví', view: 'wallet-management' }, { label: 'Mở Duyệt rút tiền', view: 'tx-withdrawals' }],
+  },
+  users: {
+    label: 'Quản lý người dùng',
+    impact: 'Tài khoản rủi ro chưa xử lý có thể tiếp tục vi phạm hoặc gây thiệt hại.',
+    workflow: ['Tìm người dùng', 'Xem lịch sử hoạt động', 'Xem tranh chấp/giao dịch liên quan', 'Quyết định xử lý'],
+    nav: [{ label: 'Mở Người dùng', view: 'user-management' }, { label: 'Mở Tranh chấp', view: 'tx-disputes' }],
+  },
+  dashboard: {
+    label: 'Tổng quan nền tảng',
+    impact: 'Các mục tồn đọng trải rộng nhiều module — cần ưu tiên xử lý mục rủi ro cao trước.',
+    workflow: ['Xem tổng quan', 'Ưu tiên mục rủi ro cao', 'Đi tới module tương ứng để xử lý'],
+    nav: [{ label: 'Mở Duyệt gia sư', view: 'tutor-approval' }, { label: 'Mở Tranh chấp', view: 'tx-disputes' }, { label: 'Mở Cảnh báo gian lận', view: 'tx-fraud' }],
+  },
+};
+
 // ── Privacy masking (never store/return raw email / phone / IP) ──────────────
 function maskEmail(email) {
   if (!email || typeof email !== 'string' || !email.includes('@')) return null;
@@ -954,17 +1026,56 @@ async function collectFraudAlertCopilotContext(alertId) {
   return ctx;
 }
 
+// Batch 39: page analysis is now module-scoped. Each pageKey resolves to a
+// canonical module and only that module's metrics are collected, so the Copilot
+// reflects what the admin is actually working on instead of a global summary.
+// Every query goes through copilotSafeCount, which returns 0 on any error — so
+// modules whose tables live on another branch (e.g. reconciliation) degrade to
+// zeros instead of throwing.
 async function collectPageCopilotContext(pageKey, pageContext) {
-  const ctx = { entity_type: 'PAGE', entity_id: null, page_key: pageKey || null, identity: {}, metrics: {}, notes: [] };
-  ctx.metrics.open_disputes    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN' AND withdrawn_at IS NULL`);
-  ctx.metrics.pending_tutors   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='pending'`);
-  ctx.metrics.appealed_ai_cases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`);
-  ctx.metrics.failed_tx_24h    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE status='FAILED' AND created_at > NOW() - INTERVAL '24 hours'`);
-  // Batch 29A: recent admin analytics activity (safe; Copilot never depends on it)
-  ctx.metrics.analytics_queries_7d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_analytics_queries WHERE created_at > NOW() - INTERVAL '7 days'`);
-  // Only a small allow-list of primitive page-context hints is kept (no PII).
-  if (pageContext && typeof pageContext === 'object') {
-    ctx.notes.push(`page_hint:${String(pageKey || 'unknown').slice(0, 40)}`);
+  const module = copilotModuleForPageKey(pageKey);
+  const ctx = { entity_type: 'PAGE', entity_id: null, page_key: pageKey || null, module, identity: {}, metrics: {}, notes: [] };
+  const M = ctx.metrics;
+
+  if (module === 'complaints') {
+    M.open_complaints    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM course_complaints WHERE status IN ('pending','processing','waiting_student','waiting_tutor')`);
+    M.awaiting_admin     = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM course_complaints WHERE status='pending'`);
+    M.stale_open         = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM course_complaints WHERE status IN ('pending','processing','waiting_student','waiting_tutor') AND created_at < NOW() - INTERVAL '3 days'`);
+    M.resolved_7d        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM course_complaints WHERE status IN ('resolved','closed') AND resolved_at > NOW() - INTERVAL '7 days'`);
+    M.avg_resolution_hours = Math.round(await copilotSafeCount(`SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (resolved_at - created_at))/3600), 0)::int AS n FROM course_complaints WHERE resolved_at IS NOT NULL`));
+  } else if (module === 'disputes') {
+    M.open_disputes      = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN' AND withdrawn_at IS NULL`);
+    M.high_severity_open = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN' AND withdrawn_at IS NULL AND severity='HIGH'`);
+    M.awaiting_tutor     = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN' AND withdrawn_at IS NULL AND tutor_response IS NULL`);
+    M.refund_resolved_30d = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='RESOLVED_REFUND' AND resolved_at > NOW() - INTERVAL '30 days'`);
+  } else if (module === 'reconciliation') {
+    // Tables ship on the reconciliation branch (Batch 37); 0 here until merged.
+    M.open_investigations = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM reconciliation_incidents WHERE status NOT IN ('RESOLVED','CLOSED')`);
+    M.critical_mismatches = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM reconciliation_findings WHERE severity='high'`);
+    M.recent_runs_7d      = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM reconciliation_runs WHERE created_at > NOW() - INTERVAL '7 days'`);
+  } else if (module === 'fraud') {
+    M.open_alerts          = await copilotSafeCount(`SELECT COUNT(DISTINCT raised_by)::int AS n FROM disputes`);
+    M.high_risk_alerts     = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM (SELECT raised_by FROM disputes GROUP BY raised_by HAVING COUNT(*) >= 2) x`);
+    M.blocked_users        = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM users WHERE COALESCE(is_banned,false)=true`);
+    M.pending_investigations = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM fraud_investigations WHERE status IN ('OPEN','INVESTIGATING','NEED_MORE_EVIDENCE')`);
+  } else if (module === 'tutor-approval') {
+    M.pending_tutors  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='pending'`);
+    M.rejected_total  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='rejected'`);
+    M.approved_total  = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='approved'`);
+  } else if (module === 'wallet') {
+    M.pending_deposits    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM deposit_requests WHERE status='PENDING'`);
+    M.pending_withdrawals = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM withdraw_requests WHERE status='PENDING'`);
+    M.approved_unpaid     = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM withdraw_requests WHERE status='APPROVED'`);
+  } else if (module === 'users') {
+    M.total_users    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM users`);
+    M.banned_users   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM users WHERE COALESCE(is_banned,false)=true`);
+    M.new_users_7d   = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM users WHERE created_at > NOW() - INTERVAL '7 days'`);
+  } else {
+    // dashboard / unknown → platform overview (original global behavior)
+    M.open_disputes     = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM disputes WHERE status='OPEN' AND withdrawn_at IS NULL`);
+    M.pending_tutors    = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM tutor_profiles WHERE status='pending'`);
+    M.appealed_ai_cases = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM ai_case_resolutions WHERE appeal_status='APPEALED_NEED_REVIEW'`);
+    M.failed_tx_24h     = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM transactions WHERE status='FAILED' AND created_at > NOW() - INTERVAL '24 hours'`);
   }
   return ctx;
 }
@@ -981,6 +1092,33 @@ function copilotAction(type, label, reason) {
   return { type, label, reason };
 }
 function copilotVnd(n) { return Number(n || 0).toLocaleString('vi-VN') + 'đ'; }
+
+// Batch 39: Operations-Copilot layer. Turns a rule-engine report into guidance —
+// what you're looking at (situation), why it matters (impact), the steps to take
+// (recommended_workflow), and where to go (navigation_actions → real activeView
+// ids). Pure presentation over the deterministic report; invents no facts.
+function buildCopilotOpsExtras(entityType, context) {
+  const module = context.module || copilotModuleForPageKey(context.page_key);
+  const profile = COPILOT_MODULE_PROFILE[module] || COPILOT_MODULE_PROFILE.dashboard;
+  const focusId = context.entity_id != null ? String(context.entity_id) : null;
+  const entityName = context.identity?.tutor_name || context.identity?.student_name || context.identity?.user_name || context.identity?.name || null;
+
+  let situation;
+  if (entityType === 'PAGE') {
+    situation = `Bạn đang ở module “${profile.label}”. Copilot đã rà soát các mục cần chú ý của riêng module này.`;
+  } else {
+    const label = { TUTOR: 'gia sư', STUDENT: 'học sinh', DISPUTE: 'tranh chấp', TRANSACTION: 'giao dịch', BOOKING: 'buổi học', FRAUD_ALERT: 'cảnh báo gian lận' }[entityType] || 'đối tượng';
+    situation = `Bạn đang xem chi tiết ${label}${entityName ? ` của ${entityName}` : ''}${focusId ? ` (mã ${focusId.slice(0, 12)})` : ''} trong module “${profile.label}”. Copilot ưu tiên phân tích đối tượng này.`;
+  }
+
+  return {
+    module,
+    situation,
+    impact: profile.impact,
+    recommended_workflow: profile.workflow,
+    navigation_actions: profile.nav.map(n => ({ label: n.label, view: n.view })),
+  };
+}
 
 function generateAdminCopilotReport(entityType, context) {
   const m = context.metrics || {};
@@ -1068,12 +1206,55 @@ function generateAdminCopilotReport(entityType, context) {
       actions.push(copilotAction('REQUEST_VERIFICATION', 'Yêu cầu xác minh danh tính', 'Điểm rủi ro cao'));
     }
 
-  } else { // PAGE
-    if (m.open_disputes > 0) { findings.push(`${m.open_disputes} khiếu nại đang mở.`); evidence.push({ label: 'Khiếu nại mở', value: m.open_disputes }); if (m.open_disputes >= 5) score += 1; }
-    if (m.appealed_ai_cases > 0) { findings.push(`${m.appealed_ai_cases} kháng cáo AI chờ xem xét.`); evidence.push({ label: 'Kháng cáo AI', value: m.appealed_ai_cases }); score += 1; }
-    if (m.pending_tutors > 0) { findings.push(`${m.pending_tutors} hồ sơ gia sư chờ duyệt.`); evidence.push({ label: 'Hồ sơ chờ duyệt', value: m.pending_tutors }); }
-    if (m.failed_tx_24h >= 5) { findings.push(`${m.failed_tx_24h} giao dịch thất bại trong 24 giờ.`); score += 1; }
-    actions.push(copilotAction('MANUAL_REVIEW', 'Xử lý các mục đang chờ', 'Có mục cần admin xử lý'));
+  } else { // PAGE — module-scoped analysis (Batch 39)
+    const mod = context.module || 'dashboard';
+    if (mod === 'complaints') {
+      if (m.open_complaints > 0) { findings.push(`${m.open_complaints} khiếu nại đang mở.`); evidence.push({ label: 'Khiếu nại mở', value: m.open_complaints }); if (m.open_complaints >= 5) score += 1; }
+      if (m.awaiting_admin > 0) { findings.push(`${m.awaiting_admin} khiếu nại đang chờ admin phản hồi.`); evidence.push({ label: 'Chờ admin', value: m.awaiting_admin }); if (m.awaiting_admin >= 3) score += 1; }
+      if (m.stale_open > 0) { findings.push(`${m.stale_open} khiếu nại mở quá 3 ngày chưa xử lý.`); evidence.push({ label: 'Tồn đọng > 3 ngày', value: m.stale_open }); score += 1; }
+      if (m.avg_resolution_hours > 0) evidence.push({ label: 'Thời gian giải quyết TB', value: `${m.avg_resolution_hours} giờ` });
+      if (m.resolved_7d > 0) evidence.push({ label: 'Đã giải quyết (7 ngày)', value: m.resolved_7d });
+      actions.push(copilotAction('MANUAL_REVIEW', 'Xử lý khiếu nại tồn đọng', 'Có khiếu nại chờ admin'));
+    } else if (mod === 'disputes') {
+      if (m.open_disputes > 0) { findings.push(`${m.open_disputes} tranh chấp đang mở.`); evidence.push({ label: 'Tranh chấp mở', value: m.open_disputes }); if (m.open_disputes >= 5) score += 1; }
+      if (m.high_severity_open > 0) { findings.push(`${m.high_severity_open} tranh chấp mở ở mức nghiêm trọng cao.`); evidence.push({ label: 'Nghiêm trọng cao', value: m.high_severity_open }); score += 2; }
+      if (m.awaiting_tutor > 0) { findings.push(`${m.awaiting_tutor} tranh chấp chờ gia sư phản hồi.`); evidence.push({ label: 'Chờ gia sư', value: m.awaiting_tutor }); }
+      if (m.refund_resolved_30d > 0) evidence.push({ label: 'Hoàn tiền (30 ngày)', value: m.refund_resolved_30d });
+      actions.push(copilotAction('MANUAL_REVIEW', 'Xử lý tranh chấp đang mở', 'Có tranh chấp giữ escrow'));
+    } else if (mod === 'reconciliation') {
+      if (m.critical_mismatches > 0) { findings.push(`${m.critical_mismatches} chênh lệch nghiêm trọng cần điều tra.`); evidence.push({ label: 'Chênh lệch nghiêm trọng', value: m.critical_mismatches }); score += 2; }
+      if (m.open_investigations > 0) { findings.push(`${m.open_investigations} cuộc điều tra đối soát đang mở.`); evidence.push({ label: 'Điều tra đang mở', value: m.open_investigations }); score += 1; }
+      if (m.recent_runs_7d > 0) evidence.push({ label: 'Lần đối soát (7 ngày)', value: m.recent_runs_7d });
+      else { findings.push('Chưa có lần đối soát nào trong 7 ngày gần đây.'); limitations.push('Nên chạy đối soát định kỳ để phát hiện chênh lệch sớm.'); }
+      actions.push(copilotAction('MANUAL_REVIEW', 'Điều tra chênh lệch', 'Có chênh lệch tài chính'));
+    } else if (mod === 'fraud') {
+      if (m.high_risk_alerts > 0) { findings.push(`${m.high_risk_alerts} cảnh báo rủi ro cao (người dùng có từ 2 tranh chấp trở lên).`); evidence.push({ label: 'Cảnh báo rủi ro cao', value: m.high_risk_alerts }); score += 2; }
+      if (m.open_alerts > 0) { findings.push(`${m.open_alerts} người dùng đang bị gắn cờ theo dõi.`); evidence.push({ label: 'Tổng cảnh báo', value: m.open_alerts }); }
+      if (m.pending_investigations > 0) { findings.push(`${m.pending_investigations} cuộc điều tra gian lận chưa kết thúc.`); evidence.push({ label: 'Điều tra chưa xong', value: m.pending_investigations }); score += 1; }
+      if (m.blocked_users > 0) evidence.push({ label: 'Tài khoản đã khoá', value: m.blocked_users });
+      actions.push(copilotAction('MANUAL_REVIEW', 'Xử lý cảnh báo rủi ro cao', 'Có cảnh báo gian lận'));
+    } else if (mod === 'tutor-approval') {
+      if (m.pending_tutors > 0) { findings.push(`${m.pending_tutors} hồ sơ gia sư đang chờ duyệt.`); evidence.push({ label: 'Chờ duyệt', value: m.pending_tutors }); if (m.pending_tutors >= 10) score += 1; }
+      if (m.rejected_total > 0) evidence.push({ label: 'Đã từ chối (tổng)', value: m.rejected_total });
+      if (m.approved_total > 0) evidence.push({ label: 'Đã duyệt (tổng)', value: m.approved_total });
+      actions.push(copilotAction('MANUAL_REVIEW', 'Duyệt hồ sơ tồn đọng', 'Có hồ sơ chờ duyệt'));
+    } else if (mod === 'wallet') {
+      if (m.pending_withdrawals > 0) { findings.push(`${m.pending_withdrawals} yêu cầu rút tiền đang chờ duyệt.`); evidence.push({ label: 'Rút tiền chờ duyệt', value: m.pending_withdrawals }); if (m.pending_withdrawals >= 5) score += 1; }
+      if (m.pending_deposits > 0) { findings.push(`${m.pending_deposits} yêu cầu nạp tiền đang chờ duyệt.`); evidence.push({ label: 'Nạp tiền chờ duyệt', value: m.pending_deposits }); }
+      if (m.approved_unpaid > 0) { findings.push(`${m.approved_unpaid} yêu cầu rút đã duyệt chưa chi trả.`); evidence.push({ label: 'Đã duyệt chưa chi', value: m.approved_unpaid }); }
+      actions.push(copilotAction('MANUAL_REVIEW', 'Xử lý yêu cầu ví tồn đọng', 'Có yêu cầu nạp/rút chờ'));
+    } else if (mod === 'users') {
+      if (m.banned_users > 0) { findings.push(`${m.banned_users} tài khoản đang bị khoá.`); evidence.push({ label: 'Tài khoản khoá', value: m.banned_users }); }
+      if (m.new_users_7d > 0) evidence.push({ label: 'Người dùng mới (7 ngày)', value: m.new_users_7d });
+      if (m.total_users > 0) evidence.push({ label: 'Tổng người dùng', value: m.total_users });
+      actions.push(copilotAction('MANUAL_REVIEW', 'Rà soát người dùng rủi ro', 'Có tài khoản cần kiểm tra'));
+    } else {
+      if (m.open_disputes > 0) { findings.push(`${m.open_disputes} khiếu nại đang mở.`); evidence.push({ label: 'Khiếu nại mở', value: m.open_disputes }); if (m.open_disputes >= 5) score += 1; }
+      if (m.appealed_ai_cases > 0) { findings.push(`${m.appealed_ai_cases} kháng cáo AI chờ xem xét.`); evidence.push({ label: 'Kháng cáo AI', value: m.appealed_ai_cases }); score += 1; }
+      if (m.pending_tutors > 0) { findings.push(`${m.pending_tutors} hồ sơ gia sư chờ duyệt.`); evidence.push({ label: 'Hồ sơ chờ duyệt', value: m.pending_tutors }); }
+      if (m.failed_tx_24h >= 5) { findings.push(`${m.failed_tx_24h} giao dịch thất bại trong 24 giờ.`); score += 1; }
+      actions.push(copilotAction('MANUAL_REVIEW', 'Xử lý các mục đang chờ', 'Có mục cần admin xử lý'));
+    }
   }
 
   if (findings.length === 0) { findings.push('Không phát hiện dấu hiệu bất thường đáng kể.'); actions.length = 0; actions.push(copilotAction('NO_ACTION', 'Không cần hành động', 'Không có tín hiệu rủi ro')); }
@@ -1128,6 +1309,7 @@ function generateAdminCopilotReport(entityType, context) {
     summary, confidence, risk_level,
     key_findings: findings, evidence, recommendations,
     suggested_admin_actions: actions, limitations, model_used: 'RULE_BASED',
+    ...buildCopilotOpsExtras(entityType, context),
   };
 }
 
@@ -10978,7 +11160,7 @@ app.get('/api/admin/course-complaints', verifyToken, requireAdmin, async (req, r
     const { rows } = await pool.query(
       `SELECT cc.id, LPAD(cc.complaint_number::text,6,'0') AS ticket_number,
               cc.title, cc.category, cc.status, cc.resolution_request, cc.created_at, cc.updated_at,
-              u.full_name AS student_name, u.email AS student_email,
+              cc.student_id, u.full_name AS student_name, u.email AS student_email,
               c.title AS course_title
        FROM course_complaints cc
        JOIN users u ON cc.student_id=u.id
@@ -15017,6 +15199,28 @@ app.post('/api/my/ai-case-feedback/:id/appeal', verifyToken, async (req, res) =>
 // ═══ Admin AI Copilot endpoints (Batch 26 — advisory only) ══════════════════
 
 // POST /api/admin/copilot/analyze — context-aware advisory analysis.
+// Batch 39: pick a focus entity out of a module's lightweight pageContext, in
+// priority order. Only keys that map to an EXISTING collector are honored
+// (course-complaint ids have no collector, so a complaints page still falls back
+// to its module summary + the booking/tutor/student it references).
+function resolvePageFocus(pageContext) {
+  if (!pageContext || typeof pageContext !== 'object') return null;
+  const pick = v => (v != null && String(v).trim() !== '') ? String(v).trim() : null;
+  const alertId = pick(pageContext.alertId);
+  const disputeId = pick(pageContext.disputeId);
+  const bookingId = pick(pageContext.bookingId);
+  const transactionId = pick(pageContext.transactionId || pageContext.selectedTransaction);
+  const tutorId = pick(pageContext.tutorId);
+  const studentId = pick(pageContext.studentId);
+  if (alertId) return { type: 'FRAUD_ALERT', id: alertId };
+  if (disputeId) return { type: 'DISPUTE', id: disputeId };
+  if (bookingId) return { type: 'BOOKING', id: bookingId };
+  if (transactionId) return { type: 'TRANSACTION', id: transactionId };
+  if (tutorId) return { type: 'TUTOR', id: tutorId };
+  if (studentId) return { type: 'STUDENT', id: studentId };
+  return null;
+}
+
 app.post('/api/admin/copilot/analyze', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { entityType, entityId, pageKey, pageContext } = req.body || {};
@@ -15025,16 +15229,40 @@ app.post('/api/admin/copilot/analyze', verifyToken, requireAdmin, async (req, re
     if (!allowed.includes(type)) return res.status(400).json({ message: 'entityType không hợp lệ.' });
     if (type !== 'PAGE' && !entityId) return res.status(400).json({ message: 'Thiếu entityId cho loại đối tượng này.' });
 
-    let context;
+    let context, reportType = type;
     if (type === 'TUTOR')            context = await collectTutorCopilotContext(entityId);
     else if (type === 'STUDENT')     context = await collectStudentCopilotContext(entityId);
     else if (type === 'DISPUTE')     context = await collectDisputeCopilotContext(entityId);
     else if (type === 'BOOKING')     context = await collectBookingCopilotContext(entityId);
     else if (type === 'TRANSACTION') context = await collectTransactionCopilotContext(entityId);
     else if (type === 'FRAUD_ALERT') context = await collectFraudAlertCopilotContext(entityId);
-    else                             context = await collectPageCopilotContext(pageKey, pageContext);
+    else {
+      // PAGE — if the module sent a selected entity id, analyze that entity
+      // (Batch 39, PART 3) reusing the existing collectors; otherwise fall back
+      // to the module summary. Either way, tag with the module so the workflow
+      // and navigation reflect the page the admin is on.
+      const focus = resolvePageFocus(pageContext);
+      const collectors = {
+        TUTOR: collectTutorCopilotContext, STUDENT: collectStudentCopilotContext,
+        DISPUTE: collectDisputeCopilotContext, BOOKING: collectBookingCopilotContext,
+        TRANSACTION: collectTransactionCopilotContext, FRAUD_ALERT: collectFraudAlertCopilotContext,
+      };
+      if (focus && collectors[focus.type]) {
+        const focused = await collectors[focus.type](focus.id);
+        if (focused.notes?.includes('NOT_FOUND')) {
+          context = await collectPageCopilotContext(pageKey, pageContext); // graceful fallback
+        } else {
+          context = focused;
+          reportType = focus.type;
+        }
+      } else {
+        context = await collectPageCopilotContext(pageKey, pageContext);
+      }
+      context.module = copilotModuleForPageKey(pageKey);
+      context.page_key = pageKey || null;
+    }
 
-    const report = generateAdminCopilotReport(type, context);
+    const report = generateAdminCopilotReport(reportType, context);
     const llm = await maybeCopilotLLMRewrite(report, context);
     report.summary = llm.summary;
     report.model_used = llm.model_used;
@@ -15050,7 +15278,7 @@ app.post('/api/admin/copilot/analyze', verifyToken, requireAdmin, async (req, re
          VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13::jsonb,$14)
          RETURNING id`,
         [
-          type, entityId ? String(entityId) : null, pageKey || null, report.summary,
+          reportType, context.entity_id != null ? String(context.entity_id) : (entityId ? String(entityId) : null), pageKey || null, report.summary,
           report.confidence, report.risk_level,
           JSON.stringify(report.key_findings), JSON.stringify(report.evidence),
           JSON.stringify(report.recommendations), JSON.stringify(report.suggested_admin_actions),
