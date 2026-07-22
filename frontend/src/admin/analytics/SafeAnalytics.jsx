@@ -61,6 +61,9 @@ function AskPanel({ token }) {
   const [recent, setRecent] = useState([])
   const [isFavorited, setIsFavorited] = useState(false)
   const [pinRefreshKey, setPinRefreshKey] = useState(0)
+  const [context, setContext] = useState(null)
+  const [suggestionPool, setSuggestionPool] = useState([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
   const chartRef = useRef(null)
 
   const loadFavorites = useCallback(() => {
@@ -72,6 +75,16 @@ function AskPanel({ token }) {
       .then(r => (r.ok ? r.json() : Promise.reject(r.status))).then(d => setRecent(d.items || [])).catch(() => {})
   }, [token])
   useEffect(() => { loadFavorites(); loadRecent() }, [loadFavorites, loadRecent])
+  useEffect(() => {
+    fetch(`${API}/api/admin/analytics/templates`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(d => setSuggestionPool([...new Set((d.items || []).flatMap(t => t.exampleQuestions || []))]))
+      .catch(() => {})
+  }, [token])
+
+  const suggestions = question.trim().length >= 2
+    ? suggestionPool.filter(s => s.toLowerCase().includes(question.trim().toLowerCase()) && s.toLowerCase() !== question.trim().toLowerCase()).slice(0, 6)
+    : []
 
   const ask = async (q) => {
     const question0 = (q ?? question).trim()
@@ -84,11 +97,12 @@ function AskPanel({ token }) {
       if (limit !== '') params.limit = Number(limit)
       const r = await fetch(`${API}/api/admin/analytics/ask`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ question: question0, params }),
+        body: JSON.stringify({ question: question0, params, context }),
       })
       const j = await r.json().catch(() => ({}))
       if (!r.ok) { alert(j.message || `Thất bại (${r.status})`); return }
       setResult(j)
+      setContext(j.next_context || null)
       loadRecent()
     } catch { alert('Lỗi kết nối') } finally { setLoading(false) }
   }
@@ -125,7 +139,25 @@ function AskPanel({ token }) {
       <PinnedWidgets token={token} refreshKey={pinRefreshKey} />
       <InsightCards token={token} />
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-        <textarea value={question} onChange={e => setQuestion(e.target.value)} rows={2} placeholder="Nhập câu hỏi về dữ liệu (VD: gia sư nào kiếm nhiều tiền nhất tháng trước?)..." className="w-full border border-gray-200 rounded-lg p-3 text-sm resize-none focus:outline-none focus:border-primary" />
+        <div className="relative">
+          <textarea
+            value={question}
+            onChange={e => setQuestion(e.target.value)}
+            onFocus={() => setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+            rows={2} placeholder="Nhập câu hỏi về dữ liệu (VD: gia sư nào kiếm nhiều tiền nhất tháng trước?)..."
+            className="w-full border border-gray-200 rounded-lg p-3 text-sm resize-none focus:outline-none focus:border-primary"
+          />
+          {showSuggestions && suggestions.length > 0 && (
+            <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+              {suggestions.map((s, i) => (
+                <button key={i} onMouseDown={() => { setQuestion(s); setShowSuggestions(false) }} className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-blue-50 flex items-center gap-2 border-b border-gray-50 last:border-0">
+                  <span className="material-symbols-outlined text-[15px] text-gray-300">search</span>{s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-3 mt-3">
           <label className="text-sm text-gray-600">Số ngày <input type="number" value={days} onChange={e => setDays(e.target.value)} placeholder="Tự động" className="w-24 ml-1 border border-gray-200 rounded-lg px-2 py-1.5 placeholder:text-gray-300" /></label>
           <label className="text-sm text-gray-600">Giới hạn <input type="number" value={limit} onChange={e => setLimit(e.target.value)} placeholder="Tự động" className="w-24 ml-1 border border-gray-200 rounded-lg px-2 py-1.5 placeholder:text-gray-300" /></label>
@@ -193,7 +225,11 @@ function AskPanel({ token }) {
               <p className="mt-2 text-xs text-gray-400">
                 Khoảng thời gian: <b className="text-gray-600">{result.days_label || `${result.params?.days ?? '—'} ngày`}</b> ({SOURCE_LABEL[result.param_sources.days] || result.param_sources.days})
                 {' · '}Giới hạn: <b className="text-gray-600">{result.params?.limit ?? '—'}</b> ({SOURCE_LABEL[result.param_sources.limit] || result.param_sources.limit})
+                {result.subject_filter && <>{' · '}Môn học: <b className="text-gray-600">{result.subject_filter}</b> (tự phát hiện)</>}
               </p>
+            )}
+            {result.context_applied && (
+              <p className="mt-1.5 text-xs text-primary flex items-center gap-1"><span className="material-symbols-outlined text-[13px]">link</span>Đã áp dụng ngữ cảnh từ câu hỏi trước</p>
             )}
             {asArray(result.limitations).length > 0 && <div className="mt-2 text-xs text-amber-600">{asArray(result.limitations).map((l, i) => <div key={i}>• {l}</div>)}</div>}
           </div>

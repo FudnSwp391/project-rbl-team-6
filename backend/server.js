@@ -2136,6 +2136,9 @@ const ADMIN_ANALYTICS_MAX_LIMIT      = Number(process.env.ADMIN_ANALYTICS_MAX_LI
 
 const ANALYTICS_BLOCKED_RE   = /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|copy|execute|exec|merge)\b|;|--|\/\*|\bpg_|information_schema/i;
 const ANALYTICS_SENSITIVE_RE = /(password|mat khau|token|otp|secret|reset|api[ _]?key|private key|raw ip|dia chi ip)/i;
+// Step 6 (conversation memory) — a question phrased this way is read as
+// referring back to the previous answer's rows, not a fresh unrelated query.
+const ANALYTICS_FOLLOWUP_REFERENCE_RE = /trong (so|nhom|nhung nguoi|nhung gia su|nhung hoc sinh) (nay|do)|among (them|those)|\bof (them|those)\b|trong (nhung|so) (nguoi|gia su|hoc sinh|khoa hoc) (nay|do|tren)/;
 
 function stripDiacritics(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
@@ -2168,9 +2171,12 @@ const ANALYTICS_TEMPLATES = [
                  (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=rl.tutor_id AND d.created_at > NOW()-make_interval(days=>$1::int)) AS dispute_count
             FROM refund_logs rl LEFT JOIN users u ON u.id=rl.tutor_id
            WHERE rl.tutor_id IS NOT NULL AND rl.created_at > NOW()-make_interval(days=>$1::int)
+             AND ($3::uuid[] IS NULL OR rl.tutor_id = ANY($3::uuid[]))
+             AND ($4::text IS NULL OR EXISTS (SELECT 1 FROM tutor_profiles tp2 WHERE tp2.user_id=rl.tutor_id AND tp2.subjects ILIKE '%'||$4||'%'))
            GROUP BY rl.tutor_id, u.full_name ORDER BY refund_count DESC, refund_amount DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, gia sư bị hoàn tiền nhiều nhất là ${rows[0].tutor_name || 'N/A'} với ${rows[0].refund_count} lần (${Number(rows[0].refund_amount).toLocaleString('vi-VN')}đ). Tổng ${rows.length} gia sư có hoàn tiền.` : `Không có gia sư nào bị hoàn tiền trong ${p.days} ngày.`,
     followUps: ['Hoàn tiền theo tháng', 'Gia sư nào có rủi ro gian lận cao nhất', 'Khiếu nại theo trạng thái'],
+    entityType: 'tutor', entityIdCol: 'tutor_id', subjectFilterable: true,
   },
   {
     key: 'top_dispute_students_30d', label: 'Top học sinh khiếu nại nhiều nhất', intentCode: 'TOP_COMPLAINTS',
@@ -2183,9 +2189,11 @@ const ANALYTICS_TEMPLATES = [
                  (SELECT COUNT(*)::int FROM refund_logs rl WHERE rl.student_id=d.raised_by AND rl.created_at > NOW()-make_interval(days=>$1::int)) AS refund_count
             FROM disputes d LEFT JOIN users u ON u.id=d.raised_by
            WHERE d.raised_by IS NOT NULL AND d.created_at > NOW()-make_interval(days=>$1::int)
+             AND ($3::uuid[] IS NULL OR d.raised_by = ANY($3::uuid[]))
            GROUP BY d.raised_by, u.full_name ORDER BY dispute_count DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Học sinh mở nhiều khiếu nại nhất trong ${p.days} ngày: ${rows[0].student_name || 'N/A'} (${rows[0].dispute_count} khiếu nại).` : `Không có khiếu nại nào trong ${p.days} ngày.`,
     followUps: ['Khiếu nại theo trạng thái', 'Hoàn tiền theo tháng', 'Gia sư nào có rủi ro gian lận cao nhất'],
+    entityType: 'student', entityIdCol: 'student_id',
   },
   {
     key: 'fraud_high_risk_tutors', label: 'Gia sư rủi ro gian lận cao', intentCode: 'FRAUD_RISK',
@@ -2198,9 +2206,12 @@ const ANALYTICS_TEMPLATES = [
                  MAX(f.risk_score)::numeric AS max_risk_score, (ARRAY_AGG(f.summary ORDER BY f.created_at DESC))[1] AS latest_summary
             FROM fraud_intel_reports f LEFT JOIN users u ON u.id=f.tutor_id
            WHERE f.tutor_id IS NOT NULL AND f.severity IN ('HIGH','CRITICAL') AND f.created_at > NOW()-make_interval(days=>$1::int)
+             AND ($3::uuid[] IS NULL OR f.tutor_id = ANY($3::uuid[]))
+             AND ($4::text IS NULL OR EXISTS (SELECT 1 FROM tutor_profiles tp2 WHERE tp2.user_id=f.tutor_id AND tp2.subjects ILIKE '%'||$4||'%'))
            GROUP BY f.tutor_id, u.full_name ORDER BY max_risk_score DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư bị gắn cờ gian lận cao trong ${p.days} ngày. Cao nhất: ${rows[0].tutor_name || 'N/A'} (điểm ${Math.round(Number(rows[0].max_risk_score))}).` : `Không có báo cáo gian lận mức cao trong ${p.days} ngày.`,
     followUps: ['Báo cáo gian lận critical', 'Gia sư đang chờ rút tiền có rủi ro cao'],
+    entityType: 'tutor', entityIdCol: 'tutor_id', subjectFilterable: true,
   },
   {
     key: 'external_payment_signals', label: 'Dấu hiệu giao dịch ngoài nền tảng', intentCode: 'EXTERNAL_PAYMENT_SIGNALS',
@@ -2214,9 +2225,12 @@ const ANALYTICS_TEMPLATES = [
                  (ARRAY_AGG(s.summary ORDER BY s.created_at DESC))[1] AS latest_summary
             FROM semantic_moderation_reports s LEFT JOIN users u ON u.id=s.tutor_id
            WHERE s.tutor_id IS NOT NULL AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT' AND s.created_at > NOW()-make_interval(days=>$1::int)
+             AND ($3::uuid[] IS NULL OR s.tutor_id = ANY($3::uuid[]))
+             AND ($4::text IS NULL OR EXISTS (SELECT 1 FROM tutor_profiles tp2 WHERE tp2.user_id=s.tutor_id AND tp2.subjects ILIKE '%'||$4||'%'))
            GROUP BY s.tutor_id, u.full_name ORDER BY semantic_report_count DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Phát hiện ${rows.length} người dùng có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.` : `Không có dấu hiệu giao dịch ngoài nền tảng trong ${p.days} ngày.`,
     followUps: ['Gia sư nào có rủi ro gian lận cao nhất', 'Báo cáo gian lận critical'],
+    entityType: 'tutor', entityIdCol: 'user_id', subjectFilterable: true,
   },
   {
     key: 'withdrawal_pending_risk', label: 'Gia sư chờ rút tiền có rủi ro', intentCode: 'WITHDRAWAL_RISK',
@@ -2231,9 +2245,12 @@ const ANALYTICS_TEMPLATES = [
                  (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=w.tutor_id AND s.categories ? 'EXTERNAL_PAYMENT_ATTEMPT') AS external_payment_reports
             FROM withdrawal_requests w LEFT JOIN users u ON u.id=w.tutor_id
            WHERE w.status='PENDING'
+             AND ($3::uuid[] IS NULL OR w.tutor_id = ANY($3::uuid[]))
+             AND ($4::text IS NULL OR EXISTS (SELECT 1 FROM tutor_profiles tp2 WHERE tp2.user_id=w.tutor_id AND tp2.subjects ILIKE '%'||$4||'%'))
            GROUP BY w.tutor_id, u.full_name ORDER BY pending_amount DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư đang chờ rút tiền; ưu tiên rà soát: ${rows[0].tutor_name || 'N/A'} (${Number(rows[0].pending_amount).toLocaleString('vi-VN')}đ, ${rows[0].active_disputes} khiếu nại mở).` : `Không có yêu cầu rút tiền đang chờ.`,
     followUps: ['Gia sư nào có rủi ro gian lận cao nhất', 'Ai có dấu hiệu giao dịch ngoài nền tảng'],
+    entityType: 'tutor', entityIdCol: 'tutor_id', subjectFilterable: true,
   },
   {
     key: 'monthly_revenue_summary', label: 'Doanh thu theo tháng', intentCode: 'REVENUE_TREND',
@@ -2331,9 +2348,12 @@ const ANALYTICS_TEMPLATES = [
            WHERE tp.status='approved' AND (
                  (SELECT COUNT(*) FROM semantic_moderation_reports s WHERE s.tutor_id=tp.user_id AND s.categories ? 'LOW_TEACHING_QUALITY' AND s.created_at > NOW()-make_interval(days=>$1::int)) > 0
               OR (SELECT COUNT(*) FROM disputes d WHERE d.tutor_id=tp.user_id AND d.created_at > NOW()-make_interval(days=>$1::int)) >= 2)
+             AND ($3::uuid[] IS NULL OR tp.user_id = ANY($3::uuid[]))
+             AND ($4::text IS NULL OR tp.subjects ILIKE '%'||$4||'%')
            ORDER BY dispute_count DESC, low_teaching_reports DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Có ${rows.length} gia sư có dấu hiệu giảm chất lượng trong ${p.days} ngày.` : `Không phát hiện gia sư giảm chất lượng rõ rệt trong ${p.days} ngày.`,
     followUps: ['Học sinh nào khiếu nại nhiều nhất', 'Top gia sư có nhiều refund nhất 30 ngày'],
+    entityType: 'tutor', entityIdCol: 'tutor_id', subjectFilterable: true,
   },
   {
     key: 'top_tutor_revenue', label: 'Top gia sư theo doanh thu', intentCode: 'TOP_TUTOR_REVENUE',
@@ -2346,9 +2366,79 @@ const ANALYTICS_TEMPLATES = [
                  COUNT(*)::int AS transaction_count
             FROM commission_logs cl LEFT JOIN users u ON u.id=cl.tutor_id
            WHERE cl.event_type='EARNED' AND cl.tutor_id IS NOT NULL AND cl.created_at > NOW()-make_interval(days=>$1::int)
+             AND ($3::uuid[] IS NULL OR cl.tutor_id = ANY($3::uuid[]))
+             AND ($4::text IS NULL OR EXISTS (SELECT 1 FROM tutor_profiles tp2 WHERE tp2.user_id=cl.tutor_id AND tp2.subjects ILIKE '%'||$4||'%'))
            GROUP BY cl.tutor_id, u.full_name ORDER BY tutor_revenue DESC LIMIT $2`,
     summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, gia sư có doanh thu cao nhất là ${rows[0].tutor_name || 'N/A'} với ${Number(rows[0].tutor_revenue).toLocaleString('vi-VN')}đ (${rows[0].transaction_count} giao dịch). Tổng ${rows.length} gia sư có doanh thu.` : `Không có gia sư nào có doanh thu trong ${p.days} ngày.`,
     followUps: ['Doanh thu theo tháng', 'Top gia sư có nhiều refund nhất 30 ngày'],
+    entityType: 'tutor', entityIdCol: 'tutor_id', subjectFilterable: true,
+  },
+  {
+    key: 'top_courses', label: 'Top khóa học', intentCode: 'TOP_COURSES',
+    description: 'Xếp hạng khóa học theo số lượt ghi danh và doanh thu trong N ngày.',
+    exampleQuestions: ['Top khóa học', 'Khóa học nào bán chạy nhất', 'Top courses by enrollment', 'Best selling courses this month'],
+    keywords: [['khoa hoc', 2], ['course', 2], ['courses', 2], ['ban chay', 3], ['best selling', 3], ['ghi danh', 2], ['enrollment', 2], ['enrollments', 2], ['top', 1], ['nhieu nhat', 1], ['cao nhat', 1]],
+    requiredTables: ['courses', 'course_enrollments'], chartType: 'leaderboard', labelKey: 'course_title', valueKey: 'enrollment_count',
+    columns: ['course_id', 'course_title', 'subject', 'enrollment_count', 'course_revenue'],
+    sql: `SELECT c.id AS course_id, c.title AS course_title, c.subject,
+                 COUNT(ce.id)::int AS enrollment_count,
+                 COALESCE(SUM(cl.gross_amount),0)::numeric AS course_revenue
+            FROM courses c
+            LEFT JOIN course_enrollments ce ON ce.course_id=c.id AND ce.status='active' AND ce.purchased_at > NOW()-make_interval(days=>$1::int)
+            LEFT JOIN commission_logs cl ON cl.course_id=c.id AND cl.event_type='EARNED' AND cl.created_at > NOW()-make_interval(days=>$1::int)
+           WHERE c.status='published'
+             AND ($3::uuid[] IS NULL OR c.id = ANY($3::uuid[]))
+             AND ($4::text IS NULL OR c.subject ILIKE '%'||$4||'%')
+           GROUP BY c.id, c.title, c.subject
+          HAVING COUNT(ce.id) > 0
+           ORDER BY enrollment_count DESC, course_revenue DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, khóa học bán chạy nhất là "${rows[0].course_title}" với ${rows[0].enrollment_count} lượt ghi danh (${Number(rows[0].course_revenue).toLocaleString('vi-VN')}đ). Tổng ${rows.length} khóa học có ghi danh.` : `Không có khóa học nào có ghi danh mới trong ${p.days} ngày.`,
+    followUps: ['Doanh thu theo tháng', 'Top gia sư theo doanh thu'],
+    entityType: 'course', entityIdCol: 'course_id', subjectFilterable: true,
+  },
+  {
+    key: 'top_students', label: 'Top học sinh chi tiêu nhiều nhất', intentCode: 'TOP_STUDENTS',
+    description: 'Xếp hạng học sinh theo tổng chi tiêu ghi nhận trong N ngày (không phải theo khiếu nại).',
+    exampleQuestions: ['Top học sinh chi tiêu nhiều nhất', 'Học sinh nào active nhất', 'Top spending students', 'Best students by purchase'],
+    keywords: [['chi tieu', 3], ['spend', 3], ['spending', 3], ['mua nhieu', 2], ['purchase', 2], ['hoc sinh', 1], ['student', 1], ['students', 1], ['tich cuc nhat', 2], ['most active', 2], ['active nhat', 2], ['best student', 2], ['top hoc sinh', 2], ['nhieu nhat', 1], ['top', 1]],
+    requiredTables: ['commission_logs', 'users'], chartType: 'leaderboard', labelKey: 'student_name', valueKey: 'total_spend',
+    columns: ['student_id', 'student_name', 'transaction_count', 'total_spend'],
+    sql: `SELECT cl.student_id, u.full_name AS student_name, COUNT(*)::int AS transaction_count,
+                 COALESCE(SUM(cl.gross_amount),0)::numeric AS total_spend
+            FROM commission_logs cl LEFT JOIN users u ON u.id=cl.student_id
+           WHERE cl.event_type='EARNED' AND cl.student_id IS NOT NULL AND cl.created_at > NOW()-make_interval(days=>$1::int)
+             AND ($3::uuid[] IS NULL OR cl.student_id = ANY($3::uuid[]))
+           GROUP BY cl.student_id, u.full_name ORDER BY total_spend DESC LIMIT $2`,
+    summarize: (rows, p) => rows.length ? `Trong ${p.days} ngày, học sinh chi tiêu nhiều nhất là ${rows[0].student_name || 'N/A'} với ${Number(rows[0].total_spend).toLocaleString('vi-VN')}đ (${rows[0].transaction_count} giao dịch).` : `Không có học sinh nào phát sinh chi tiêu trong ${p.days} ngày.`,
+    followUps: ['Học sinh nào khiếu nại nhiều nhất', 'Top khóa học'],
+    entityType: 'student', entityIdCol: 'student_id',
+  },
+  {
+    key: 'course_growth', label: 'Tăng trưởng khóa học theo tháng', intentCode: 'COURSE_GROWTH',
+    description: 'Số lượt ghi danh mới theo tháng — theo dõi khóa học đang tăng hay giảm học sinh.',
+    exampleQuestions: ['Tăng trưởng khóa học', 'Course growth', 'Khóa học có đang tăng trưởng không', 'Course enrollment growth by month'],
+    keywords: [['tang truong', 3], ['growth', 3], ['ghi danh', 2], ['enrollment', 2], ['enrollments', 2], ['khoa hoc', 1], ['course', 1], ['courses', 1], ['theo thang', 2], ['by month', 2], ['xu huong', 1], ['trend', 1]],
+    requiredTables: ['course_enrollments'], chartType: 'line', labelKey: 'month', valueKey: 'new_enrollments',
+    columns: ['month', 'new_enrollments'],
+    sql: `SELECT to_char(date_trunc('month', purchased_at),'YYYY-MM') AS month, COUNT(*)::int AS new_enrollments
+            FROM course_enrollments WHERE status='active' AND purchased_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
+    summarize: (rows) => rows.length ? `Ghi danh khóa học theo ${rows.length} tháng gần nhất. Tháng mới nhất (${rows[0].month}): ${rows[0].new_enrollments} lượt ghi danh mới.` : `Chưa có dữ liệu ghi danh khóa học.`,
+    followUps: ['Top khóa học', 'Doanh thu theo tháng'],
+  },
+  {
+    key: 'transaction_volume', label: 'Khối lượng giao dịch theo tháng', intentCode: 'TRANSACTION_VOLUME',
+    description: 'Số lượng và tổng giá trị giao dịch (transactions) theo tháng.',
+    exampleQuestions: ['Khối lượng giao dịch', 'Transaction volume', 'Số lượng giao dịch theo tháng', 'Transaction volume by month'],
+    keywords: [['khoi luong giao dich', 3], ['transaction volume', 3], ['giao dich', 2], ['transaction', 2], ['transactions', 2], ['so luong', 1], ['volume', 2], ['theo thang', 2], ['by month', 2]],
+    requiredTables: ['transactions'], chartType: 'line', labelKey: 'month', valueKey: 'transaction_volume',
+    columns: ['month', 'transaction_count', 'transaction_volume'],
+    sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month, COUNT(*)::int AS transaction_count,
+                 COALESCE(SUM(ABS(amount)),0)::numeric AS transaction_volume
+            FROM transactions WHERE created_at > NOW()-make_interval(days=>$1::int)
+           GROUP BY 1 ORDER BY 1 DESC LIMIT $2`,
+    summarize: (rows) => rows.length ? `Giao dịch theo ${rows.length} tháng gần nhất. Tháng mới nhất (${rows[0].month}): ${rows[0].transaction_count} giao dịch, tổng ${Number(rows[0].transaction_volume).toLocaleString('vi-VN')}đ.` : `Chưa có dữ liệu giao dịch.`,
+    followUps: ['Doanh thu theo tháng', 'Hoàn tiền theo tháng'],
   },
 ];
 const ANALYTICS_TEMPLATE_MAP = Object.fromEntries(ANALYTICS_TEMPLATES.map(t => [t.key, t]));
@@ -2486,11 +2576,32 @@ function extractAnalyticsLimit(qNorm) {
   const n = parseInt(m[1], 10);
   return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(ADMIN_ANALYTICS_MAX_LIMIT, n)) : null;
 }
+// Subject mention (rest of Step 5) — mirrors the platform's own canonical
+// subject list (CANONICAL_SUBJECTS / SUBJECT_NORM_MAP, Batch 32) so a filter
+// hit here means the same "Toán"/"Vật lý"/... the rest of the admin UI uses,
+// just matched against the diacritic-stripped analytics normalizer.
+const ANALYTICS_SUBJECT_PATTERNS = [
+  { re: /\btoan\b|\bmath\b|\bmaths\b|\bmathematics\b/, name: 'Toán' },
+  { re: /\btieng viet\b|\bvietnamese\b/, name: 'Tiếng Việt' },
+  { re: /\bngu van\b|\bvan hoc\b|\bliterature\b/, name: 'Ngữ văn' },
+  { re: /\btieng anh\b|\benglish\b/, name: 'Tiếng Anh' },
+  { re: /\bvat ly\b|\bphysics\b/, name: 'Vật lý' },
+  { re: /\bhoa hoc\b|\bchemistry\b/, name: 'Hóa học' },
+  { re: /\bsinh hoc\b|\bbiology\b/, name: 'Sinh học' },
+  { re: /\blich su\b|\bhistory\b/, name: 'Lịch sử' },
+  { re: /\bdia ly\b|\bgeography\b/, name: 'Địa lý' },
+  { re: /\btin hoc\b|\binformatics\b|\bcomputer science\b/, name: 'Tin học' },
+];
+function extractAnalyticsSubject(qNorm) {
+  for (const p of ANALYTICS_SUBJECT_PATTERNS) if (p.re.test(qNorm)) return p.name;
+  return null;
+}
 function extractAnalyticsParameters(question) {
   const qNorm = normalizeAnalyticsQuestion(question);
   const period = extractAnalyticsPeriod(qNorm);
   const limit = extractAnalyticsLimit(qNorm);
-  return { days: period ? period.days : null, days_label: period ? period.label : null, limit };
+  const subject = extractAnalyticsSubject(qNorm);
+  return { days: period ? period.days : null, days_label: period ? period.label : null, limit, subject };
 }
 
 function clampAnalyticsParams(params = {}) {
@@ -2696,6 +2807,18 @@ async function withAnalyticsCache(key, ttlMs, fn) {
 }
 
 // Run a vetted template with a transaction-scoped statement_timeout (read-only).
+// entityIds: conversation-memory follow-up filter (Step 6) — only meaningful
+// when the caller already confirmed context.entityType === t.entityType.
+// subject: NL-extracted canonical subject name (rest of Step 5). Both are
+// optional and only ever appended to the SQL params array when the matched
+// template actually declares support (entityIdCol / subjectFilterable) —
+// Postgres errors if you bind more parameters than a query references, so
+// the array length must exactly match what each template's SQL expects.
+function clampAnalyticsEntityIds(entityIds) {
+  if (!Array.isArray(entityIds) || !entityIds.length) return null;
+  const clean = entityIds.filter(id => typeof id === 'string' && SEM_UUID_RE.test(id)).slice(0, 100);
+  return clean.length ? clean : null;
+}
 async function runAnalyticsTemplate(templateKey, params, adminId) {
   const t = getAnalyticsTemplate(templateKey);
   if (!t) return { status: 'NO_MATCH', limitations: ['TEMPLATE_NOT_FOUND'] };
@@ -2703,20 +2826,25 @@ async function runAnalyticsTemplate(templateKey, params, adminId) {
   if (!v.ok) return { status: 'BLOCKED', limitations: [v.reason], safety_flags: ['TEMPLATE_VALIDATION_FAILED'] };
 
   const { days, limit } = clampAnalyticsParams(params);
+  const entityIds = t.entityIdCol ? clampAnalyticsEntityIds(params.entityIds) : null;
+  const subject = t.subjectFilterable && params.subject ? String(params.subject).slice(0, 60) : null;
   const limitations = [];
   for (const tbl of t.requiredTables) { if (!(await fraudTableExists(tbl))) limitations.push(`TABLE_NOT_FOUND:${tbl}`); }
-  const explain = { data_sources: t.requiredTables, follow_up_questions: t.followUps || [] };
+  const explain = { data_sources: t.requiredTables, follow_up_questions: t.followUps || [], entity_filter_applied: !!entityIds, subject_filter_applied: subject || null };
   if (limitations.length) {
     return { status: 'SUCCESS', template_key: t.key, columns: t.columns, rows: [], chart: {}, summary: 'Không đủ dữ liệu: một số bảng chưa sẵn sàng.', insights: [], risk_level: 'LOW', risk_reason: 'Không đủ dữ liệu để đánh giá.', limitations, sql_preview: t.sql, params: { days, limit }, ...explain };
   }
 
-  const cacheKey = `tpl:${t.key}:${days}:${limit}`;
+  const sqlParams = [days, limit];
+  if (t.entityIdCol) sqlParams.push(entityIds);
+  if (t.subjectFilterable) sqlParams.push(subject);
+  const cacheKey = `tpl:${t.key}:${days}:${limit}:${(entityIds || []).join(',')}:${subject || ''}`;
   return withAnalyticsCache(cacheKey, ADMIN_ANALYTICS_CACHE_TTL_MS, async () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       await client.query('SET LOCAL statement_timeout = 8000');
-      const r = await client.query(t.sql, [days, limit]);
+      const r = await client.query(t.sql, sqlParams);
       await client.query('COMMIT');
       const rows = r.rows.map(maskAnalyticsRow);
       const insights = buildAnalyticsInsights(t, rows);
@@ -17797,9 +17925,11 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
       const auditId = await saveAnalyticsAuditLog({ question, normalized_question: normalized, status: 'NO_MATCH', summary: 'Không có mẫu phân tích phù hợp.', model_used: modelUsed, created_by: req.user.id });
       return res.json({ status: 'NO_MATCH', intent: null, intent_code: null, confidence: 0, summary: 'Hiện hệ thống chưa hỗ trợ câu hỏi này ở chế độ an toàn.', columns: [], rows: [], chart: {}, limitations: [], safety_flags: [], sql_preview: null, audit_id: auditId, suggestions: listAnalyticsTemplates().map(t => t.exampleQuestions[0]) });
     }
+    const matchedTemplate = getAnalyticsTemplate(intent.key);
 
-    // Parameter extraction (Step 5): NL-extracted time period/limit fill in
-    // whatever the admin left blank in the form; explicit form values win.
+    // Parameter extraction (Step 5): NL-extracted time period/limit/subject
+    // fill in whatever the admin left blank in the form; explicit form
+    // values win for days/limit (there's no manual subject field).
     const extracted = extractAnalyticsParameters(question);
     const userDays = (params.days !== undefined && params.days !== null && params.days !== '') ? parseInt(params.days, 10) : null;
     const userLimit = (params.limit !== undefined && params.limit !== null && params.limit !== '') ? parseInt(params.limit, 10) : null;
@@ -17807,13 +17937,31 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
       days: Number.isFinite(userDays) ? 'manual' : (extracted.days != null ? 'nlp' : 'default'),
       limit: Number.isFinite(userLimit) ? 'manual' : (extracted.limit != null ? 'nlp' : 'default'),
     };
+
+    // Conversation memory (Step 6): only applies the previous turn's row IDs
+    // as a filter when the question itself reads as a follow-up reference
+    // ("trong số đó" / "among them" / "of those") AND the entity type
+    // matches (a tutor-id filter is meaningless on a student-scoped
+    // template) — matching entity type alone is not enough, since a fresh
+    // unrelated question ("gia sư nào có refund nhiều nhất") could easily
+    // reuse the same entity type as the prior turn by coincidence.
+    const context = req.body?.context && typeof req.body.context === 'object' ? req.body.context : null;
+    const isFollowUpReference = ANALYTICS_FOLLOWUP_REFERENCE_RE.test(normalized);
+    const contextApplies = !!(isFollowUpReference && context?.entityType && matchedTemplate?.entityType === context.entityType
+      && Array.isArray(context.entityIds) && context.entityIds.length);
+
     const mergedParams = {
       days: Number.isFinite(userDays) ? userDays : (extracted.days ?? undefined),
       limit: Number.isFinite(userLimit) ? userLimit : (extracted.limit ?? undefined),
+      subject: extracted.subject || undefined,
+      entityIds: contextApplies ? context.entityIds : undefined,
     };
 
     const result = await runAnalyticsTemplate(intent.key, mergedParams, req.user.id);
-    const extractedMeta = { days_label: extracted.days_label, param_sources: paramSources };
+    const nextContext = (matchedTemplate?.entityType && matchedTemplate?.entityIdCol && result.status === 'SUCCESS')
+      ? { entityType: matchedTemplate.entityType, entityIds: [...new Set((result.rows || []).map(r => r[matchedTemplate.entityIdCol]).filter(Boolean))] }
+      : null;
+    const extractedMeta = { days_label: extracted.days_label, param_sources: paramSources, subject: extracted.subject, context_applied: contextApplies };
     const auditId = await saveAnalyticsAuditLog({
       question, normalized_question: normalized, detected_intent: intent.key, template_key: intent.key,
       status: result.status, summary: result.summary, sql_preview: result.sql_preview, parameters: result.params,
@@ -17833,6 +17981,7 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
       model_used: modelUsed, audit_id: auditId, params: result.params, param_sources: paramSources, days_label: extracted.days_label,
       data_sources: result.data_sources || [], rows_analyzed: (result.rows || []).length, generated_at: new Date().toISOString(),
       cached: !!result.served_from_cache,
+      subject_filter: extracted.subject || null, context_applied: contextApplies, next_context: nextContext,
     });
   } catch (err) {
     console.error('POST /api/admin/analytics/ask error:', err.message);

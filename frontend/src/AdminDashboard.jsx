@@ -32,6 +32,7 @@ const Moderation = lazy(() => import('./admin/services/Moderation'))
 const SemanticModeration = lazy(() => import('./admin/semantic/SemanticModeration'))
 const FraudIntel = lazy(() => import('./admin/fraud/FraudIntel'))
 const SafeAnalytics = lazy(() => import('./admin/analytics/SafeAnalytics'))
+const PinnedWidgets = lazy(() => import('./admin/analytics/PinnedWidgets'))
 const SubjectsView = lazy(() => import('./admin/subjects/SubjectsView'))
 import { subjectMeta as sharedSubjectMeta } from './admin/subjects/subjectMeta'
 import { uploadCourseThumbnail } from './services/upload'
@@ -492,6 +493,7 @@ export default function AdminDashboard() {
               loading={loading}
               onNavigate={setActiveView}
               displayName={displayName}
+              token={token}
               kpiStats={kpiStats}
               kpiLoading={kpiLoading}
               kpiError={kpiError}
@@ -679,7 +681,7 @@ const fmtCompact = (n) => {
 }
 
 function DashboardView({
-  stats, loading, onNavigate, displayName = 'Admin',
+  stats, loading, onNavigate, displayName = 'Admin', token,
   kpiStats, kpiLoading, kpiError, onRefreshKpi,
   chartData, chartLoading, chartError, chartRange, onRangeChange, onRefreshChart,
 }) {
@@ -996,6 +998,12 @@ function DashboardView({
             </div>
           </button>
         ))}
+      </div>
+
+      <div className="mt-8">
+        <Suspense fallback={null}>
+          <PinnedWidgets token={token} />
+        </Suspense>
       </div>
     </div>
   )
