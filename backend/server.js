@@ -5394,6 +5394,7 @@ app.get("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
       price:      parseInt(row.price) || 0,
       premium:    (parseInt(row.price) || 0) > 0,
       status:     STATUS_VI[row.status] || 'Bản nháp',
+      status_raw: row.status || 'draft',
       desc:       row.desc,
       rating:     row.rating ? parseFloat(row.rating) : 0,
       students:   parseInt(row.students) || 0,
@@ -5408,6 +5409,83 @@ app.get("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("GET /api/admin/courses error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy danh sách khóa học." });
+  }
+});
+
+// ── PATCH /api/admin/courses/:id — edit fields and/or change status ──────────
+// Same courses.status vocabulary the tutor-facing endpoints use (courses_status_check).
+// Used for both the edit form (title/description/price/subject) and the
+// archive/hide row actions (status only) — partial update, only sent fields change.
+const ADMIN_COURSE_STATUSES = new Set(['draft', 'pending_review', 'published', 'rejected', 'archived']);
+app.patch("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { title, description, price, subject, status } = req.body || {};
+    const sets = [], params = [];
+    if (title !== undefined)       { params.push(String(title).trim());  sets.push(`title = $${params.length}`); }
+    if (description !== undefined) { params.push(String(description));   sets.push(`description = $${params.length}`); }
+    if (subject !== undefined)     { params.push(String(subject).trim());sets.push(`subject = $${params.length}`); }
+    if (price !== undefined) {
+      const p = Number(price);
+      if (!Number.isFinite(p) || p < 0) return res.status(400).json({ message: "Giá không hợp lệ." });
+      params.push(p); sets.push(`price = $${params.length}`);
+    }
+    if (status !== undefined) {
+      if (!ADMIN_COURSE_STATUSES.has(status)) return res.status(400).json({ message: "Trạng thái không hợp lệ." });
+      params.push(status); sets.push(`status = $${params.length}`);
+    }
+    if (sets.length === 0) return res.status(400).json({ message: "Không có trường nào để cập nhật." });
+    sets.push(`updated_at = NOW()`);
+    params.push(req.params.id);
+    const result = await pool.query(
+      `UPDATE courses SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id`,
+      params
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    return res.json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error("PATCH /api/admin/courses/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật khóa học." });
+  }
+});
+
+// ── DELETE /api/admin/courses/:id ─────────────────────────────────────────────
+// Guarded hard delete — mirrors the Subject Management Center's own rule
+// (archive is always safe/reversible; real delete only when nothing depends on
+// the record). A course with any enrollment is refused with a clear message
+// pointing at Archive instead, so paying students never lose access silently.
+app.delete("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows: enrolled } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM course_enrollments WHERE course_id = $1`, [req.params.id]
+    );
+    if (enrolled[0].n > 0) {
+      return res.status(409).json({ message: `Khóa học đã có ${enrolled[0].n} học viên đăng ký — không thể xóa. Hãy dùng "Lưu trữ" thay thế.` });
+    }
+    const result = await pool.query(`DELETE FROM courses WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/courses/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi xóa khóa học." });
+  }
+});
+
+// ── GET /api/admin/courses/:id/students — real enrolled-students list ────────
+app.get("/api/admin/courses/:id/students", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT e.id, e.student_id, COALESCE(u.full_name, e.student_name, 'Học viên') AS name,
+              u.email, u.picture, e.child_name, e.status, e.purchased_at
+       FROM course_enrollments e
+       LEFT JOIN users u ON u.id = e.student_id
+       WHERE e.course_id = $1
+       ORDER BY e.purchased_at DESC`,
+      [req.params.id]
+    );
+    return res.json({ students: rows });
+  } catch (err) {
+    console.error("GET /api/admin/courses/:id/students error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách học viên." });
   }
 });
 
