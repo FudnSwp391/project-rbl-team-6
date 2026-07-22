@@ -159,7 +159,9 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const canBuyCourse = !user || ['student', 'parent'].includes(user.role)
   const isStaffView = user?.role === 'tutor' || user?.role === 'admin'
 
-  const handleEnroll = async (targetStudentId = null) => {
+  // Sentinel: undefined means "not yet chosen a child"
+  // null/string means a child was explicitly selected (or non-parent flow)
+  const handleEnroll = async (targetStudentId = undefined) => {
     if (!user) {
       // Lưu đúng trang khóa học này để đăng nhập xong quay lại, không đá về trang chủ.
       try { sessionStorage.setItem('redirectAfterLogin', window.location.hash) } catch { /* noop */ }
@@ -170,9 +172,11 @@ export default function CoursePlayer({ courseId, onGoHome }) {
       setError('Tài khoản gia sư/quản trị không cần mua khóa học. Vui lòng quay lại trang quản lý khóa học.')
       return
     }
-    if (user.role === 'parent' && typeof targetStudentId !== 'number' && typeof targetStudentId !== 'string') {
+
+    // Nếu là phụ huynh và chưa chọn con (targetStudentId === undefined) => hiện modal chọn con
+    if (user.role === 'parent' && targetStudentId === undefined) {
       if (parentChildren.length === 0) {
-        setError('Bạn chưa liên kết với tài khoản học sinh nào để mua khoá học.');
+        setError('Bạn chưa liên kết với tài khoản học sinh nào. Vui lòng vào trang Tổng quan để liên kết trước.');
         return;
       }
       setShowChildSelect(true);
@@ -182,10 +186,17 @@ export default function CoursePlayer({ courseId, onGoHome }) {
     setBuying(true)
     setError('')
     try {
-      await enrollCourse(course.id, {
+      const payload = {
         studentName: user.name || user.email?.split('@')[0] || 'Student',
-        targetStudentId: targetStudentId || undefined
-      })
+      }
+      // Chỉ thêm targetStudentId khi là phụ huynh và đã chọn con
+      if (user.role === 'parent' && targetStudentId) {
+        payload.targetStudentId = targetStudentId
+      }
+      await enrollCourse(course.id, payload)
+      if (user.role === 'parent') {
+        alert('Đăng ký khóa học cho bé thành công!');
+      }
       await loadCourse()
       setShowChildSelect(false)
     } catch (err) {
@@ -298,7 +309,7 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                   {canBuyCourse ? (
                     <>
                       <p>Đăng ký khóa học để mở khóa toàn bộ bài học, tài liệu và theo dõi tiến độ.</p>
-                      <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
+                      <button style={S.primaryBtn} onClick={() => handleEnroll()} disabled={buying}>
                         {buying ? 'Đang xử lý...' : `Mua khóa học ${money(course.price)}`}
                       </button>
                     </>
@@ -489,7 +500,7 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                   <strong style={{ fontSize: 28, color: '#00288e' }}>{money(course.price)}</strong>
                 </div>
                 {canBuyCourse ? (
-                  <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
+                  <button style={S.primaryBtn} onClick={() => handleEnroll()} disabled={buying}>
                     <span className="material-symbols-outlined">shopping_cart</span>
                     {buying ? 'Đang xử lý...' : 'Đăng ký và học ngay'}
                   </button>

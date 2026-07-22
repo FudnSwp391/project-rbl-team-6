@@ -9595,8 +9595,8 @@ async function createCommissionLog(client, log) {
 }
 
 app.post("/api/cart/checkout", verifyToken, async (req, res) => {
-  const studentId = req.user.userId;
-  const { items, couponCode, source } = req.body || {};
+  const payerId = req.user.userId;
+  const { items, couponCode, source, targetStudentId } = req.body || {};
   const paidViaVnpay = source === "vnpay"; // VNPAY đã thu tiền → không trừ ví
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const ids = (Array.isArray(items) ? [...new Set(items.filter(Boolean))] : []).filter((id) => UUID_RE.test(String(id)));
@@ -9607,12 +9607,28 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
     await client.query("BEGIN");
     await setLedgerContext(client, { reason_code: 'COURSE_PURCHASE', source: 'api', reference_type: 'course', actor_id: req.user.userId });
 
+    // --- PARENT DELEGATION SUPPORT ---
+    // enrollId: người được ghi danh vào khoá học (có thể khác payerId nếu là phụ huynh mua cho con)
+    let enrollId = payerId;
+    if (req.user.role === 'parent') {
+      if (!targetStudentId || !UUID_RE.test(String(targetStudentId))) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Phụ huynh phải chọn học sinh muốn mua khóa học cho." });
+      }
+      const checkLink = await client.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [payerId, targetStudentId]);
+      if (checkLink.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ message: "Học sinh không hợp lệ hoặc chưa được liên kết với bạn." });
+      }
+      enrollId = targetStudentId;
+    }
+
     const coursesRes = await client.query(
       `SELECT id, title, price, tutor_id FROM courses WHERE id = ANY($1::uuid[])`, [ids]);
     if (coursesRes.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy khóa học." }); }
 
-    // Đang test → cho phép mua lại khóa đã đăng ký; chỉ loại khóa của chính mình
-    const toBuy = coursesRes.rows.filter(c => c.tutor_id !== studentId);
+    // Loại bỏ khóa do chính payerId hoặc enrollId sở hữu (không thể mua khoá của chính mình)
+    const toBuy = coursesRes.rows.filter(c => c.tutor_id !== payerId && c.tutor_id !== enrollId);
     if (toBuy.length === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không có khóa hợp lệ (không thể mua khóa của chính bạn)." }); }
 
     const sumPrices = toBuy.reduce((s, c) => s + Number(c.price || 0), 0);
@@ -9636,9 +9652,9 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
     const finalTotal = Math.max(0, sumPrices - discount);
 
     if (finalTotal > 0) {
-      // Trừ ví học sinh — CHỈ khi trả bằng ví (qua VNPAY thì cổng đã thu tiền)
+      // Trừ ví người thanh toán (payerId) — CHỈ khi trả bằng ví (qua VNPAY thì cổng đã thu tiền)
       if (!paidViaVnpay) {
-        const sw = await client.query(`SELECT id, balance FROM wallets WHERE user_id=$1 FOR UPDATE`, [studentId]);
+        const sw = await client.query(`SELECT id, balance FROM wallets WHERE user_id=$1 FOR UPDATE`, [payerId]);
         if (sw.rowCount === 0) { await client.query("ROLLBACK"); return res.status(400).json({ message: "Không tìm thấy ví của bạn." }); }
         if (Number(sw.rows[0].balance) < finalTotal) {
           await client.query("ROLLBACK");
@@ -9670,36 +9686,36 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
         // Commission log: EARNED per course in cart (Batch 18)
         await createCommissionLog(client, {
           source_type: 'course', source_id: c.id, course_id: c.id,
-          student_id: studentId, tutor_id: c.tutor_id,
+          student_id: enrollId, tutor_id: c.tutor_id,
           gross_amount: eff, commission_rate: PLATFORM_COMMISSION_RATE,
           commission_amount: adminShare, tutor_amount: tutorShare,
           event_type: 'EARNED', reason_code: 'COURSE_PURCHASE',
           decision_by: 'api', actor_id: req.user.userId,
-          idempotency_key: `commission:course:${c.id}:student:${studentId}:COURSE_PURCHASE`,
+          idempotency_key: `commission:course:${c.id}:student:${enrollId}:COURSE_PURCHASE`,
           metadata: { cart: true, discount_applied: discount > 0 },
         });
         // Notify student (Batch 20)
         await safeNotifyUser(client, {
-          userId: studentId, channels: ['IN_APP', 'EMAIL'],
+          userId: enrollId, channels: ['IN_APP', 'EMAIL'],
           templateKey: 'course_purchased', eventType: 'course_purchased',
           data: { courseName: c.title }, refId: c.id, refType: 'course',
           sourceType: 'course', sourceId: c.id,
-          idempotencyKey: `course:${c.id}:purchased:${studentId}`,
+          idempotencyKey: `course:${c.id}:purchased:${enrollId}`,
         });
       }
     }
 
-    // Đăng ký khóa (update nếu từng hủy, insert nếu mới)
-    const sName = (await client.query(`SELECT full_name FROM users WHERE id=$1`, [studentId])).rows[0]?.full_name || "Học sinh";
+    // Đăng ký khóa cho enrollId (update nếu từng hủy, insert nếu mới)
+    const sName = (await client.query(`SELECT full_name FROM users WHERE id=$1`, [enrollId])).rows[0]?.full_name || "Học sinh";
     for (const c of toBuy) {
-      const upd = await client.query(`UPDATE course_enrollments SET status='active', updated_at=NOW() WHERE course_id=$1 AND student_id=$2`, [c.id, studentId]);
+      const upd = await client.query(`UPDATE course_enrollments SET status='active', updated_at=NOW() WHERE course_id=$1 AND student_id=$2`, [c.id, enrollId]);
       if (upd.rowCount === 0) {
-        await client.query(`INSERT INTO course_enrollments (course_id, student_id, student_name, status) VALUES ($1,$2,$3,'active')`, [c.id, studentId, sName]);
+        await client.query(`INSERT INTO course_enrollments (course_id, student_id, student_name, status) VALUES ($1,$2,$3,'active')`, [c.id, enrollId, sName]);
       }
     }
 
     await client.query("COMMIT");
-    const bal = (await pool.query(`SELECT balance FROM wallets WHERE user_id=$1`, [studentId])).rows[0]?.balance ?? null;
+    const bal = (await pool.query(`SELECT balance FROM wallets WHERE user_id=$1`, [payerId])).rows[0]?.balance ?? null;
     return res.json({ success: true, enrolled: toBuy.length, total: finalTotal, discount, balance: bal });
   } catch (e) {
     await client.query("ROLLBACK");
@@ -9738,7 +9754,11 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
 
     // --- PARENT DELEGATION SUPPORT ---
     const targetStudentId = req.body?.targetStudentId;
-    if (req.user.role === 'parent' && targetStudentId) {
+    if (req.user.role === 'parent') {
+      if (!targetStudentId) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Phụ huynh phải chỉ định học sinh muốn ghi danh." });
+      }
       // Validate that the target student is actually linked to this parent
       const checkLink = await client.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [payerId, targetStudentId]);
       if (checkLink.rows.length === 0) {

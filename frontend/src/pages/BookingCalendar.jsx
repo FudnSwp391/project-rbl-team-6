@@ -113,10 +113,11 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     const token = localStorage.getItem('token');
     if (user && user.role === 'parent' && token) {
       fetch(`${API_BASE_URL}/api/parent/children`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.ok ? r.json() : [])
+        .then(r => r.ok ? r.json() : { children: [] })
         .then(data => {
-          setChildren(data);
-          if (data.length > 0) setSelectedChild(data[0].id);
+          const list = data?.children || [];
+          setChildren(list);
+          if (list.length > 0) setSelectedChild(list[0].student_id);
         })
         .catch(() => setChildren([]));
     }
@@ -867,7 +868,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                   ) : (
                     <select value={selectedChild} onChange={e => setSelectedChild(e.target.value)}
                       className="w-full bg-[#f8f9fb] border-none rounded-lg px-4 py-2.5 text-[#191c1e] text-sm focus:ring-1 focus:ring-[#00288e]">
-                      {children.map(c => <option key={c.id} value={c.id}>{c.nickname || c.full_name || 'Học viên'} (ID: {c.id.substring(0,8)})</option>)}
+                      {children.map(c => <option key={c.student_id} value={c.student_id}>{c.nickname || c.student_name || 'Học viên'} ({c.student_email || ''})</option>)}
                     </select>
                   )}
                     <span className="material-symbols-outlined" style={S.selectArrow}>expand_more</span>
