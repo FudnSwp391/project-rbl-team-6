@@ -749,14 +749,14 @@ export default function TutorDashboard() {
             {/* Ă¢â€â‚¬Ă¢â€â‚¬ RIGHT: Today's Schedule Ă¢â€â‚¬Ă¢â€â‚¬ */}
             <div className="space-y-md">
               <h3 className="font-headline-md text-headline-md text-on-surface">
-                Today's Schedule
+                Lịch Hôm Nay
               </h3>
               <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-[0_10px_15px_-3px_rgba(0,0,0,0.08)] rounded-[1rem] p-md flex flex-col">
                 <div className="relative border-l-2 border-surface-variant ml-3 space-y-6 flex-1">
                   {scheduleToday.length === 0 ? (
                     <div className="pl-6 py-8 text-center text-on-surface-variant">
                       <span className="material-symbols-outlined text-[40px] mb-2">event_available</span>
-                      <p className="font-label-md text-label-md">No approved lessons yet.</p>
+                      <p className="font-label-md text-label-md">Chưa có buổi học nào được xác nhận.</p>
                     </div>
                   ) : (
                     scheduleToday.map((slot) => (
@@ -768,7 +768,7 @@ export default function TutorDashboard() {
                   onClick={() => setActiveTab('My Schedule')}
                   className="mt-6 w-full h-10 border border-outline-variant rounded-lg font-label-md text-on-surface-variant hover:bg-surface-container-high transition-colors"
                 >
-                  Open Full Calendar
+                  Xem Toàn Bộ Lịch
                 </button>
               </div>
             </div>
@@ -1105,7 +1105,7 @@ function ScheduleItem({ slot }) {
         <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">
           <p className="font-label-sm text-primary mb-2 flex items-center gap-1">
             <span className="material-symbols-outlined text-[14px]">schedule</span>
-            {slot.time} <span className="ml-1 font-bold">(Now)</span>
+            {slot.time} <span className="ml-1 font-bold">(Đang diễn ra)</span>
           </p>
           <div className="flex items-center gap-3 mb-3">
             <div className="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-label-sm font-bold">
@@ -1115,13 +1115,13 @@ function ScheduleItem({ slot }) {
               <p className="font-label-md text-on-surface">{slot.name}</p>
               <p className="font-label-sm text-on-surface-variant flex items-center gap-1 flex-wrap">
                 {slot.subject}
-                {slot.bookingType === 'trial' && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">Trial</span>}
+                {slot.bookingType === 'trial' && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">Học thử</span>}
               </p>
             </div>
           </div>
           <button className="w-full h-10 bg-primary text-on-primary rounded-lg font-label-md hover:bg-primary/90 transition-colors shadow-md flex items-center justify-center gap-2">
             <span className="material-symbols-outlined text-[18px]">videocam</span>
-            Start Meeting
+            Bắt Đầu Buổi Học
           </button>
         </div>
       </div>
@@ -1142,7 +1142,7 @@ function ScheduleItem({ slot }) {
             <p className="font-label-md text-on-surface">{slot.name}</p>
             <p className="font-label-sm text-on-surface-variant flex items-center gap-1 flex-wrap">
               {slot.subject}
-              {slot.bookingType === 'trial' && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">Trial</span>}
+              {slot.bookingType === 'trial' && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">Học thử</span>}
             </p>
           </div>
         </div>

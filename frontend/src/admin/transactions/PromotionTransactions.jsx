@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { StatusBadge, PageHeader, EmptyState } from './components'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const fmtMoney = n => 'đ' + Number(n || 0).toLocaleString('vi-VN')
 const fmtDate  = iso => iso ? new Date(iso).toLocaleDateString('vi-VN') : '—'

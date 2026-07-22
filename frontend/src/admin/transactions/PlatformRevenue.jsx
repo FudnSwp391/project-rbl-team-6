@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { PageHeader } from './components'
 
-const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 const VALID_RANGES = ['6m', '12m', 'ytd']
 const RANGE_LABELS  = { '6m': '6 Tháng', '12m': '12 Tháng', 'ytd': 'Năm Nay' }
 

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { KpiCard, SkeletonCard, PageHeader, SectionCard } from './components'
 import { fmtDateTime } from './mockData'
 
-const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const fmtCompact = n => {
   if (!n) return 'đ0'

@@ -3,7 +3,13 @@ const express = require('express');
 
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+const WebSocketImpl = require('ws');
+// Only .from()/postgrest queries below, no realtime channels — pass ws
+// explicitly so client construction doesn't depend on native WebSocket
+// detection (see server.js's supabaseAdmin for the same fix + rationale).
+const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, { realtime: { transport: WebSocketImpl } })
+  : null;
 
 
 

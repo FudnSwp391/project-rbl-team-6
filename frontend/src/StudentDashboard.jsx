@@ -288,7 +288,7 @@ export default function StudentDashboard() {
                     />
                     <StatCard
                       icon="assignment_late"
-                      label="Bài Tập Sắp Hết Hạn"
+                      label="Bài Tập Chưa Hoàn Thành"
                       value={dashboardLoading ? '—' : String(allPendingExamPapers.length)}
                     />
                     <StatCard
@@ -362,7 +362,7 @@ export default function StudentDashboard() {
                   {/* ── Pending Assignments ── */}
                   <div className="bg-surface-container-lowest/70 backdrop-blur-md border border-surface-container-lowest/30 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05)] rounded-xl p-lg">
                     <div className="flex justify-between items-center mb-md">
-                      <h3 className="font-headline-md text-headline-md text-on-surface">Bài Tập Sắp Hết Hạn</h3>
+                      <h3 className="font-headline-md text-headline-md text-on-surface">Bài Tập Chưa Hoàn Thành</h3>
                       <a
                         href="#/dashboard/assessments"
                         className="font-label-md text-label-md text-primary hover:text-surface-tint rounded px-2 py-1 transition-colors"

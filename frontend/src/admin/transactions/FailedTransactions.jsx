@@ -6,7 +6,7 @@ import {
 } from './components'
 import { fmtMoney, fmtDateTime } from './mockData'
 
-const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const GATEWAYS = ['Tất cả', 'MoMo', 'VNPay', 'Bank Transfer', 'Internal Wallet']
 const ERROR_CODES = ['Tất cả', 'ERR_INSUFFICIENT_FUNDS', 'ERR_TIMEOUT', 'ERR_INVALID_ACCOUNT', 'ERR_CARD_DECLINED', 'ERR_DUPLICATE', 'ERR_LIMIT_EXCEEDED', 'ERR_WALLET_FROZEN']

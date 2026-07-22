@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../AuthContext';
 import { getTutorDetail, getTutorAvailability, createBooking } from '../services/api';
+import { API_BASE_URL } from '../config';
 import BookingConfirmationModal from '../components/BookingConfirmationModal';
 import { methodSupport, methodLabel, METHOD_OPTIONS } from '../utils/teachingMethod';
 
@@ -97,6 +98,8 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   const [isSubmitting, setIsSubmitting]             = useState(false);
   const [submitError, setSubmitError]               = useState(null);
   const [bookingSuccessData, setBookingSuccessData] = useState(null);
+  const [topupInfo, setTopupInfo]                   = useState(null); // { needed, balance, missing }
+  const [isTopupLoading, setIsTopupLoading]          = useState(false);
 
   // --- Monthly Booking States ---
   const [bookingMode, setBookingMode]               = useState('custom'); // 'custom' | 'monthly'
@@ -136,13 +139,16 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     if (pending.notes) setNotes(pending.notes);
     if (typeof pending.currentYear === 'number') setCurrentYear(pending.currentYear);
     if (typeof pending.currentMonth === 'number') setCurrentMonth(pending.currentMonth);
+    if (typeof pending.monthlyDuration === 'number') setMonthlyDuration(pending.monthlyDuration);
+    if (pending.monthlyStartDate) setMonthlyStartDate(pending.monthlyStartDate);
+    if (pending.monthlySelectedSlots) setMonthlySelectedSlots(pending.monthlySelectedSlots);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, tutorId]);
 
   useEffect(() => {
     let active = true;
     async function load() {
-      if (!tutorId) { setError('No Tutor ID provided.'); setLoading(false); return; }
+      if (!tutorId) { setError('Không tìm thấy ID gia sư.'); setLoading(false); return; }
       console.log('Booking tutorId from URL:', tutorId);
       setLoading(true); setError(null);
       try {
@@ -294,9 +300,11 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   /* Calendar helpers */
   const getDaysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
   const getFirstDay    = (y, m) => new Date(y, m, 1).getDay();
-  const MONTH_NAMES = ['January','February','March','April','May','June',
-                       'July','August','September','October','November','December'];
+  const MONTH_NAMES = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6',
+                       'Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
   const DAYS_MAP    = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const STATUS_LABELS = { Pending: 'Chờ xác nhận', Approved: 'Đã xác nhận', Confirmed: 'Đã xác nhận', Completed: 'Đã hoàn thành', Cancelled: 'Đã huỷ', Declined: 'Đã từ chối' };
+  const statusLabel = (s) => STATUS_LABELS[s] || s;
 
   const changeMonth = useCallback((dir) => {
     setSlideDir(dir);
@@ -405,22 +413,69 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
           notes,
           currentYear,
           currentMonth,
+          monthlyDuration,
+          monthlyStartDate,
+          monthlySelectedSlots,
         }));
       } catch { /* sessionStorage không khả dụng */ }
       window.location.hash = '/signin';
       return;
     }
-    if (getSelectedBookingItems().length === 0) { alert('Please select at least one date and time slot.'); return; }
+    if (getSelectedBookingItems().length === 0) { alert('Vui lòng chọn ít nhất một ngày và khung giờ.'); return; }
     setIsConfirmModalOpen(true);
   };
 
   const handleCloseModal = () => {
     setIsConfirmModalOpen(false);
     setSubmitError(null);
+    setTopupInfo(null);
     if (bookingSuccessData) {
       setBookingSuccessData(null);
       setSelectedBookings({});
       setSelectedTimeSlot('');
+    }
+  };
+
+  // Lưu lại lựa chọn đặt lịch hiện tại rồi chuyển sang VNPAY nạp tiền; sau khi
+  // thanh toán xong, người dùng quay lại đúng trang này và lựa chọn được khôi phục
+  // (dùng chung cơ chế "edux_pending_booking" với luồng đăng nhập).
+  const handleTopUp = async () => {
+    if (!topupInfo) return;
+    setIsTopupLoading(true);
+    try {
+      sessionStorage.setItem('edux_pending_booking', JSON.stringify({
+        tutorId,
+        bookingMode,
+        selectedBookings,
+        subject,
+        teachingMethod,
+        notes,
+        currentYear,
+        currentMonth,
+        monthlyDuration,
+        monthlyStartDate,
+        monthlySelectedSlots,
+      }));
+      const token = localStorage.getItem('token');
+      // Phải quay về /payment/result trước (trang này gọi IPN để cộng tiền vào ví),
+      // trang đó sẽ tự chuyển tiếp về đúng trang đặt lịch nhờ "edux_pending_booking".
+      const returnUrl = `${window.location.origin}/#/payment/result`;
+      const res = await fetch(`${API_BASE_URL}/api/payment/create-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ amount: topupInfo.missing, bankCode: '', returnUrl }),
+      });
+      const data = await res.json();
+      const payUrl = data.redirectUrl || data.url;
+      if (payUrl) {
+        window.location.href = payUrl;
+      } else {
+        setSubmitError(data.message || 'Không tạo được liên kết thanh toán. Vui lòng thử lại.');
+        setIsTopupLoading(false);
+      }
+    } catch (err) {
+      setSubmitError(err.message || 'Không tạo được liên kết thanh toán. Vui lòng thử lại.');
+      setIsTopupLoading(false);
     }
   };
 
@@ -436,7 +491,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       return !bookedForDay.some(booked => booked.timeSlot === session.timeSlot);
     });
     if (sessions.length === 0) {
-      setSubmitError('All selected slots have already been booked. Please choose another slot.');
+      setSubmitError('Tất cả khung giờ đã chọn đều đã có người đặt. Vui lòng chọn khung giờ khác.');
       return;
     }
 
@@ -468,6 +523,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
 
     setIsSubmitting(true);
     setSubmitError(null);
+    setTopupInfo(null);
     try {
       const result = await createBooking(bookingPayload);
       console.log('[BookingCalendar] Booking success result:', result);
@@ -488,7 +544,13 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       setBookingSuccessData(result);
     } catch (err) {
       console.error('[BookingCalendar] Booking error:', err);
-      setSubmitError(err.message || 'Failed to submit booking.');
+      if (err.code === 'INSUFFICIENT_FUNDS') {
+        const needed = Number(err.needed || 0);
+        const balance = Number(err.balance || 0);
+        setTopupInfo({ needed, balance, missing: Math.max(needed - balance, 0) });
+      } else {
+        setSubmitError(err.message || 'Gửi yêu cầu đặt lịch thất bại.');
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -511,7 +573,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       <CalHeader tutor={null} onBack={onGoHome} />
       <div style={S.center}>
         <div style={S.spinner} />
-        <p style={{ color: 'var(--on-surface-variant)', marginTop: 16 }}>Loading availability...</p>
+        <p style={{ color: 'var(--on-surface-variant)', marginTop: 16 }}>Đang tải lịch trống...</p>
       </div>
     </div>
   );
@@ -522,14 +584,14 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       <div style={S.center}>
         <div style={S.errorCard}>
           <span className="material-symbols-outlined" style={{ fontSize: 56, color: '#dc2626' }}>error_outline</span>
-          <h2 style={{ fontSize: 20, fontWeight: 800, color: 'var(--on-surface)', margin: 0 }}>Tutor calendar unavailable</h2>
+          <h2 style={{ fontSize: 20, fontWeight: 800, color: 'var(--on-surface)', margin: 0 }}>Không thể tải lịch của gia sư</h2>
           <p style={{ fontSize: 14, color: 'var(--on-surface-variant)' }}>{error}</p>
           <div style={{ display: 'flex', gap: 10, width: '100%' }}>
             <button onClick={onGoHome} style={{ ...S.backBtn, flex: 1, justifyContent: 'center', height: 44 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
-              Back
+              Quay lại
             </button>
-            <button onClick={() => window.location.reload()} style={{ ...S.btnPrimary, flex: 1 }}>Retry</button>
+            <button onClick={() => window.location.reload()} style={{ ...S.btnPrimary, flex: 1 }}>Thử lại</button>
           </div>
         </div>
       </div>
@@ -592,10 +654,10 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
         {/* Page title */}
         <div style={{ marginBottom: 28 }}>
           <h1 style={{ fontSize: 26, fontWeight: 800, color: 'var(--on-surface)', marginBottom: 6 }}>
-            Book a Session
+            Đặt Lịch Học
           </h1>
           <p style={{ fontSize: 14, color: 'var(--on-surface-variant)' }}>
-            Select a date and available time slot to schedule with{' '}
+            Chọn ngày và khung giờ còn trống để đặt lịch với{' '}
             <strong>{tutor?.name}</strong>.
           </p>
         </div>
@@ -614,10 +676,10 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                   {MONTH_NAMES[currentMonth]} {currentYear}
                 </h2>
                 <div style={{ display: 'flex', gap: 6 }}>
-                  <button type="button" onClick={() => changeMonth('left')} style={S.navBtn} aria-label="Previous month">
+                  <button type="button" onClick={() => changeMonth('left')} style={S.navBtn} aria-label="Tháng trước">
                     <span className="material-symbols-outlined">chevron_left</span>
                   </button>
-                  <button type="button" onClick={() => changeMonth('right')} style={S.navBtn} aria-label="Next month">
+                  <button type="button" onClick={() => changeMonth('right')} style={S.navBtn} aria-label="Tháng sau">
                     <span className="material-symbols-outlined">chevron_right</span>
                   </button>
                 </div>
@@ -625,7 +687,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
 
               {/* Day labels */}
               <div style={S.calHeader}>
-                {['SUN','MON','TUE','WED','THU','FRI','SAT'].map(d => (
+                {['CN','T2','T3','T4','T5','T6','T7'].map(d => (
                   <div key={d} style={S.calHeaderCell}>{d}</div>
                 ))}
               </div>
@@ -645,23 +707,23 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
               <div style={S.legend}>
                 <span style={S.legendItem}>
                   <span style={{ ...S.legendDot, background: '#fff', border: '2px solid var(--primary)', boxSizing: 'border-box' }} />
-                  Today
+                  Hôm nay
                 </span>
                 <span style={S.legendItem}>
                   <span style={{ ...S.legendDot, background: '#fff', border: '1px solid rgba(196,197,213,0.4)' }} />
-                  Available
+                  Còn trống
                 </span>
                 <span style={S.legendItem}>
                   <span style={{ ...S.legendDot, background: 'var(--primary)' }} />
-                  Selected
+                  Đã chọn
                 </span>
                 <span style={S.legendItem}>
                   <span style={{ ...S.legendDot, background: '#e5e7eb' }} />
-                  Unavailable
+                  Không khả dụng
                 </span>
                 <span style={S.legendItem}>
                   <span style={{ ...S.legendDot, background: '#fee2e2', border: '1px solid #fecaca' }} />
-                  Booked
+                  Đã đặt
                 </span>
               </div>
             </div>
@@ -671,8 +733,8 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
               <h3 style={S.cardTitle}>
                 <span className="material-symbols-outlined" style={S.cardIcon}>schedule</span>
                 {selectedDate
-                  ? `Slots - ${selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`
-                  : 'Select a Date First'}
+                  ? `Khung giờ - ${selectedDate.toLocaleDateString('vi-VN', { weekday: 'long', month: 'short', day: 'numeric' })}`
+                  : 'Hãy chọn một ngày trước'}
               </h3>
               {selectedSlots.length > 0 ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -684,20 +746,20 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                         disabled={!!booked}
                         onClick={() => toggleSelectedSlot(slot)}
                         style={booked ? S.slotBtnBooked : picked ? S.slotBtnSelected : S.slotBtn}
-                        title={booked ? `Already booked (${booked.status})` : 'Available'}
+                        title={booked ? `Đã có người đặt (${statusLabel(booked.status)})` : 'Còn trống'}
                       >
                         <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
                           {booked ? 'event_busy' : 'schedule'}
                         </span>
                         {slot}
-                        {booked && <span style={S.slotStatus}>{booked.status}</span>}
+                        {booked && <span style={S.slotStatus}>{statusLabel(booked.status)}</span>}
                       </button>
                     );
                   })}
                 </div>
               ) : (
                 <p style={{ fontSize: 13, color: 'var(--outline)', fontStyle: 'italic' }}>
-                  {selectedDate ? 'No slots available on this day.' : 'Pick an available day above.'}
+                  {selectedDate ? 'Không có khung giờ nào trống trong ngày này.' : 'Hãy chọn một ngày còn trống ở trên.'}
                 </p>
               )}
             </div>
@@ -708,7 +770,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
             <div style={S.card}>
               <h3 style={S.cardTitle}>
                 <span className="material-symbols-outlined" style={S.cardIcon}>edit_note</span>
-                Booking Information
+                Thông Tin Đặt Lịch
               </h3>
 
               {/* Booking Mode Toggle */}
@@ -836,22 +898,22 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                 <div style={S.summaryRow}>
                   <span style={S.summaryLabel}>
                     <span className="material-symbols-outlined" style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 4 }}>calendar_today</span>
-                    Date
+                    Ngày
                   </span>
                   <span style={S.summaryValue}>
                     {selectedBookingCount
-                      ? `${selectedBookingCount} session${selectedBookingCount > 1 ? 's' : ''} selected`
+                      ? `Đã chọn ${selectedBookingCount} buổi`
                       : '-'}
                   </span>
                 </div>
                 <div style={S.summaryRow}>
                   <span style={S.summaryLabel}>
                     <span className="material-symbols-outlined" style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 4 }}>schedule</span>
-                    Time
+                    Giờ
                   </span>
                   <span style={S.summaryValue}>
                     {selectedBookingItems.slice(0, 2).map(item => `${item.date} ${item.timeSlot}`).join(', ') || '-'}
-                    {selectedBookingCount > 2 ? ` +${selectedBookingCount - 2} more` : ''}
+                    {selectedBookingCount > 2 ? ` +${selectedBookingCount - 2} khác` : ''}
                   </span>
                 </div>
               </div>
@@ -859,7 +921,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
               {/* Child selector - parent only */}
               {user?.role === 'parent' && (
                 <div style={S.formGroup}>
-                  <label htmlFor="child-select" style={S.label}>Select Student (Child)</label>
+                  <label htmlFor="child-select" style={S.label}>Chọn Học Viên (Con)</label>
                   <div style={{ position: 'relative' }}>
                     {children.length === 0 ? (
                     <div className="text-xs text-[#ba1a1a] bg-[#ffdad6] px-3 py-2 rounded-lg">
@@ -879,7 +941,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
               {/* Subject */}
               {tutor?.subjects?.length > 0 && (
                 <div style={S.formGroup}>
-                  <label htmlFor="subject-select" style={S.label}>Subject</label>
+                  <label htmlFor="subject-select" style={S.label}>Môn học</label>
                   <div style={{ position: 'relative' }}>
                     <select id="subject-select" value={subject}
                       onChange={e => setSubject(e.target.value)} style={S.select}>
@@ -945,10 +1007,10 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
 
               {/* Notes */}
               <div style={S.formGroup}>
-                <label htmlFor="booking-notes" style={S.label}>Topics / Notes</label>
+                <label htmlFor="booking-notes" style={S.label}>Nội dung / Ghi chú</label>
                 <textarea id="booking-notes" rows={4} value={notes}
                   onChange={e => setNotes(e.target.value)}
-                  placeholder="Tell the tutor what you'd like to focus on..."
+                  placeholder="Cho gia sư biết bạn muốn tập trung vào nội dung gì..."
                   style={S.textarea}
                 />
               </div>
@@ -959,21 +1021,21 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                   <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
                     {selectedDate ? 'check_circle' : 'radio_button_unchecked'}
                   </span>
-                  Date
+                  Ngày
                 </div>
                 <div style={S.progressLine} />
                 <div style={{ ...S.progressStep, ...(selectedTimeSlot ? S.progressStepDone : {}) }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
                     {selectedTimeSlot ? 'check_circle' : 'radio_button_unchecked'}
                   </span>
-                  Time
+                  Giờ
                 </div>
                 <div style={S.progressLine} />
                 <div style={{ ...S.progressStep, ...(canSubmit ? S.progressStepDone : {}) }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
                     {canSubmit ? 'check_circle' : 'radio_button_unchecked'}
                   </span>
-                  Ready
+                  Sẵn sàng
                 </div>
               </div>
 
@@ -983,9 +1045,9 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>assignment_turned_in</span>
                 {user
                   ? selectedBookingCount
-                    ? `Confirm ${selectedBookingCount} Booking Request${selectedBookingCount > 1 ? 's' : ''}`
-                    : 'Confirm Booking Request'
-                  : 'Sign in to Book'}
+                    ? `Xác Nhận ${selectedBookingCount} Yêu Cầu Đặt Lịch`
+                    : 'Xác Nhận Yêu Cầu Đặt Lịch'
+                  : 'Đăng Nhập Để Đặt Lịch'}
               </button>
             </div>
           </div>
@@ -998,7 +1060,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
           onClose={handleCloseModal}
           tutor={tutor}
           date={selectedBookingItems[0]?.date || null}
-          timeSlot={selectedBookingItems.length === 1 ? selectedBookingItems[0].timeSlot : `${selectedBookingCount} sessions selected`}
+          timeSlot={selectedBookingItems.length === 1 ? selectedBookingItems[0].timeSlot : `Đã chọn ${selectedBookingCount} buổi`}
           sessions={selectedBookingItems}
           subject={subject}
           notes={notes}
@@ -1009,6 +1071,9 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
           bookingSuccessData={bookingSuccessData}
           onConfirm={handleConfirmBooking}
           onGoToDashboard={handleGoToDashboard}
+          topupInfo={topupInfo}
+          isTopupLoading={isTopupLoading}
+          onTopUp={handleTopUp}
         />
       )}
 
@@ -1049,7 +1114,7 @@ function CalHeader({ tutor, onBack }) {
         )}
         <button type="button" onClick={onBack} style={S.backBtn}>
           <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
-          Back
+          Quay lại
         </button>
       </div>
     </header>
