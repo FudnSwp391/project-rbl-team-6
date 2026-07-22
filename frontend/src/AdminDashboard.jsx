@@ -34,6 +34,7 @@ const FraudIntel = lazy(() => import('./admin/fraud/FraudIntel'))
 const SafeAnalytics = lazy(() => import('./admin/analytics/SafeAnalytics'))
 const SubjectsView = lazy(() => import('./admin/subjects/SubjectsView'))
 import { subjectMeta as sharedSubjectMeta } from './admin/subjects/subjectMeta'
+import { uploadCourseThumbnail } from './services/upload'
 const ReportsView = lazy(() => import('./admin/reports/ReportsView'))
 
 import { API_BASE_URL as API } from './config'
@@ -2168,7 +2169,9 @@ function CourseThumb({ course, size = 'sm' }) {
   const icon = size === 'lg' ? 'text-[56px]' : 'text-[20px]'
   return (
     <div className={`relative bg-gradient-to-br ${m.grad} ${dims} flex items-center justify-center overflow-hidden shrink-0`}>
-      <span className={`material-symbols-outlined text-white/90 ${icon}`}>{m.icon}</span>
+      {course.thumbnail_url
+        ? <img src={course.thumbnail_url} alt={course.title} className="w-full h-full object-cover" />
+        : <span className={`material-symbols-outlined text-white/90 ${icon}`}>{m.icon}</span>}
       {course.premium && size === 'lg' && (
         <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-amber-400 text-amber-900 text-[11px] font-bold flex items-center gap-1">
           <span className="material-symbols-outlined text-[13px]">workspace_premium</span> Premium
@@ -2230,20 +2233,45 @@ function DrawerDetail({ label, value }) {
   )
 }
 
-function CourseDrawer({ course, show, tab, onTab, onClose, token }) {
+const emptyCouponForm = { code: '', discount_type: 'percent', discount_value: '', max_discount: '' }
+
+function CourseDrawer({ course, show, tab, onTab, onClose, token, onChanged }) {
   const [lessons, setLessons]           = useState(null)
   const [reviews, setReviews]           = useState(null)
+  const [auditLog, setAuditLog]         = useState(null)
+  const [coupons, setCoupons]           = useState(null)
+  const [analytics, setAnalytics]       = useState(null)
   const [contentError, setContentError] = useState(null)
 
-  useEffect(() => {
-    if (!course || !token) { setLessons(null); setReviews(null); return }
-    setLessons(null); setReviews(null); setContentError(null)
+  const [editingLessons, setEditingLessons] = useState(false)
+  const [draftLessons, setDraftLessons]     = useState([])
+  const [lessonsSaving, setLessonsSaving]   = useState(false)
+
+  const [couponForm, setCouponForm]     = useState(emptyCouponForm)
+  const [couponSaving, setCouponSaving] = useState(false)
+  const [couponError, setCouponError]   = useState(null)
+
+  const load = useCallback(() => {
+    if (!course || !token) return
+    setLessons(null); setReviews(null); setAuditLog(null); setCoupons(null); setAnalytics(null); setContentError(null)
     Promise.all([
       authFetch(`${API}/api/admin/courses/${course.id}/lessons`, token),
       authFetch(`${API}/api/admin/courses/${course.id}/reviews`, token),
+      authFetch(`${API}/api/admin/courses/${course.id}/audit-log`, token),
+      authFetch(`${API}/api/admin/courses/${course.id}/coupons`, token),
+      authFetch(`${API}/api/admin/courses/${course.id}/analytics`, token),
     ])
-      .then(([l, r]) => { setLessons(l.lessons || []); setReviews(r.reviews || []) })
+      .then(([l, r, a, c, an]) => {
+        setLessons(l.lessons || []); setReviews(r.reviews || []); setAuditLog(a.logs || [])
+        setCoupons(c.coupons || []); setAnalytics(an)
+      })
       .catch(err => setContentError(err.message))
+  }, [course?.id, token])
+
+  useEffect(() => {
+    load()
+    setEditingLessons(false)
+    setCouponForm(emptyCouponForm); setCouponError(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [course?.id, token])
 
@@ -2256,7 +2284,71 @@ function CourseDrawer({ course, show, tab, onTab, onClose, token }) {
     { id: 'content', label: 'Nội dung',  icon: 'list_alt' },
     { id: 'stats',   label: 'Thống kê',  icon: 'insights' },
     { id: 'reviews', label: 'Đánh giá',  icon: 'reviews' },
+    { id: 'coupons', label: 'Mã giảm giá', icon: 'sell' },
+    { id: 'audit',   label: 'Nhật ký',   icon: 'history_edu' },
   ]
+
+  const startEditingLessons = () => { setDraftLessons((lessons || []).map(l => ({ ...l }))); setEditingLessons(true) }
+  const addDraftLesson = () => setDraftLessons(d => [...d, { title: '', duration_label: '', is_preview: false }])
+  const removeDraftLesson = i => setDraftLessons(d => d.filter((_, idx) => idx !== i))
+  const moveDraftLesson = (i, dir) => setDraftLessons(d => {
+    const j = i + dir
+    if (j < 0 || j >= d.length) return d
+    const n = [...d];[n[i], n[j]] = [n[j], n[i]]
+    return n
+  })
+  const updateDraftLesson = (i, field, value) => setDraftLessons(d => d.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
+
+  const saveLessons = async () => {
+    const clean = draftLessons.filter(l => l.title.trim())
+    setLessonsSaving(true)
+    try {
+      const res = await authFetch(`${API}/api/admin/courses/${course.id}/lessons`, token, {
+        method: 'PUT', body: JSON.stringify({ lessons: clean.map((l, i) => ({ ...l, position: i + 1 })) }),
+      })
+      setLessons(res.lessons || [])
+      setEditingLessons(false)
+      onChanged?.()
+    } catch (err) {
+      window.alert(`Lưu nội dung thất bại: ${err.message}`)
+    } finally {
+      setLessonsSaving(false)
+    }
+  }
+
+  const submitCoupon = async () => {
+    setCouponError(null)
+    if (!couponForm.code.trim()) { setCouponError('Mã không được để trống.'); return }
+    if (!Number(couponForm.discount_value)) { setCouponError('Giá trị giảm không hợp lệ.'); return }
+    setCouponSaving(true)
+    try {
+      await authFetch(`${API}/api/admin/courses/${course.id}/coupons`, token, { method: 'POST', body: JSON.stringify(couponForm) })
+      setCouponForm(emptyCouponForm)
+      const c = await authFetch(`${API}/api/admin/courses/${course.id}/coupons`, token)
+      setCoupons(c.coupons || [])
+    } catch (err) {
+      setCouponError(err.message)
+    } finally {
+      setCouponSaving(false)
+    }
+  }
+
+  const toggleCouponActive = async coupon => {
+    try {
+      await authFetch(`${API}/api/admin/courses/${course.id}/coupons/${coupon.id}`, token, { method: 'PATCH', body: JSON.stringify({ active: !coupon.active }) })
+      setCoupons(cs => cs.map(c => c.id === coupon.id ? { ...c, active: !c.active } : c))
+    } catch (err) { window.alert(err.message) }
+  }
+
+  const deleteCoupon = async coupon => {
+    if (!window.confirm(`Xóa mã "${coupon.code}"?`)) return
+    try {
+      await authFetch(`${API}/api/admin/courses/${course.id}/coupons/${coupon.id}`, token, { method: 'DELETE' })
+      setCoupons(cs => cs.filter(c => c.id !== coupon.id))
+    } catch (err) { window.alert(err.message) }
+  }
+
+  const fmtWatched = sec => sec >= 60 ? `${Math.floor(sec / 60)} phút ${sec % 60}s` : `${sec}s`
   return (
     <div className={`fixed inset-0 z-[70] ${show ? '' : 'pointer-events-none'}`}>
       <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${show ? 'opacity-100' : 'opacity-0'}`} onClick={onClose} />
@@ -2312,10 +2404,50 @@ function CourseDrawer({ course, show, tab, onTab, onClose, token }) {
           )}
           {tab === 'content' && (
             <div className="space-y-3">
+              <div className="flex justify-end">
+                {editingLessons ? (
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditingLessons(false)} disabled={lessonsSaving} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-on-surface-variant hover:bg-gray-100">Hủy</button>
+                    <button onClick={saveLessons} disabled={lessonsSaving} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-white hover:bg-primary/90 disabled:opacity-50">
+                      {lessonsSaving ? 'Đang lưu...' : 'Lưu nội dung'}
+                    </button>
+                  </div>
+                ) : lessons !== null && (
+                  <button onClick={startEditingLessons} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-amber-600 hover:bg-amber-50">
+                    <span className="material-symbols-outlined text-[15px]">edit</span> Chỉnh sửa bài học
+                  </button>
+                )}
+              </div>
+
               {contentError ? (
                 <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{contentError}</div>
               ) : lessons === null ? (
                 <div className="flex justify-center py-10 text-on-surface-variant"><span className="material-symbols-outlined animate-spin">progress_activity</span></div>
+              ) : editingLessons ? (
+                <div className="space-y-2">
+                  {draftLessons.map((l, i) => (
+                    <div key={i} className="bg-white rounded-xl border border-outline-variant p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input value={l.title} onChange={e => updateDraftLesson(i, 'title', e.target.value)} placeholder={`Bài ${i + 1}: tên bài học...`}
+                          className="flex-1 px-2.5 py-1.5 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+                        <button onClick={() => moveDraftLesson(i, -1)} disabled={i === 0} className="p-1 text-on-surface-variant hover:text-on-surface disabled:opacity-30"><span className="material-symbols-outlined text-[18px]">arrow_upward</span></button>
+                        <button onClick={() => moveDraftLesson(i, 1)} disabled={i === draftLessons.length - 1} className="p-1 text-on-surface-variant hover:text-on-surface disabled:opacity-30"><span className="material-symbols-outlined text-[18px]">arrow_downward</span></button>
+                        <button onClick={() => removeDraftLesson(i)} className="p-1 text-red-500 hover:text-red-700"><span className="material-symbols-outlined text-[18px]">delete</span></button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input value={l.duration_label || ''} onChange={e => updateDraftLesson(i, 'duration_label', e.target.value)} placeholder="Thời lượng (vd: 30 phút)"
+                          className="flex-1 px-2.5 py-1.5 border border-outline-variant rounded-lg text-xs focus:outline-none focus:border-primary" />
+                        <label className="flex items-center gap-1.5 text-xs text-on-surface-variant whitespace-nowrap">
+                          <input type="checkbox" checked={!!l.is_preview} onChange={e => updateDraftLesson(i, 'is_preview', e.target.checked)} className="rounded border-outline-variant" />
+                          Xem trước
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                  <button onClick={addDraftLesson} className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed border-outline-variant text-sm text-on-surface-variant hover:bg-gray-50">
+                    <span className="material-symbols-outlined text-[18px]">add</span> Thêm bài học
+                  </button>
+                </div>
               ) : lessons.length === 0 ? (
                 <div className="text-center py-12 text-on-surface-variant">
                   <span className="material-symbols-outlined text-[48px] text-gray-300">list_alt</span>
@@ -2365,6 +2497,31 @@ function CourseDrawer({ course, show, tab, onTab, onClose, token }) {
                 </div>
                 <p className="text-xs text-on-surface-variant mt-2">Dựa trên {fmtInt(course.reviews)} lượt đánh giá</p>
               </div>
+
+              {/* Per-lesson drop-off (Batch 41) */}
+              <div className="bg-white rounded-xl border border-outline-variant p-4">
+                <p className="text-sm font-bold text-on-surface mb-1">Tỷ lệ hoàn thành theo bài học</p>
+                <p className="text-xs text-on-surface-variant mb-3">{analytics ? `Trên ${fmtInt(analytics.total_enrolled)} học viên đang học` : ''}</p>
+                {analytics === null ? (
+                  <div className="flex justify-center py-6 text-on-surface-variant"><span className="material-symbols-outlined animate-spin">progress_activity</span></div>
+                ) : analytics.lessons.length === 0 ? (
+                  <p className="text-xs text-on-surface-variant text-center py-4">Chưa có bài học nào để phân tích.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {analytics.lessons.map((l, i) => (
+                      <div key={l.lesson_id}>
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-on-surface font-medium truncate flex-1">{i + 1}. {l.title}</span>
+                          <span className="text-on-surface-variant shrink-0 ml-2">{l.completion_pct}% · TB {fmtWatched(l.avg_watched_seconds)}</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${l.completion_pct >= 70 ? 'bg-emerald-400' : l.completion_pct >= 30 ? 'bg-amber-400' : 'bg-red-400'}`} style={{ width: `${l.completion_pct}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
           {tab === 'reviews' && (
@@ -2393,6 +2550,92 @@ function CourseDrawer({ course, show, tab, onTab, onClose, token }) {
                   <p className="text-sm text-on-surface-variant leading-relaxed">{r.comment}</p>
                 </div>
               ))}
+            </div>
+          )}
+          {tab === 'coupons' && (
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl border border-outline-variant p-4 space-y-2.5">
+                <p className="text-sm font-bold text-on-surface">Tạo mã giảm giá cho khóa học này</p>
+                {couponError && <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-red-700 text-xs">{couponError}</div>}
+                <div className="flex gap-2">
+                  <input value={couponForm.code} onChange={e => setCouponForm(f => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="MÃ CODE"
+                    className="flex-1 px-2.5 py-1.5 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+                  <select value={couponForm.discount_type} onChange={e => setCouponForm(f => ({ ...f, discount_type: e.target.value }))}
+                    className="px-2.5 py-1.5 border border-outline-variant rounded-lg text-sm focus:outline-none">
+                    <option value="percent">%</option>
+                    <option value="fixed">đ</option>
+                  </select>
+                  <input type="number" min="0" value={couponForm.discount_value} onChange={e => setCouponForm(f => ({ ...f, discount_value: e.target.value }))} placeholder="Giá trị"
+                    className="w-24 px-2.5 py-1.5 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+                </div>
+                {couponForm.discount_type === 'percent' && (
+                  <input type="number" min="0" value={couponForm.max_discount} onChange={e => setCouponForm(f => ({ ...f, max_discount: e.target.value }))} placeholder="Giảm tối đa (đ, không bắt buộc)"
+                    className="w-full px-2.5 py-1.5 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+                )}
+                <button onClick={submitCoupon} disabled={couponSaving} className="w-full py-2 rounded-lg text-sm font-semibold bg-primary text-white hover:bg-primary/90 disabled:opacity-50">
+                  {couponSaving ? 'Đang tạo...' : 'Tạo mã'}
+                </button>
+              </div>
+
+              {coupons === null ? (
+                <div className="flex justify-center py-6 text-on-surface-variant"><span className="material-symbols-outlined animate-spin">progress_activity</span></div>
+              ) : coupons.length === 0 ? (
+                <div className="text-center py-8 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[40px] text-gray-300">sell</span>
+                  <p className="text-sm mt-2">Chưa có mã giảm giá riêng cho khóa học này.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {coupons.map(c => (
+                    <div key={c.id} className="bg-white rounded-xl border border-outline-variant p-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-sm text-on-surface">{c.code}</span>
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>{c.active ? 'Đang bật' : 'Đã tắt'}</span>
+                        </div>
+                        <p className="text-xs text-on-surface-variant mt-0.5">
+                          Giảm {c.discount_type === 'percent' ? `${c.discount_value}%` : fmtVND(c.discount_value)}
+                          {c.max_discount ? ` (tối đa ${fmtVND(c.max_discount)})` : ''}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => toggleCouponActive(c)} className="text-xs font-semibold px-2 py-1 rounded-lg text-on-surface-variant hover:bg-gray-100">
+                          {c.active ? 'Tắt' : 'Bật'}
+                        </button>
+                        <button onClick={() => deleteCoupon(c)} className="p-1.5 text-red-500 hover:text-red-700"><span className="material-symbols-outlined text-[18px]">delete</span></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {tab === 'audit' && (
+            <div className="space-y-2">
+              {auditLog === null ? (
+                <div className="flex justify-center py-10 text-on-surface-variant"><span className="material-symbols-outlined animate-spin">progress_activity</span></div>
+              ) : auditLog.length === 0 ? (
+                <div className="text-center py-12 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[48px] text-gray-300">history_edu</span>
+                  <p className="text-sm mt-2">Chưa có hành động nào được ghi nhận.</p>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl border border-outline-variant divide-y divide-outline-variant">
+                  {auditLog.map(l => (
+                    <div key={l.id} className="px-4 py-2.5 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-on-surface">{l.action}</span>
+                        <span className="text-xs text-on-surface-variant whitespace-nowrap">{fmtDMY(l.created_at)}</span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant mt-0.5">
+                        {l.admin_name || 'Admin'}
+                        {l.previous_status && l.new_status ? ` · ${l.previous_status} → ${l.new_status}` : ''}
+                        {l.reason ? ` · ${l.reason}` : ''}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2518,7 +2761,24 @@ function CourseEditModal({ course, token, onClose, onSaved, onError }) {
   const [subject, setSubject] = useState(course.subject || '')
   const [price, setPrice]     = useState(String(course.price ?? 0))
   const [status, setStatus]   = useState(course.status_raw || 'draft')
+  const [thumbnailUrl, setThumbnailUrl] = useState(course.thumbnail_url || '')
+  const [uploading, setUploading]       = useState(false)
   const [saving, setSaving]   = useState(false)
+
+  const pickThumbnail = async e => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setUploading(true)
+    try {
+      const uploaded = await uploadCourseThumbnail(file, course.id)
+      setThumbnailUrl(uploaded.previewUrl || uploaded.url || '')
+    } catch (err) {
+      onError(`Tải ảnh thất bại: ${err.message}`)
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const save = async () => {
     if (!title.trim()) { onError('Tên khóa học không được để trống.'); return }
@@ -2528,7 +2788,7 @@ function CourseEditModal({ course, token, onClose, onSaved, onError }) {
     try {
       await authFetch(`${API}/api/admin/courses/${course.id}`, token, {
         method: 'PATCH',
-        body: JSON.stringify({ title: title.trim(), description: desc, subject: subject.trim(), price: p, status }),
+        body: JSON.stringify({ title: title.trim(), description: desc, subject: subject.trim(), price: p, status, thumbnail_url: thumbnailUrl }),
       })
       onSaved()
     } catch (err) {
@@ -2546,6 +2806,18 @@ function CourseEditModal({ course, token, onClose, onSaved, onError }) {
           <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100"><span className="material-symbols-outlined">close</span></button>
         </div>
         <div className="space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Ảnh đại diện</label>
+            <div className="flex items-center gap-3">
+              <div className="w-24 h-16 rounded-lg overflow-hidden bg-gray-100 border border-outline-variant shrink-0 flex items-center justify-center">
+                {thumbnailUrl ? <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" /> : <span className="material-symbols-outlined text-gray-300">image</span>}
+              </div>
+              <label className="px-3 py-2 rounded-lg border border-outline-variant text-sm font-semibold text-on-surface-variant hover:bg-gray-50 cursor-pointer">
+                {uploading ? 'Đang tải...' : 'Chọn ảnh'}
+                <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={pickThumbnail} disabled={uploading} className="hidden" />
+              </label>
+            </div>
+          </div>
           <div>
             <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Tên khóa học</label>
             <input value={title} onChange={e => setTitle(e.target.value)} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
@@ -2988,7 +3260,7 @@ function CourseManagementView({ token }) {
       <AICourseInsightsCard />
 
       {/* Drawer */}
-      <CourseDrawer course={drawer} show={drawerShow} tab={drawerTab} onTab={setDrawerTab} onClose={closeDrawer} token={token} />
+      <CourseDrawer course={drawer} show={drawerShow} tab={drawerTab} onTab={setDrawerTab} onClose={closeDrawer} token={token} onChanged={() => setTick(t => t + 1)} />
 
       {/* Create modal */}
       {createModal && (
