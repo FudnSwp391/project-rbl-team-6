@@ -2161,7 +2161,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Xếp hạng gia sư theo số lần và tổng tiền bị hoàn trong N ngày.',
     exampleQuestions: ['Top gia sư có nhiều refund nhất 30 ngày', 'Gia sư nào bị hoàn tiền nhiều nhất tháng này', 'Which tutors get the most refunds'],
     keywords: [['refund', 2], ['refunded', 2], ['hoan tien', 2], ['hoan tra', 2], ['bi hoan', 2], ['gia su', 1], ['tutor', 1], ['tutors', 1], ['nhieu nhat', 1], ['top', 1], ['most', 1], ['highest refund', 2]],
-    requiredTables: ['refund_logs', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'refund_count',
+    requiredTables: ['refund_logs', 'users'], chartType: 'leaderboard', labelKey: 'tutor_name', valueKey: 'refund_count',
     columns: ['tutor_id', 'tutor_name', 'refund_count', 'refund_amount', 'dispute_count'],
     sql: `SELECT rl.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS refund_count,
                  COALESCE(SUM(rl.refund_amount),0)::numeric AS refund_amount,
@@ -2176,7 +2176,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Xếp hạng học sinh theo số khiếu nại đã mở trong N ngày.',
     exampleQuestions: ['Học sinh nào khiếu nại nhiều nhất', 'Top học sinh tạo dispute nhiều nhất tháng này', 'Which students complain the most'],
     keywords: [['hoc sinh', 2], ['student', 2], ['students', 2], ['khieu nai', 2], ['complaint', 2], ['complaints', 2], ['dispute', 2], ['disputes', 2], ['nhieu nhat', 1], ['top', 1], ['most', 1]],
-    requiredTables: ['disputes', 'users'], chartType: 'bar', labelKey: 'student_name', valueKey: 'dispute_count',
+    requiredTables: ['disputes', 'users'], chartType: 'leaderboard', labelKey: 'student_name', valueKey: 'dispute_count',
     columns: ['student_id', 'student_name', 'dispute_count', 'refund_count'],
     sql: `SELECT d.raised_by AS student_id, u.full_name AS student_name, COUNT(*)::int AS dispute_count,
                  (SELECT COUNT(*)::int FROM refund_logs rl WHERE rl.student_id=d.raised_by AND rl.created_at > NOW()-make_interval(days=>$1::int)) AS refund_count
@@ -2190,7 +2190,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Gia sư có báo cáo gian lận mức HIGH/CRITICAL (Batch 28).',
     exampleQuestions: ['Gia sư nào có rủi ro gian lận cao nhất', 'Top fraud tutor high risk', 'Who has the highest fraud risk'],
     keywords: [['gian lan', 2], ['fraud', 2], ['fraudulent', 2], ['rui ro', 1], ['risk', 1], ['risky', 1], ['gia su', 1], ['tutor', 1], ['tutors', 1], ['cao nhat', 1], ['highest', 1], ['high risk', 2]],
-    requiredTables: ['fraud_intel_reports', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'max_risk_score',
+    requiredTables: ['fraud_intel_reports', 'users'], chartType: 'leaderboard', labelKey: 'tutor_name', valueKey: 'max_risk_score',
     columns: ['tutor_id', 'tutor_name', 'report_count', 'max_risk_score', 'latest_summary'],
     sql: `SELECT f.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS report_count,
                  MAX(f.risk_score)::numeric AS max_risk_score, (ARRAY_AGG(f.summary ORDER BY f.created_at DESC))[1] AS latest_summary
@@ -2204,7 +2204,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Người dùng có báo cáo kiểm duyệt EXTERNAL_PAYMENT_ATTEMPT (Batch 27).',
     exampleQuestions: ['Ai có dấu hiệu giao dịch ngoài nền tảng', 'Top gia sư rủ chuyển khoản ngoài app', 'Who shows signs of off-platform payment'],
     keywords: [['giao dich ngoai', 3], ['ngoai nen tang', 2], ['ngoai app', 2], ['chuyen khoan', 2], ['external payment', 3], ['off platform', 2], ['off-platform', 2], ['ne phi', 1], ['tron phi', 1]],
-    requiredTables: ['semantic_moderation_reports', 'users'], chartType: 'bar', labelKey: 'user_name', valueKey: 'semantic_report_count',
+    requiredTables: ['semantic_moderation_reports', 'users'], chartType: 'leaderboard', labelKey: 'user_name', valueKey: 'semantic_report_count',
     columns: ['user_id', 'user_name', 'semantic_report_count', 'fraud_report_count', 'latest_summary'],
     sql: `SELECT s.tutor_id AS user_id, u.full_name AS user_name, COUNT(*)::int AS semantic_report_count,
                  (SELECT COUNT(*)::int FROM fraud_intel_reports f WHERE f.tutor_id=s.tutor_id AND f.report_type='EXTERNAL_PAYMENT_COLLUSION' AND f.created_at > NOW()-make_interval(days=>$1::int)) AS fraud_report_count,
@@ -2219,7 +2219,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Yêu cầu rút tiền PENDING kèm khiếu nại/gian lận/giao dịch ngoài.',
     exampleQuestions: ['Gia sư đang chờ rút tiền có rủi ro cao', 'Withdrawal pending risky tutors', 'Which pending withdrawals are risky'],
     keywords: [['rut tien', 3], ['withdrawal', 3], ['withdrawals', 3], ['cho rut', 2], ['pending', 1], ['rui ro', 1], ['risky', 1]],
-    requiredTables: ['withdrawal_requests', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'pending_amount',
+    requiredTables: ['withdrawal_requests', 'users'], chartType: 'leaderboard', labelKey: 'tutor_name', valueKey: 'pending_amount',
     columns: ['tutor_id', 'tutor_name', 'pending_amount', 'active_disputes', 'fraud_reports', 'external_payment_reports'],
     sql: `SELECT w.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(w.amount),0)::numeric AS pending_amount,
                  (SELECT COUNT(*)::int FROM disputes d WHERE d.tutor_id=w.tutor_id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS active_disputes,
@@ -2235,7 +2235,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Tổng hoa hồng/doanh thu ghi nhận (commission_logs EARNED) theo tháng.',
     exampleQuestions: ['Doanh thu theo tháng', 'Revenue by month', 'Revenue trend'],
     keywords: [['doanh thu', 3], ['revenue', 3], ['theo thang', 2], ['by month', 2], ['monthly', 2], ['thang', 1], ['xu huong', 1], ['trend', 1]],
-    requiredTables: ['commission_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'gross_revenue',
+    requiredTables: ['commission_logs'], chartType: 'line', labelKey: 'month', valueKey: 'gross_revenue',
     columns: ['month', 'gross_revenue', 'commission_amount', 'transaction_count'],
     sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month,
                  COALESCE(SUM(gross_amount),0)::numeric AS gross_revenue,
@@ -2249,7 +2249,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Số lần và tổng tiền hoàn theo tháng.',
     exampleQuestions: ['Refund theo tháng', 'Hoàn tiền theo tháng', 'Refund trend'],
     keywords: [['refund', 2], ['refunds', 2], ['hoan tien', 2], ['xu huong hoan tien', 3], ['refund trend', 3], ['theo thang', 3], ['by month', 3], ['thang', 1], ['xu huong', 1], ['trend', 1]],
-    requiredTables: ['refund_logs'], chartType: 'bar', labelKey: 'month', valueKey: 'refund_amount',
+    requiredTables: ['refund_logs'], chartType: 'line', labelKey: 'month', valueKey: 'refund_amount',
     columns: ['month', 'refund_count', 'refund_amount'],
     sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month, COUNT(*)::int AS refund_count,
                  COALESCE(SUM(refund_amount),0)::numeric AS refund_amount
@@ -2262,7 +2262,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Phân bố khiếu nại theo trạng thái trong N ngày.',
     exampleQuestions: ['Thống kê khiếu nại theo trạng thái', 'Dispute status summary', 'Disputes by status'],
     keywords: [['khieu nai', 2], ['dispute', 2], ['disputes', 2], ['trang thai', 3], ['status', 2], ['thong ke', 1], ['summary', 1], ['breakdown', 1]],
-    requiredTables: ['disputes'], chartType: 'bar', labelKey: 'status', valueKey: 'count',
+    requiredTables: ['disputes'], chartType: 'pie', labelKey: 'status', valueKey: 'count',
     columns: ['status', 'count', 'latest_created_at'],
     sql: `SELECT status, COUNT(*)::int AS count, MAX(created_at) AS latest_created_at
             FROM disputes WHERE created_at > NOW()-make_interval(days=>$1::int)
@@ -2274,7 +2274,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Báo cáo kiểm duyệt ngữ nghĩa mức HIGH/CRITICAL theo mức độ.',
     exampleQuestions: ['Nội dung kiểm duyệt rủi ro cao', 'Semantic moderation high risk', 'High risk content moderation reports'],
     keywords: [['kiem duyet', 2], ['moderation', 2], ['semantic', 2], ['noi dung', 1], ['content', 1], ['rui ro cao', 2], ['high risk', 2]],
-    requiredTables: ['semantic_moderation_reports'], chartType: 'bar', labelKey: 'severity', valueKey: 'report_count',
+    requiredTables: ['semantic_moderation_reports'], chartType: 'pie', labelKey: 'severity', valueKey: 'report_count',
     columns: ['severity', 'report_count', 'latest_summary'],
     sql: `SELECT severity, COUNT(*)::int AS report_count, (ARRAY_AGG(summary ORDER BY created_at DESC))[1] AS latest_summary
             FROM semantic_moderation_reports WHERE severity IN ('HIGH','CRITICAL') AND created_at > NOW()-make_interval(days=>$1::int)
@@ -2286,7 +2286,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Danh sách báo cáo gian lận mức CRITICAL (Batch 28).',
     exampleQuestions: ['Báo cáo gian lận critical', 'Fraud critical reports', 'Most severe fraud reports'],
     keywords: [['gian lan', 2], ['fraud', 2], ['critical', 3], ['nghiem trong', 2], ['severe', 2], ['nghiem trong nhat', 3]],
-    requiredTables: ['fraud_intel_reports'], chartType: 'none', labelKey: 'report_type', valueKey: 'risk_score',
+    requiredTables: ['fraud_intel_reports'], chartType: 'heatmap', labelKey: 'report_type', valueKey: 'risk_score', pivotRowKey: 'report_type', pivotColKey: 'status',
     columns: ['report_type', 'severity', 'risk_score', 'summary', 'status'],
     sql: `SELECT report_type, severity, risk_score::numeric AS risk_score, summary, status
             FROM fraud_intel_reports WHERE severity='CRITICAL' AND created_at > NOW()-make_interval(days=>$1::int)
@@ -2310,7 +2310,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Gia sư có báo cáo chất lượng thấp / khiếu nại / hoàn tiền tăng.',
     exampleQuestions: ['Gia sư có dấu hiệu giảm chất lượng', 'Tutor quality decline', 'Courses with abnormal ratings', 'Tutors with dropping ratings'],
     keywords: [['giam chat luong', 3], ['chat luong', 1], ['quality decline', 3], ['declining quality', 3], ['abnormal rating', 3], ['danh gia bat thuong', 3], ['gia su', 1], ['tutor', 1], ['tutors', 1]],
-    requiredTables: ['tutor_profiles', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'dispute_count',
+    requiredTables: ['tutor_profiles', 'users'], chartType: 'leaderboard', labelKey: 'tutor_name', valueKey: 'dispute_count',
     columns: ['tutor_id', 'tutor_name', 'avg_rating', 'low_teaching_reports', 'dispute_count', 'refund_count'],
     sql: `SELECT tp.user_id AS tutor_id, u.full_name AS tutor_name, COALESCE(tp.avg_rating,0)::numeric AS avg_rating,
                  (SELECT COUNT(*)::int FROM semantic_moderation_reports s WHERE s.tutor_id=tp.user_id AND s.categories ? 'LOW_TEACHING_QUALITY' AND s.created_at > NOW()-make_interval(days=>$1::int)) AS low_teaching_reports,
@@ -2328,7 +2328,7 @@ const ANALYTICS_TEMPLATES = [
     description: 'Xếp hạng gia sư theo tổng thu nhập (tutor_amount) ghi nhận trong N ngày.',
     exampleQuestions: ['Top gia sư theo doanh thu', 'Highest earning tutor', 'Tutor making the most money', 'Who earned the most', 'Best revenue tutor this month'],
     keywords: [['doanh thu', 2], ['revenue', 2], ['gia su', 2], ['tutor', 2], ['tutors', 2], ['kiem tien', 3], ['kiem nhieu tien', 3], ['earning', 3], ['earnings', 3], ['earned', 3], ['thu nhap', 3], ['income', 3], ['most money', 3], ['nhieu tien nhat', 3], ['best revenue', 3], ['cao nhat', 1], ['nhieu nhat', 1], ['top', 2]],
-    requiredTables: ['commission_logs', 'users'], chartType: 'bar', labelKey: 'tutor_name', valueKey: 'tutor_revenue',
+    requiredTables: ['commission_logs', 'users'], chartType: 'leaderboard', labelKey: 'tutor_name', valueKey: 'tutor_revenue',
     columns: ['tutor_id', 'tutor_name', 'tutor_revenue', 'transaction_count'],
     sql: `SELECT cl.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(cl.tutor_amount),0)::numeric AS tutor_revenue,
                  COUNT(*)::int AS transaction_count
@@ -2488,11 +2488,88 @@ function clampAnalyticsParams(params = {}) {
   return { days, limit };
 }
 
+// Step 10 — auto-select visualization by intent: leaderboard for rankings,
+// line for time trends (reversed to chronological order — templates query
+// ORDER BY ... DESC LIMIT so the most recent rows aren't dropped by LIMIT),
+// pie for categorical distributions, heatmap for a two-dimension pivot of the
+// already-returned rows (no extra SQL — just a client-safe reshape).
 function buildChartData(t, rows) {
   if (!t || t.chartType === 'none' || !rows.length) return {};
-  const labels = rows.slice(0, 20).map(r => String(r[t.labelKey] ?? ''));
-  const values = rows.slice(0, 20).map(r => Number(r[t.valueKey]) || 0);
+  if (t.chartType === 'heatmap' && t.pivotRowKey && t.pivotColKey) {
+    const rowKeys = [...new Set(rows.map(r => String(r[t.pivotRowKey] ?? '—')))].slice(0, 20);
+    const colKeys = [...new Set(rows.map(r => String(r[t.pivotColKey] ?? '—')))].slice(0, 12);
+    const matrix = rowKeys.map(rk => colKeys.map(ck =>
+      rows.filter(r => String(r[t.pivotRowKey] ?? '—') === rk && String(r[t.pivotColKey] ?? '—') === ck).length));
+    return { type: 'heatmap', rowLabels: rowKeys, colLabels: colKeys, matrix, value_label: 'Số lượng' };
+  }
+  const sliced = rows.slice(0, 20);
+  if (t.chartType === 'line') sliced.reverse();
+  const labels = sliced.map(r => String(r[t.labelKey] ?? ''));
+  const values = sliced.map(r => Number(r[t.valueKey]) || 0);
   return { type: t.chartType, labels, values, value_label: t.valueKey };
+}
+
+// ── AI Insight Cards (Step 2.2): fixed, safe, read-only KPI aggregates — no
+// user input reaches SQL, same safety posture as the template registry, just
+// unconditional (always the same 4 cards) rather than intent-routed. Each
+// card compares the trailing 30 days to the 30 days before that and includes
+// a 14-day daily sparkline.
+async function computeInsightCard(client, key, label, valueType, sql, sparklineSql, riskThresholds) {
+  const trendRes = await client.query(sql);
+  const row = trendRes.rows[0] || { current_val: 0, previous_val: 0 };
+  const current = Number(row.current_val) || 0;
+  const previous = Number(row.previous_val) || 0;
+  const trendPct = previous > 0 ? Math.round(((current - previous) / previous) * 1000) / 10 : null;
+  const sparkRes = await client.query(sparklineSql);
+  const sparkline = sparkRes.rows.map(r => Number(r.v) || 0);
+  let riskLevel = null;
+  if (riskThresholds) riskLevel = current >= riskThresholds.high ? 'HIGH' : current >= riskThresholds.medium ? 'MEDIUM' : 'LOW';
+  return {
+    key, label, value: current, value_type: valueType, trend_pct: trendPct,
+    comparison_label: previous > 0 ? 'So với 30 ngày trước' : 'Chưa có dữ liệu 30 ngày trước để so sánh',
+    sparkline, risk_level: riskLevel,
+  };
+}
+async function buildAnalyticsInsightCards() {
+  const cards = [];
+  const client = await pool.connect();
+  try {
+    await client.query('SET statement_timeout = 8000');
+    if (await fraudTableExists('commission_logs')) {
+      cards.push(await computeInsightCard(client, 'revenue', 'Doanh thu', 'currency',
+        `SELECT COALESCE(SUM(gross_amount) FILTER (WHERE created_at > NOW()-INTERVAL '30 days'),0) AS current_val,
+                COALESCE(SUM(gross_amount) FILTER (WHERE created_at <= NOW()-INTERVAL '30 days' AND created_at > NOW()-INTERVAL '60 days'),0) AS previous_val
+           FROM commission_logs WHERE event_type='EARNED' AND created_at > NOW()-INTERVAL '60 days'`,
+        `SELECT to_char(date_trunc('day', created_at),'MM-DD') AS d, COALESCE(SUM(gross_amount),0) AS v
+           FROM commission_logs WHERE event_type='EARNED' AND created_at > NOW()-INTERVAL '14 days' GROUP BY 1 ORDER BY 1`));
+    }
+    if (await fraudTableExists('refund_logs')) {
+      cards.push(await computeInsightCard(client, 'refund', 'Hoàn tiền', 'currency',
+        `SELECT COALESCE(SUM(refund_amount) FILTER (WHERE created_at > NOW()-INTERVAL '30 days'),0) AS current_val,
+                COALESCE(SUM(refund_amount) FILTER (WHERE created_at <= NOW()-INTERVAL '30 days' AND created_at > NOW()-INTERVAL '60 days'),0) AS previous_val
+           FROM refund_logs WHERE created_at > NOW()-INTERVAL '60 days'`,
+        `SELECT to_char(date_trunc('day', created_at),'MM-DD') AS d, COALESCE(SUM(refund_amount),0) AS v
+           FROM refund_logs WHERE created_at > NOW()-INTERVAL '14 days' GROUP BY 1 ORDER BY 1`));
+    }
+    if (await fraudTableExists('disputes')) {
+      cards.push(await computeInsightCard(client, 'complaints', 'Khiếu nại', 'count',
+        `SELECT COUNT(*) FILTER (WHERE created_at > NOW()-INTERVAL '30 days') AS current_val,
+                COUNT(*) FILTER (WHERE created_at <= NOW()-INTERVAL '30 days' AND created_at > NOW()-INTERVAL '60 days') AS previous_val
+           FROM disputes WHERE created_at > NOW()-INTERVAL '60 days'`,
+        `SELECT to_char(date_trunc('day', created_at),'MM-DD') AS d, COUNT(*) AS v
+           FROM disputes WHERE created_at > NOW()-INTERVAL '14 days' GROUP BY 1 ORDER BY 1`));
+    }
+    if (await fraudTableExists('fraud_intel_reports')) {
+      cards.push(await computeInsightCard(client, 'fraud', 'Rủi ro gian lận', 'count',
+        `SELECT COUNT(*) FILTER (WHERE created_at > NOW()-INTERVAL '30 days' AND severity IN ('HIGH','CRITICAL')) AS current_val,
+                COUNT(*) FILTER (WHERE created_at <= NOW()-INTERVAL '30 days' AND created_at > NOW()-INTERVAL '60 days' AND severity IN ('HIGH','CRITICAL')) AS previous_val
+           FROM fraud_intel_reports WHERE created_at > NOW()-INTERVAL '60 days'`,
+        `SELECT to_char(date_trunc('day', created_at),'MM-DD') AS d, COUNT(*) FILTER (WHERE severity IN ('HIGH','CRITICAL')) AS v
+           FROM fraud_intel_reports WHERE created_at > NOW()-INTERVAL '14 days' GROUP BY 1 ORDER BY 1`,
+        { medium: 1, high: 4 }));
+    }
+  } finally { client.release(); }
+  return cards;
 }
 
 // Run a vetted template with a transaction-scoped statement_timeout (read-only).
@@ -17632,6 +17709,18 @@ app.post('/api/admin/analytics/ask', verifyToken, requireAdmin, async (req, res)
 app.get('/api/admin/analytics/templates', verifyToken, requireAdmin, async (req, res) => {
   try { return res.json({ items: listAnalyticsTemplates() }); }
   catch (err) { console.error('GET /api/admin/analytics/templates error:', err.message); return res.status(500).json({ message: 'Không thể tải danh sách mẫu.' }); }
+});
+
+// GET /api/admin/analytics/insight-cards — fixed KPI cards (Step 2.2), shown
+// above the query results regardless of what the admin asked.
+app.get('/api/admin/analytics/insight-cards', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const cards = await buildAnalyticsInsightCards();
+    return res.json({ cards, generated_at: new Date().toISOString() });
+  } catch (err) {
+    console.error('GET /api/admin/analytics/insight-cards error:', err.message);
+    return res.status(500).json({ message: 'Không thể tải insight cards.' });
+  }
 });
 
 // GET /api/admin/analytics/history — previous queries (filters + pagination).

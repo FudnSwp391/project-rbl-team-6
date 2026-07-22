@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { PageHeader, EmptyState } from '../transactions/components'
+import AnalyticsChart from './charts'
+import InsightCards from './InsightCards'
 
 import { API_BASE_URL as API } from '../../config'
 
@@ -45,6 +47,7 @@ function ConfidenceBadge({ confidence }) {
   return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>Độ tin cậy {confidence}%</span>
 }
 const SOURCE_LABEL = { manual: 'nhập tay', nlp: 'tự phát hiện từ câu hỏi', default: 'mặc định' }
+const CHART_TYPE_LABEL = { bar: 'Cột', leaderboard: 'Bảng xếp hạng', line: 'Đường xu hướng', pie: 'Tròn', heatmap: 'Bản đồ nhiệt' }
 
 function AskPanel({ token }) {
   const [question, setQuestion] = useState('')
@@ -74,10 +77,10 @@ function AskPanel({ token }) {
 
   const st = result ? (STATUS_CFG[result.status] || STATUS_CFG.FAILED) : null
   const chart = result?.chart
-  const maxVal = chart?.values?.length ? Math.max(...chart.values, 1) : 1
 
   return (
     <div className="space-y-6">
+      <InsightCards token={token} />
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
         <textarea value={question} onChange={e => setQuestion(e.target.value)} rows={2} placeholder="Nhập câu hỏi về dữ liệu (VD: gia sư nào kiếm nhiều tiền nhất tháng trước?)..." className="w-full border border-gray-200 rounded-lg p-3 text-sm resize-none focus:outline-none focus:border-primary" />
         <div className="flex flex-wrap items-center gap-3 mt-3">
@@ -121,17 +124,10 @@ function AskPanel({ token }) {
             </div>
           )}
 
-          {chart && chart.values && chart.values.length > 0 && (
+          {chart && chart.type && (chart.values?.length > 0 || chart.matrix?.length > 0) && (
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              <p className="text-xs text-gray-400 uppercase font-semibold mb-3">Biểu đồ ({chart.value_label})</p>
-              <div className="space-y-1.5">
-                {chart.labels.map((lb, i) => (
-                  <div key={i}>
-                    <div className="flex justify-between text-xs mb-0.5"><span className="text-gray-600 truncate max-w-[70%]">{lb || '—'}</span><span className="font-semibold text-gray-800">{fmtCell(chart.values[i])}</span></div>
-                    <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden"><div className="h-full bg-primary rounded-full" style={{ width: `${(chart.values[i] / maxVal) * 100}%` }} /></div>
-                  </div>
-                ))}
-              </div>
+              <p className="text-xs text-gray-400 uppercase font-semibold mb-3">Biểu đồ ({chart.value_label}) · {CHART_TYPE_LABEL[chart.type] || chart.type}</p>
+              <AnalyticsChart chart={chart} />
             </div>
           )}
 
