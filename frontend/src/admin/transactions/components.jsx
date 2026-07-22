@@ -25,8 +25,11 @@ const STATUS_CONFIG = {
   LOW:             { label: 'Thấp',            cls: 'bg-green-100 text-green-700 border border-green-200' },
   INFO:            { label: 'Thông tin',       cls: 'bg-sky-100 text-sky-700 border border-sky-200' },
   // Alert statuses
-  INVESTIGATING:   { label: 'Đang điều tra',   cls: 'bg-purple-100 text-purple-700 border border-purple-200' },
-  RESOLVED:        { label: 'Đã giải quyết',  cls: 'bg-gray-100 text-gray-600 border border-gray-200' },
+  INVESTIGATING:      { label: 'Đang điều tra',      cls: 'bg-purple-100 text-purple-700 border border-purple-200' },
+  NEED_MORE_EVIDENCE: { label: 'Cần thêm bằng chứng', cls: 'bg-amber-100 text-amber-700 border border-amber-200' },
+  RESOLVED:           { label: 'Đã giải quyết',      cls: 'bg-gray-100 text-gray-600 border border-gray-200' },
+  CONFIRMED_FRAUD:    { label: 'Xác nhận gian lận',   cls: 'bg-red-100 text-red-700 border border-red-200' },
+  FALSE_POSITIVE:     { label: 'Báo động giả',        cls: 'bg-sky-100 text-sky-700 border border-sky-200' },
   // Other
   ACTIVE:          { label: 'Đang hoạt động', cls: 'bg-emerald-100 text-emerald-700 border border-emerald-200' },
   EXPIRED:         { label: 'Hết hạn',         cls: 'bg-gray-100 text-gray-600 border border-gray-200' },

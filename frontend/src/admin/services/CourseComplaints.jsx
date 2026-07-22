@@ -527,6 +527,25 @@ export default function CourseComplaintsAdminView({ token }) {
     load(1, sf, search);
   };
 
+  // Broadcast lightweight context to the AI Copilot (Batch 39, PART 2). When a
+  // complaint is selected, its student_id lets the Copilot focus on that student;
+  // otherwise the current filter scopes the module summary. Reuses the existing
+  // window-event channel — no new wiring in AdminDashboard.
+  useEffect(() => {
+    const selected = complaints.find(c => c.id === selectedId) || null;
+    window.dispatchEvent(new CustomEvent('admin-copilot:context', {
+      detail: {
+        pageKey: 'sm-complaints',
+        context: {
+          complaintId: selectedId || null,
+          studentId: selected?.student_id || null,
+          selectedRow: selected ? { id: selected.id, title: selected.title, status: selected.status } : null,
+          filters: { status: statusFilter, search: search || null },
+        },
+      },
+    }));
+  }, [selectedId, statusFilter, search, complaints]);
+
   const totalPages = Math.ceil(total / limit);
   const totalAll = Object.values(stats).reduce((a, b) => a + b, 0);
   const pendingCount = (stats.pending || 0) + (stats.processing || 0) + (stats.waiting_student || 0) + (stats.waiting_tutor || 0);

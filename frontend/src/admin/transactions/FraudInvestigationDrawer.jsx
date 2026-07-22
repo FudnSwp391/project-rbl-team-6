@@ -20,6 +20,30 @@ const HISTORY_TABS = [
   ['refunds',      'Yêu cầu hoàn tiền'],
 ]
 
+const STATUS_OPTIONS = [
+  ['OPEN',                'Đang mở'],
+  ['INVESTIGATING',       'Đang điều tra'],
+  ['NEED_MORE_EVIDENCE',  'Cần thêm bằng chứng'],
+  ['RESOLVED',            'Đã giải quyết'],
+  ['CONFIRMED_FRAUD',     'Xác nhận gian lận'],
+  ['FALSE_POSITIVE',      'Báo động giả'],
+]
+
+// Buttons map 1:1 to POST /api/admin/fraud-alerts/:id/actions. Freeze/hold/
+// release are advisory (logged only) — see server.js Batch 38 comment: moving
+// money or blocking transactions there would touch financial transaction
+// logic / the wallet_ledger trigger, which is out of scope for this batch.
+const ACTION_BUTTONS = [
+  { type: 'ASSIGN_INVESTIGATOR', label: 'Nhận xử lý',              icon: 'assignment_ind', reason: false },
+  { type: 'REQUEST_VERIFICATION', label: 'Yêu cầu xác minh',        icon: 'verified_user',  reason: true },
+  { type: 'FREEZE_WALLET',        label: 'Tạm giữ ví',              icon: 'account_balance_wallet', reason: true, advisory: true },
+  { type: 'SUSPEND_USER',         label: 'Khoá tài khoản',          icon: 'block',           reason: true, danger: true },
+  { type: 'HOLD_PAYMENT',         label: 'Giữ thanh toán',          icon: 'pause_circle',    reason: true, advisory: true },
+  { type: 'RELEASE_PAYMENT',      label: 'Giải ngân thanh toán',    icon: 'play_circle',     reason: true, advisory: true },
+  { type: 'MARK_FALSE_POSITIVE',  label: 'Đánh dấu báo động giả',   icon: 'thumb_down',      reason: true },
+  { type: 'RESOLVE',              label: 'Kết thúc điều tra',       icon: 'task_alt',        reason: true },
+]
+
 const fmtVnd = n => Number(n || 0).toLocaleString('vi-VN') + 'đ'
 
 const openCopilot = (entityType, entityId) =>
@@ -35,6 +59,10 @@ export default function FraudInvestigationDrawer({ token, alertRow, open, onClos
   const [noteBusy,   setNoteBusy]   = useState(false)
   const [editingId,  setEditingId]  = useState(null)
   const [editText,   setEditText]   = useState('')
+  const [auditLog,   setAuditLog]   = useState(null)
+  const [statusDraft, setStatusDraft] = useState('OPEN')
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [actionBusy, setActionBusy] = useState(null)
 
   const myAdminId = token ? decodeJwtUserId(token) : null
   const alertId = alertRow?.id
@@ -47,19 +75,53 @@ export default function FraudInvestigationDrawer({ token, alertRow, open, onClos
       fetch(`${API}/api/admin/fraud-alerts/${alertId}`, { headers }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       fetch(`${API}/api/admin/fraud-alerts/${alertId}/history`, { headers }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       fetch(`${API}/api/admin/fraud-alerts/${alertId}/timeline`, { headers }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      fetch(`${API}/api/admin/fraud-alerts/${alertId}/audit-log`, { headers }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
     ])
-      .then(([d, h, t]) => { setDetail(d); setHistory(h); setTimeline(t) })
-      .catch(() => { setDetail(null); setHistory(null); setTimeline(null) })
+      .then(([d, h, t, a]) => { setDetail(d); setHistory(h); setTimeline(t); setAuditLog(a); setStatusDraft(d.investigation?.status || 'OPEN') })
+      .catch(() => { setDetail(null); setHistory(null); setTimeline(null); setAuditLog(null) })
       .finally(() => setLoading(false))
   }, [token, alertId])
 
   useEffect(() => {
     if (open && alertId) load()
     if (!open) {
-      setDetail(null); setHistory(null); setTimeline(null)
+      setDetail(null); setHistory(null); setTimeline(null); setAuditLog(null)
       setHistoryTab('transactions'); setNoteText(''); setEditingId(null)
     }
   }, [open, alertId, load])
+
+  const updateStatus = async () => {
+    const reason = window.prompt('Lý do thay đổi trạng thái (không bắt buộc):') || ''
+    setStatusBusy(true)
+    try {
+      const r = await fetch(`${API}/api/admin/fraud-alerts/${alertId}/status`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: statusDraft, reason }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) { window.alert(j.message || 'Không thể cập nhật trạng thái.'); return }
+      load()
+    } catch { window.alert('Lỗi kết nối.') } finally { setStatusBusy(false) }
+  }
+
+  const runAction = async (btn) => {
+    let reason = ''
+    if (btn.reason) {
+      reason = window.prompt(`Lý do cho hành động "${btn.label}":`) || ''
+      if (btn.reason && !reason.trim()) return
+    }
+    if (btn.danger && !window.confirm(`Xác nhận: ${btn.label}?`)) return
+    setActionBusy(btn.type)
+    try {
+      const r = await fetch(`${API}/api/admin/fraud-alerts/${alertId}/actions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: btn.type, reason }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) { window.alert(j.message || 'Không thể thực hiện hành động.'); return }
+      load()
+    } catch { window.alert('Lỗi kết nối.') } finally { setActionBusy(null) }
+  }
 
   const submitNote = async () => {
     const content = noteText.trim()
@@ -104,7 +166,14 @@ export default function FraudInvestigationDrawer({ token, alertRow, open, onClos
       ) : (
         <div className="space-y-4">
           {/* 1. Alert Information */}
-          <SectionCard title="Thông tin cảnh báo" icon="warning">
+          <SectionCard title="Thông tin cảnh báo" icon="warning"
+            action={
+              <button onClick={() => openCopilot('FRAUD_ALERT', alertId)}
+                className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border border-primary/30 text-primary hover:bg-primary/5">
+                <span className="material-symbols-outlined text-[15px]">auto_awesome</span>
+                Phân tích bằng AI
+              </button>
+            }>
             <div className="p-5 space-y-3">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-mono font-bold text-orange-600">{detail.alert.id}</span>
@@ -239,6 +308,64 @@ export default function FraudInvestigationDrawer({ token, alertRow, open, onClos
                           </div>
                         </div>
                       ) : <p className="text-sm text-gray-700 whitespace-pre-wrap">{n.content}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </SectionCard>
+
+          {/* 7. Status Management */}
+          <SectionCard title="Trạng thái điều tra" icon="flag">
+            <div className="p-5 flex items-center gap-2 flex-wrap">
+              <select value={statusDraft} onChange={e => setStatusDraft(e.target.value)}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none flex-1 min-w-[180px]">
+                {STATUS_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+              <button onClick={updateStatus} disabled={statusBusy || statusDraft === (detail.investigation?.status || 'OPEN')}
+                className="px-3 py-2 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 disabled:opacity-50">
+                {statusBusy ? 'Đang lưu...' : 'Cập nhật trạng thái'}
+              </button>
+            </div>
+          </SectionCard>
+
+          {/* 8. Investigation Actions */}
+          <SectionCard title="Hành động điều tra" icon="bolt">
+            <div className="p-5 grid grid-cols-2 gap-2">
+              {ACTION_BUTTONS.map(btn => (
+                <button key={btn.type} onClick={() => runAction(btn)} disabled={actionBusy === btn.type}
+                  title={btn.advisory ? 'Ghi nhận vào nhật ký kiểm toán — không tự động di chuyển tiền.' : undefined}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold border transition disabled:opacity-50
+                    ${btn.danger ? 'border-red-200 text-red-700 hover:bg-red-50' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}>
+                  <span className="material-symbols-outlined text-[16px]">{btn.icon}</span>
+                  {actionBusy === btn.type ? 'Đang xử lý...' : btn.label}
+                  {btn.advisory && <span className="material-symbols-outlined text-[13px] text-gray-400 ml-auto">info</span>}
+                </button>
+              ))}
+            </div>
+            <p className="px-5 pb-4 text-[11px] text-gray-400">
+              Các hành động có biểu tượng <span className="material-symbols-outlined text-[11px] align-middle">info</span> chỉ ghi nhận vào nhật ký kiểm toán, chưa tự động thực thi trên ví/giao dịch thật.
+            </p>
+          </SectionCard>
+
+          {/* Audit Log */}
+          <SectionCard title="Nhật ký kiểm toán" icon="history_edu">
+            <div className="p-5">
+              {(auditLog?.logs || []).length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-4">Chưa có hành động nào được ghi nhận.</p>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {auditLog.logs.map(l => (
+                    <div key={l.id} className="py-2.5 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-gray-800">{l.action}</span>
+                        <span className="text-xs text-gray-400 whitespace-nowrap">{fmtDateTime(l.created_at)}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {l.admin_name || 'Admin'}
+                        {l.previous_status && l.new_status ? ` · ${l.previous_status} → ${l.new_status}` : ''}
+                        {l.reason ? ` · ${l.reason}` : ''}
+                      </p>
                     </div>
                   ))}
                 </div>
