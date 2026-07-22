@@ -2199,7 +2199,7 @@ const ANALYTICS_TEMPLATES = [
     key: 'fraud_high_risk_tutors', label: 'Gia sư rủi ro gian lận cao', intentCode: 'FRAUD_RISK',
     description: 'Gia sư có báo cáo gian lận mức HIGH/CRITICAL (Batch 28).',
     exampleQuestions: ['Gia sư nào có rủi ro gian lận cao nhất', 'Top fraud tutor high risk', 'Who has the highest fraud risk'],
-    keywords: [['gian lan', 2], ['fraud', 2], ['fraudulent', 2], ['rui ro', 1], ['risk', 1], ['risky', 1], ['gia su', 1], ['tutor', 1], ['tutors', 1], ['cao nhat', 1], ['highest', 1], ['high risk', 2]],
+    keywords: [['gian lan', 2], ['fraud', 2], ['fraudulent', 2], ['rui ro', 1], ['risk', 1], ['risky', 1], ['gia su', 1], ['tutor', 1], ['tutors', 1], ['cao nhat', 1], ['highest', 1], ['high risk', 2], ['lua dao', 3], ['scam', 3], ['bi report', 2], ['report', 1], ['bao cao vi pham', 2]],
     requiredTables: ['fraud_intel_reports', 'users'], chartType: 'leaderboard', labelKey: 'tutor_name', valueKey: 'max_risk_score',
     columns: ['tutor_id', 'tutor_name', 'report_count', 'max_risk_score', 'latest_summary'],
     sql: `SELECT f.tutor_id, u.full_name AS tutor_name, COUNT(*)::int AS report_count,
@@ -2217,7 +2217,7 @@ const ANALYTICS_TEMPLATES = [
     key: 'external_payment_signals', label: 'Dấu hiệu giao dịch ngoài nền tảng', intentCode: 'EXTERNAL_PAYMENT_SIGNALS',
     description: 'Người dùng có báo cáo kiểm duyệt EXTERNAL_PAYMENT_ATTEMPT (Batch 27).',
     exampleQuestions: ['Ai có dấu hiệu giao dịch ngoài nền tảng', 'Top gia sư rủ chuyển khoản ngoài app', 'Who shows signs of off-platform payment'],
-    keywords: [['giao dich ngoai', 3], ['ngoai nen tang', 2], ['ngoai app', 2], ['chuyen khoan', 2], ['external payment', 3], ['off platform', 2], ['off-platform', 2], ['ne phi', 1], ['tron phi', 1]],
+    keywords: [['giao dich ngoai', 3], ['ngoai nen tang', 2], ['ngoai app', 2], ['chuyen khoan', 2], ['external payment', 3], ['off platform', 3], ['off-platform', 3], ['ne phi', 1], ['tron phi', 1]],
     requiredTables: ['semantic_moderation_reports', 'users'], chartType: 'leaderboard', labelKey: 'user_name', valueKey: 'semantic_report_count',
     columns: ['user_id', 'user_name', 'semantic_report_count', 'fraud_report_count', 'latest_summary'],
     sql: `SELECT s.tutor_id AS user_id, u.full_name AS user_name, COUNT(*)::int AS semantic_report_count,
@@ -2256,7 +2256,7 @@ const ANALYTICS_TEMPLATES = [
     key: 'monthly_revenue_summary', label: 'Doanh thu theo tháng', intentCode: 'REVENUE_TREND',
     description: 'Tổng hoa hồng/doanh thu ghi nhận (commission_logs EARNED) theo tháng.',
     exampleQuestions: ['Doanh thu theo tháng', 'Revenue by month', 'Revenue trend'],
-    keywords: [['doanh thu', 3], ['revenue', 3], ['theo thang', 2], ['by month', 2], ['monthly', 2], ['thang', 1], ['xu huong', 1], ['trend', 1]],
+    keywords: [['doanh thu', 3], ['revenue', 3], ['theo thang', 2], ['by month', 2], ['monthly', 2], ['thang', 1], ['xu huong', 1], ['trend', 1], ['tinh hinh kinh doanh', 3], ['kinh doanh', 1], ['tinh hinh', 1]],
     requiredTables: ['commission_logs'], chartType: 'line', labelKey: 'month', valueKey: 'gross_revenue',
     columns: ['month', 'gross_revenue', 'commission_amount', 'transaction_count'],
     sql: `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month,
@@ -2336,8 +2336,8 @@ const ANALYTICS_TEMPLATES = [
   {
     key: 'tutor_quality_decline', label: 'Gia sư giảm chất lượng', intentCode: 'TUTOR_QUALITY_DECLINE',
     description: 'Gia sư có báo cáo chất lượng thấp / khiếu nại / hoàn tiền tăng.',
-    exampleQuestions: ['Gia sư có dấu hiệu giảm chất lượng', 'Tutor quality decline', 'Courses with abnormal ratings', 'Tutors with dropping ratings'],
-    keywords: [['giam chat luong', 3], ['chat luong', 1], ['quality decline', 3], ['declining quality', 3], ['abnormal rating', 3], ['danh gia bat thuong', 3], ['gia su', 1], ['tutor', 1], ['tutors', 1]],
+    exampleQuestions: ['Gia sư có dấu hiệu giảm chất lượng', 'Tutor quality decline', 'Tutors with unusually low ratings', 'Tutors with dropping ratings'],
+    keywords: [['giam chat luong', 3], ['chat luong', 1], ['quality decline', 3], ['declining quality', 3], ['abnormal rating', 3], ['danh gia bat thuong', 3], ['gia su', 1], ['tutor', 1], ['tutors', 1], ['te nhat', 3], ['kem nhat', 3], ['worst', 2], ['worst tutor', 3], ['dropping rating', 3], ['low rating', 3], ['rating', 1]],
     requiredTables: ['tutor_profiles', 'users'], chartType: 'leaderboard', labelKey: 'tutor_name', valueKey: 'dispute_count',
     columns: ['tutor_id', 'tutor_name', 'avg_rating', 'low_teaching_reports', 'dispute_count', 'refund_count'],
     sql: `SELECT tp.user_id AS tutor_id, u.full_name AS tutor_name, COALESCE(tp.avg_rating,0)::numeric AS avg_rating,
@@ -2359,7 +2359,7 @@ const ANALYTICS_TEMPLATES = [
     key: 'top_tutor_revenue', label: 'Top gia sư theo doanh thu', intentCode: 'TOP_TUTOR_REVENUE',
     description: 'Xếp hạng gia sư theo tổng thu nhập (tutor_amount) ghi nhận trong N ngày.',
     exampleQuestions: ['Top gia sư theo doanh thu', 'Highest earning tutor', 'Tutor making the most money', 'Who earned the most', 'Best revenue tutor this month'],
-    keywords: [['doanh thu', 2], ['revenue', 2], ['gia su', 2], ['tutor', 2], ['tutors', 2], ['kiem tien', 3], ['kiem nhieu tien', 3], ['earning', 3], ['earnings', 3], ['earned', 3], ['thu nhap', 3], ['income', 3], ['most money', 3], ['nhieu tien nhat', 3], ['best revenue', 3], ['cao nhat', 1], ['nhieu nhat', 1], ['top', 2]],
+    keywords: [['doanh thu', 2], ['revenue', 2], ['gia su', 2], ['tutor', 2], ['tutors', 2], ['kiem tien', 3], ['kiem nhieu tien', 3], ['earning', 3], ['earnings', 3], ['earned', 3], ['thu nhap', 3], ['income', 3], ['most money', 3], ['nhieu tien nhat', 3], ['best revenue', 3], ['cao nhat', 1], ['nhieu nhat', 1], ['top', 2], ['lam an tot', 3], ['lam an', 2], ['kinh doanh tot', 3], ['kinh doanh', 1]],
     requiredTables: ['commission_logs', 'users'], chartType: 'leaderboard', labelKey: 'tutor_name', valueKey: 'tutor_revenue',
     columns: ['tutor_id', 'tutor_name', 'tutor_revenue', 'transaction_count'],
     sql: `SELECT cl.tutor_id, u.full_name AS tutor_name, COALESCE(SUM(cl.tutor_amount),0)::numeric AS tutor_revenue,
@@ -2377,7 +2377,7 @@ const ANALYTICS_TEMPLATES = [
     key: 'top_courses', label: 'Top khóa học', intentCode: 'TOP_COURSES',
     description: 'Xếp hạng khóa học theo số lượt ghi danh và doanh thu trong N ngày.',
     exampleQuestions: ['Top khóa học', 'Khóa học nào bán chạy nhất', 'Top courses by enrollment', 'Best selling courses this month'],
-    keywords: [['khoa hoc', 2], ['course', 2], ['courses', 2], ['ban chay', 3], ['best selling', 3], ['ghi danh', 2], ['enrollment', 2], ['enrollments', 2], ['top', 1], ['nhieu nhat', 1], ['cao nhat', 1]],
+    keywords: [['khoa hoc', 2], ['course', 2], ['courses', 2], ['ban chay', 3], ['best selling', 3], ['ghi danh', 2], ['enrollment', 2], ['enrollments', 2], ['top', 1], ['nhieu nhat', 1], ['cao nhat', 1], ['hot nhat', 3], ['pho bien nhat', 3], ['hot', 1], ['popular', 2]],
     requiredTables: ['courses', 'course_enrollments'], chartType: 'leaderboard', labelKey: 'course_title', valueKey: 'enrollment_count',
     columns: ['course_id', 'course_title', 'subject', 'enrollment_count', 'course_revenue'],
     sql: `SELECT c.id AS course_id, c.title AS course_title, c.subject,
@@ -2400,7 +2400,7 @@ const ANALYTICS_TEMPLATES = [
     key: 'top_students', label: 'Top học sinh chi tiêu nhiều nhất', intentCode: 'TOP_STUDENTS',
     description: 'Xếp hạng học sinh theo tổng chi tiêu ghi nhận trong N ngày (không phải theo khiếu nại).',
     exampleQuestions: ['Top học sinh chi tiêu nhiều nhất', 'Học sinh nào active nhất', 'Top spending students', 'Best students by purchase'],
-    keywords: [['chi tieu', 3], ['spend', 3], ['spending', 3], ['mua nhieu', 2], ['purchase', 2], ['hoc sinh', 1], ['student', 1], ['students', 1], ['tich cuc nhat', 2], ['most active', 2], ['active nhat', 2], ['best student', 2], ['top hoc sinh', 2], ['nhieu nhat', 1], ['top', 1]],
+    keywords: [['chi tieu', 3], ['spend', 3], ['spending', 3], ['mua nhieu', 2], ['purchase', 2], ['hoc sinh', 1], ['student', 1], ['students', 1], ['tich cuc nhat', 2], ['most active', 2], ['active nhat', 2], ['best student', 2], ['top hoc sinh', 2], ['nhieu nhat', 1], ['top', 1], ['chiu chi', 3]],
     requiredTables: ['commission_logs', 'users'], chartType: 'leaderboard', labelKey: 'student_name', valueKey: 'total_spend',
     columns: ['student_id', 'student_name', 'transaction_count', 'total_spend'],
     sql: `SELECT cl.student_id, u.full_name AS student_name, COUNT(*)::int AS transaction_count,
@@ -2481,22 +2481,20 @@ function singularize(w) {
   if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
   return w;
 }
-// Exact substring match first (fast path, preserves prior exact behavior);
-// falls back to per-word fuzzy match (plural + single-typo tolerant) so
-// "highest earning tutors" still hits a keyword phrase like "earning tutor".
-function fuzzyPhraseMatch(questionNorm, questionWords, phrase) {
-  if (questionNorm.includes(phrase)) return true;
-  const phraseWords = phrase.split(' ').filter(Boolean);
-  return phraseWords.every(pw => {
-    const pwSing = singularize(pw);
-    return questionWords.some(qw => {
-      if (qw === pw) return true;
-      const qwSing = singularize(qw);
-      if (qwSing === pwSing) return true;
-      if (pw.length >= 4 && Math.abs(qw.length - pw.length) <= 1) return levenshtein(qwSing, pwSing) <= 1;
-      return false;
-    });
-  });
+// Multi-word keywords only ever match as a literal (ordered, adjacent)
+// substring — an earlier version fell back to "do all these words appear
+// anywhere in the question" with no order requirement, which let unrelated
+// questions false-match: "ai đang rút tiền nhiều nhất" (about withdrawals)
+// scored a hit on the revenue template's "nhieu tien nhat" keyword just
+// because "nhieu"/"tien"/"nhat" each appeared somewhere, scrambled,
+// alongside "rut". Single words get real typo/plural tolerance instead
+// (the actual case spec Step 3 asked for).
+function singleWordFuzzyMatch(qw, pw) {
+  if (qw === pw) return true;
+  const qwSing = singularize(qw), pwSing = singularize(pw);
+  if (qwSing === pwSing) return true;
+  if (pw.length >= 4 && Math.abs(qw.length - pw.length) <= 1) return levenshtein(qwSing, pwSing) <= 1;
+  return false;
 }
 function analyticsTemplateMaxScore(t) {
   const weights = t.keywords.map(k => k[1]).sort((a, b) => b - a);
@@ -2509,8 +2507,22 @@ function detectAnalyticsIntent(question) {
   const words = q.split(' ').filter(Boolean);
   const scored = [];
   for (const t of ANALYTICS_TEMPLATES) {
-    let score = 0; const matched = [];
-    for (const [kw, w] of t.keywords) { if (fuzzyPhraseMatch(q, words, kw)) { score += w; matched.push(kw); } }
+    let score = 0; const matched = []; const usedWords = new Set();
+    for (const [kw, w] of t.keywords) {
+      const kwWords = kw.split(' ').filter(Boolean);
+      if (kwWords.length === 1) {
+        // Single-word keyword: credit at most one question word per keyword,
+        // and never credit the same question word twice for this template —
+        // otherwise near-duplicate entries like 'risk'/'risky' or
+        // 'tutor'/'tutors' both fire off the one word actually present,
+        // silently doubling a template's score relative to templates
+        // without that redundant pairing.
+        const hitWord = words.find(qw => !usedWords.has(qw) && singleWordFuzzyMatch(qw, kwWords[0]));
+        if (hitWord) { score += w; matched.push(kw); usedWords.add(hitWord); }
+      } else if (q.includes(kw)) {
+        score += w; matched.push(kw);
+      }
+    }
     if (score > 0) scored.push({ t, score, matched });
   }
   scored.sort((a, b) => b.score - a.score);
