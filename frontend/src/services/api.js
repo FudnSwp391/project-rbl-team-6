@@ -607,6 +607,10 @@ export async function enrollCourse(courseId, payload = {}) {
   })
 }
 
+export async function getParentChildren() {
+  return request('/api/parent/children')
+}
+
 export async function getMyCourses() {
   return request('/api/my/courses')
 }

@@ -8484,6 +8484,10 @@ app.post('/api/parent/link-child', verifyToken, async (req, res) => {
     const dup = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [parentId,studentId]);
     if (dup.rows.length) return res.status(409).json({ message: 'Học sinh này đã được liên kết rồi.' });
     await pool.query('INSERT INTO parent_children (parent_id,student_id,nickname) VALUES ($1,$2,$3)', [parentId,studentId,nickname?.trim()||null]);
+    
+    // --- Security Fix: Xoá mã liên kết sau khi sử dụng để tránh bị hack ---
+    await pool.query('DELETE FROM student_link_codes WHERE code=$1', [code.trim().toUpperCase()]);
+
     const student = await pool.query('SELECT id,full_name,email,picture FROM users WHERE id=$1', [studentId]);
     return res.status(201).json({ message: 'Liên kết thành công!', student: student.rows[0] });
   } catch (e) { res.status(500).json({ message: 'Lỗi máy chủ.' }); }
@@ -9657,7 +9661,7 @@ app.post('/api/student/assessments/homework/:id/submit', verifyToken, async (req
 
     // Verify homework actually exists and get info for notifications
     const hwCheck = await pool.query(
-      `SELECT id, title, course, status, tutor_id FROM tutor_homeworks WHERE id = $1`,
+      `SELECT id, title, course, status, tutor_id, assigned_students FROM tutor_homeworks WHERE id = $1`,
       [homeworkId]
     );
     if (hwCheck.rows.length === 0) {
@@ -9666,6 +9670,14 @@ app.post('/api/student/assessments/homework/:id/submit', verifyToken, async (req
     }
     const hwData = hwCheck.rows[0];
     console.log('[SUBMIT HW] Found homework:', hwData.title);
+
+    // --- IDOR Protection ---
+    // Ensure the student is actually assigned to this homework
+    const assigned = hwData.assigned_students || [];
+    if (!assigned.includes(studentId)) {
+      console.warn(`[SECURITY] IDOR Attempt: Student ${studentId} tried to submit to homework ${homeworkId} without being assigned.`);
+      return res.status(403).json({ message: 'Bạn không có quyền nộp bài cho bài tập này vì bạn không nằm trong danh sách được giao.' });
+    }
 
     // Check if this is a first-time submission or re-submission
     const existing = await pool.query(
@@ -10602,11 +10614,24 @@ app.get("/api/courses/:id/enrollment-status", verifyToken, async (req, res) => {
 // ── POST /api/courses/:id/enroll ── Đăng ký khóa học ────────────────────────
 app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
   const courseId = req.params.id;
-  const studentId = req.user.userId;
+  let studentId = req.user.userId;
+  const payerId = req.user.userId;
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN"); // Bắt đầu transaction
+
+    // --- PARENT DELEGATION SUPPORT ---
+    const targetStudentId = req.body?.targetStudentId;
+    if (req.user.role === 'parent' && targetStudentId) {
+      // Validate that the target student is actually linked to this parent
+      const checkLink = await client.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [payerId, targetStudentId]);
+      if (checkLink.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ message: "Học sinh không hợp lệ hoặc chưa được liên kết với bạn." });
+      }
+      studentId = targetStudentId; // Đứa bé được ghi danh
+    }
 
     // Kiểm tra khóa học tồn tại
     const courseRes = await client.query(
@@ -10645,15 +10670,15 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
     // XỬ LÝ THANH TOÁN NẾU KHÓA HỌC CÓ GIÁ > 0
     const price = Number(course.price);
     if (price > 0) {
-      // 1. Lock ví học sinh để tránh ghi đè
-      const studentWalletRes = await client.query(`SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [studentId]);
-      if (studentWalletRes.rowCount === 0) {
+      // 1. Lock ví người thanh toán để tránh ghi đè
+      const payerWalletRes = await client.query(`SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [payerId]);
+      if (payerWalletRes.rowCount === 0) {
         await client.query("ROLLBACK");
         return res.status(400).json({ message: "Không tìm thấy ví của bạn." });
       }
-      const studentWallet = studentWalletRes.rows[0];
+      const payerWallet = payerWalletRes.rows[0];
       
-      if (Number(studentWallet.balance) < price) {
+      if (Number(payerWallet.balance) < price) {
         await client.query("ROLLBACK");
         return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư trong ví không đủ. Vui lòng nạp thêm tiền." });
       }
@@ -10685,7 +10710,7 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       const tutorShare = price - adminShare;
 
       // Cập nhật số dư các ví
-      await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [price, studentWallet.id]);
+      await client.query(`UPDATE wallets SET balance = balance - $1 WHERE id = $2`, [price, payerWallet.id]);
       await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [tutorShare, tutorWalletId]);
       await client.query(`UPDATE wallets SET balance = balance + $1 WHERE id = $2`, [adminShare, adminWalletId]);
 
@@ -10702,11 +10727,11 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       });
 
       // 5. Ghi log Transactions
-      // Học viên trừ tiền mua khóa
+      // Người thanh toán bị trừ tiền mua khóa
       await client.query(`
         INSERT INTO transactions (wallet_id, amount, type, status, description)
         VALUES ($1, $2, 'PAYMENT', 'SUCCESS', $3)
-      `, [studentWallet.id, -price, `Thanh toán mua khóa học: ${course.title}`]);
+      `, [payerWallet.id, -price, `Thanh toán mua khóa học: ${course.title}`]);
 
       // Gia sư nhận doanh thu
       await client.query(`
@@ -11451,6 +11476,31 @@ app.patch("/api/courses/:id/lessons/:lessonId/progress", verifyToken, async (req
       return res.status(404).json({ message: "Không tìm thấy bài học." });
     }
 
+    const oldProg = await pool.query(
+      `SELECT watched_seconds, updated_at FROM course_progress WHERE enrollment_id = $1 AND lesson_id = $2`,
+      [enrollmentId, lessonId]
+    );
+
+    let newWatchedSeconds = Math.max(0, Number(watchedSeconds) || 0);
+    
+    // --- Anti-cheat logic ---
+    if (oldProg.rows.length > 0) {
+      const old = oldProg.rows[0];
+      const elapsedSec = (Date.now() - new Date(old.updated_at).getTime()) / 1000;
+      const claimedProgress = newWatchedSeconds - Number(old.watched_seconds || 0);
+      
+      // Cho phép tối đa tua x2 tốc độ + 5s buffer
+      if (claimedProgress > (elapsedSec * 2) + 5) {
+        newWatchedSeconds = Number(old.watched_seconds || 0) + (elapsedSec * 2);
+        console.warn(`[ANTI-CHEAT] Course Progress: User ${studentId} claimed +${claimedProgress}s in ${elapsedSec}s. Capped to ${newWatchedSeconds}s.`);
+      }
+    }
+
+    // Yêu cầu học sinh phải xem ít nhất 10 giây mới được bấm hoàn thành
+    if (isCompleted && newWatchedSeconds < 10) {
+      return res.status(400).json({ message: "Bạn phải xem ít nhất 10 giây để đánh dấu hoàn thành." });
+    }
+
     const result = await pool.query(
       `INSERT INTO course_progress (enrollment_id, lesson_id, watched_seconds, is_completed, completed_at)
        VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN NOW() ELSE NULL END)
@@ -11460,7 +11510,7 @@ app.patch("/api/courses/:id/lessons/:lessonId/progress", verifyToken, async (req
          completed_at = EXCLUDED.completed_at,
          updated_at = NOW()
        RETURNING *`,
-      [enrollmentId, lessonId, Math.max(0, Number(watchedSeconds) || 0), !!isCompleted]
+      [enrollmentId, lessonId, newWatchedSeconds, !!isCompleted]
     );
 
     return res.json({ success: true, progress: result.rows[0] });
@@ -15232,6 +15282,21 @@ app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) =
     }
 
     const idemKey = clientKey ? `withdrawal:tutor:${req.user.userId}:${clientKey}` : null;
+
+    // --- Rate Limit / Cooldown chống spam rút tiền (2 phút) ---
+    const recentWd = await pool.query(
+      `SELECT created_at FROM withdrawal_requests WHERE tutor_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [req.user.userId]
+    );
+    if (recentWd.rows.length > 0) {
+      const lastReqTime = new Date(recentWd.rows[0].created_at).getTime();
+      const elapsedMs = Date.now() - lastReqTime;
+      const cooldownMs = 2 * 60 * 1000;
+      if (elapsedMs < cooldownMs) {
+        const waitSec = Math.ceil((cooldownMs - elapsedMs) / 1000);
+        return res.status(429).json({ message: `Vui lòng đợi thêm ${waitSec} giây trước khi tạo yêu cầu rút tiền mới.` });
+      }
+    }
 
     await client.query('BEGIN');
 
