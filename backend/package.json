@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "test": "node --test",
+    "test": "jest --forceExit",
     "test:watch": "jest --watch --forceExit",
     "test:coverage": "jest --coverage --forceExit",
     "demo:seed:dry": "node scripts/demo-data.js --seed --dry-run",

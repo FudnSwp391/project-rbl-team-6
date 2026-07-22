@@ -7,6 +7,7 @@ export default function PaymentResult() {
     const [status, setStatus] = useState('processing');
     const [message, setMessage] = useState('');
     const [isOrder, setIsOrder] = useState(false);
+    const [pendingBookingTutorId, setPendingBookingTutorId] = useState(null);
 
     useEffect(() => {
         const queryParams = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
@@ -44,6 +45,15 @@ export default function PaymentResult() {
                 const ipnUrl = `${API_BASE}/api/payment/vnpay-ipn?${queryParams.toString()}`;
                 fetch(ipnUrl).catch(e => console.error('Lỗi giả lập IPN:', e));
             }
+
+            // Nếu người dùng nạp tiền từ giữa chừng một lượt đặt lịch, quay lại đúng
+            // trang đó (lựa chọn sẽ được khôi phục ở BookingCalendar) thay vì về dashboard.
+            try {
+                const pending = JSON.parse(sessionStorage.getItem('edux_pending_booking') || 'null');
+                if (pending && pending.tutorId) {
+                    setPendingBookingTutorId(pending.tutorId);
+                }
+            } catch { /* ignore */ }
         } else if (rspCode) {
             localStorage.removeItem('edux_pending_order');
             setStatus('error');
@@ -54,7 +64,10 @@ export default function PaymentResult() {
         }
     }, []);
 
-    const goPrimary = () => { window.location.hash = isOrder ? '/my-courses' : '/dashboard'; };
+    const goPrimary = () => {
+        if (pendingBookingTutorId) { window.location.hash = `/booking/${pendingBookingTutorId}`; return; }
+        window.location.hash = isOrder ? '/my-courses' : '/dashboard';
+    };
 
     return (
         <div className="min-h-screen bg-surface flex flex-col items-center justify-center p-4">
@@ -78,7 +91,7 @@ export default function PaymentResult() {
                             onClick={goPrimary}
                             className="w-full h-12 bg-[#00288e] text-white font-semibold rounded-xl hover:bg-[#00288e]/90 transition-colors"
                         >
-                            {isOrder ? 'Vào Khóa học của tôi' : 'Quay về Bảng Điều Khiển'}
+                            {pendingBookingTutorId ? 'Quay lại đặt lịch' : (isOrder ? 'Vào Khóa học của tôi' : 'Quay về Bảng Điều Khiển')}
                         </button>
                     </>
                 )}

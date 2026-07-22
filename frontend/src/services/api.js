@@ -32,7 +32,11 @@ async function request(url, options = {}) {
       window.location.hash = '/signin';
       window.location.reload();
     }
-    throw new Error(errorData.message || `API request failed with status ${response.status}`);
+    const error = new Error(errorData.message || `API request failed with status ${response.status}`);
+    if (errorData.code) error.code = errorData.code;
+    if (errorData.needed !== undefined) error.needed = errorData.needed;
+    if (errorData.balance !== undefined) error.balance = errorData.balance;
+    throw error;
   }
 
   return response.json();

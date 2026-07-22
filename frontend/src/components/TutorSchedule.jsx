@@ -10,12 +10,16 @@ export default function TutorSchedule({ availability }) {
   if (!availability) return null;
 
   const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const dayLabels = {
+    Monday: 'Thứ 2', Tuesday: 'Thứ 3', Wednesday: 'Thứ 4', Thursday: 'Thứ 5',
+    Friday: 'Thứ 6', Saturday: 'Thứ 7', Sunday: 'Chủ nhật',
+  };
 
   return (
     <div className="bg-white/50 backdrop-blur-md rounded-2xl border border-outline-variant/30 p-6 space-y-4">
       <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2 mb-2">
         <span className="material-symbols-outlined text-primary">calendar_month</span>
-        Weekly Business Hours
+        Lịch Dạy Hàng Tuần
       </h3>
       
       <div className="space-y-3">
@@ -33,7 +37,7 @@ export default function TutorSchedule({ availability }) {
               }`}
             >
               <span className="font-label-md text-label-md text-on-surface font-semibold mb-2 sm:mb-0">
-                {day}
+                {dayLabels[day] || day}
               </span>
               
               <div className="flex flex-wrap gap-1.5 justify-start sm:justify-end">
@@ -48,7 +52,7 @@ export default function TutorSchedule({ availability }) {
                   ))
                 ) : (
                   <span className="text-[13px] text-on-surface-variant italic font-medium">
-                    Unavailable
+                    Không có lịch
                   </span>
                 )}
               </div>

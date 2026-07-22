@@ -19,7 +19,10 @@ export default function BookingConfirmationModal({
   submitError,
   bookingSuccessData,
   onConfirm,
-  onGoToDashboard
+  onGoToDashboard,
+  topupInfo,
+  isTopupLoading,
+  onTopUp
 }) {
   if (!isOpen) return null;
   const sessionItems = sessions.length ? sessions : (date && timeSlot ? [{ date, timeSlot }] : []);
@@ -39,7 +42,7 @@ export default function BookingConfirmationModal({
     if (!dateStr) return '';
     try {
       const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-      return new Date(dateStr).toLocaleDateString('en-US', options);
+      return new Date(dateStr).toLocaleDateString('vi-VN', options);
     } catch {
       return dateStr;
     }
@@ -104,11 +107,11 @@ export default function BookingConfirmationModal({
             </div>
             
             <div className="space-y-2">
-              <h3 className="font-headline-lg text-headline-lg text-on-surface">Booking Confirmed!</h3>
+              <h3 className="font-headline-lg text-headline-lg text-on-surface">Đặt Lịch Thành Công!</h3>
               <p className="font-body-md text-body-md text-on-surface-variant max-w-sm mx-auto">
                 {hasMultipleSessions
-                  ? `${sessionItems.length} booking requests have been sent successfully. The tutor will review them shortly.`
-                  : 'Your booking request has been sent successfully. The tutor will review your request shortly.'}
+                  ? `${sessionItems.length} yêu cầu đặt lịch đã được gửi thành công. Gia sư sẽ sớm xem xét và xác nhận.`
+                  : 'Yêu cầu đặt lịch của bạn đã được gửi thành công. Gia sư sẽ sớm xem xét và xác nhận.'}
               </p>
             </div>
 
@@ -131,15 +134,15 @@ export default function BookingConfirmationModal({
               
               <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-[13px]">
                 <div>
-                  <span className="text-on-surface-variant block font-medium">Date</span>
+                  <span className="text-on-surface-variant block font-medium">Ngày</span>
                   <span className="text-on-surface font-semibold">
-                    {hasMultipleSessions ? `${sessionItems.length} sessions` : formatDate(date)}
+                    {hasMultipleSessions ? `${sessionItems.length} buổi học` : formatDate(date)}
                   </span>
                 </div>
                 <div>
-                  <span className="text-on-surface-variant block font-medium">Time Slot</span>
+                  <span className="text-on-surface-variant block font-medium">Khung giờ</span>
                   <span className="text-on-surface font-semibold">
-                    {hasMultipleSessions ? 'Multiple times' : timeSlot}
+                    {hasMultipleSessions ? 'Nhiều khung giờ' : timeSlot}
                   </span>
                 </div>
                 {hasMultipleSessions && (
@@ -163,30 +166,30 @@ export default function BookingConfirmationModal({
                 )}
                 {childName && (
                   <div className="col-span-2">
-                    <span className="text-on-surface-variant block font-medium">Student</span>
+                    <span className="text-on-surface-variant block font-medium">Học viên</span>
                     <span className="text-on-surface font-semibold">{childName}</span>
                   </div>
                 )}
                 <div className="col-span-2">
-                  <span className="text-on-surface-variant block font-medium">Rate</span>
+                  <span className="text-on-surface-variant block font-medium">Học phí</span>
                   <span className="text-primary font-bold">{formatRate(tutor.rate)}</span>
                 </div>
               </div>
             </div>
 
             <div className="flex flex-col gap-2.5 pt-2">
-              <button 
+              <button
                 onClick={onGoToDashboard}
                 className="w-full h-12 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:bg-primary/90 transition-colors shadow-md flex items-center justify-center gap-2"
               >
                 <span className="material-symbols-outlined text-[18px]">dashboard</span>
-                Go to My Schedule
+                Xem Lịch Học Của Tôi
               </button>
-              <button 
+              <button
                 onClick={onClose}
                 className="w-full h-12 bg-transparent text-on-surface-variant hover:text-primary font-label-md text-label-md rounded-xl hover:bg-surface-container transition-colors"
               >
-                Book Another Session
+                Đặt Buổi Học Khác
               </button>
             </div>
           </div>
@@ -195,7 +198,7 @@ export default function BookingConfirmationModal({
           <div className="p-8">
             <h3 className="font-headline-md text-headline-md text-on-surface mb-5 flex items-center gap-2">
               <span className="material-symbols-outlined text-primary text-[28px]">lock_reset</span>
-              Confirm Booking Details
+              Xác Nhận Thông Tin Đặt Lịch
             </h3>
 
             {isSubmitting ? (
@@ -205,20 +208,46 @@ export default function BookingConfirmationModal({
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
                 </svg>
-                <p className="font-label-md text-label-md text-on-surface">Sending booking request to backend...</p>
-                <p className="font-label-sm text-label-sm text-on-surface-variant/70">Connecting to API server at localhost:5000</p>
+                <p className="font-label-md text-label-md text-on-surface">Đang gửi yêu cầu đặt lịch...</p>
+                <p className="font-label-sm text-label-sm text-on-surface-variant/70">Đang kết nối tới máy chủ, vui lòng đợi trong giây lát</p>
               </div>
             ) : (
               /* Review Content */
               <div className="space-y-5">
                 
-                {submitError && (
+                {submitError && !topupInfo && (
                   <div className="p-3.5 bg-error/10 border border-error/20 rounded-xl text-error font-label-sm text-label-sm flex items-start gap-2">
                     <span className="material-symbols-outlined text-[20px] shrink-0">error</span>
                     <div>
-                      <p className="font-bold">Booking Request Failed</p>
+                      <p className="font-bold">Đặt Lịch Thất Bại</p>
                       <p className="mt-0.5 opacity-90">{submitError}</p>
                     </div>
+                  </div>
+                )}
+
+                {topupInfo && (
+                  <div className="p-4 bg-error/10 border border-error/20 rounded-xl space-y-3">
+                    <div className="flex items-start gap-2 text-error font-label-sm text-label-sm">
+                      <span className="material-symbols-outlined text-[20px] shrink-0">account_balance_wallet</span>
+                      <div>
+                        <p className="font-bold">Số dư ví không đủ</p>
+                        <p className="mt-0.5 opacity-90">Vui lòng nạp thêm tiền để tiếp tục đặt lịch.</p>
+                      </div>
+                    </div>
+                    <div className="flex justify-between text-[13px] text-on-surface-variant">
+                      <span>Cần nạp thêm:</span>
+                      <span className="font-bold text-error">{topupInfo.missing.toLocaleString('vi-VN')}đ</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onTopUp}
+                      disabled={isTopupLoading}
+                      className="w-full h-11 bg-[#00288e] text-white font-label-md text-label-md rounded-xl hover:bg-[#1e40af] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">qr_code_2</span>
+                      {isTopupLoading ? 'Đang chuyển đến VNPAY...' : `Nạp ${topupInfo.missing.toLocaleString('vi-VN')}đ qua VNPAY`}
+                    </button>
+                    <p className="text-[11px] text-on-surface-variant/80 text-center">Lựa chọn buổi học của bạn sẽ được giữ lại sau khi nạp tiền.</p>
                   </div>
                 )}
 
@@ -244,20 +273,20 @@ export default function BookingConfirmationModal({
                     <div className="flex justify-between items-start">
                       <span className="text-on-surface-variant flex items-center gap-1">
                         <span className="material-symbols-outlined text-[18px]">calendar_today</span>
-                        Date:
+                        Ngày:
                       </span>
                       <span className="text-on-surface font-semibold text-right max-w-[240px]">
-                        {hasMultipleSessions ? `${sessionItems.length} sessions selected` : formatDate(date)}
+                        {hasMultipleSessions ? `Đã chọn ${sessionItems.length} buổi` : formatDate(date)}
                       </span>
                     </div>
-                    
+
                     <div className="flex justify-between items-center">
                       <span className="text-on-surface-variant flex items-center gap-1">
                         <span className="material-symbols-outlined text-[18px]">schedule</span>
-                        Time:
+                        Giờ:
                       </span>
                       <span className="text-on-surface font-semibold">
-                        {hasMultipleSessions ? 'See list below' : timeSlot}
+                        {hasMultipleSessions ? 'Xem danh sách bên dưới' : timeSlot}
                       </span>
                     </div>
 
@@ -288,7 +317,7 @@ export default function BookingConfirmationModal({
                       <div className="flex justify-between items-center">
                         <span className="text-on-surface-variant flex items-center gap-1">
                           <span className="material-symbols-outlined text-[18px]">person</span>
-                          Student (Child):
+                          Học viên (Con):
                         </span>
                         <span className="text-on-surface font-semibold">
                           {childName}
@@ -311,7 +340,7 @@ export default function BookingConfirmationModal({
                     )}
 
                     <div className="flex justify-between items-center pt-2 border-t border-outline-variant/10">
-                      <span className="text-on-surface-variant font-medium">Session Rate:</span>
+                      <span className="text-on-surface-variant font-medium">Học phí mỗi buổi:</span>
                       <span className="text-primary text-lg font-bold">{formatRate(tutor.rate)}</span>
                     </div>
                   </div>
@@ -329,7 +358,7 @@ export default function BookingConfirmationModal({
                 {/* Optional description notes summary */}
                 {notes && (
                   <div className="space-y-1.5">
-                    <span className="font-label-md text-label-md text-on-surface font-semibold">Notes / Topics to cover:</span>
+                    <span className="font-label-md text-label-md text-on-surface font-semibold">Ghi chú / Nội dung muốn học:</span>
                     <p className="p-3 bg-surface-container-low/40 rounded-xl text-on-surface-variant font-body-md text-[14px] leading-relaxed italic border border-outline-variant/10">
                       "{notes}"
                     </p>
@@ -337,21 +366,23 @@ export default function BookingConfirmationModal({
                 )}
 
                 <div className="flex gap-3 pt-3">
-                  <button 
+                  <button
                     type="button"
                     onClick={onClose}
                     className="flex-1 h-12 border border-outline-variant/50 text-on-surface-variant font-label-md text-label-md rounded-xl hover:bg-surface-container transition-colors"
                   >
-                    Cancel
+                    Hủy
                   </button>
-                  <button 
-                    type="button"
-                    onClick={onConfirm}
-                    className="flex-1 h-12 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:bg-primary/95 transition-colors shadow-md flex items-center justify-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">verified</span>
-                    Confirm Booking
-                  </button>
+                  {!topupInfo && (
+                    <button
+                      type="button"
+                      onClick={onConfirm}
+                      className="flex-1 h-12 bg-primary text-on-primary font-label-md text-label-md rounded-xl hover:bg-primary/95 transition-colors shadow-md flex items-center justify-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">verified</span>
+                      Xác Nhận Đặt Lịch
+                    </button>
+                  )}
                 </div>
               </div>
             )}

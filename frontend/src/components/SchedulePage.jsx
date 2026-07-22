@@ -111,7 +111,7 @@ const SchedulePage = () => {
   // periodOffset dịch ngày/tuần/tháng tùy chế độ để xem được các kỳ khác (vd buổi học tháng sau).
   const getDisplayDates = () => {
     const todayStr = new Date().toDateString();
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const days = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
     const dates = [];
 
     if (timeFrame === 'Today') {
@@ -168,6 +168,8 @@ const SchedulePage = () => {
   };
 
   const displayDates = getDisplayDates();
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
 
   // Nhãn kỳ đang xem (để người dùng biết đang ở tuần/tháng nào khi điều hướng).
   const periodLabel = (() => {
@@ -193,6 +195,13 @@ const SchedulePage = () => {
     if (status === 'cancelled' || status === 'declined') return { bgColor: 'bg-error-container/10', borderColor: 'border-error/20', labelBg: 'bg-error', labelColor: 'text-on-error' };
     return { bgColor: 'bg-surface', borderColor: 'border-outline-variant', labelBg: 'bg-surface-variant', labelColor: 'text-on-surface' };
   };
+
+  // Nhãn trạng thái hiển thị bằng tiếng Việt (giá trị status gốc từ backend vẫn giữ tiếng Anh).
+  const SESSION_STATUS_LABELS = {
+    ongoing: 'Đang diễn ra', upcoming: 'Sắp diễn ra', accepted: 'Đã xác nhận',
+    pending: 'Chờ xác nhận', completed: 'Đã hoàn thành', cancelled: 'Đã huỷ', declined: 'Đã từ chối',
+  };
+  const sessionStatusLabel = (status) => SESSION_STATUS_LABELS[status] || (status ? status.charAt(0).toUpperCase() + status.slice(1) : '');
 
   // Trạng thái "báo cáo vi phạm" cho 1 session: null (chưa/không cần hiện gì),
   // 'open' (đã có dispute đang mở -> hiện badge), 'reportable' (hiện nút, còn trong hạn 48h).
@@ -267,9 +276,9 @@ const SchedulePage = () => {
             </button>
           </div>
           <div className="flex bg-surface-container rounded-lg p-1 hidden sm:flex">
-            <button type="button" onClick={() => changeTimeFrame('Today')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'Today' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>Today</button>
-            <button type="button" onClick={() => changeTimeFrame('This Week')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Week' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>This Week</button>
-            <button type="button" onClick={() => changeTimeFrame('This Month')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Month' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>This Month</button>
+            <button type="button" onClick={() => changeTimeFrame('Today')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'Today' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>Hôm nay</button>
+            <button type="button" onClick={() => changeTimeFrame('This Week')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Week' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>Tuần này</button>
+            <button type="button" onClick={() => changeTimeFrame('This Month')} className={`px-4 py-1.5 rounded-md text-label-md font-label-md transition-colors ${timeFrame === 'This Month' ? 'bg-surface shadow-sm text-primary font-bold' : 'text-on-surface-variant hover:text-on-surface'}`}>Tháng này</button>
           </div>
         </div>
       </section>
@@ -404,17 +413,17 @@ const SchedulePage = () => {
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
               >
-                <option>All Status</option>
-                <option value="upcoming">Upcoming</option>
-                <option value="ongoing">Ongoing</option>
-                <option value="completed">Completed</option>
+                <option value="All Status">Tất cả trạng thái</option>
+                <option value="upcoming">Sắp diễn ra</option>
+                <option value="ongoing">Đang diễn ra</option>
+                <option value="completed">Đã hoàn thành</option>
               </select>
               <select 
                 className="px-4 py-2.5 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-2 focus:ring-primary/20 text-body-md font-body-md text-on-surface h-12 min-w-[140px]"
                 value={subjectFilter}
                 onChange={(e) => setSubjectFilter(e.target.value)}
               >
-                <option>All Subjects</option>
+                <option value="All Subjects">Tất cả môn học</option>
                 <option value="Toán học">Toán học</option>
                 <option value="Vật lý">Vật lý</option>
                 <option value="Hóa học">Hóa học</option>
@@ -428,24 +437,78 @@ const SchedulePage = () => {
             {/* Weekly Schedule Board */}
             <section className="bg-surface rounded-xl shadow-sm border border-surface-variant w-full lg:w-[70%] flex flex-col h-full overflow-x-auto">
               {/* Days Header */}
-              <div className={`grid ${timeFrame === 'Today' ? 'grid-cols-1' : 'grid-cols-7 min-w-[1100px]'} ${timeFrame === 'This Month' ? 'border-b-0' : 'border-b'} border-surface-variant bg-surface-container-lowest rounded-t-xl shrink-0`}>
-                {displayDates.map((wd, index) => {
-                  if (!wd) return <div key={index} className="py-3 border-r border-b border-surface-variant last:border-r-0 bg-surface/30"></div>;
-                  return (
-                  <div key={index} className={`py-3 text-center border-r border-surface-variant last:border-0 ${wd.isToday ? 'bg-primary/10' : ''}`}>
-                    <p className={`text-label-sm font-label-sm uppercase tracking-wider ${wd.isToday ? 'text-primary font-bold' : 'text-on-surface-variant'}`}>
-                      {wd.dayName}
-                    </p>
-                    <p className={`text-headline-md font-headline-md mt-1 ${wd.isToday ? 'text-primary' : 'text-on-surface'}`}>
-                      {wd.date}
-                    </p>
-                    {wd.isToday && <div className="text-[10px] font-bold text-primary mt-1">Hôm nay</div>}
-                  </div>
-                );
-              })}
-              </div>
+              {timeFrame === 'This Month' ? (
+                <div className="grid grid-cols-7 border-b border-surface-variant bg-surface-container-lowest rounded-t-xl shrink-0">
+                  {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map((label) => (
+                    <div key={label} className="py-2 text-center border-r border-surface-variant last:border-0">
+                      <p className="text-label-sm font-label-sm uppercase tracking-wider text-on-surface-variant">{label}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={`grid ${timeFrame === 'Today' ? 'grid-cols-1' : 'grid-cols-7 min-w-[1100px]'} border-b border-surface-variant bg-surface-container-lowest rounded-t-xl shrink-0`}>
+                  {displayDates.map((wd, index) => {
+                    if (!wd) return <div key={index} className="py-3 border-r border-b border-surface-variant last:border-r-0 bg-surface/30"></div>;
+                    return (
+                    <div key={index} className={`py-3 text-center border-r border-surface-variant last:border-0 ${wd.isToday ? 'bg-primary/10' : ''}`}>
+                      <p className={`text-label-sm font-label-sm uppercase tracking-wider ${wd.isToday ? 'text-primary font-bold' : 'text-on-surface-variant'}`}>
+                        {wd.dayName}
+                      </p>
+                      <p className={`text-headline-md font-headline-md mt-1 ${wd.isToday ? 'text-primary' : 'text-on-surface'}`}>
+                        {wd.date}
+                      </p>
+                      {wd.isToday && <div className="text-[10px] font-bold text-primary mt-1">Hôm nay</div>}
+                    </div>
+                  );
+                })}
+                </div>
+              )}
 
-              {/* Compact Calendar Grid */}
+              {/* Calendar Grid */}
+              {timeFrame === 'This Month' ? (
+                <div className="grid grid-cols-7 bg-surface-container-lowest rounded-b-xl flex-1">
+                  {displayDates.map((wd, index) => {
+                    if (!wd) return <div key={index} className="border-r border-b border-surface-variant last:border-r-0 bg-surface/30 min-h-[92px]"></div>;
+                    const daySessions = data.sessions.filter(s => {
+                      const sessionDate = new Date(s.start_time);
+                      return sessionDate.toDateString() === wd.fullDate.toDateString();
+                    });
+                    const isPast = wd.fullDate < todayStart && !wd.isToday;
+                    const visibleChips = daySessions.slice(0, 2);
+                    const hiddenCount = daySessions.length - visibleChips.length;
+
+                    return (
+                      <div
+                        key={index}
+                        onClick={() => daySessions.length > 0 && setSelectedDay({ date: wd.fullDate, sessions: daySessions })}
+                        className={`border-r border-b border-surface-variant last:border-r-0 p-1.5 min-h-[92px] flex flex-col gap-1 ${wd.isToday ? 'bg-primary/10' : 'bg-surface'} ${isPast ? 'opacity-50' : ''} ${daySessions.length > 0 ? 'cursor-pointer hover:bg-surface-container-lowest transition-colors' : ''}`}
+                      >
+                        <span className={`text-label-sm font-bold w-5 h-5 flex items-center justify-center rounded-full ${wd.isToday ? 'bg-primary text-on-primary' : 'text-on-surface'}`}>{wd.date}</span>
+                        {daySessions.length > 0 && (
+                          <div className="flex flex-col gap-0.5">
+                            {visibleChips.map((s) => {
+                              const style = getSessionStyle(s.status);
+                              return (
+                                <div
+                                  key={s.id}
+                                  onClick={(e) => { e.stopPropagation(); setDetailSession(s); }}
+                                  title={s.title}
+                                  className={`text-[9px] font-bold leading-tight px-1 py-0.5 rounded truncate ${style.labelBg} ${style.labelColor} hover:brightness-95 transition-all`}
+                                >
+                                  {new Date(s.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} {s.title}
+                                </div>
+                              );
+                            })}
+                            {hiddenCount > 0 && (
+                              <span className="text-[9px] font-bold text-on-surface-variant pl-1">+{hiddenCount} nữa</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
               <div className={`grid ${timeFrame === 'Today' ? 'grid-cols-1' : 'grid-cols-7 min-w-[1100px]'} bg-surface-container-lowest rounded-b-xl flex-1`}>
 
                 {displayDates.map((wd, index) => {
@@ -460,7 +523,7 @@ const SchedulePage = () => {
                   const hiddenCount = daySessions.length - 2;
 
                   return (
-                    <div key={index} className={`border-r border-b border-surface-variant last:border-r-0 p-2 flex flex-col gap-2 ${wd.isToday ? 'bg-primary/5' : 'bg-surface'} h-full ${timeFrame === 'This Month' ? 'min-h-[120px]' : 'min-h-[200px]'}`}>
+                    <div key={index} className={`border-r border-b border-surface-variant last:border-r-0 p-2 flex flex-col gap-2 ${wd.isToday ? 'bg-primary/5' : 'bg-surface'} h-full min-h-[200px]`}>
                       {daySessions.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-8 text-on-surface-variant opacity-50 flex-1">
                           <span className="material-symbols-outlined text-2xl mb-1">event_busy</span>
@@ -480,7 +543,7 @@ const SchedulePage = () => {
                                   <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 ${style.labelBg} ${style.labelColor}`}>
                                     {session.status === 'ongoing' && <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>}
                                     {session.status === 'completed' && <span className="material-symbols-outlined text-[10px]">check</span>}
-                                    {session.status === 'ongoing' ? 'Live now' : session.status.charAt(0).toUpperCase() + session.status.slice(1)}
+                                    {sessionStatusLabel(session.status)}
                                   </span>
                                   {session.xp_earned > 0 && <span className="text-[10px] font-bold text-primary">+{session.xp_earned} XP</span>}
                                 </div>
@@ -539,6 +602,7 @@ const SchedulePage = () => {
                   );
                 })}
               </div>
+              )}
             </section>
 
             {/* Right Panel */}
@@ -656,6 +720,9 @@ const SchedulePage = () => {
           info={sessionInfoMap[detailSession.id] || null}
           onRequested={fetchSchedule}
           onClose={() => setDetailSession(null)}
+          reportStatus={getReportStatus(detailSession)}
+          onReport={() => { setDetailSession(null); setReportSession(detailSession); }}
+          onWithdrawDispute={() => handleWithdrawDispute(detailSession.open_dispute_id)}
         />
       )}
 
@@ -713,7 +780,7 @@ const SchedulePage = () => {
                           <span className={`text-[11px] font-bold px-2 py-1 rounded-md flex items-center gap-1.5 ${style.labelBg} ${style.labelColor}`}>
                             {session.status === 'ongoing' && <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>}
                             {session.status === 'completed' && <span className="material-symbols-outlined text-[12px]">check</span>}
-                            {session.status === 'ongoing' ? 'Live now' : session.status.charAt(0).toUpperCase() + session.status.slice(1)}
+                            {sessionStatusLabel(session.status)}
                           </span>
                           {session.xp_earned > 0 && (
                             <span className="text-[11px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">+{session.xp_earned} XP</span>
@@ -782,7 +849,7 @@ const SchedulePage = () => {
 export default SchedulePage;
 
 // ─── Session Detail Modal ────────────────────────────────────────────────────
-function SessionDetailModal({ session, info, onClose, onRequested }) {
+function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute }) {
   const [copied, setCopied] = useState(false);
   const [copiedPwd, setCopiedPwd] = useState(false);
   const [checkedMaterials, setCheckedMaterials] = useState({});
@@ -1077,6 +1144,40 @@ function SessionDetailModal({ session, info, onClose, onRequested }) {
               </div>
             </div>
           </div>
+
+          {/* Khiếu nại buổi học (chỉ hiện với buổi đã hoàn thành, trong hạn 48h) */}
+          {reportStatus === 'reportable' && (
+            <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-center justify-between gap-3">
+              <div className="flex items-start gap-2 min-w-0">
+                <span className="material-symbols-outlined text-red-500 text-[20px] flex-shrink-0 mt-0.5">report</span>
+                <div className="min-w-0">
+                  <p className="font-bold text-[13px] text-red-700">Buổi học có vấn đề?</p>
+                  <p className="text-[12px] text-red-600">Bạn có thể khiếu nại trong vòng 48h sau khi buổi học kết thúc.</p>
+                </div>
+              </div>
+              <button
+                onClick={onReport}
+                className="shrink-0 h-9 px-4 rounded-lg bg-red-600 text-white text-[12px] font-bold hover:bg-red-700 transition-colors flex items-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-[15px]">report</span>
+                Khiếu nại
+              </button>
+            </div>
+          )}
+          {reportStatus === 'open' && (
+            <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-orange-600 text-[18px]">hourglass_top</span>
+                <p className="text-[12px] font-bold text-orange-700">Khiếu nại đang chờ xử lý</p>
+              </div>
+              <button
+                onClick={onWithdrawDispute}
+                className="text-[12px] font-bold text-orange-700 underline decoration-dotted hover:text-orange-900"
+              >
+                Rút khiếu nại
+              </button>
+            </div>
+          )}
 
           {/* Xin đổi hình thức học (ốm không đến được → xin học online, v.v.) */}
           {(() => {
