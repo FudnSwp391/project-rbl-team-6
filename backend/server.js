@@ -15704,12 +15704,15 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 // Danh sách model thử lần lượt: nếu model đầu hết quota (429) hoặc quá tải (503),
 // tự động fallback sang model tiếp theo. Mỗi model free tier có quota riêng,
 // nên thử nhiều model giúp tăng tổng số request dùng được mỗi ngày.
+// "gemini-2.5-flash-lite" bị Google ngừng cấp cho API key mới (404 "no longer
+// available to new users", xác nhận qua test thật 2026-07-23) — xếp cuối danh
+// sách thay vì đầu để không tốn 1 lượt gọi thất bại + độ trễ mạng mỗi lần hỏi.
 const GEMINI_MODELS = [
-  process.env.GEMINI_MODEL || "gemini-2.5-flash-lite",
-  "gemini-2.5-flash",
+  process.env.GEMINI_MODEL || "gemini-2.5-flash",
+  "gemini-flash-latest",
   "gemini-2.0-flash-lite",
   "gemini-2.0-flash",
-  "gemini-flash-latest",
+  "gemini-2.5-flash-lite",
 ].filter((m, i, arr) => arr.indexOf(m) === i); // loại trùng
 
 // Gọi 1 model Gemini. Trả { ok, data?, status?, errText? }
