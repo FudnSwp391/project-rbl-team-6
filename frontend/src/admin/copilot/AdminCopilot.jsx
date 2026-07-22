@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const RISK_CFG = {
   LOW:      { label: 'Thấp',        cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
@@ -16,18 +16,20 @@ const ENTITY_TYPES = [
   { value: 'DISPUTE',     label: 'Khiếu nại' },
   { value: 'BOOKING',     label: 'Buổi học' },
   { value: 'TRANSACTION', label: 'Giao dịch' },
+  { value: 'FRAUD_ALERT', label: 'Cảnh báo gian lận' },
 ]
 
 const ACTION_ICON = {
   WATCHLIST: 'visibility', MANUAL_REVIEW: 'gavel', SEND_WARNING_DRAFT: 'edit_note',
   REQUEST_MORE_EVIDENCE: 'attach_file', REVIEW_TUTOR_QUALITY: 'workspace_premium',
   REVIEW_REFUND_PATTERN: 'account_balance_wallet', NO_ACTION: 'check_circle',
+  FREEZE_WALLET: 'account_balance_wallet', REQUEST_VERIFICATION: 'verified_user', MONITOR_7_DAYS: 'visibility',
 }
 
 const asArray = v => Array.isArray(v) ? v : (v ? [v] : [])
 const fmtDate = iso => iso ? new Date(iso).toLocaleString('vi-VN') : '—'
 
-export default function AdminCopilot({ token, pageKey }) {
+export default function AdminCopilot({ token, pageKey, onNavigate }) {
   const [open, setOpen]         = useState(false)
   const [tab, setTab]           = useState('analyze') // 'analyze' | 'history'
   const [entityType, setEntityType] = useState('PAGE')
@@ -39,15 +41,23 @@ export default function AdminCopilot({ token, pageKey }) {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [copied, setCopied]     = useState('')
   const analyzeRef = useRef(null)
+  // Latest lightweight context broadcast by the active module (Batch 39, PART 2).
+  // Modules dispatch `admin-copilot:context` with { pageKey, context } whenever
+  // their selection/filters change; we forward it so PAGE analysis is scoped.
+  const pageContextRef = useRef({})
 
   const analyze = useCallback(async (type, id) => {
     if (!token) return
     setLoading(true); setError(null); setReport(null)
     try {
+      // Only attach module context for PAGE analysis, and only if it belongs to
+      // the page we're on (stale context from another module is ignored).
+      const pc = (type === 'PAGE' && pageContextRef.current?._pageKey === pageKey)
+        ? pageContextRef.current : {}
       const r = await fetch(`${API}/api/admin/copilot/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ entityType: type, entityId: id || null, pageKey, pageContext: {} }),
+        body: JSON.stringify({ entityType: type, entityId: id || null, pageKey, pageContext: pc }),
       })
       const j = await r.json().catch(() => ({}))
       if (!r.ok) { setError(j.message || `Phân tích thất bại (${r.status})`); return }
@@ -72,6 +82,18 @@ export default function AdminCopilot({ token, pageKey }) {
     window.addEventListener('admin-copilot:analyze', handler)
     return () => window.removeEventListener('admin-copilot:analyze', handler)
   }, [])
+
+  // Modules broadcast their current lightweight context here (Batch 39, PART 2).
+  useEffect(() => {
+    const handler = (e) => {
+      const { pageKey: pk, context } = e.detail || {}
+      if (context && typeof context === 'object') {
+        pageContextRef.current = { ...context, _pageKey: pk || pageKey }
+      }
+    }
+    window.addEventListener('admin-copilot:context', handler)
+    return () => window.removeEventListener('admin-copilot:context', handler)
+  }, [pageKey])
 
   const loadHistory = useCallback(() => {
     if (!token) return
@@ -186,6 +208,14 @@ export default function AdminCopilot({ token, pageKey }) {
 
                   {report && (
                     <div className="space-y-4">
+                      {/* Situation — what the admin is looking at (Ops Copilot) */}
+                      {report.situation && (
+                        <div className="flex items-start gap-2 bg-primary/5 border border-primary/15 rounded-xl px-4 py-3">
+                          <span className="material-symbols-outlined text-[18px] text-primary mt-0.5">my_location</span>
+                          <p className="text-sm text-gray-700 leading-relaxed">{report.situation}</p>
+                        </div>
+                      )}
+
                       {/* Summary + risk */}
                       <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
                         <div className="flex items-center justify-between mb-2">
@@ -217,6 +247,27 @@ export default function AdminCopilot({ token, pageKey }) {
                         </div>
                       )}
 
+                      {report.impact && (
+                        <div>
+                          <SectionTitle icon="priority_high" title="Tác động" />
+                          <p className="text-sm text-gray-700 bg-amber-50/60 border border-amber-100 rounded-lg px-3 py-2">{report.impact}</p>
+                        </div>
+                      )}
+
+                      {asArray(report.recommended_workflow).length > 0 && (
+                        <div>
+                          <SectionTitle icon="account_tree" title="Quy trình đề xuất" />
+                          <ol className="space-y-1.5">
+                            {asArray(report.recommended_workflow).map((step, i) => (
+                              <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                                <span>{step}</span>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      )}
+
                       {asArray(report.recommendations).length > 0 && (
                         <Section title="Đề xuất" icon="tips_and_updates" items={asArray(report.recommendations)} />
                       )}
@@ -237,6 +288,22 @@ export default function AdminCopilot({ token, pageKey }) {
                             ))}
                           </div>
                           <p className="text-[11px] text-gray-400 mt-2 italic">Các hành động chỉ mang tính tư vấn — hệ thống không tự thực hiện.</p>
+                        </div>
+                      )}
+
+                      {/* Action Center — navigate to existing admin modules (PART 6) */}
+                      {asArray(report.navigation_actions).length > 0 && onNavigate && (
+                        <div>
+                          <SectionTitle icon="open_in_new" title="Đi tới" />
+                          <div className="flex flex-wrap gap-2">
+                            {asArray(report.navigation_actions).map((n, i) => (
+                              <button key={i} onClick={() => { onNavigate(n.view); setOpen(false) }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/25 text-primary text-xs font-semibold hover:bg-primary/5 transition-colors">
+                                <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
+                                {n.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       )}
 

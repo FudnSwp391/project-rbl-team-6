@@ -9,6 +9,16 @@ import { createContext, useContext, useState } from 'react'
 // ─── Context ──────────────────────────────────────────────────────────────────
 const AuthContext = createContext(null)
 
+// Lấy (và xóa) "chỗ cần quay về" mà 1 trang đã lưu trước khi bắt người dùng đăng nhập.
+// Vd: đang đặt lịch mà chưa đăng nhập -> lưu '#/booking/<id>' -> đăng nhập xong quay lại đúng đó.
+function consumeRedirectAfterLogin() {
+  try {
+    const r = sessionStorage.getItem('redirectAfterLogin')
+    if (r) { sessionStorage.removeItem('redirectAfterLogin'); return r }
+  } catch { /* sessionStorage không khả dụng */ }
+  return null
+}
+
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }) {
   // Initialise from localStorage (runs once on mount)
@@ -37,6 +47,10 @@ export function AuthProvider({ children }) {
     setToken(newToken)
     setUser(newUser)
 
+    // Nếu người dùng bị bắt đăng nhập giữa chừng (vd đang đặt lịch) → quay lại đúng chỗ đó.
+    const redirect = consumeRedirectAfterLogin()
+    if (redirect) { window.location.hash = redirect; return }
+
     if (newUser?.role === 'admin') {
       window.location.hash = '/'
     } else if (newUser?.role === 'tutor') {
@@ -59,15 +73,15 @@ export function AuthProvider({ children }) {
     setToken(newToken)
     setUser(newUser)
 
-    if (newUser?.role === 'admin') {
-      window.location.hash = '/'
-    } else if (newUser?.role === 'tutor') {
+    // Gia sư mới cần vào onboarding trước; các role khác thì quay lại chỗ đang làm dở nếu có.
+    if (newUser?.role === 'tutor') {
       window.location.hash = '/tutor-profile'
-    } else if (newUser?.role === 'parent') {
-      window.location.hash = '/'
-    } else {
-      window.location.hash = '/'
+      return
     }
+    const redirect = consumeRedirectAfterLogin()
+    if (redirect) { window.location.hash = redirect; return }
+
+    window.location.hash = '/'
   }
 
   /** Clears all auth state and redirects to home. */

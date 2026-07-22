@@ -3,13 +3,17 @@ import {
   getTutorExams,
   createTutorExam,
   updateTutorExamStatus,
+  updateTutorExam,
   duplicateTutorExam,
   deleteTutorExam,
+  getTutorExamDetail,
   getTutorHomework,
   createTutorHomework,
   updateTutorHomeworkStatus,
+  updateTutorHomework,
   deleteTutorHomework,
   getTutorCourses,
+  getHomeworkSubmissions,
 } from '../services/api';
 import { uploadHomeworkFile } from '../services/upload';
 import { API_BASE_URL } from '../config';
@@ -21,6 +25,8 @@ export default function TutorAssessmentManager({ token, user }) {
   // Modals state
   const [isExamModalOpen, setIsExamModalOpen] = useState(false);
   const [isHomeworkModalOpen, setIsHomeworkModalOpen] = useState(false);
+  const [editingExam, setEditingExam] = useState(null);
+  const [editingHomework, setEditingHomework] = useState(null);
 
   // Data states
   const [exams, setExams] = useState([]);
@@ -29,12 +35,32 @@ export default function TutorAssessmentManager({ token, user }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Submission panel state
+  const [viewingSubmissions, setViewingSubmissions] = useState(null); // homework object
+  const [submissions, setSubmissions] = useState([]);
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
+
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCourse, setFilterCourse] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
 
   const dropdownRef = useRef(null);
+
+  // Open submissions panel for a homework
+  const handleViewSubmissions = async (hw) => {
+    setViewingSubmissions(hw);
+    setSubmissions([]);
+    setLoadingSubmissions(true);
+    try {
+      const data = await getHomeworkSubmissions(hw.id);
+      setSubmissions(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Error fetching submissions:', err);
+    } finally {
+      setLoadingSubmissions(false);
+    }
+  };
 
   // Fetch Data
   const fetchData = async () => {
@@ -167,13 +193,13 @@ export default function TutorAssessmentManager({ token, user }) {
           {isDropdownOpen && (
             <div className="absolute right-0 mt-2 w-56 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-xl z-50 overflow-hidden">
               <button 
-                onClick={() => { setIsExamModalOpen(true); setIsDropdownOpen(false); }}
+                onClick={() => { setEditingExam(null); setIsExamModalOpen(true); setIsDropdownOpen(false); }}
                 className="w-full text-left px-md py-sm hover:bg-surface-container-low flex items-center gap-md font-label-md transition-colors"
               >
                 <span className="material-symbols-outlined text-primary">edit_document</span> Tạo Đề thi mới
               </button>
               <button 
-                onClick={() => { setIsHomeworkModalOpen(true); setIsDropdownOpen(false); }}
+                onClick={() => { setEditingHomework(null); setIsHomeworkModalOpen(true); setIsDropdownOpen(false); }}
                 className="w-full text-left px-md py-sm hover:bg-surface-container-low flex items-center gap-md font-label-md border-t border-outline-variant transition-colors"
               >
                 <span className="material-symbols-outlined text-primary">cloud_upload</span> Giao Bài tập về nhà
@@ -330,6 +356,9 @@ export default function TutorAssessmentManager({ token, user }) {
                       </td>
                       <td className="px-lg py-md text-right">
                         <div className="flex items-center justify-end gap-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                           <button onClick={() => { setEditingExam(exam); setIsExamModalOpen(true); }} title="Chỉnh sửa" className="text-secondary hover:text-primary">
+                             <span className="material-symbols-outlined">edit</span>
+                           </button>
                            <button onClick={() => handlePublishExam(exam.id, exam.status)} title="Đổi trạng thái" className="text-secondary hover:text-primary">
                              <span className="material-symbols-outlined">{exam.status === 'Published' ? 'visibility_off' : 'visibility'}</span>
                            </button>
@@ -380,7 +409,24 @@ export default function TutorAssessmentManager({ token, user }) {
                         <span className={`px-sm py-1 rounded-full text-label-sm font-bold ${hw.status === 'Open' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                           {hw.status === 'Open' ? 'Đang mở' : 'Đã đóng'}
                         </span>
-                        <div className="flex items-center gap-xs ml-2">
+                        {/* View submissions button */}
+                        <button
+                          onClick={() => handleViewSubmissions(hw)}
+                          title="Xem bài nộp của học sinh"
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-label-sm font-semibold transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">assignment_turned_in</span>
+                          Bài nộp
+                          {(hw.submission_count || 0) > 0 && (
+                            <span className="ml-0.5 bg-primary text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                              {hw.submission_count}
+                            </span>
+                          )}
+                        </button>
+                        <div className="flex items-center gap-xs ml-1">
+                           <button onClick={() => { setEditingHomework(hw); setIsHomeworkModalOpen(true); }} title="Chỉnh sửa" className="p-xs text-secondary hover:text-primary rounded-full hover:bg-surface-container">
+                             <span className="material-symbols-outlined">edit</span>
+                           </button>
                            <button onClick={() => handlePublishHomework(hw.id, hw.status)} title="Đổi trạng thái" className="p-xs text-secondary hover:text-primary rounded-full hover:bg-surface-container">
                              <span className="material-symbols-outlined">{hw.status === 'Open' ? 'lock' : 'lock_open'}</span>
                            </button>
@@ -404,6 +450,7 @@ export default function TutorAssessmentManager({ token, user }) {
           onClose={() => setIsExamModalOpen(false)} 
           onSuccess={() => { setIsExamModalOpen(false); fetchData(); }} 
           courses={courses}
+          editingData={editingExam}
         />
       )}
       
@@ -412,7 +459,105 @@ export default function TutorAssessmentManager({ token, user }) {
           onClose={() => setIsHomeworkModalOpen(false)} 
           onSuccess={() => { setIsHomeworkModalOpen(false); fetchData(); }} 
           courses={courses}
+          editingData={editingHomework}
         />
+      )}
+
+      {/* Submissions Panel */}
+      {viewingSubmissions && (
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-outline-variant flex items-start justify-between bg-surface-container-lowest">
+              <div>
+                <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Bài nộp của học sinh</p>
+                <h3 className="font-bold text-lg text-on-surface mt-0.5">{viewingSubmissions.title}</h3>
+                <p className="text-sm text-secondary mt-0.5">{viewingSubmissions.course || 'Chung'} • Hạn: {viewingSubmissions.deadline ? new Date(viewingSubmissions.deadline).toLocaleString('vi-VN') : 'Không giới hạn'}</p>
+              </div>
+              <button onClick={() => setViewingSubmissions(null)} className="p-1 rounded-full hover:bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="overflow-y-auto flex-1 p-6">
+              {loadingSubmissions ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-on-surface-variant">
+                  <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <p className="text-sm">Đang tải bài nộp...</p>
+                </div>
+              ) : submissions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[56px] opacity-30">assignment_late</span>
+                  <p className="font-semibold text-base">Chưa có học sinh nào nộp bài</p>
+                  <p className="text-sm text-secondary">Bài nộp sẽ hiển thị ở đây khi học sinh nộp.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  <p className="text-sm text-secondary font-medium">{submissions.length} bài nộp</p>
+                  {submissions.map((sub, idx) => (
+                    <div key={sub.id || idx} className="border border-outline-variant rounded-xl p-4 hover:bg-surface-container-low/30 transition-colors">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          {sub.student_picture ? (
+                            <img src={sub.student_picture} className="w-9 h-9 rounded-full object-cover ring-2 ring-outline-variant/30" alt="" />
+                          ) : (
+                            <div className="w-9 h-9 rounded-full bg-primary-container/50 flex items-center justify-center">
+                              <span className="material-symbols-outlined text-[18px] text-on-primary-container">person</span>
+                            </div>
+                          )}
+                          <div>
+                            <p className="font-semibold text-sm text-on-surface">{sub.student_name || 'Học sinh'}</p>
+                            <p className="text-xs text-secondary">
+                              Nộp lúc: {sub.submitted_at ? new Date(sub.submitted_at).toLocaleString('vi-VN') : '--'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {sub.score != null && (
+                            <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-bold">
+                              {sub.score} đ
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-bold">
+                            {sub.status || 'Submitted'}
+                          </span>
+                        </div>
+                      </div>
+                      {sub.file_url && (
+                        <a
+                          href={sub.file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-3 flex items-center gap-2 text-sm font-medium text-primary hover:text-primary/80 bg-primary/5 px-3 py-2 rounded-lg border border-primary/15 w-fit transition-colors hover:bg-primary/10"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">description</span>
+                          Tải / Xem bài nộp
+                        </a>
+                      )}
+                      {sub.feedback && (
+                        <div className="mt-2 p-2 bg-amber-50 border border-amber-200/50 rounded-lg">
+                          <p className="text-xs font-semibold text-amber-800">Nhận xét đã gửi:</p>
+                          <p className="text-xs text-amber-700 mt-0.5">{sub.feedback}</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-3 border-t border-outline-variant bg-surface-container-lowest flex justify-end">
+              <button
+                onClick={() => setViewingSubmissions(null)}
+                className="px-5 py-2 text-sm font-semibold border border-outline-variant rounded-lg hover:bg-surface-container text-on-surface transition-colors"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -422,7 +567,7 @@ export default function TutorAssessmentManager({ token, user }) {
 // Sub Components (Modals)
 // ----------------------------------------------------------------------
 
-function CreateExamModal({ onClose, onSuccess, courses }) {
+function CreateExamModal({ onClose, onSuccess, courses, editingData }) {
   const [formData, setFormData] = useState({
     title: '',
     course: '',
@@ -453,6 +598,39 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
     };
     fetchStudents();
   }, []);
+
+  useEffect(() => {
+    if (editingData) {
+      setLoading(true);
+      getTutorExamDetail(editingData.id).then(data => {
+        if (data) {
+          setFormData({
+            title: data.title || '',
+            course: data.subject || '',
+            duration_minutes: data.duration_minutes || 60,
+            total_score: 100,
+            status: data.is_published ? 'Published' : 'Draft',
+            assigned_students: data.assigned_students || [],
+            questions: (data.questions || []).map(q => ({
+              id: q.id,
+              question_type: q.question_type === 'essay' ? 'Essay' : 'MCQ',
+              question_text: q.question_text || '',
+              options: [
+                { text: q.option_a || '', isCorrect: q.correct_answer === 'A' },
+                { text: q.option_b || '', isCorrect: q.correct_answer === 'B' },
+                { text: q.option_c || '', isCorrect: q.correct_answer === 'C' },
+                { text: q.option_d || '', isCorrect: q.correct_answer === 'D' }
+              ],
+              correct_answer: q.correct_answer || 'A',
+              grading_note: q.explanation || q.suggested_answer || '',
+              max_point: 10
+            }))
+          });
+        }
+        setLoading(false);
+      });
+    }
+  }, [editingData]);
 
   const handleAddMCQ = () => {
     setFormData(prev => ({
@@ -521,7 +699,11 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
           suggested_answer: q.grading_note || ''
         }))
       };
-      await createTutorExam(payload);
+      if (editingData) {
+        await updateTutorExam(editingData.id, payload);
+      } else {
+        await createTutorExam(payload);
+      }
       onSuccess();
     } catch (err) {
       setFormError("Error saving exam: " + err.message);
@@ -537,7 +719,7 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
         
         <div className="px-xl py-lg border-b border-outline-variant flex justify-between items-center bg-white shrink-0">
           <div>
-            <h3 className="text-headline-md font-headline-md text-primary">Tạo Đề thi mới</h3>
+            <h3 className="text-headline-md font-headline-md text-primary">{editingData ? 'Chỉnh sửa Đề thi' : 'Tạo Đề thi mới'}</h3>
             <p className="text-body-md text-secondary">Thiết lập cấu hình và câu hỏi cho đề thi trắc nghiệm / tự luận.</p>
           </div>
           <button className="text-secondary hover:text-error transition-colors" onClick={onClose}>
@@ -735,7 +917,7 @@ function CreateExamModal({ onClose, onSuccess, courses }) {
   );
 }
 
-function UploadHomeworkModal({ onClose, onSuccess, courses }) {
+function UploadHomeworkModal({ onClose, onSuccess, courses, editingData }) {
   const [formData, setFormData] = useState({
     title: '',
     course: '',
@@ -769,6 +951,21 @@ function UploadHomeworkModal({ onClose, onSuccess, courses }) {
     fetchStudents();
   }, []);
 
+  useEffect(() => {
+    if (editingData) {
+      setFormData({
+        title: editingData.title || '',
+        course: editingData.course || '',
+        deadline: editingData.deadline ? new Date(editingData.deadline).toISOString().split('T')[0] : '',
+        max_score: editingData.max_score || 100,
+        instructions: '',
+        allow_late: editingData.allow_late || false,
+        status: editingData.status || 'Open',
+        assigned_students: editingData.assigned_students || []
+      });
+    }
+  }, [editingData]);
+
   const handleSave = async (status) => {
     setFormError('');
     if (!formData.title.trim()) {
@@ -777,14 +974,18 @@ function UploadHomeworkModal({ onClose, onSuccess, courses }) {
     }
     setLoading(true);
     try {
-      let fileUrl = null;
-      let fileType = null;
+      let fileUrl = editingData ? editingData.file_url : null;
+      let fileType = editingData ? editingData.file_type : null;
       if (file) {
         fileUrl = await uploadHomeworkFile(file, 'me'); // In a real app, pass actual user id
         fileType = file.type;
       }
 
-      await createTutorHomework({ ...formData, status, file_url: fileUrl, file_type: fileType });
+      if (editingData) {
+        await updateTutorHomework(editingData.id, { ...formData, status, file_url: fileUrl, file_type: fileType });
+      } else {
+        await createTutorHomework({ ...formData, status, file_url: fileUrl, file_type: fileType });
+      }
       onSuccess();
     } catch (err) {
       setFormError("Error uploading homework: " + err.message);
@@ -798,7 +999,7 @@ function UploadHomeworkModal({ onClose, onSuccess, courses }) {
       <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={onClose}></div>
       <div className="relative w-full max-w-lg bg-surface rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
         <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-white shrink-0">
-          <h3 className="text-xl font-bold text-primary">Giao Bài tập về nhà</h3>
+          <h3 className="text-xl font-bold text-primary">{editingData ? 'Chỉnh sửa Bài tập' : 'Giao Bài tập về nhà'}</h3>
           <button className="text-secondary hover:text-error transition-colors" onClick={onClose}>
             <span className="material-symbols-outlined">close</span>
           </button>

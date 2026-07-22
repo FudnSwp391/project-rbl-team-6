@@ -1,8 +1,8 @@
 /**
  * Unit tests cho utils/businessRules.js — các quy tắc nghiệp vụ tiền & booking.
- * Chạy: npm test (từ thư mục backend/) — dùng node:test, không cần cài thêm gì.
+ * Chạy: npm test (từ thư mục backend/) — chạy qua Jest như các test khác;
+ * describe/test là global do Jest cấp, chỉ assertion dùng node:assert/strict.
  */
-const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {

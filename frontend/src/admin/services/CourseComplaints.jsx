@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+import { API_BASE_URL as API_BASE } from '../../config';
 
 const STATUS_CONFIG = {
   pending:         { label: 'Đang chờ',           color: '#b45309', bg: '#fef3c7', icon: 'pending' },
@@ -526,6 +526,25 @@ export default function CourseComplaintsAdminView({ token }) {
     setStatusFilter(sf);
     load(1, sf, search);
   };
+
+  // Broadcast lightweight context to the AI Copilot (Batch 39, PART 2). When a
+  // complaint is selected, its student_id lets the Copilot focus on that student;
+  // otherwise the current filter scopes the module summary. Reuses the existing
+  // window-event channel — no new wiring in AdminDashboard.
+  useEffect(() => {
+    const selected = complaints.find(c => c.id === selectedId) || null;
+    window.dispatchEvent(new CustomEvent('admin-copilot:context', {
+      detail: {
+        pageKey: 'sm-complaints',
+        context: {
+          complaintId: selectedId || null,
+          studentId: selected?.student_id || null,
+          selectedRow: selected ? { id: selected.id, title: selected.title, status: selected.status } : null,
+          filters: { status: statusFilter, search: search || null },
+        },
+      },
+    }));
+  }, [selectedId, statusFilter, search, complaints]);
 
   const totalPages = Math.ceil(total / limit);
   const totalAll = Object.values(stats).reduce((a, b) => a + b, 0);

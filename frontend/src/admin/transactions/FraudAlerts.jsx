@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { StatusBadge, PageHeader, DataTable, SearchFilterBar, FilterTabs, Pagination, AvatarCell, EmptyState, usePagination, useSearch } from './components'
 import { fmtDateTime } from './mockData'
+import FraudInvestigationDrawer from './FraudInvestigationDrawer'
 
-const API = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000'
+import { API_BASE_URL as API } from '../../config'
 
 const STATUS_TABS = [
   { value: 'ALL',  label: 'Tất cả' },
@@ -24,11 +25,12 @@ const SEV_COLOR = {
   LOW:    'bg-gray-100 text-gray-600',
 }
 
-export default function FraudAlerts({ token }) {
-  const [alerts,       setAlerts]       = useState([])
-  const [loading,      setLoading]      = useState(true)
-  const [error,        setError]        = useState(null)
-  const [statusFilter, setStatusFilter] = useState('ALL')
+export default function FraudAlerts({ token, onNavigate }) {
+  const [alerts,        setAlerts]        = useState([])
+  const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState(null)
+  const [statusFilter,  setStatusFilter]  = useState('ALL')
+  const [selectedAlert, setSelectedAlert] = useState(null)
 
   useEffect(() => {
     if (!token) return
@@ -92,7 +94,8 @@ export default function FraudAlerts({ token }) {
         )}
       >
         {paginated.map(a => (
-          <tr key={a.id} className={`hover:bg-gray-50 transition-colors ${a.severity === 'HIGH' ? 'bg-red-50/30' : ''}`}>
+          <tr key={a.id} onClick={() => setSelectedAlert(a)}
+            className={`hover:bg-gray-50 transition-colors cursor-pointer ${a.severity === 'HIGH' ? 'bg-red-50/30' : ''}`}>
             <td className="py-3.5 px-5"><span className="text-xs font-mono font-bold text-orange-600">{a.id.slice(0, 16)}</span></td>
             <td className="py-3.5 px-5">
               <AvatarCell name={a.user_name || a.user_email} email={a.user_email} avatar={null} />
@@ -133,6 +136,14 @@ export default function FraudAlerts({ token }) {
       <div className="bg-white rounded-b-xl border border-t-0 border-gray-100">
         <Pagination page={page} totalPages={totalPages} onPage={setPage} />
       </div>
+
+      <FraudInvestigationDrawer
+        token={token}
+        alertRow={selectedAlert}
+        open={!!selectedAlert}
+        onClose={() => setSelectedAlert(null)}
+        onNavigate={onNavigate}
+      />
     </div>
   )
 }

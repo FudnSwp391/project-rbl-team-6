@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { useAuth } from '../AuthContext'
-import { enrollCourse, getCourseDetail, updateCourseProgress, askCourseAI } from '../services/api'
+import { enrollCourse, getCourseDetail, updateCourseProgress, askCourseAI, getParentChildren } from '../services/api'
 
 function money(value) {
   return new Intl.NumberFormat('vi-VN', {
@@ -19,6 +19,11 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const [buying, setBuying] = useState(false)
   const [savingProgress, setSavingProgress] = useState(false)
 
+  // Parent Delegation states
+  const [parentChildren, setParentChildren] = useState([])
+  const [showChildSelect, setShowChildSelect] = useState(false)
+  const [selectedChildId, setSelectedChildId] = useState('')
+
   // Advanced feature states
   const [activeTab, setActiveTab] = useState('overview')
   const [cinematic, setCinematic] = useState(false)
@@ -32,11 +37,26 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const [isAiLoading, setIsAiLoading] = useState(false)
   const chatScrollRef = useRef(null)
 
+  // Playback state
+  const [playbackRate, setPlaybackRate] = useState(1)
+
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [aiMessages, isAiLoading])
+
+  // Fetch parent children for delegation
+  useEffect(() => {
+    if (user?.role === 'parent') {
+      getParentChildren().then(data => {
+        if (data && data.children) {
+          setParentChildren(data.children)
+          if (data.children.length > 0) setSelectedChildId(data.children[0].student_id)
+        }
+      }).catch(err => console.error("Could not load children:", err))
+    }
+  }, [user])
 
   // Smart Notes & Auto Resume Load
   useEffect(() => {
@@ -89,8 +109,26 @@ export default function CoursePlayer({ courseId, onGoHome }) {
       if (savedTime && Number(savedTime) > 2) {
          videoRef.current.currentTime = Number(savedTime);
       }
+      videoRef.current.playbackRate = playbackRate;
     }
-  }, [selectedId, user])
+  }, [selectedId, user, playbackRate])
+
+  const handleVideoEnded = async () => {
+    // Tự động hoàn thành bài học hiện tại nếu chưa hoàn thành
+    if (selectedLesson && !selectedLesson.isCompleted) {
+      await handleComplete();
+    }
+    // Tự động nhảy sang bài tiếp theo
+    if (course && course.lessons) {
+      const currentIndex = course.lessons.findIndex(l => l.id === selectedId);
+      if (currentIndex !== -1 && currentIndex < course.lessons.length - 1) {
+        const nextLesson = course.lessons[currentIndex + 1];
+        if (!nextLesson.isLocked) {
+          setSelectedId(nextLesson.id);
+        }
+      }
+    }
+  }
 
   const loadCourse = async () => {
     setLoading(true)
@@ -118,11 +156,15 @@ export default function CoursePlayer({ courseId, onGoHome }) {
   const completed = course?.lessons?.filter((lesson) => lesson.isCompleted).length || 0
   const totalLessons = course?.lessons?.length || 0
   const progress = totalLessons ? Math.round((completed / totalLessons) * 100) : 0
-  const canBuyCourse = user && ['student', 'parent'].includes(user.role)
+  const canBuyCourse = !user || ['student', 'parent'].includes(user.role)
   const isStaffView = user?.role === 'tutor' || user?.role === 'admin'
 
-  const handleEnroll = async () => {
+  // Sentinel: undefined means "not yet chosen a child"
+  // null/string means a child was explicitly selected (or non-parent flow)
+  const handleEnroll = async (targetStudentId = undefined) => {
     if (!user) {
+      // Lưu đúng trang khóa học này để đăng nhập xong quay lại, không đá về trang chủ.
+      try { sessionStorage.setItem('redirectAfterLogin', window.location.hash) } catch { /* noop */ }
       window.location.hash = '/signin'
       return
     }
@@ -130,13 +172,33 @@ export default function CoursePlayer({ courseId, onGoHome }) {
       setError('Tài khoản gia sư/quản trị không cần mua khóa học. Vui lòng quay lại trang quản lý khóa học.')
       return
     }
+
+    // Nếu là phụ huynh và chưa chọn con (targetStudentId === undefined) => hiện modal chọn con
+    if (user.role === 'parent' && targetStudentId === undefined) {
+      if (parentChildren.length === 0) {
+        setError('Bạn chưa liên kết với tài khoản học sinh nào. Vui lòng vào trang Tổng quan để liên kết trước.');
+        return;
+      }
+      setShowChildSelect(true);
+      return;
+    }
+
     setBuying(true)
     setError('')
     try {
-      await enrollCourse(course.id, {
+      const payload = {
         studentName: user.name || user.email?.split('@')[0] || 'Student',
-      })
+      }
+      // Chỉ thêm targetStudentId khi là phụ huynh và đã chọn con
+      if (user.role === 'parent' && targetStudentId) {
+        payload.targetStudentId = targetStudentId
+      }
+      await enrollCourse(course.id, payload)
+      if (user.role === 'parent') {
+        alert('Đăng ký khóa học cho bé thành công!');
+      }
       await loadCourse()
+      setShowChildSelect(false)
     } catch (err) {
       setError(err.message || 'Không thể đăng ký khóa học.')
     } finally {
@@ -247,7 +309,7 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                   {canBuyCourse ? (
                     <>
                       <p>Đăng ký khóa học để mở khóa toàn bộ bài học, tài liệu và theo dõi tiến độ.</p>
-                      <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
+                      <button style={S.primaryBtn} onClick={() => handleEnroll()} disabled={buying}>
                         {buying ? 'Đang xử lý...' : `Mua khóa học ${money(course.price)}`}
                       </button>
                     </>
@@ -284,7 +346,7 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                     );
                   }
 
-                  return <video ref={videoRef} onTimeUpdate={handleTimeUpdate} key={selectedLesson.id} src={url} controls controlsList="nodownload" onContextMenu={(e) => e.preventDefault()} preload="metadata" style={S.video} />;
+                  return <video ref={videoRef} onTimeUpdate={handleTimeUpdate} onEnded={handleVideoEnded} key={selectedLesson.id} src={url} controls controlsList="nodownload" onContextMenu={(e) => e.preventDefault()} preload="metadata" style={S.video} />;
                 })()
               ) : (
                 <div style={S.locked}>
@@ -317,6 +379,19 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                       <p style={S.lessonDesc}>{selectedLesson?.description || course.description || 'Chưa có mô tả chi tiết.'}</p>
                     </div>
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', flexDirection: 'column', alignItems: 'flex-end' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f1f5f9', padding: '6px 12px', borderRadius: '8px', marginBottom: '8px' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#64748b' }}>speed</span>
+                        <select 
+                          value={playbackRate} 
+                          onChange={(e) => setPlaybackRate(Number(e.target.value))}
+                          style={{ border: 'none', background: 'transparent', outline: 'none', fontWeight: '500', color: '#334155', cursor: 'pointer' }}
+                        >
+                          <option value={1}>1.0x (Chuẩn)</option>
+                          <option value={1.25}>1.25x</option>
+                          <option value={1.5}>1.5x</option>
+                          <option value={2}>2.0x</option>
+                        </select>
+                      </div>
                       {course.isEnrolled && !selectedLesson?.isLocked && (
                         <button style={selectedLesson?.isCompleted ? S.doneBtn : S.primaryBtn} onClick={handleComplete} disabled={savingProgress}>
                           <span className="material-symbols-outlined">{selectedLesson?.isCompleted ? 'check_circle' : 'task_alt'}</span>
@@ -425,7 +500,7 @@ export default function CoursePlayer({ courseId, onGoHome }) {
                   <strong style={{ fontSize: 28, color: '#00288e' }}>{money(course.price)}</strong>
                 </div>
                 {canBuyCourse ? (
-                  <button style={S.primaryBtn} onClick={handleEnroll} disabled={buying}>
+                  <button style={S.primaryBtn} onClick={() => handleEnroll()} disabled={buying}>
                     <span className="material-symbols-outlined">shopping_cart</span>
                     {buying ? 'Đang xử lý...' : 'Đăng ký và học ngay'}
                   </button>
@@ -472,6 +547,42 @@ export default function CoursePlayer({ courseId, onGoHome }) {
           </aside>
         </div>
       </main>
+
+      {/* PARENT BUY COURSE MODAL */}
+      {showChildSelect && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" style={{ zIndex: 9999, display: 'flex', position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 400, boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ fontSize: 20, fontWeight: 800, color: '#111827', margin: '0 0 16px 0' }}>Bạn muốn mua khóa học cho bé nào?</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
+              {parentChildren.map(child => (
+                <label key={child.student_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, border: selectedChildId === child.student_id ? '2px solid #00288e' : '1px solid #e5e7eb', background: selectedChildId === child.student_id ? '#eef4ff' : '#fff', borderRadius: 12, cursor: 'pointer' }}>
+                  <input type="radio" name="child" value={child.student_id} checked={selectedChildId === child.student_id} onChange={(e) => setSelectedChildId(e.target.value)} style={{ width: 18, height: 18, accentColor: '#00288e' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {child.student_picture ? (
+                       <img src={child.student_picture} alt="Avatar" style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover' }} />
+                    ) : (
+                       <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                          {child.student_name?.[0]?.toUpperCase()}
+                       </div>
+                    )}
+                    <div>
+                      <p style={{ margin: 0, fontWeight: 700, color: '#111827' }}>{child.student_name}</p>
+                      <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>{child.nickname || 'Chưa có biệt danh'}</p>
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button onClick={() => setShowChildSelect(false)} style={{ padding: '10px 16px', borderRadius: 10, border: 0, background: '#f3f4f6', color: '#374151', fontWeight: 'bold', cursor: 'pointer' }}>Hủy</button>
+              <button onClick={() => handleEnroll(selectedChildId)} disabled={buying || !selectedChildId} style={{ padding: '10px 16px', borderRadius: 10, border: 0, background: '#00288e', color: '#fff', fontWeight: 'bold', cursor: 'pointer', opacity: buying ? 0.6 : 1 }}>
+                {buying ? 'Đang xử lý...' : 'Xác nhận Mua'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

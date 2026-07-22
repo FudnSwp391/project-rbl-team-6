@@ -17,6 +17,9 @@ export default function CartPage({ onGoSignIn, user }) {
   const [promoLoading, setPromoLoading] = useState(false);
   const [demoRemoved, setDemoRemoved] = useState(0);
   const [walletBalance, setWalletBalance] = useState(null);
+  const [showTopupModal, setShowTopupModal] = useState(false);
+  const [children, setChildren] = useState([]);
+  const [selectedChildId, setSelectedChildId] = useState('');
   const [toast, setToast] = useState(null);
   const showToast = (type, msg, title) => setToast({ type, msg, title });
 
@@ -58,6 +61,21 @@ export default function CartPage({ onGoSignIn, user }) {
       .then(r => (r.ok ? r.json() : null))
       .then(d => setWalletBalance(d?.wallet ? Number(d.wallet.balance) : 0))
       .catch(() => setWalletBalance(null));
+  }, [user]);
+
+  // Lấy danh sách con nếu là phụ huynh
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (user && user.role === 'parent' && token) {
+      fetch(`${API_BASE}/api/parent/children`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : { children: [] })
+        .then(data => {
+          const list = data?.children || [];
+          setChildren(list);
+          if (list.length > 0) setSelectedChildId(list[0].student_id);
+        })
+        .catch(() => setChildren([]));
+    }
   }, [user]);
 
   const removeItem = (id) => {
@@ -113,6 +131,7 @@ export default function CartPage({ onGoSignIn, user }) {
 
   const handleCheckout = async () => {
     if (!user) {
+      try { sessionStorage.setItem('redirectAfterLogin', '#/cart'); } catch (e) {}
       if (onGoSignIn) onGoSignIn();
       else window.location.hash = '/signin';
       return;
@@ -124,7 +143,11 @@ export default function CartPage({ onGoSignIn, user }) {
       const res = await fetch(`${API_BASE}/api/cart/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ items: cartItems.map(i => i.id), couponCode: appliedCoupon?.code || null }),
+        body: JSON.stringify({ 
+          items: cartItems.map(i => i.id), 
+          couponCode: appliedCoupon?.code || null,
+          targetStudentId: user?.role === 'parent' ? selectedChildId : undefined
+        }),
       });
       if (res.status === 401 || res.status === 403) {
         showToast('error', 'Phiên đăng nhập đã hết hạn, đang chuyển sang đăng nhập...', 'Hết phiên');
@@ -136,7 +159,7 @@ export default function CartPage({ onGoSignIn, user }) {
         localStorage.setItem('edux_cart', '[]');
         window.dispatchEvent(new Event('cartUpdated'));
         showToast('success', `Đã trừ ${fmt(data.total)} đ từ ví. Bạn đã sở hữu ${data.enrolled} khóa học.`, 'Thanh toán thành công!');
-        setTimeout(() => { window.location.hash = '/my-courses'; }, 1600);
+        setTimeout(() => { window.location.hash = user?.role === 'parent' ? '/dashboard' : '/my-courses'; }, 1600);
         return;
       }
       if (data.code === 'INSUFFICIENT_FUNDS') {
@@ -161,7 +184,11 @@ export default function CartPage({ onGoSignIn, user }) {
     try {
       const token = localStorage.getItem('token');
       // Mã QR sẽ thanh toán CHÍNH đơn này → lưu đơn để đăng ký khóa sau khi trả thành công
-      localStorage.setItem('edux_pending_order', JSON.stringify({ items: cartItems.map(i => i.id), couponCode: appliedCoupon?.code || null }));
+      localStorage.setItem('edux_pending_order', JSON.stringify({ 
+        items: cartItems.map(i => i.id), 
+        couponCode: appliedCoupon?.code || null,
+        targetStudentId: user?.role === 'parent' ? selectedChildId : undefined
+      }));
       const returnUrl = `${window.location.origin}/#/payment/result`;
       const res = await fetch(`${API_BASE}/api/payment/create-url`, {
         method: 'POST',
@@ -436,6 +463,35 @@ export default function CartPage({ onGoSignIn, user }) {
                 )}
               </div>
 
+              {/* Lựa chọn tài khoản con (nếu là Phụ huynh) */}
+              {user && user.role === 'parent' && (
+                <div className="border-t border-[#e1e2e4] pt-6 mb-5">
+                  <div className="flex flex-col gap-2">
+                    <span className="text-sm font-semibold text-[#191c1e] flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[#00288e] text-[20px]">family_restroom</span>
+                      Mua khóa học cho:
+                    </span>
+                    {children.length === 0 ? (
+                      <div className="text-xs text-[#ba1a1a] bg-[#ffdad6] px-3 py-2 rounded-lg">
+                        Bạn chưa liên kết tài khoản con nào. Hãy liên kết trước khi mua khóa học.
+                      </div>
+                    ) : (
+                      <select 
+                        value={selectedChildId} 
+                        onChange={(e) => setSelectedChildId(e.target.value)}
+                        className="border border-[#c4c5d5] rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-[#00288e] focus:ring-1 focus:ring-[#00288e]"
+                      >
+                        {children.map(child => (
+                          <option key={child.student_id} value={child.student_id}>
+                            {child.nickname || child.student_name || 'Học viên'} ({child.student_email || ''})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Số dư ví điện tử */}
               <div className="border-t border-[#e1e2e4] pt-6 mb-5">
                 <div className="flex items-center justify-between">
@@ -458,22 +514,49 @@ export default function CartPage({ onGoSignIn, user }) {
                   className="w-full bg-[#00288e] text-white py-3 rounded-lg font-bold text-sm hover:bg-[#1e40af] transition-colors shadow-md">
                   Đăng nhập để thanh toán
                 </button>
-              ) : enough ? (
-                <button onClick={handleCheckout} disabled={loadingPayment || cartItems.length === 0}
-                  className="w-full bg-[#00288e] text-white py-3 rounded-lg font-bold text-sm hover:bg-[#1e40af] transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[18px]">account_balance_wallet</span>
-                  {loadingPayment ? 'Đang xử lý...' : `Thanh toán bằng ví — ${fmt(finalTotal)} đ`}
-                </button>
               ) : (
-                <button onClick={topUpQR} disabled={loadingPayment || cartItems.length === 0}
-                  className="w-full bg-gradient-to-r from-[#0ea5e9] to-[#1e40af] text-white py-3 rounded-lg font-bold text-sm hover:-translate-y-0.5 transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[18px]">qr_code_2</span>
-                  {loadingPayment ? 'Đang mở mã QR...' : `Thanh toán bằng mã QR — ${fmt(finalTotal)} đ`}
+                <button onClick={() => {
+                  if (!enough) setShowTopupModal(true);
+                  else handleCheckout();
+                }} disabled={loadingPayment || cartItems.length === 0}
+                  className="w-full bg-[#00288e] text-white py-3 rounded-lg font-bold text-sm hover:bg-[#1e40af] transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">{enough ? 'account_balance_wallet' : 'error'}</span>
+                  {loadingPayment ? 'Đang xử lý...' : `Thanh toán — ${fmt(finalTotal)} đ`}
                 </button>
               )}
             </div>
           </div>
         </div>
+
+        {/* Modal Báo thiếu tiền */}
+        {showTopupModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowTopupModal(false)}>
+            <div className="bg-white rounded-2xl w-full max-w-md p-6 text-center shadow-2xl relative" onClick={e => e.stopPropagation()}>
+              <span className="material-symbols-outlined text-[#ea580c] text-6xl mb-2">account_balance_wallet</span>
+              <h3 className="text-xl font-bold text-[#191c1e]">Số dư Ví không đủ!</h3>
+              <div className="my-4 text-sm text-[#444653] space-y-1">
+                <p>Tổng thanh toán: <span className="font-semibold">{fmt(finalTotal)} đ</span></p>
+                <p>Số dư hiện tại: <span className="font-semibold">{fmt(walletBalance)} đ</span></p>
+                <div className="border-t border-[#e1e2e4] my-2 pt-2"></div>
+                <p className="text-base">Bạn còn thiếu: <span className="font-bold text-[#ba1a1a]">{fmt(finalTotal - (walletBalance || 0))} đ</span></p>
+              </div>
+              <p className="text-xs text-[#5d5f5f] mb-6">Bạn có thể nạp phần còn thiếu qua VNPAY để hệ thống tự động hoàn tất mua khóa học.</p>
+              
+              <div className="space-y-3">
+                <button onClick={() => { setShowTopupModal(false); topUpQR(); }} className="w-full bg-[#00288e] text-white py-3 rounded-lg font-bold hover:bg-[#1e40af] transition-colors flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">qr_code_2</span>
+                  Nạp {fmt(finalTotal - (walletBalance || 0))}đ qua VNPAY & Mua luôn
+                </button>
+                <button onClick={() => { setShowTopupModal(false); window.location.hash = '/dashboard'; }} className="w-full bg-[#f1f3f4] text-[#191c1e] py-3 rounded-lg font-bold hover:bg-[#e1e2e4] transition-colors">
+                  Đi đến trang Quản lý Ví
+                </button>
+                <button onClick={() => setShowTopupModal(false)} className="w-full text-[#757684] text-sm font-semibold hover:text-[#191c1e] mt-2">
+                  Hủy bỏ
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Suggested Courses */}
         <div className="mt-16">
