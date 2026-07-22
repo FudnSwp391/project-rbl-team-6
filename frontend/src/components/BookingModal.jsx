@@ -35,10 +35,11 @@ export default function BookingModal({ tutor, onClose }) {
   useEffect(() => {
     if (user && user.role === 'parent' && token) {
       fetch(`${API_BASE}/api/parent/children`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.ok ? r.json() : [])
+        .then(r => r.ok ? r.json() : { children: [] })
         .then(data => {
-          setChildren(data);
-          if (data.length > 0) setSelectedChildId(data[0].id);
+          const list = data?.children || [];
+          setChildren(list);
+          if (list.length > 0) setSelectedChildId(list[0].student_id);
         })
         .catch(() => setChildren([]));
     }
@@ -195,8 +196,8 @@ export default function BookingModal({ tutor, onClose }) {
                       className="w-full px-3 py-2 rounded-lg border border-[#d6d9e0] text-sm focus:outline-none focus:border-[#00288e]"
                     >
                       {children.map(child => (
-                        <option key={child.id} value={child.id}>
-                          {child.nickname || child.full_name || 'Học viên'} (ID: {child.id.substring(0,8)})
+                        <option key={child.student_id} value={child.student_id}>
+                          {child.nickname || child.student_name || 'Học viên'} ({child.student_email || ''})
                         </option>
                       ))}
                     </select>

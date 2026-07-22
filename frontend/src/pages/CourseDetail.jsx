@@ -45,6 +45,10 @@ export default function CourseDetail({ courseId }) {
   const [complaintOpen, setComplaintOpen] = useState(false);
   const [activeComplaintId, setActiveComplaintId] = useState(null);
 
+  const [parentChildren, setParentChildren] = useState([]);
+  const [showChildSelect, setShowChildSelect] = useState(false);
+  const [selectedChildId, setSelectedChildId] = useState('');
+
   // ── Giỏ hàng (localStorage edux_cart — cùng định dạng CartPage/Marketplace) ──
   const CART_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const readCartIds = () => {
@@ -117,10 +121,21 @@ export default function CourseDetail({ courseId }) {
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d?.active) setActiveComplaintId(d.active.id); })
         .catch(() => {});
+
+      if (user?.role === 'parent') {
+        fetch(`${API_BASE}/api/parent/children`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.ok ? r.json() : { children: [] })
+          .then(data => {
+            const list = data?.children || [];
+            setParentChildren(list);
+            if (list.length > 0) setSelectedChildId(list[0].student_id);
+          })
+          .catch(() => setParentChildren([]));
+      }
     }
   }, [courseId, user, token]);
 
-  const handleEnroll = async () => {
+  const handleEnroll = async (targetStudentId) => {
     if (!user) {
       try { sessionStorage.setItem('redirectAfterLogin', window.location.hash); } catch (e) {}
       window.location.hash = '/signin';
@@ -130,6 +145,16 @@ export default function CourseDetail({ courseId }) {
     if (course && course.tutor_id === user.userId) {
       setToast('Bạn không thể đăng ký khóa học của chính mình.');
       setTimeout(() => setToast(''), 3000);
+      return;
+    }
+
+    if (user.role === 'parent' && targetStudentId === undefined) {
+      if (parentChildren.length === 0) {
+        setToast('Bạn chưa liên kết với tài khoản học sinh nào. Vui lòng vào trang Bảng Điều Khiển để liên kết trước.');
+        setTimeout(() => setToast(''), 5000);
+        return;
+      }
+      setShowChildSelect(true);
       return;
     }
 
@@ -144,10 +169,14 @@ export default function CourseDetail({ courseId }) {
     setEnrollLoading(true);
     try {
       await apiRequest(`/api/courses/${course.id}/enroll`, {
-        method: 'POST'
+        method: 'POST',
+        body: user.role === 'parent' ? JSON.stringify({ targetStudentId }) : undefined
       });
 
-      setEnrolled(true);
+      if (user.role !== 'parent') {
+        setEnrolled(true);
+      }
+      setShowChildSelect(false);
       setToast('Đăng ký khóa học thành công!');
       setTimeout(() => setToast(''), 3000);
     } catch (err) {
@@ -464,7 +493,7 @@ export default function CourseDetail({ courseId }) {
                   Đã đăng ký (Đến lớp học)
                 </button>
               ) : (
-                <button onClick={handleEnroll} disabled={enrollLoading} className={`w-full py-3.5 rounded-xl text-white font-bold text-base flex items-center justify-center gap-2 transition-all mb-3 ${enrollLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)]'}`}>
+                <button onClick={() => handleEnroll()} disabled={enrollLoading} className={`w-full py-3.5 rounded-xl text-white font-bold text-base flex items-center justify-center gap-2 transition-all mb-3 ${enrollLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#1e40af] to-[#3b6fe0] hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-6px_rgba(59,111,224,0.6)]'}`}>
                   {enrollLoading ? (
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   ) : (
@@ -525,6 +554,48 @@ export default function CourseDetail({ courseId }) {
         courseTitle={c?.title}
         token={token}
       />
+
+      {/* Modal chọn con cái khi Phụ huynh bấm mua */}
+      {showChildSelect && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-[400px] shadow-2xl">
+            <h3 className="text-xl font-bold text-[#111827] mb-4">Bạn muốn mua khóa học cho bé nào?</h3>
+            <div className="flex flex-col gap-3 mb-6">
+              {parentChildren.map(child => (
+                <label key={child.student_id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${selectedChildId === child.student_id ? 'border-[#00288e] bg-[#eef4ff]' : 'border-[#e5e7eb] hover:bg-gray-50'}`}>
+                  <input 
+                    type="radio" name="child" value={child.student_id} 
+                    checked={selectedChildId === child.student_id} 
+                    onChange={(e) => setSelectedChildId(e.target.value)} 
+                    className="w-4 h-4 accent-[#00288e]" 
+                  />
+                  <div className="flex items-center gap-3">
+                    {child.student_picture ? (
+                       <img src={child.student_picture} alt="Avatar" className="w-9 h-9 rounded-full object-cover" />
+                    ) : (
+                       <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center font-bold text-gray-600">
+                          {child.student_name?.[0]?.toUpperCase()}
+                       </div>
+                    )}
+                    <div>
+                      <div className="font-semibold text-sm text-[#111827]">{child.nickname || child.student_name}</div>
+                      <div className="text-xs text-gray-500">{child.student_email || 'Chưa cập nhật email'}</div>
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowChildSelect(false)} className="flex-1 py-2.5 rounded-xl font-semibold border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors">
+                Hủy
+              </button>
+              <button onClick={() => handleEnroll(selectedChildId)} disabled={!selectedChildId} className="flex-1 py-2.5 rounded-xl font-semibold bg-[#00288e] text-white hover:bg-[#001d6e] disabled:opacity-50 transition-colors">
+                Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

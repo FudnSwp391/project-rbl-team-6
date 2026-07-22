@@ -68,10 +68,11 @@ export default function CartPage({ onGoSignIn, user }) {
     const token = localStorage.getItem('token');
     if (user && user.role === 'parent' && token) {
       fetch(`${API_BASE}/api/parent/children`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.ok ? r.json() : [])
+        .then(r => r.ok ? r.json() : { children: [] })
         .then(data => {
-          setChildren(data);
-          if (data.length > 0) setSelectedChildId(data[0].id);
+          const list = data?.children || [];
+          setChildren(list);
+          if (list.length > 0) setSelectedChildId(list[0].student_id);
         })
         .catch(() => setChildren([]));
     }
@@ -158,7 +159,7 @@ export default function CartPage({ onGoSignIn, user }) {
         localStorage.setItem('edux_cart', '[]');
         window.dispatchEvent(new Event('cartUpdated'));
         showToast('success', `Đã trừ ${fmt(data.total)} đ từ ví. Bạn đã sở hữu ${data.enrolled} khóa học.`, 'Thanh toán thành công!');
-        setTimeout(() => { window.location.hash = '/my-courses'; }, 1600);
+        setTimeout(() => { window.location.hash = user?.role === 'parent' ? '/dashboard' : '/my-courses'; }, 1600);
         return;
       }
       if (data.code === 'INSUFFICIENT_FUNDS') {
@@ -481,8 +482,8 @@ export default function CartPage({ onGoSignIn, user }) {
                         className="border border-[#c4c5d5] rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-[#00288e] focus:ring-1 focus:ring-[#00288e]"
                       >
                         {children.map(child => (
-                          <option key={child.id} value={child.id}>
-                            {child.nickname || child.full_name || 'Học viên'} (ID: {child.id.substring(0,8)})
+                          <option key={child.student_id} value={child.student_id}>
+                            {child.nickname || child.student_name || 'Học viên'} ({child.student_email || ''})
                           </option>
                         ))}
                       </select>
