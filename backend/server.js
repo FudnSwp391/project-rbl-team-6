@@ -5794,30 +5794,69 @@ app.get("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
     reported:       'Bị báo cáo',
     rejected:       'Bị báo cáo',
   };
+  // Real per-course trend %: null when there's no prior-period baseline to compare
+  // against, rather than fabricating a number (e.g. 0 → 5 has no meaningful "%").
+  const pctChange = (recent, prior) => {
+    recent = Number(recent) || 0; prior = Number(prior) || 0;
+    if (prior <= 0) return null;
+    return Math.round(((recent - prior) / prior) * 100);
+  };
   try {
-    const result = await pool.query(`
-      SELECT
-        c.id::text                        AS id,
-        COALESCE(c.title, '')             AS title,
-        COALESCE(u.full_name, '')         AS tutor,
-        COALESCE(c.subject, '')           AS subject,
-        COALESCE(c.price, 0)             AS price,
-        COALESCE(c.status, 'draft')       AS status,
-        COALESCE(c.description, '')       AS desc,
-        COALESCE(c.avg_rating, 0)        AS rating,
-        COALESCE(c.enrollment_count, 0)  AS students,
-        c.created_at,
-        c.updated_at,
-        COUNT(DISTINCT cl.id)::int        AS lessons,
-        COUNT(DISTINCT r.id)::int         AS reviews
-      FROM courses c
-      LEFT JOIN users u           ON u.id         = c.tutor_id
-      LEFT JOIN course_lessons cl ON cl.course_id = c.id
-      LEFT JOIN reviews r         ON r.course_id  = c.id
-      GROUP BY c.id, u.full_name
-      ORDER BY c.updated_at DESC NULLS LAST
-      LIMIT 200
-    `);
+    const [result, statsRes] = await Promise.all([
+      pool.query(`
+        SELECT
+          c.id::text                        AS id,
+          COALESCE(c.title, '')             AS title,
+          COALESCE(u.full_name, '')         AS tutor,
+          COALESCE(c.subject, '')           AS subject,
+          COALESCE(c.price, 0)             AS price,
+          COALESCE(c.status, 'draft')       AS status,
+          COALESCE(c.description, '')       AS desc,
+          COALESCE(c.avg_rating, 0)        AS rating,
+          COALESCE(c.enrollment_count, 0)  AS students,
+          c.created_at,
+          c.updated_at,
+          COUNT(DISTINCT cl.id)::int        AS lessons,
+          COUNT(DISTINCT r.id)::int         AS reviews,
+          COALESCE(cm.revenue, 0)           AS revenue,
+          COALESCE(comp.completion_pct, 0)  AS completion
+        FROM courses c
+        LEFT JOIN users u           ON u.id         = c.tutor_id
+        LEFT JOIN course_lessons cl ON cl.course_id = c.id
+        LEFT JOIN reviews r         ON r.course_id  = c.id
+        LEFT JOIN (
+          SELECT course_id,
+                 SUM(CASE WHEN event_type = 'EARNED' THEN gross_amount
+                          WHEN event_type = 'REVERSED' THEN -gross_amount ELSE 0 END) AS revenue
+          FROM commission_logs WHERE source_type = 'course' GROUP BY course_id
+        ) cm ON cm.course_id = c.id
+        LEFT JOIN (
+          SELECT ce.course_id,
+                 COUNT(*) FILTER (WHERE cp.is_completed) * 100.0 / NULLIF(COUNT(*), 0) AS completion_pct
+          FROM course_enrollments ce
+          JOIN course_lessons cl2 ON cl2.course_id = ce.course_id
+          LEFT JOIN course_progress cp ON cp.enrollment_id = ce.id AND cp.lesson_id = cl2.id
+          WHERE ce.status = 'active'
+          GROUP BY ce.course_id
+        ) comp ON comp.course_id = c.id
+        GROUP BY c.id, u.full_name, cm.revenue, comp.completion_pct
+        ORDER BY c.updated_at DESC NULLS LAST
+        LIMIT 200
+      `),
+      pool.query(`
+        SELECT
+          (SELECT COUNT(*) FROM courses)                                                       AS total_courses,
+          (SELECT COUNT(*) FROM courses WHERE created_at > NOW() - INTERVAL '30 days')          AS courses_recent30,
+          (SELECT COUNT(*) FROM courses WHERE created_at BETWEEN NOW() - INTERVAL '60 days' AND NOW() - INTERVAL '30 days') AS courses_prior30,
+          (SELECT COUNT(*) FROM courses WHERE status = 'published')                             AS active_courses,
+          (SELECT COUNT(DISTINCT student_id) FROM course_enrollments)                           AS total_students,
+          (SELECT COUNT(*) FROM course_enrollments WHERE purchased_at > NOW() - INTERVAL '30 days') AS enrollments_recent30,
+          (SELECT COUNT(*) FROM course_enrollments WHERE purchased_at BETWEEN NOW() - INTERVAL '60 days' AND NOW() - INTERVAL '30 days') AS enrollments_prior30,
+          (SELECT COALESCE(SUM(gross_amount), 0) FROM commission_logs WHERE source_type = 'course' AND event_type = 'EARNED') AS total_revenue,
+          (SELECT COALESCE(SUM(gross_amount), 0) FROM commission_logs WHERE source_type = 'course' AND event_type = 'EARNED' AND created_at > NOW() - INTERVAL '30 days') AS revenue_recent30,
+          (SELECT COALESCE(SUM(gross_amount), 0) FROM commission_logs WHERE source_type = 'course' AND event_type = 'EARNED' AND created_at BETWEEN NOW() - INTERVAL '60 days' AND NOW() - INTERVAL '30 days') AS revenue_prior30
+      `),
+    ]);
     const courses = result.rows.map(row => ({
       id:         row.id,
       title:      row.title,
@@ -5826,20 +5865,178 @@ app.get("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
       price:      parseInt(row.price) || 0,
       premium:    (parseInt(row.price) || 0) > 0,
       status:     STATUS_VI[row.status] || 'Bản nháp',
+      status_raw: row.status || 'draft',
       desc:       row.desc,
       rating:     row.rating ? parseFloat(row.rating) : 0,
       students:   parseInt(row.students) || 0,
       lessons:    parseInt(row.lessons) || 0,
       reviews:    parseInt(row.reviews) || 0,
-      revenue:    0,
-      completion: 0,
+      revenue:    Math.round(Number(row.revenue) || 0),
+      completion: Math.round(Number(row.completion) || 0),
       created:    row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : '',
       updated:    row.updated_at ? new Date(row.updated_at).toISOString().slice(0, 10) : '',
     }));
-    return res.json({ courses });
+    const s = statsRes.rows[0];
+    const stats = {
+      total_courses:  parseInt(s.total_courses)  || 0,
+      active_courses: parseInt(s.active_courses) || 0,
+      total_students: parseInt(s.total_students) || 0,
+      total_revenue:  Math.round(Number(s.total_revenue) || 0),
+      courses_trend:  pctChange(s.courses_recent30, s.courses_prior30),
+      students_trend: pctChange(s.enrollments_recent30, s.enrollments_prior30),
+      revenue_trend:  pctChange(s.revenue_recent30, s.revenue_prior30),
+      active_trend:   null, // no historical status snapshot exists — never fabricated
+    };
+    return res.json({ courses, stats });
   } catch (err) {
     console.error("GET /api/admin/courses error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy danh sách khóa học." });
+  }
+});
+
+// ── PATCH /api/admin/courses/:id — edit fields and/or change status ──────────
+// Same courses.status vocabulary the tutor-facing endpoints use (courses_status_check).
+// Used for both the edit form (title/description/price/subject) and the
+// archive/hide row actions (status only) — partial update, only sent fields change.
+const ADMIN_COURSE_STATUSES = new Set(['draft', 'pending_review', 'published', 'rejected', 'archived']);
+app.patch("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { title, description, price, subject, status } = req.body || {};
+    const sets = [], params = [];
+    if (title !== undefined)       { params.push(String(title).trim());  sets.push(`title = $${params.length}`); }
+    if (description !== undefined) { params.push(String(description));   sets.push(`description = $${params.length}`); }
+    if (subject !== undefined)     { params.push(String(subject).trim());sets.push(`subject = $${params.length}`); }
+    if (price !== undefined) {
+      const p = Number(price);
+      if (!Number.isFinite(p) || p < 0) return res.status(400).json({ message: "Giá không hợp lệ." });
+      params.push(p); sets.push(`price = $${params.length}`);
+    }
+    if (status !== undefined) {
+      if (!ADMIN_COURSE_STATUSES.has(status)) return res.status(400).json({ message: "Trạng thái không hợp lệ." });
+      params.push(status); sets.push(`status = $${params.length}`);
+    }
+    if (sets.length === 0) return res.status(400).json({ message: "Không có trường nào để cập nhật." });
+    sets.push(`updated_at = NOW()`);
+    params.push(req.params.id);
+    const result = await pool.query(
+      `UPDATE courses SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id`,
+      params
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    return res.json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error("PATCH /api/admin/courses/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật khóa học." });
+  }
+});
+
+// ── DELETE /api/admin/courses/:id ─────────────────────────────────────────────
+// Guarded hard delete — mirrors the Subject Management Center's own rule
+// (archive is always safe/reversible; real delete only when nothing depends on
+// the record). A course with any enrollment is refused with a clear message
+// pointing at Archive instead, so paying students never lose access silently.
+app.delete("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows: enrolled } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM course_enrollments WHERE course_id = $1`, [req.params.id]
+    );
+    if (enrolled[0].n > 0) {
+      return res.status(409).json({ message: `Khóa học đã có ${enrolled[0].n} học viên đăng ký — không thể xóa. Hãy dùng "Lưu trữ" thay thế.` });
+    }
+    const result = await pool.query(`DELETE FROM courses WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/courses/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi xóa khóa học." });
+  }
+});
+
+// ── GET /api/admin/courses/:id/students — real enrolled-students list ────────
+app.get("/api/admin/courses/:id/students", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT e.id, e.student_id, COALESCE(u.full_name, e.student_name, 'Học viên') AS name,
+              u.email, u.picture, e.child_name, e.status, e.purchased_at
+       FROM course_enrollments e
+       LEFT JOIN users u ON u.id = e.student_id
+       WHERE e.course_id = $1
+       ORDER BY e.purchased_at DESC`,
+      [req.params.id]
+    );
+    return res.json({ students: rows });
+  } catch (err) {
+    console.error("GET /api/admin/courses/:id/students error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách học viên." });
+  }
+});
+
+// ── GET /api/admin/courses/:id/lessons — real course content list ────────────
+// Replaces the frontend's buildModules() fake-data generator for the drawer's
+// "Nội dung" tab.
+app.get("/api/admin/courses/:id/lessons", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, title, description, duration_label, is_preview, position
+       FROM course_lessons WHERE course_id = $1 ORDER BY position, created_at`,
+      [req.params.id]
+    );
+    return res.json({ lessons: rows });
+  } catch (err) {
+    console.error("GET /api/admin/courses/:id/lessons error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy nội dung khóa học." });
+  }
+});
+
+// ── GET /api/admin/courses/:id/reviews — real reviews list ───────────────────
+// Replaces the frontend's buildReviews() fake-data generator (invented names
+// like "Ngọc Mai") for the drawer's "Đánh giá" tab. Note: the live `reviews`
+// table uses (user_id, tutor_id, course_id, rating, comment, is_visible) — the
+// CREATE TABLE IF NOT EXISTS earlier in this file describes an older shape
+// (reviewer_name/content) that never actually applies because the table
+// already exists with this schema; querying the real columns here.
+app.get("/api/admin/courses/:id/reviews", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.id, r.rating, r.comment, r.created_at,
+              COALESCE(u.full_name, 'Học viên') AS reviewer_name, u.picture AS reviewer_picture
+       FROM reviews r
+       LEFT JOIN users u ON u.id = r.user_id
+       WHERE r.course_id = $1 AND COALESCE(r.is_visible, true) = true
+       ORDER BY r.created_at DESC LIMIT 50`,
+      [req.params.id]
+    );
+    return res.json({ reviews: rows });
+  } catch (err) {
+    console.error("GET /api/admin/courses/:id/reviews error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy đánh giá khóa học." });
+  }
+});
+
+// ── POST /api/admin/courses — create a new course on a tutor's behalf ────────
+// Always created as 'draft'; admin uses the existing Edit modal to set
+// status/other fields afterward, so this endpoint only needs the minimum to
+// create a valid row (mirrors upsertTutorCourse's required fields).
+app.post("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { title, description, subject, price, tutor_id } = req.body || {};
+    const cleanTitle = String(title || '').trim();
+    if (!cleanTitle) return res.status(400).json({ message: "Tên khóa học là bắt buộc." });
+    if (!tutor_id) return res.status(400).json({ message: "Vui lòng chọn gia sư phụ trách." });
+    const p = Number(price) || 0;
+    if (p < 0) return res.status(400).json({ message: "Giá không hợp lệ." });
+    const tutorCheck = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'tutor'`, [tutor_id]);
+    if (!tutorCheck.rows.length) return res.status(400).json({ message: "Không tìm thấy gia sư." });
+
+    const result = await pool.query(
+      `INSERT INTO courses (tutor_id, title, description, subject, price, status)
+       VALUES ($1, $2, $3, $4, $5, 'draft') RETURNING id`,
+      [tutor_id, cleanTitle, String(description || '').trim() || null, String(subject || '').trim() || null, p]
+    );
+    return res.status(201).json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error("POST /api/admin/courses error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo khóa học." });
   }
 });
 

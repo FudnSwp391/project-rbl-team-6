@@ -2161,43 +2161,6 @@ const C_CHIPS = [
   { key: 'Premium',        match: c => c.premium },
 ]
 
-const MODULE_TITLES = ['Nhập môn & Nền tảng', 'Kiến thức trọng tâm', 'Luyện tập chuyên sâu', 'Tổng ôn & Thực chiến']
-function buildModules(course) {
-  const total = course.lessons || 0
-  const count = Math.min(4, Math.max(2, Math.round(total / 8) || 2))
-  const per = Math.ceil(total / count)
-  let n = 0
-  const mods = []
-  for (let m = 0; m < count; m++) {
-    const items = []
-    for (let i = 0; i < per && n < total; i++, n++) {
-      items.push({ type: 'lesson', title: `Bài ${n + 1}: ${course.subject} — chuyên đề ${n + 1}`, duration: `${10 + (n * 4) % 35} phút` })
-    }
-    items.push({ type: 'quiz', title: `Quiz kiểm tra Module ${m + 1}`, q: 8 + (m * 2) % 10 })
-    mods.push({ title: `Module ${m + 1}: ${MODULE_TITLES[m] || 'Nội dung mở rộng'}`, items })
-  }
-  return mods
-}
-
-const REVIEW_AUTHORS = ['Ngọc Mai', 'Hoàng Long', 'Thu Hà', 'Đức Anh', 'Phương Linh', 'Gia Bảo']
-const REVIEW_TEXTS = [
-  'Khóa học rất chi tiết, giảng viên giải thích dễ hiểu và tận tâm.',
-  'Nội dung bám sát thực tế, bài tập phong phú. Mình tiến bộ rõ rệt.',
-  'Phần đầu hơi nhanh nhưng càng về sau càng cuốn, rất đáng tiền.',
-  'Video chất lượng cao, có quiz củng cố sau mỗi chương rất hữu ích.',
-  'Mong giảng viên cập nhật thêm ví dụ mới cho phần nâng cao.',
-]
-function buildReviews(course) {
-  if (!course.reviews) return []
-  const base = Math.round(course.rating)
-  return REVIEW_AUTHORS.slice(0, 4).map((name, i) => ({
-    name,
-    score: Math.max(3, Math.min(5, base - (i % 2))),
-    comment: REVIEW_TEXTS[i % REVIEW_TEXTS.length],
-    date: fmtDMY(new Date(Date.now() - (i + 1) * 86400000 * 6).toISOString()),
-  }))
-}
-
 // ── Course Thumbnail ──
 function CourseThumb({ course, size = 'sm' }) {
   const m = subjMeta(course.subject)
@@ -2267,11 +2230,25 @@ function DrawerDetail({ label, value }) {
   )
 }
 
-function CourseDrawer({ course, show, tab, onTab, onClose }) {
+function CourseDrawer({ course, show, tab, onTab, onClose, token }) {
+  const [lessons, setLessons]           = useState(null)
+  const [reviews, setReviews]           = useState(null)
+  const [contentError, setContentError] = useState(null)
+
+  useEffect(() => {
+    if (!course || !token) { setLessons(null); setReviews(null); return }
+    setLessons(null); setReviews(null); setContentError(null)
+    Promise.all([
+      authFetch(`${API}/api/admin/courses/${course.id}/lessons`, token),
+      authFetch(`${API}/api/admin/courses/${course.id}/reviews`, token),
+    ])
+      .then(([l, r]) => { setLessons(l.lessons || []); setReviews(r.reviews || []) })
+      .catch(err => setContentError(err.message))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [course?.id, token])
+
   if (!course) return null
   const m = subjMeta(course.subject)
-  const modules = buildModules(course)
-  const reviews = buildReviews(course)
   const st = cStatusMeta(course.status)
   const hours = Math.max(1, Math.round((course.lessons * 16) / 60))
   const TABS = [
@@ -2334,26 +2311,30 @@ function CourseDrawer({ course, show, tab, onTab, onClose }) {
             </div>
           )}
           {tab === 'content' && (
-            <div className="space-y-4">
-              {modules.map((mod, i) => (
-                <div key={i} className="bg-white rounded-xl border border-outline-variant overflow-hidden">
-                  <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-outline-variant">
-                    <p className="text-sm font-bold text-on-surface">{mod.title}</p>
-                    <span className="text-xs text-on-surface-variant">{mod.items.length} mục</span>
-                  </div>
+            <div className="space-y-3">
+              {contentError ? (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{contentError}</div>
+              ) : lessons === null ? (
+                <div className="flex justify-center py-10 text-on-surface-variant"><span className="material-symbols-outlined animate-spin">progress_activity</span></div>
+              ) : lessons.length === 0 ? (
+                <div className="text-center py-12 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[48px] text-gray-300">list_alt</span>
+                  <p className="text-sm mt-2">Khóa học chưa có bài học nào.</p>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl border border-outline-variant overflow-hidden">
                   <ul className="divide-y divide-outline-variant">
-                    {mod.items.map((it, j) => (
-                      <li key={j} className="flex items-center gap-3 px-4 py-2.5">
-                        <span className={`material-symbols-outlined text-[18px] ${it.type === 'quiz' ? 'text-violet-600' : 'text-primary'}`}>
-                          {it.type === 'quiz' ? 'quiz' : 'play_circle'}
-                        </span>
-                        <span className="text-sm text-on-surface flex-1 truncate">{it.title}</span>
-                        <span className="text-xs text-on-surface-variant shrink-0">{it.type === 'quiz' ? `${it.q} câu` : it.duration}</span>
+                    {lessons.map((l, j) => (
+                      <li key={l.id} className="flex items-center gap-3 px-4 py-2.5">
+                        <span className="material-symbols-outlined text-[18px] text-primary">play_circle</span>
+                        <span className="text-sm text-on-surface flex-1 truncate">{j + 1}. {l.title}</span>
+                        {l.is_preview && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 shrink-0">Xem trước</span>}
+                        <span className="text-xs text-on-surface-variant shrink-0">{l.duration_label || '—'}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
-              ))}
+              )}
             </div>
           )}
           {tab === 'stats' && (
@@ -2388,23 +2369,26 @@ function CourseDrawer({ course, show, tab, onTab, onClose }) {
           )}
           {tab === 'reviews' && (
             <div className="space-y-3">
-              {reviews.length === 0 && (
+              {contentError ? (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{contentError}</div>
+              ) : reviews === null ? (
+                <div className="flex justify-center py-10 text-on-surface-variant"><span className="material-symbols-outlined animate-spin">progress_activity</span></div>
+              ) : reviews.length === 0 ? (
                 <div className="text-center py-12 text-on-surface-variant">
                   <span className="material-symbols-outlined text-[48px] text-gray-300">reviews</span>
                   <p className="text-sm mt-2">Khóa học chưa có đánh giá nào.</p>
                 </div>
-              )}
-              {reviews.map((r, i) => (
-                <div key={i} className="bg-white rounded-xl border border-outline-variant p-4">
+              ) : reviews.map((r, i) => (
+                <div key={r.id} className="bg-white rounded-xl border border-outline-variant p-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <div className={`w-8 h-8 rounded-full ${AVATAR_COLORS[i % AVATAR_COLORS.length]} flex items-center justify-center text-white text-xs font-bold`}>{initialsOf(r.name)}</div>
+                      <div className={`w-8 h-8 rounded-full ${AVATAR_COLORS[i % AVATAR_COLORS.length]} flex items-center justify-center text-white text-xs font-bold`}>{initialsOf(r.reviewer_name)}</div>
                       <div>
-                        <p className="text-sm font-semibold text-on-surface">{r.name}</p>
-                        <p className="text-[11px] text-on-surface-variant">{r.date}</p>
+                        <p className="text-sm font-semibold text-on-surface">{r.reviewer_name}</p>
+                        <p className="text-[11px] text-on-surface-variant">{fmtDMY(r.created_at)}</p>
                       </div>
                     </div>
-                    <span className="text-amber-500 text-sm font-bold">{'★'.repeat(r.score)}<span className="text-gray-300">{'★'.repeat(5 - r.score)}</span></span>
+                    <span className="text-amber-500 text-sm font-bold">{'★'.repeat(r.rating)}<span className="text-gray-300">{'★'.repeat(5 - r.rating)}</span></span>
                   </div>
                   <p className="text-sm text-on-surface-variant leading-relaxed">{r.comment}</p>
                 </div>
@@ -2414,6 +2398,238 @@ function CourseDrawer({ course, show, tab, onTab, onClose }) {
         </div>
       </aside>
     </div>
+  )
+}
+
+const COURSE_STATUS_OPTIONS = [
+  ['draft', 'Bản nháp'], ['pending_review', 'Chờ duyệt'], ['published', 'Hoạt động'],
+  ['rejected', 'Bị báo cáo'], ['archived', 'Đã lưu trữ'],
+]
+
+// Admin creates courses on a tutor's behalf, so the form needs a tutor picker.
+// Reuses the existing public /api/tutors search (already backs the student-
+// facing "Find Tutors" page) instead of adding a new endpoint.
+function CourseCreateModal({ token, onClose, onCreated, onError }) {
+  const [title, setTitle]         = useState('')
+  const [desc, setDesc]           = useState('')
+  const [subject, setSubject]     = useState('')
+  const [price, setPrice]         = useState('0')
+  const [tutorQuery, setTutorQuery] = useState('')
+  const [tutorOptions, setTutorOptions] = useState([])
+  const [tutor, setTutor]         = useState(null)
+  const [saving, setSaving]       = useState(false)
+
+  useEffect(() => {
+    if (!tutorQuery.trim()) { setTutorOptions([]); return }
+    const t = setTimeout(() => {
+      fetch(`${API}/api/tutors?search=${encodeURIComponent(tutorQuery)}&limit=8`)
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(d => setTutorOptions(d.tutors || []))
+        .catch(() => setTutorOptions([]))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [tutorQuery])
+
+  const create = async () => {
+    if (!title.trim()) { onError('Tên khóa học không được để trống.'); return }
+    if (!tutor) { onError('Vui lòng chọn gia sư phụ trách.'); return }
+    const p = Number(price)
+    if (!Number.isFinite(p) || p < 0) { onError('Giá không hợp lệ.'); return }
+    setSaving(true)
+    try {
+      await authFetch(`${API}/api/admin/courses`, token, {
+        method: 'POST',
+        body: JSON.stringify({ title: title.trim(), description: desc, subject: subject.trim(), price: p, tutor_id: tutor.id }),
+      })
+      onCreated()
+    } catch (err) {
+      onError(`Tạo khóa học thất bại: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      <div className="w-full max-w-lg p-7 rounded-2xl shadow-2xl bg-white max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="text-xl font-bold text-on-surface">Tạo khóa học mới</h3>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100"><span className="material-symbols-outlined">close</span></button>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Gia sư phụ trách</label>
+            {tutor ? (
+              <div className="flex items-center justify-between px-3 py-2 border border-primary/30 bg-primary/5 rounded-lg text-sm">
+                <span className="font-semibold text-on-surface">{tutor.full_name}</span>
+                <button onClick={() => { setTutor(null); setTutorQuery('') }} className="text-on-surface-variant hover:text-on-surface"><span className="material-symbols-outlined text-[16px]">close</span></button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input value={tutorQuery} onChange={e => setTutorQuery(e.target.value)} placeholder="Tìm tên gia sư..."
+                  className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+                {tutorOptions.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full bg-white border border-outline-variant rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {tutorOptions.map(t => (
+                      <button key={t.id} onClick={() => { setTutor(t); setTutorOptions([]) }}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
+                        <span className="font-medium text-on-surface">{t.full_name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Tên khóa học</label>
+            <input value={title} onChange={e => setTitle(e.target.value)} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Mô tả</label>
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm resize-none focus:outline-none focus:border-primary" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Môn học</label>
+              <input value={subject} onChange={e => setSubject(e.target.value)} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Giá (đ)</label>
+              <input type="number" min="0" value={price} onChange={e => setPrice(e.target.value)} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+            </div>
+          </div>
+          <p className="text-xs text-on-surface-variant">Khóa học mới luôn bắt đầu ở trạng thái <b>Bản nháp</b> — dùng "Chỉnh sửa" sau khi tạo để đổi trạng thái.</p>
+        </div>
+        <div className="flex gap-3 mt-6">
+          <button onClick={create} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-primary hover:opacity-90 disabled:opacity-50 transition-opacity">
+            {saving ? 'Đang tạo...' : 'Tạo khóa học'}
+          </button>
+          <button onClick={onClose} className="flex-1 py-2.5 bg-gray-100 text-on-surface-variant rounded-xl text-sm font-bold hover:bg-gray-200 transition-colors">Hủy</button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+function CourseEditModal({ course, token, onClose, onSaved, onError }) {
+  const [title, setTitle]     = useState(course.title || '')
+  const [desc, setDesc]       = useState(course.desc || '')
+  const [subject, setSubject] = useState(course.subject || '')
+  const [price, setPrice]     = useState(String(course.price ?? 0))
+  const [status, setStatus]   = useState(course.status_raw || 'draft')
+  const [saving, setSaving]   = useState(false)
+
+  const save = async () => {
+    if (!title.trim()) { onError('Tên khóa học không được để trống.'); return }
+    const p = Number(price)
+    if (!Number.isFinite(p) || p < 0) { onError('Giá không hợp lệ.'); return }
+    setSaving(true)
+    try {
+      await authFetch(`${API}/api/admin/courses/${course.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ title: title.trim(), description: desc, subject: subject.trim(), price: p, status }),
+      })
+      onSaved()
+    } catch (err) {
+      onError(`Lưu thất bại: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      <div className="w-full max-w-lg p-7 rounded-2xl shadow-2xl bg-white max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="text-xl font-bold text-on-surface">Chỉnh sửa khóa học</h3>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100"><span className="material-symbols-outlined">close</span></button>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Tên khóa học</label>
+            <input value={title} onChange={e => setTitle(e.target.value)} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Mô tả</label>
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm resize-none focus:outline-none focus:border-primary" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Môn học</label>
+              <input value={subject} onChange={e => setSubject(e.target.value)} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Giá (đ)</label>
+              <input type="number" min="0" value={price} onChange={e => setPrice(e.target.value)} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-on-surface-variant uppercase mb-1 block">Trạng thái</label>
+            <select value={status} onChange={e => setStatus(e.target.value)} className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm focus:outline-none focus:border-primary">
+              {COURSE_STATUS_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="flex gap-3 mt-6">
+          <button onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-primary hover:opacity-90 disabled:opacity-50 transition-opacity">
+            {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
+          </button>
+          <button onClick={onClose} className="flex-1 py-2.5 bg-gray-100 text-on-surface-variant rounded-xl text-sm font-bold hover:bg-gray-200 transition-colors">Hủy</button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+function CourseStudentsModal({ course, token, onClose }) {
+  const [students, setStudents] = useState(null)
+  const [error, setError]       = useState(null)
+
+  useEffect(() => {
+    if (!token) return
+    authFetch(`${API}/api/admin/courses/${course.id}/students`, token)
+      .then(data => setStudents(data.students || []))
+      .catch(err => setError(err.message))
+  }, [course.id, token])
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      <div className="w-full max-w-lg p-7 rounded-2xl shadow-2xl bg-white max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-xl font-bold text-on-surface">Học viên đã đăng ký</h3>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-gray-100"><span className="material-symbols-outlined">close</span></button>
+        </div>
+        <p className="text-sm text-on-surface-variant mb-5 truncate">{course.title}</p>
+        {error ? (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
+        ) : students === null ? (
+          <div className="flex justify-center py-10 text-on-surface-variant"><span className="material-symbols-outlined animate-spin">progress_activity</span></div>
+        ) : students.length === 0 ? (
+          <div className="text-center py-10 text-on-surface-variant">
+            <span className="material-symbols-outlined text-[40px] text-gray-300">group_off</span>
+            <p className="text-sm mt-2">Chưa có học viên nào đăng ký khóa học này.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-outline-variant">
+            {students.map(s => (
+              <div key={s.id} className="py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-on-surface truncate">{s.name}{s.child_name ? ` (${s.child_name})` : ''}</p>
+                  <p className="text-xs text-on-surface-variant truncate">{s.email || '—'}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.status === 'active' ? 'bg-emerald-50 text-emerald-700' : s.status === 'refunded' ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                    {s.status === 'active' ? 'Đang học' : s.status === 'refunded' ? 'Đã hoàn tiền' : 'Đã hủy'}
+                  </span>
+                  <p className="text-[11px] text-on-surface-variant mt-1">{fmtDMY(s.purchased_at)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </ModalOverlay>
   )
 }
 
@@ -2434,12 +2650,16 @@ function CourseManagementView({ token }) {
   const [menu, setMenu]               = useState(null)   // { id, x, y }
   const [confirm, setConfirm]         = useState(null)   // { title, message, danger, confirmLabel, onConfirm }
   const [toast, setToast]             = useState(null)
+  const [editModal, setEditModal]     = useState(null)   // course being edited, or null
+  const [studentsModal, setStudentsModal] = useState(null) // course whose students are shown, or null
+  const [createModal, setCreateModal] = useState(false)
+  const [stats, setStats]             = useState(null)
 
   useEffect(() => {
     setLoading(true)
     setError(null)
     authFetch(`${API}/api/admin/courses`, token)
-      .then(data => { setCourses(data.courses || []); setLoading(false) })
+      .then(data => { setCourses(data.courses || []); setStats(data.stats || null); setLoading(false) })
       .catch(err  => { setError(err.message); setLoading(false) })
   }, [token, tick])
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t) }, [toast])
@@ -2481,10 +2701,39 @@ function CourseManagementView({ token }) {
   const toggleOne = id => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const clearSelection = () => setSelected(new Set())
 
-  // ── Mutations (disabled — read-only view) ──
-  const doArchive  = _ids => showToast('Chức năng quản lý khóa học đang được phát triển.', 'error')
-  const doHide     = _ids => showToast('Chức năng quản lý khóa học đang được phát triển.', 'error')
-  const doDelete   = _ids => showToast('Chức năng quản lý khóa học đang được phát triển.', 'error')
+  // ── Mutations ──
+  // Archive/Hide are reversible status changes on the courses table (same
+  // vocabulary the tutor-facing endpoints already use), so they run immediately.
+  // Delete is guarded server-side (refused if the course has enrollments), so
+  // it always goes through the confirm modal first.
+  const patchCourseStatus = async (ids, status, successMsg) => {
+    try {
+      await Promise.all(ids.map(id => authFetch(`${API}/api/admin/courses/${id}`, token, {
+        method: 'PATCH', body: JSON.stringify({ status }),
+      })))
+      showToast(successMsg)
+      clearSelection()
+      setTick(t => t + 1)
+    } catch (err) {
+      showToast(`Thất bại: ${err.message}`, 'error')
+    }
+  }
+  const doArchive = ids => patchCourseStatus(ids, 'archived', `Đã lưu trữ ${ids.length} khóa học.`)
+  const doHide    = ids => patchCourseStatus(ids, 'draft', `Đã ẩn ${ids.length} khóa học khỏi marketplace.`)
+  const doDelete  = ids => setConfirm({
+    title: 'Xóa khóa học',
+    message: `Xóa vĩnh viễn ${ids.length} khóa học đã chọn? Chỉ xóa được khóa học chưa có học viên đăng ký — nếu đã có học viên, hệ thống sẽ từ chối và bạn nên dùng "Lưu trữ" thay thế.`,
+    danger: true,
+    confirmLabel: 'Xóa',
+    onConfirm: async () => {
+      const results = await Promise.allSettled(ids.map(id => authFetch(`${API}/api/admin/courses/${id}`, token, { method: 'DELETE' })))
+      const failed = results.filter(r => r.status === 'rejected')
+      if (failed.length) showToast(failed[0].reason?.message || 'Một số khóa học không thể xóa.', 'error')
+      else showToast(`Đã xóa ${ids.length} khóa học.`)
+      clearSelection()
+      setTick(t => t + 1)
+    },
+  })
 
   const openMenu = (e, id) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu(menu && menu.id === id ? null : { id, x: r.right, y: r.bottom }) }
   const openDrawer = c => { setDrawer(c); setDrawerTab('info'); requestAnimationFrame(() => setDrawerShow(true)) }
@@ -2503,12 +2752,16 @@ function CourseManagementView({ token }) {
     showToast(`Đã xuất ${sorted.length} khóa học ra Excel.`)
   }
 
-  const STATS = [
-    { label: 'Tổng khóa học', value: '1,284', icon: 'school',      iconBg: 'bg-blue-50',    iconColor: 'text-blue-700',    trend: '+12%', up: true },
-    { label: 'Đang hoạt động', value: '986',  icon: 'check_circle', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-700', trend: '+6%',  up: true },
-    { label: 'Tổng học viên', value: '62.4K', icon: 'group',        iconBg: 'bg-amber-50',  iconColor: 'text-amber-700',   trend: '+18%', up: true },
-    { label: 'Doanh thu',     value: '3.2 tỷ', icon: 'payments',    iconBg: 'bg-violet-50',  iconColor: 'text-violet-700',  trend: '+22%', up: true },
-  ]
+  // Real aggregates from the API (stats block on GET /api/admin/courses).
+  // Trend is null (no badge shown) whenever there's no prior-period baseline
+  // to compare against — see server.js pctChange(), never a fabricated %.
+  const trendBadge = pct => pct == null ? null : { trend: `${pct >= 0 ? '+' : ''}${pct}%`, up: pct >= 0 }
+  const STATS = stats ? [
+    { label: 'Tổng khóa học',   value: fmtInt(stats.total_courses),      icon: 'school',       iconBg: 'bg-blue-50',    iconColor: 'text-blue-700',    ...trendBadge(stats.courses_trend) },
+    { label: 'Đang hoạt động',  value: fmtInt(stats.active_courses),     icon: 'check_circle', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-700', ...trendBadge(stats.active_trend) },
+    { label: 'Tổng học viên',   value: fmtInt(stats.total_students),     icon: 'group',         iconBg: 'bg-amber-50',   iconColor: 'text-amber-700',   ...trendBadge(stats.students_trend) },
+    { label: 'Doanh thu',       value: fmtCompactVND(stats.total_revenue), icon: 'payments',    iconBg: 'bg-violet-50', iconColor: 'text-violet-700',  ...trendBadge(stats.revenue_trend) },
+  ] : []
 
   const SortHead = ({ label, k, align = 'left' }) => (
     <th className={`py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase whitespace-nowrap ${align === 'right' ? 'text-right' : ''}`}>
@@ -2531,7 +2784,7 @@ function CourseManagementView({ token }) {
           <button onClick={exportExcel} className="px-4 py-2.5 bg-white border border-outline-variant text-on-surface rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-gray-50 transition-colors shadow-sm">
             <span className="material-symbols-outlined text-[18px] text-emerald-600">file_download</span> Xuất Excel
           </button>
-          <button onClick={() => showToast('Mở trình tạo khóa học mới.')} className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-primary/90 transition-colors shadow-sm">
+          <button onClick={() => setCreateModal(true)} className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-primary/90 transition-colors shadow-sm">
             <span className="material-symbols-outlined text-[18px]">add</span> Tạo khóa học
           </button>
         </div>
@@ -2539,18 +2792,26 @@ function CourseManagementView({ token }) {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
-        {STATS.map((s, i) => (
+        {(stats ? STATS : Array.from({ length: 4 })).map((s, i) => (
           <div key={i} className="bg-white rounded-xl p-5 shadow-sm border border-outline-variant hover:shadow-md transition-shadow">
-            <div className="flex justify-between items-start mb-4">
-              <div className={`w-10 h-10 rounded-lg ${s.iconBg} flex items-center justify-center ${s.iconColor}`}>
-                <span className="material-symbols-outlined">{s.icon}</span>
-              </div>
-              <span className={`flex items-center text-xs font-semibold ${s.up ? 'text-emerald-600' : 'text-amber-600'}`}>
-                <span className="material-symbols-outlined text-[15px]">{s.up ? 'trending_up' : 'trending_up'}</span>{s.trend}
-              </span>
-            </div>
-            <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider mb-1">{s.label}</p>
-            <h4 className="text-2xl font-bold text-on-background">{s.value}</h4>
+            {s ? (
+              <>
+                <div className="flex justify-between items-start mb-4">
+                  <div className={`w-10 h-10 rounded-lg ${s.iconBg} flex items-center justify-center ${s.iconColor}`}>
+                    <span className="material-symbols-outlined">{s.icon}</span>
+                  </div>
+                  {s.trend && (
+                    <span className={`flex items-center text-xs font-semibold ${s.up ? 'text-emerald-600' : 'text-red-500'}`}>
+                      <span className="material-symbols-outlined text-[15px]">{s.up ? 'trending_up' : 'trending_down'}</span>{s.trend}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider mb-1">{s.label}</p>
+                <h4 className="text-2xl font-bold text-on-background">{s.value}</h4>
+              </>
+            ) : (
+              <div className="h-16 shimmer rounded-lg" />
+            )}
           </div>
         ))}
       </div>
@@ -2672,9 +2933,9 @@ function CourseManagementView({ token }) {
                       <div className="flex items-center justify-end gap-0.5">
                         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                           <button onClick={() => openDrawer(c)} title="Xem" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-blue-50 hover:text-primary transition-colors"><span className="material-symbols-outlined text-[18px]">visibility</span></button>
-                          <button onClick={() => showToast(`Chỉnh sửa ${c.id}`)} title="Chỉnh sửa" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-amber-50 hover:text-amber-600 transition-colors"><span className="material-symbols-outlined text-[18px]">edit</span></button>
+                          <button onClick={() => setEditModal(c)} title="Chỉnh sửa" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-amber-50 hover:text-amber-600 transition-colors"><span className="material-symbols-outlined text-[18px]">edit</span></button>
                           <button onClick={() => { openDrawer(c); setDrawerTab('stats') }} title="Thống kê" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-violet-50 hover:text-violet-600 transition-colors"><span className="material-symbols-outlined text-[18px]">bar_chart</span></button>
-                          <button onClick={() => showToast(`${fmtInt(c.students)} học viên trong ${c.id}`)} title="Học viên" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-emerald-50 hover:text-emerald-600 transition-colors"><span className="material-symbols-outlined text-[18px]">group</span></button>
+                          <button onClick={() => setStudentsModal(c)} title="Học viên" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-emerald-50 hover:text-emerald-600 transition-colors"><span className="material-symbols-outlined text-[18px]">group</span></button>
                           <button onClick={() => doArchive([c.id])} title="Lưu trữ" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-slate-100 hover:text-slate-600 transition-colors"><span className="material-symbols-outlined text-[18px]">inventory_2</span></button>
                         </div>
                         <button onClick={e => openMenu(e, c.id)} title="Thêm" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-gray-100 transition-colors"><span className="material-symbols-outlined text-[18px]">more_vert</span></button>
@@ -2727,7 +2988,33 @@ function CourseManagementView({ token }) {
       <AICourseInsightsCard />
 
       {/* Drawer */}
-      <CourseDrawer course={drawer} show={drawerShow} tab={drawerTab} onTab={setDrawerTab} onClose={closeDrawer} />
+      <CourseDrawer course={drawer} show={drawerShow} tab={drawerTab} onTab={setDrawerTab} onClose={closeDrawer} token={token} />
+
+      {/* Create modal */}
+      {createModal && (
+        <CourseCreateModal
+          token={token}
+          onClose={() => setCreateModal(false)}
+          onCreated={() => { setCreateModal(false); showToast('Đã tạo khóa học mới (bản nháp).'); setTick(t => t + 1) }}
+          onError={msg => showToast(msg, 'error')}
+        />
+      )}
+
+      {/* Edit modal */}
+      {editModal && (
+        <CourseEditModal
+          course={editModal}
+          token={token}
+          onClose={() => setEditModal(null)}
+          onSaved={() => { setEditModal(null); showToast('Đã lưu thay đổi khóa học.'); setTick(t => t + 1) }}
+          onError={msg => showToast(msg, 'error')}
+        />
+      )}
+
+      {/* Students modal */}
+      {studentsModal && (
+        <CourseStudentsModal course={studentsModal} token={studentsModal ? token : null} onClose={() => setStudentsModal(null)} />
+      )}
 
       {/* Row context menu */}
       {menu && (() => {
@@ -2735,6 +3022,7 @@ function CourseManagementView({ token }) {
         if (!c) return null
         const items = [
           { label: 'Xem chi tiết', icon: 'visibility', color: 'text-primary', show: true, fn: () => openDrawer(c) },
+          { label: 'Chỉnh sửa', icon: 'edit', color: 'text-amber-600', show: true, fn: () => setEditModal(c) },
           { label: 'Ẩn khóa học', icon: 'visibility_off', color: 'text-on-surface', show: true, fn: () => doHide([c.id]) },
           { label: 'Lưu trữ', icon: 'inventory_2', color: 'text-on-surface', show: c.status !== 'Đã lưu trữ', fn: () => doArchive([c.id]) },
           { label: 'Xóa', icon: 'delete', color: 'text-red-600', show: true, danger: true, fn: () => doDelete([c.id]) },
