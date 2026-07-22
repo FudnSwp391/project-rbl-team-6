@@ -90,7 +90,8 @@ export default function BookingModal({ tutor, onClose }) {
         body: JSON.stringify({ amount: missingAmount, bankCode: '', returnUrl })
       });
       const data = await res.json();
-      if (data.url) window.location.href = data.url;
+      const payUrl = data.redirectUrl || data.url;
+      if (payUrl) window.location.href = payUrl;
     } catch (e) { console.error(e); }
   };
 

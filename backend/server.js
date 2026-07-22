@@ -14087,10 +14087,20 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
       sessions = sessions.filter(s => s.title.toLowerCase().includes(search.toLowerCase()) || s.subject.toLowerCase().includes(search.toLowerCase()));
     }
     if (statusFilter !== 'All Status') {
-      sessions = sessions.filter(s => s.status === statusFilter);
+      // Buổi "pending" (chờ gia sư xác nhận) chưa được remap ở trên nên vẫn giữ
+      // status gốc — coi nó thuộc nhóm "upcoming" khi lọc, nếu không filter này
+      // sẽ luôn trả rỗng cho các booking chưa được accept.
+      sessions = sessions.filter(s =>
+        statusFilter === 'upcoming' ? (s.status === 'upcoming' || s.status === 'pending') : s.status === statusFilter
+      );
     }
     if (subjectFilter !== 'All Subjects') {
-      sessions = sessions.filter(s => s.subject === subjectFilter);
+      // So khớp lỏng: "Toán" và "Toán học" phải được coi là cùng 1 môn — dữ liệu
+      // subject trong bookings không được chuẩn hoá nhất quán tuỳ luồng tạo booking,
+      // nên so đúng tuyệt đối sẽ làm rớt oan các buổi có tên môn viết tắt.
+      const normalizeSubject = (s) => (s || '').trim().toLowerCase().replace(/\s+học$/i, '');
+      const target = normalizeSubject(subjectFilter);
+      sessions = sessions.filter(s => normalizeSubject(s.subject) === target);
     }
     if (tutorFilter !== 'All Tutors') {
       sessions = sessions.filter(s => s.tutor_name === tutorFilter);
@@ -14422,7 +14432,12 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id=$1', [req.user.userId]);
         if (walletRes.rowCount === 0 || walletRes.rows[0].balance < totalFee) {
           await client.query("ROLLBACK");
-          return res.status(400).json({ message: "Số dư ví không đủ để đặt lịch. Vui lòng nạp thêm tiền." });
+          return res.status(400).json({
+            code: "INSUFFICIENT_FUNDS",
+            message: "Số dư ví không đủ để đặt lịch. Vui lòng nạp thêm tiền.",
+            needed: totalFee,
+            balance: Number(walletRes.rows[0]?.balance || 0),
+          });
         }
         studentWalletId = walletRes.rows[0].id;
       }
