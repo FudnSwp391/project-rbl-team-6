@@ -2670,6 +2670,30 @@ function buildAnalyticsInsights(t, rows) {
   }
   return insights.slice(0, 5);
 }
+// Per-row risk tag (rest of Step 8 — the query-level risk badge only tells
+// you the answer as a whole looks risky, not which specific row to look at
+// first). Same mean+stddev approach as the outlier insight above, just
+// emitted per-row instead of as a bullet. Only meaningful for ranked/
+// distributional rows — a time-series point or a heatmap cell isn't "a risky
+// row" in the same sense, so line/heatmap/none/pie are left untagged.
+function tagRowsWithRisk(t, rows) {
+  if (!t || !rows.length || !['leaderboard', 'bar'].includes(t.chartType)) return rows;
+  const values = rows.map(r => Number(r[t.valueKey]));
+  const finite = values.filter(Number.isFinite);
+  if (finite.length < 3) return rows;
+  const mean = finite.reduce((s, v) => s + v, 0) / finite.length;
+  const variance = finite.reduce((s, v) => s + (v - mean) ** 2, 0) / finite.length;
+  const std = Math.sqrt(variance);
+  return rows.map((r, i) => {
+    const v = values[i];
+    let risk = 'LOW';
+    if (std > 0 && Number.isFinite(v)) {
+      if (v > mean + 2 * std) risk = 'HIGH';
+      else if (v > mean + std) risk = 'MEDIUM';
+    }
+    return { ...r, _row_risk: risk };
+  });
+}
 // Transparent, not pretending precision it doesn't have: risk level is
 // literally "how many anomaly signals did the insight engine find," stated
 // as the reason rather than implied certainty (Step 14 philosophy applied
@@ -2846,7 +2870,7 @@ async function runAnalyticsTemplate(templateKey, params, adminId) {
       await client.query('SET LOCAL statement_timeout = 8000');
       const r = await client.query(t.sql, sqlParams);
       await client.query('COMMIT');
-      const rows = r.rows.map(maskAnalyticsRow);
+      const rows = tagRowsWithRisk(t, r.rows.map(maskAnalyticsRow));
       const insights = buildAnalyticsInsights(t, rows);
       const risk = deriveAnalyticsRiskLevel(insights);
       const baseSummary = t.summarize(rows, { days, limit });
@@ -18022,7 +18046,8 @@ app.get('/api/admin/analytics/history', verifyToken, requireAdmin, async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await copilotSafeCount(`SELECT COUNT(*)::int AS n FROM admin_analytics_queries ${whereSql}`, params);
     const items = await copilotSafeRows(
-      `SELECT id, question, template_key, detected_intent, status, result_count, summary, model_used, created_at
+      `SELECT id, question, template_key, detected_intent, status, result_count, summary, model_used, created_at,
+              parameters, intent_code, confidence
          FROM admin_analytics_queries ${whereSql} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]);
     return res.json({ items, pagination: { page, limit, total } });

@@ -86,15 +86,27 @@ function AskPanel({ token }) {
     ? suggestionPool.filter(s => s.toLowerCase().includes(question.trim().toLowerCase()) && s.toLowerCase() !== question.trim().toLowerCase()).slice(0, 6)
     : []
 
-  const ask = async (q) => {
+  // overrideParams: used by favorites/recent so re-asking a saved question
+  // reproduces the exact same report (days/limit) instead of whatever is
+  // currently sitting in the form fields.
+  const ask = async (q, overrideParams) => {
     const question0 = (q ?? question).trim()
     if (!question0) { alert('Nhập câu hỏi.'); return }
     if (q) setQuestion(q)
+    if (overrideParams) {
+      setDays(overrideParams.days != null ? String(overrideParams.days) : '')
+      setLimit(overrideParams.limit != null ? String(overrideParams.limit) : '')
+    }
     setLoading(true); setResult(null); setIsFavorited(false)
     try {
       const params = {}
-      if (days !== '') params.days = Number(days)
-      if (limit !== '') params.limit = Number(limit)
+      if (overrideParams) {
+        if (overrideParams.days != null) params.days = Number(overrideParams.days)
+        if (overrideParams.limit != null) params.limit = Number(overrideParams.limit)
+      } else {
+        if (days !== '') params.days = Number(days)
+        if (limit !== '') params.limit = Number(limit)
+      }
       const r = await fetch(`${API}/api/admin/analytics/ask`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ question: question0, params, context }),
@@ -102,7 +114,11 @@ function AskPanel({ token }) {
       const j = await r.json().catch(() => ({}))
       if (!r.ok) { alert(j.message || `Thất bại (${r.status})`); return }
       setResult(j)
-      setContext(j.next_context || null)
+      // Only overwrite context when the response actually carries one — a
+      // NO_MATCH/BLOCKED/FAILED reply omits next_context entirely (it isn't
+      // "no entities", it's "we don't know"), so a failed attempt shouldn't
+      // erase the still-valid context from the prior successful turn.
+      if ('next_context' in j) setContext(j.next_context)
       loadRecent()
     } catch { alert('Lỗi kết nối') } finally { setLoading(false) }
   }
@@ -172,7 +188,7 @@ function AskPanel({ token }) {
         {recent.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-50">
             <span className="text-[11px] text-gray-400 font-semibold uppercase flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">history</span>Gần đây</span>
-            {recent.map(r => <button key={r.id} onClick={() => ask(r.question)} className="text-xs px-3 py-1.5 rounded-full bg-gray-50 text-gray-500 hover:bg-blue-50 hover:text-blue-700 transition-colors truncate max-w-[220px]" title={r.question}>{r.question}</button>)}
+            {recent.map(r => <button key={r.id} onClick={() => ask(r.question, r.parameters)} className="text-xs px-3 py-1.5 rounded-full bg-gray-50 text-gray-500 hover:bg-blue-50 hover:text-blue-700 transition-colors truncate max-w-[220px]" title={r.question}>{r.question}</button>)}
           </div>
         )}
         {favorites.length > 0 && (
@@ -180,7 +196,7 @@ function AskPanel({ token }) {
             <span className="text-[11px] text-gray-400 font-semibold uppercase flex items-center gap-1"><span className="material-symbols-outlined text-[14px] text-amber-400">star</span>Yêu thích</span>
             {favorites.map(f => (
               <span key={f.id} className="flex items-center gap-1 text-xs pl-3 pr-1.5 py-1 rounded-full bg-amber-50 text-amber-700">
-                <button onClick={() => ask(f.question)} className="truncate max-w-[200px]" title={f.question}>{f.label || f.question}</button>
+                <button onClick={() => ask(f.question, f.params)} className="truncate max-w-[200px]" title={f.question}>{f.label || f.question}</button>
                 <button onClick={() => removeFavorite(f.id)} className="text-amber-400 hover:text-red-500"><span className="material-symbols-outlined text-[14px]">close</span></button>
               </span>
             ))}
@@ -252,10 +268,16 @@ function AskPanel({ token }) {
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50"><tr>{(result.columns || Object.keys(result.rows[0])).map(c => <th key={c} className="py-2.5 px-4 text-left text-xs font-bold text-gray-500 uppercase whitespace-nowrap">{c}</th>)}</tr></thead>
+                  <thead className="bg-gray-50"><tr>
+                    {result.rows[0]?._row_risk && <th className="py-2.5 px-4 text-left text-xs font-bold text-gray-500 uppercase w-10">Rủi ro</th>}
+                    {(result.columns || Object.keys(result.rows[0])).map(c => <th key={c} className="py-2.5 px-4 text-left text-xs font-bold text-gray-500 uppercase whitespace-nowrap">{c}</th>)}
+                  </tr></thead>
                   <tbody className="divide-y divide-gray-50">
                     {result.rows.map((row, i) => (
-                      <tr key={i} className="hover:bg-gray-50">{(result.columns || Object.keys(row)).map(c => <td key={c} className="py-2.5 px-4 text-gray-700 whitespace-nowrap max-w-[300px] truncate" title={String(row[c] ?? '')}>{fmtCell(row[c])}</td>)}</tr>
+                      <tr key={i} className="hover:bg-gray-50">
+                        {row._row_risk && <td className="py-2.5 px-4"><RowRiskDot level={row._row_risk} /></td>}
+                        {(result.columns || Object.keys(row)).map(c => <td key={c} className="py-2.5 px-4 text-gray-700 whitespace-nowrap max-w-[300px] truncate" title={String(row[c] ?? '')}>{fmtCell(row[c])}</td>)}
+                      </tr>
                     ))}
                   </tbody>
                 </table>
@@ -352,6 +374,10 @@ function RiskBadge({ level, reason }) {
   const cfg = level ? RISK_CFG[level] : null
   if (!cfg) return null
   return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cfg.cls}`} title={reason || ''}>{cfg.label}</span>
+}
+const ROW_RISK_DOT_CLS = { LOW: 'bg-emerald-400', MEDIUM: 'bg-amber-400', HIGH: 'bg-red-500' }
+function RowRiskDot({ level }) {
+  return <span className={`inline-block w-2.5 h-2.5 rounded-full ${ROW_RISK_DOT_CLS[level] || 'bg-gray-300'}`} title={RISK_CFG[level]?.label || level} />
 }
 
 function TemplatesPanel({ token }) {
