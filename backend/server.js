@@ -13360,6 +13360,17 @@ app.post('/api/complaints', verifyToken, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(403).json({ message: 'Bạn chưa đăng ký hoặc khóa học chưa kích hoạt.' });
     }
+    // Tránh chồng chéo với luồng tranh chấp giao dịch (escrow) cho cùng khóa học —
+    // nếu đã có dispute OPEN, hướng dẫn học viên chờ dispute đó thay vì mở thêm
+    // một khiếu nại dịch vụ song song (2 luồng không liên kết, dễ xử lý mâu thuẫn nhau).
+    const openDispute = await client.query(
+      `SELECT id FROM disputes WHERE course_id=$1 AND raised_by=$2 AND status='OPEN' AND withdrawn_at IS NULL`,
+      [course_id, studentId]
+    );
+    if (openDispute.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Khóa học này đang có tranh chấp giao dịch (escrow) chưa xử lý xong. Vui lòng chờ tranh chấp đó được giải quyết trước khi gửi khiếu nại dịch vụ mới.' });
+    }
     let complaint;
     try {
       complaint = await client.query(
@@ -13615,10 +13626,17 @@ app.get('/api/admin/course-complaints', verifyToken, requireAdmin, async (req, r
       `SELECT cc.id, LPAD(cc.complaint_number::text,6,'0') AS ticket_number,
               cc.title, cc.category, cc.status, cc.resolution_request, cc.created_at, cc.updated_at,
               cc.student_id, u.full_name AS student_name, u.email AS student_email,
-              c.title AS course_title
+              c.title AS course_title,
+              related_d.id AS related_dispute_id, related_d.status AS related_dispute_status
        FROM course_complaints cc
        JOIN users u ON cc.student_id=u.id
        JOIN courses c ON cc.course_id=c.id
+       LEFT JOIN LATERAL (
+         SELECT d2.id, d2.status
+         FROM disputes d2
+         WHERE d2.course_id = cc.course_id AND d2.raised_by = cc.student_id AND d2.withdrawn_at IS NULL
+         ORDER BY d2.created_at DESC LIMIT 1
+       ) related_d ON true
        ${where}
        ORDER BY cc.created_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -13641,11 +13659,18 @@ app.get('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
       `SELECT cc.*, LPAD(cc.complaint_number::text,6,'0') AS ticket_number,
               u.full_name AS student_name, u.email AS student_email, u.picture AS student_picture,
               c.title AS course_title, c.price AS course_price, c.subject AS course_subject,
-              tu.full_name AS tutor_name
+              tu.full_name AS tutor_name,
+              related_d.id AS related_dispute_id, related_d.status AS related_dispute_status
        FROM course_complaints cc
        JOIN users u ON cc.student_id=u.id
        JOIN courses c ON cc.course_id=c.id
        LEFT JOIN users tu ON tu.id=c.tutor_id
+       LEFT JOIN LATERAL (
+         SELECT d2.id, d2.status
+         FROM disputes d2
+         WHERE d2.course_id = cc.course_id AND d2.raised_by = cc.student_id AND d2.withdrawn_at IS NULL
+         ORDER BY d2.created_at DESC LIMIT 1
+       ) related_d ON true
        WHERE cc.id=$1`,
       [req.params.id]
     );
@@ -14726,13 +14751,20 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
              c.title AS course_title,
              u_reporter.full_name AS reporter_name, u_reporter.email AS reporter_email,
              u_tutor.full_name AS tutor_full_name, u_tutor.email AS tutor_email,
-             u_student.full_name AS student_name
+             u_student.full_name AS student_name,
+             related_cc.id AS related_complaint_id, related_cc.status AS related_complaint_status
       FROM disputes d
       LEFT JOIN bookings b ON b.id = d.booking_id
       LEFT JOIN courses c ON c.id = d.course_id
       JOIN users u_reporter ON u_reporter.id = d.raised_by
       LEFT JOIN users u_tutor ON u_tutor.id = COALESCE(b.tutor_id, c.tutor_id, d.tutor_id)
       LEFT JOIN users u_student ON u_student.id = COALESCE(b.student_id, d.raised_by)
+      LEFT JOIN LATERAL (
+        SELECT cc2.id, cc2.status
+        FROM course_complaints cc2
+        WHERE cc2.course_id = d.course_id AND cc2.student_id = d.raised_by
+        ORDER BY cc2.created_at DESC LIMIT 1
+      ) related_cc ON d.target_type = 'course' AND d.course_id IS NOT NULL
       ORDER BY
         CASE WHEN d.status = 'OPEN' AND d.withdrawn_at IS NULL THEN 0 ELSE 1 END,
         d.created_at DESC
@@ -17395,6 +17427,16 @@ app.post('/api/courses/:id/report', verifyToken, async (req, res) => {
       "SELECT id FROM disputes WHERE course_id=$1 AND raised_by=$2 AND status='OPEN' AND withdrawn_at IS NULL", [enrollment.course_id, req.user.userId]
     );
     if (existingDispute.rows.length) return res.status(409).json({ message: 'Bạn đã gửi khiếu nại cho khóa học này rồi.' });
+
+    // Tránh chồng chéo với luồng khiếu nại dịch vụ (course_complaints) cho cùng khóa học —
+    // xem ghi chú tương ứng ở POST /api/complaints.
+    const activeServiceComplaint = await client.query(
+      `SELECT id FROM course_complaints WHERE course_id=$1 AND student_id=$2 AND status NOT IN ('resolved','rejected','closed')`,
+      [enrollment.course_id, enrollment.student_id]
+    );
+    if (activeServiceComplaint.rows.length) {
+      return res.status(409).json({ message: 'Khóa học này đang có khiếu nại dịch vụ chưa xử lý xong. Vui lòng chờ khiếu nại đó được giải quyết trước khi mở tranh chấp giao dịch.' });
+    }
 
     // ── Refund Policy v2.1: 48h window + progress-tiered rate (Batch 16) ──────
     const hoursSincePurchase = (Date.now() - new Date(enrollment.purchased_at).getTime()) / 3600000;
