@@ -331,6 +331,13 @@ function DetailDrawer({ id, token, onClose, onUpdated }) {
                 </div>
               </div>
 
+              {detail.related_dispute_id && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-red-600" style={{ fontSize: 16, fontVariationSettings: "'FILL' 1" }}>gavel</span>
+                  <p className="text-xs text-red-700 font-semibold">Học viên này cũng có tranh chấp giao dịch (escrow) đang {detail.related_dispute_status === 'OPEN' ? 'mở' : 'ghi nhận'} cho cùng khóa học — kiểm tra mục "Tranh Chấp Giao Dịch" trước khi quyết định hoàn tiền ở đây để tránh hoàn tiền trùng lặp.</p>
+                </div>
+              )}
+
               <div className="bg-gray-50 rounded-xl p-3">
                 <p className="text-xs text-gray-400 mb-1">Lý do</p>
                 <p className="text-sm text-gray-700">{detail.reason}</p>
@@ -556,8 +563,8 @@ export default function CourseComplaintsAdminView({ token }) {
         {/* Header */}
         <div className="flex items-end justify-between mb-8 flex-wrap gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-on-background">Khiếu nại khóa học</h2>
-            <p className="text-sm text-on-surface-variant mt-1">Quản lý và xử lý khiếu nại từ học viên về chất lượng khóa học.</p>
+            <h2 className="text-2xl font-bold text-on-background">Khiếu nại Dịch vụ</h2>
+            <p className="text-sm text-on-surface-variant mt-1">Quản lý và xử lý khiếu nại từ học viên về chất lượng khóa học/gia sư. Không xử lý hoàn tiền qua escrow — xem "Tranh Chấp Giao Dịch" nếu liên quan tiền đang tạm giữ.</p>
           </div>
           <button onClick={() => load(page)} className="flex items-center gap-2 px-4 py-2 rounded-xl border border-outline-variant text-sm hover:bg-surface-container transition-colors">
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span> Làm mới
@@ -657,6 +664,14 @@ export default function CourseComplaintsAdminView({ token }) {
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">
                             <span className="material-symbols-outlined" style={{ fontSize: 11, fontVariationSettings: "'FILL' 1" }}>currency_exchange</span>
                             Refund
+                          </span>
+                        )}
+                        {c.related_dispute_id && (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700"
+                            title="Học viên này cũng có tranh chấp giao dịch (escrow) cho cùng khóa học — xem mục Tranh Chấp Giao Dịch">
+                            <span className="material-symbols-outlined" style={{ fontSize: 11, fontVariationSettings: "'FILL' 1" }}>gavel</span>
+                            Có tranh chấp escrow
                           </span>
                         )}
                       </div>

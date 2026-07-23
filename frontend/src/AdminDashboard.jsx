@@ -76,7 +76,6 @@ const TX_SUB_ITEMS = [
   { id: 'tx-withdrawals',  label: 'Duyệt Rút Tiền',      icon: 'account_balance' },
   { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
   { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
-  { id: 'tx-ai-cases',     label: 'Xử Lý AI Khiếu Nại',    icon: 'smart_toy' },
   { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
   { id: 'tx-gateways',     label: 'Cổng Thanh Toán',      icon: 'credit_card' },
   { id: 'tx-commissions',  label: 'Quản Lý Hoa Hồng',       icon: 'percent' },
@@ -96,7 +95,7 @@ const TX_SUB_ITEMS = [
 const TX_VIEW_IDS = new Set(TX_SUB_ITEMS.map(i => i.id))
 
 const SM_SUB_ITEMS = [
-  { id: 'sm-complaints',   label: 'Khiếu nại',             icon: 'report_problem' },
+  { id: 'sm-complaints',   label: 'Khiếu nại Dịch vụ',     icon: 'report_problem' },
   { id: 'sm-reviews',      label: 'Đánh giá',              icon: 'reviews' },
   { id: 'sm-violations',   label: 'Báo cáo vi phạm',       icon: 'gavel' },
   { id: 'sm-moderation',   label: 'Kiểm duyệt nội dung',   icon: 'policy' },
@@ -536,8 +535,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
           {activeView === 'tx-withdrawals'   && <WithdrawalRequests token={token} />}
           {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
-          {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
-          {activeView === 'tx-ai-cases'      && <AICaseResolutions token={token} />}
+          {activeView === 'tx-disputes'      && <DisputesCenterView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
           {activeView === 'tx-gateways'      && <PaymentGateways token={token} />}
           {activeView === 'tx-commissions'   && <CommissionManagement token={token} />}
@@ -973,7 +971,7 @@ function DashboardView({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-6">
         {[
           { id: 'tutor-approval', icon: 'how_to_reg',     label: 'Duyệt gia sư', desc: 'Xem xét hồ sơ chờ duyệt',          tile: 'bg-blue-50 text-blue-600',       count: kpiLoading ? null : (K.pending_tutors || null) },
-          { id: 'sm-complaints',  icon: 'report_problem', label: 'Khiếu nại',    desc: 'Xem và xử lý khiếu nại tranh chấp', tile: 'bg-amber-50 text-amber-600',     count: null },
+          { id: 'sm-complaints',  icon: 'report_problem', label: 'Khiếu nại Dịch vụ', desc: 'Xem và xử lý khiếu nại chất lượng dịch vụ', tile: 'bg-amber-50 text-amber-600',     count: null },
           { id: 'transactions',   icon: 'payments',       label: 'Giao dịch',    desc: 'Theo dõi hoạt động thanh toán',     tile: 'bg-emerald-50 text-emerald-600', count: null },
         ].map(item => (
           <button
@@ -3500,6 +3498,30 @@ function TransactionsView({ token }) {
   )
 }
 
+// Gộp "Quản Lý Tranh Chấp" + "AI Gợi Ý Xử Lý Tranh Chấp" vào 1 trang, 2 tab —
+// trước đây là 2 mục sidebar riêng nhưng AI Gợi Ý chỉ là lớp gợi ý trên chính
+// dữ liệu disputes (ai_case_resolutions.dispute_id khóa 1-1 vào disputes.id),
+// không phải một loại khiếu nại độc lập, nên tách riêng gây hiểu lầm.
+function DisputesCenterView({ token }) {
+  const [tab, setTab] = useState('disputes')
+  return (
+    <div>
+      <div className="flex gap-2 border-b border-outline-variant px-10 pt-6">
+        {[
+          { key: 'disputes', label: 'Tranh Chấp Giao Dịch', icon: 'gavel' },
+          { key: 'ai',       label: 'AI Gợi Ý Xử Lý',       icon: 'smart_toy' },
+        ].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors ${tab === t.key ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}>
+            <span className="material-symbols-outlined text-[18px]">{t.icon}</span>{t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'disputes' ? <ComplaintsView token={token} /> : <AICaseResolutions token={token} />}
+    </div>
+  )
+}
+
 function ComplaintsView({ token }) {
   const API_BASE = API
   const [disputes, setDisputes] = useState([])
@@ -3566,8 +3588,8 @@ function ComplaintsView({ token }) {
     <div className="p-10 max-w-[1280px] mx-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
-          <h2 className="text-3xl font-bold text-on-background">Khiếu nại & Tranh chấp</h2>
-          <p className="text-sm text-on-surface-variant mt-1">Xem xét và phán quyết các khiếu nại liên quan đến học phí.</p>
+          <h2 className="text-3xl font-bold text-on-background">Tranh Chấp Giao Dịch (Escrow)</h2>
+          <p className="text-sm text-on-surface-variant mt-1">Xem xét và phán quyết các tranh chấp học phí đang bị tạm giữ (escrow). Không bao gồm khiếu nại chất lượng dịch vụ — xem mục "Khiếu nại Dịch vụ".</p>
         </div>
         <button onClick={fetchDisputes} className="flex items-center gap-2 px-4 py-2 rounded-xl border border-outline-variant text-sm hover:bg-gray-50 transition-colors">
           <span className="material-symbols-outlined text-[18px]">refresh</span>Làm mới
@@ -3624,7 +3646,15 @@ function ComplaintsView({ token }) {
                   <td className="py-3 px-4 text-sm text-on-surface">{d.tutor_full_name || d.tutor_name || d.d_tutor_id}</td>
                   <td className="py-3 px-4 text-sm">
                     {d.target_type === 'course' ? (
-                      <p><span className="bg-primary/10 text-primary text-[10px] px-1 rounded uppercase mr-1">Khóa học</span>{d.course_title}</p>
+                      <>
+                        <p><span className="bg-primary/10 text-primary text-[10px] px-1 rounded uppercase mr-1">Khóa học</span>{d.course_title}</p>
+                        {d.related_complaint_id && (
+                          <p className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-amber-700" title="Học viên này cũng có khiếu nại dịch vụ cho cùng khóa học — xem mục Khiếu nại Dịch vụ">
+                            <span className="material-symbols-outlined text-[12px]">report_problem</span>
+                            Có khiếu nại dịch vụ liên quan ({d.related_complaint_status})
+                          </p>
+                        )}
+                      </>
                     ) : (
                       <><p>{d.subject}</p><p className="text-xs text-on-surface-variant">{fmtDate(d.lesson_date)}</p></>
                     )}
@@ -3683,6 +3713,15 @@ function ComplaintsView({ token }) {
                   <span className="text-on-surface-variant">Lý do:</span>
                   <p className="text-on-surface mt-1 italic">"{resolveModal.reason}"</p>
                 </div>
+                {resolveModal.related_complaint_id && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-amber-700 bg-amber-100">
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>report_problem</span>
+                      Có khiếu nại dịch vụ liên quan ({resolveModal.related_complaint_status})
+                    </span>
+                    <p className="text-xs text-on-surface-variant mt-1">Kiểm tra mục "Khiếu nại Dịch vụ" trước khi phán quyết để tránh hoàn tiền trùng lặp.</p>
+                  </div>
+                )}
                 {resolveModal.withdrawn_at && (
                   <div className="pt-2 border-t border-gray-200">
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-orange-700 bg-orange-100">
