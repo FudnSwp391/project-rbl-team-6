@@ -596,6 +596,17 @@ export async function deleteTutorCourse(courseId) {
   return request(`/api/tutor/courses/${courseId}`, { method: 'DELETE' })
 }
 
+export async function getTutorCourseCoupons(courseId) {
+  return request(`/api/tutor/courses/${courseId}/coupons`)
+}
+
+export async function createTutorCourseCoupon(courseId, payload) {
+  return request(`/api/tutor/courses/${courseId}/coupons`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function getCourseDetail(courseId) {
   return request(`/api/courses/${courseId}`)
 }

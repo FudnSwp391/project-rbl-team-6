@@ -2341,8 +2341,9 @@ function CourseDrawer({ course, show, tab, onTab, onClose, token, onChanged }) {
 
   const toggleCouponActive = async coupon => {
     try {
-      await authFetch(`${API}/api/admin/courses/${course.id}/coupons/${coupon.id}`, token, { method: 'PATCH', body: JSON.stringify({ active: !coupon.active }) })
-      setCoupons(cs => cs.map(c => c.id === coupon.id ? { ...c, active: !c.active } : c))
+      const nextActive = !coupon.active
+      await authFetch(`${API}/api/admin/courses/${course.id}/coupons/${coupon.id}`, token, { method: 'PATCH', body: JSON.stringify({ active: nextActive }) })
+      setCoupons(cs => cs.map(c => c.id === coupon.id ? { ...c, active: nextActive, pending_approval: nextActive ? false : c.pending_approval } : c))
     } catch (err) { window.alert(err.message) }
   }
 
@@ -2593,21 +2594,34 @@ function CourseDrawer({ course, show, tab, onTab, onClose, token, onChanged }) {
               ) : (
                 <div className="space-y-2">
                   {coupons.map(c => (
-                    <div key={c.id} className="bg-white rounded-xl border border-outline-variant p-3 flex items-center justify-between gap-3">
+                    <div key={c.id} className={`bg-white rounded-xl border p-3 flex items-center justify-between gap-3 ${c.pending_approval ? 'border-amber-300 bg-amber-50/40' : 'border-outline-variant'}`}>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-mono font-bold text-sm text-on-surface">{c.code}</span>
-                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>{c.active ? 'Đang bật' : 'Đã tắt'}</span>
+                          {c.pending_approval ? (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">Chờ duyệt</span>
+                          ) : (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>{c.active ? 'Đang bật' : 'Đã tắt'}</span>
+                          )}
                         </div>
                         <p className="text-xs text-on-surface-variant mt-0.5">
                           Giảm {c.discount_type === 'percent' ? `${c.discount_value}%` : fmtVND(c.discount_value)}
                           {c.max_discount ? ` (tối đa ${fmtVND(c.max_discount)})` : ''}
                         </p>
+                        <p className="text-[11px] text-on-surface-variant/70 mt-0.5">
+                          {c.creator_role === 'tutor' ? `Do gia sư ${c.creator_name || ''} tạo` : c.creator_name ? `Do admin ${c.creator_name} tạo` : 'Do admin tạo'}
+                        </p>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <button onClick={() => toggleCouponActive(c)} className="text-xs font-semibold px-2 py-1 rounded-lg text-on-surface-variant hover:bg-gray-100">
-                          {c.active ? 'Tắt' : 'Bật'}
-                        </button>
+                        {c.pending_approval ? (
+                          <button onClick={() => toggleCouponActive(c)} className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-primary text-white hover:opacity-90">
+                            Duyệt
+                          </button>
+                        ) : (
+                          <button onClick={() => toggleCouponActive(c)} className="text-xs font-semibold px-2 py-1 rounded-lg text-on-surface-variant hover:bg-gray-100">
+                            {c.active ? 'Tắt' : 'Bật'}
+                          </button>
+                        )}
                         <button onClick={() => deleteCoupon(c)} className="p-1.5 text-red-500 hover:text-red-700"><span className="material-symbols-outlined text-[18px]">delete</span></button>
                       </div>
                     </div>

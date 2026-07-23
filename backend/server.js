@@ -3135,6 +3135,11 @@ const NOTIFICATION_TEMPLATES = {
     body: `Admin đã xóa khóa học "${d.courseName || ''}" (chưa có học viên đăng ký).`,
     icon: 'delete', priority: 'high',
   }),
+  tutor_coupon_pending_approval: d => ({
+    subject: '[EduX] Mã giảm giá cần duyệt', title: 'Mã giảm giá vượt ngưỡng tự động — cần duyệt',
+    body: `Gia sư ${d.tutorName || ''} tạo mã "${d.code || ''}" giảm ${d.discountLabel || ''} cho khóa "${d.courseName || ''}" — vượt ngưỡng ${TUTOR_COUPON_AUTO_APPROVE_PERCENT}% tự động, cần admin duyệt.`,
+    icon: 'local_offer', priority: 'normal',
+  }),
   tutor_profile_approved: d => ({
     subject: '[EduX] Hồ sơ gia sư đã được duyệt', title: 'Hồ sơ gia sư đã được duyệt',
     body: 'Hồ sơ đăng ký gia sư của bạn đã được chấp thuận. Tài khoản của bạn hiện đã hoạt động đầy đủ.',
@@ -6744,8 +6749,12 @@ app.get("/api/admin/courses/:id/reviews", verifyToken, requireAdmin, async (req,
 app.get("/api/admin/courses/:id/coupons", verifyToken, requireAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, code, description, discount_type, discount_value, max_discount, min_order, active, expires_at, created_at
-       FROM coupons WHERE course_id = $1 ORDER BY created_at DESC`,
+      `SELECT c.id, c.code, c.description, c.discount_type, c.discount_value, c.max_discount, c.min_order,
+              c.active, c.pending_approval, c.expires_at, c.created_at,
+              u.full_name AS creator_name, u.role AS creator_role
+       FROM coupons c
+       LEFT JOIN users u ON u.id = c.created_by
+       WHERE c.course_id = $1 ORDER BY c.pending_approval DESC, c.created_at DESC`,
       [req.params.id]
     );
     return res.json({ coupons: rows });
@@ -6782,7 +6791,13 @@ app.patch("/api/admin/courses/:id/coupons/:couponId", verifyToken, requireAdmin,
   try {
     const { active, discount_value, max_discount, expires_at } = req.body || {};
     const sets = [], params = [];
-    if (active !== undefined)         { params.push(!!active); sets.push(`active = $${params.length}`); }
+    if (active !== undefined) {
+      params.push(!!active); sets.push(`active = $${params.length}`);
+      // Approving a tutor's pending coupon (admin flips active=true) also
+      // clears pending_approval; later manual on/off toggles by admin never
+      // re-trigger the "needs approval" state.
+      if (active) sets.push(`pending_approval = FALSE`);
+    }
     if (discount_value !== undefined) { params.push(Number(discount_value)); sets.push(`discount_value = $${params.length}`); }
     if (max_discount !== undefined)   { params.push(max_discount != null ? Number(max_discount) : null); sets.push(`max_discount = $${params.length}`); }
     if (expires_at !== undefined)     { params.push(expires_at || null); sets.push(`expires_at = $${params.length}`); }
@@ -6810,6 +6825,145 @@ app.delete("/api/admin/courses/:id/coupons/:couponId", verifyToken, requireAdmin
     return res.json({ ok: true });
   } catch (err) {
     console.error("DELETE /api/admin/courses/:id/coupons/:couponId error:", err);
+    return res.status(500).json({ message: "Lỗi khi xóa mã giảm giá." });
+  }
+});
+
+// ── Cart-wide coupon management (Promotion Management page) ──────────────────
+// Same coupons table as the per-course endpoints above, restricted to
+// course_id IS NULL rows so the two features never edit each other's data —
+// per-course coupons stay managed only from the Course Management drawer.
+function validateCouponBody(body) {
+  const { code, description, discount_type, discount_value, max_discount, min_order, expires_at } = body || {};
+  const cleanCode = String(code || '').trim().toUpperCase();
+  if (!cleanCode) return { error: "Mã giảm giá không được để trống." };
+  const type = discount_type === 'fixed' ? 'fixed' : 'percent';
+  const value = Number(discount_value);
+  if (!Number.isFinite(value) || value <= 0) return { error: "Giá trị giảm không hợp lệ." };
+  if (type === 'percent' && value > 100) return { error: "Giảm theo % không được vượt quá 100." };
+  const minOrderNum = min_order != null ? Number(min_order) : 0;
+  if (!Number.isFinite(minOrderNum) || minOrderNum < 0) return { error: "Đơn tối thiểu không hợp lệ." };
+  return {
+    cleanCode, description: String(description || '').trim() || null, type, value,
+    maxDiscount: max_discount != null && max_discount !== '' ? Number(max_discount) : null,
+    minOrder: minOrderNum,
+    expiresAt: expires_at || null,
+  };
+}
+
+app.get("/api/admin/coupons", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT c.id::text, c.code, c.description, c.discount_type AS type, c.discount_value::numeric AS value,
+             c.max_discount::numeric, c.min_order::numeric, c.active, c.expires_at, c.created_at,
+             COALESCE(cu.times_used, 0)::int AS times_used,
+             COALESCE(cu.total_discount_given, 0)::numeric AS total_discount_given,
+             COALESCE(cu.revenue_generated, 0)::numeric AS revenue_generated
+      FROM coupons c
+      LEFT JOIN (
+        SELECT coupon_id, COUNT(*) AS times_used, SUM(discount_amount) AS total_discount_given, SUM(order_value) AS revenue_generated
+        FROM coupon_usages GROUP BY coupon_id
+      ) cu ON cu.coupon_id = c.id
+      WHERE c.course_id IS NULL
+      ORDER BY c.created_at DESC
+    `);
+    const courseScopedCount = (await pool.query(`SELECT COUNT(*)::int AS n FROM coupons WHERE course_id IS NOT NULL`)).rows[0].n;
+    return res.json({ coupons: rows, course_scoped_count: courseScopedCount });
+  } catch (err) {
+    console.error("GET /api/admin/coupons error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+app.get("/api/admin/coupons/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const couponRes = await pool.query(
+      `SELECT id::text, code, description, discount_type AS type, discount_value::numeric AS value,
+              max_discount::numeric, min_order::numeric, active, expires_at, created_at
+       FROM coupons WHERE id=$1 AND course_id IS NULL`, [req.params.id]);
+    if (!couponRes.rows.length) return res.status(404).json({ message: "Không tìm thấy mã giảm giá." });
+
+    const statsRes = await pool.query(
+      `SELECT COUNT(*)::int AS times_used,
+              COALESCE(SUM(discount_amount),0)::numeric AS total_discount_given,
+              COALESCE(SUM(order_value),0)::numeric AS revenue_generated,
+              COALESCE(AVG(discount_amount),0)::numeric AS avg_discount_per_order
+       FROM coupon_usages WHERE coupon_id=$1`, [req.params.id]);
+
+    const recentRes = await pool.query(
+      `SELECT cu.id::text, cu.items_count, cu.order_value::numeric, cu.discount_amount::numeric, cu.created_at,
+              u.full_name AS user_name, u.email AS user_email
+       FROM coupon_usages cu
+       LEFT JOIN users u ON u.id = cu.user_id
+       WHERE cu.coupon_id=$1
+       ORDER BY cu.created_at DESC LIMIT 20`, [req.params.id]);
+
+    return res.json({ ...couponRes.rows[0], stats: statsRes.rows[0], recent_usages: recentRes.rows });
+  } catch (err) {
+    console.error("GET /api/admin/coupons/:id error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+app.post("/api/admin/coupons", verifyToken, requireAdmin, async (req, res) => {
+  const v = validateCouponBody(req.body);
+  if (v.error) return res.status(400).json({ message: v.error });
+  try {
+    const result = await pool.query(
+      `INSERT INTO coupons (code, description, discount_type, discount_value, max_discount, min_order, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [v.cleanCode, v.description, v.type, v.value, v.maxDiscount, v.minOrder, v.expiresAt]
+    );
+    return res.status(201).json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ message: "Mã giảm giá đã tồn tại." });
+    console.error("POST /api/admin/coupons error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo mã giảm giá." });
+  }
+});
+
+app.patch("/api/admin/coupons/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { active, description, discount_value, max_discount, min_order, expires_at } = req.body || {};
+    const sets = [], params = [];
+    if (active !== undefined)         { params.push(!!active); sets.push(`active = $${params.length}`); }
+    if (description !== undefined)    { params.push(String(description || '').trim() || null); sets.push(`description = $${params.length}`); }
+    if (discount_value !== undefined) {
+      const v = Number(discount_value);
+      if (!Number.isFinite(v) || v <= 0) return res.status(400).json({ message: "Giá trị giảm không hợp lệ." });
+      params.push(v); sets.push(`discount_value = $${params.length}`);
+    }
+    if (max_discount !== undefined)   { params.push(max_discount != null && max_discount !== '' ? Number(max_discount) : null); sets.push(`max_discount = $${params.length}`); }
+    if (min_order !== undefined)      { params.push(Number(min_order) || 0); sets.push(`min_order = $${params.length}`); }
+    if (expires_at !== undefined)     { params.push(expires_at || null); sets.push(`expires_at = $${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ message: "Không có trường nào để cập nhật." });
+    params.push(req.params.id);
+    const result = await pool.query(
+      `UPDATE coupons SET ${sets.join(', ')} WHERE id = $${params.length} AND course_id IS NULL RETURNING id`,
+      params
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy mã giảm giá." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /api/admin/coupons/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi cập nhật mã giảm giá." });
+  }
+});
+
+app.delete("/api/admin/coupons/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    // Mirrors Course Management's archive-vs-delete rule: refuse hard-delete
+    // once a coupon has real usage history, so audit trail (coupon_usages)
+    // never gets silently orphaned/cascaded away — admin should deactivate instead.
+    const usage = await pool.query(`SELECT COUNT(*)::int AS n FROM coupon_usages WHERE coupon_id=$1`, [req.params.id]);
+    if (usage.rows[0].n > 0) {
+      return res.status(409).json({ message: `Mã này đã được dùng ${usage.rows[0].n} lần — không thể xóa để giữ lịch sử. Hãy tắt hoạt động (Ngừng) thay vì xóa.` });
+    }
+    const result = await pool.query(`DELETE FROM coupons WHERE id=$1 AND course_id IS NULL RETURNING id`, [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy mã giảm giá." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/coupons/:id error:", err);
     return res.status(500).json({ message: "Lỗi khi xóa mã giảm giá." });
   }
 });
@@ -11865,6 +12019,8 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
 
     // Áp mã giảm giá phía server (chống chỉnh client)
     let discount = 0;
+    let appliedCoupon = null;
+    let appliedOrderValue = 0;
     if (couponCode) {
       const cp = await client.query(
         `SELECT * FROM coupons WHERE UPPER(code)=UPPER($1) AND active=TRUE AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1`, [couponCode]);
@@ -11883,10 +12039,21 @@ app.post("/api/cart/checkout", verifyToken, async (req, res) => {
             if (c.max_discount != null) discount = Math.min(discount, Number(c.max_discount));
           } else discount = Number(c.discount_value) || 0;
           discount = Math.min(discount, discountBase);
+          appliedCoupon = c;
+          appliedOrderValue = discountBase;
         }
       }
     }
     const finalTotal = Math.max(0, sumPrices - discount);
+    // Audit-only usage log for the admin Promotion Management page — never read
+    // back by any discount/payment calculation above, purely a record of what
+    // happened. Only written when a coupon actually reduced the total.
+    if (appliedCoupon && discount > 0) {
+      await client.query(
+        `INSERT INTO coupon_usages (coupon_id, user_id, items_count, order_value, discount_amount) VALUES ($1,$2,$3,$4,$5)`,
+        [appliedCoupon.id, enrollId, toBuy.length, appliedOrderValue, discount]
+      );
+    }
 
     if (finalTotal > 0) {
       // Trừ ví người thanh toán (payerId) — CHỈ khi trả bằng ví (qua VNPAY thì cổng đã thu tiền)
@@ -14002,7 +14169,33 @@ async function startServer() {
     // behavior; set means the coupon only ever discounts that one course (see
     // POST /api/cart/checkout, discountBase computation).
     await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS course_id UUID REFERENCES courses(id) ON DELETE CASCADE");
+    // Tutor self-service coupon creation: created_by tracks who made it (NULL =
+    // admin-created, same as before this column existed); pending_approval marks
+    // a tutor-created coupon whose discount exceeded the auto-approve threshold
+    // and is sitting inactive until an admin reviews it (see
+    // TUTOR_COUPON_AUTO_APPROVE_PERCENT / POST /api/tutor/courses/:id/coupons).
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL");
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS pending_approval BOOLEAN NOT NULL DEFAULT FALSE");
     console.log("✅ DB migration: coupons table ready");
+
+    // Accurate coupon usage tracking (replaces the old "guess from transaction
+    // description text" heuristic in GET /api/admin/promotion-transactions).
+    // Populated additively in POST /api/cart/checkout — never read/altered by
+    // any discount/payment calculation, pure audit trail.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS coupon_usages (
+        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        coupon_id       UUID NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+        user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+        items_count     INT NOT NULL DEFAULT 1,
+        order_value     NUMERIC NOT NULL DEFAULT 0,
+        discount_amount NUMERIC NOT NULL DEFAULT 0,
+        created_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_coupon_usages_coupon ON coupon_usages(coupon_id)");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_coupon_usages_created ON coupon_usages(created_at DESC)");
+    console.log("✅ DB migration: coupon_usages table ready");
   } catch (err) {
     console.error("⚠️  DB migration (coupons) warning:", err.message);
   }
@@ -14369,6 +14562,80 @@ app.delete("/api/tutor/courses/:id", verifyToken, requireTutor, async (req, res)
   } catch (error) {
     console.error("Archive course error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ── Tutor self-service coupon creation ────────────────────────────────────────
+// Tutors can create a coupon for their own course without waiting on admin,
+// but only up to a safe discount threshold (protects the platform's 10%
+// commission share, which is computed proportionally on the discounted total —
+// see discountBase/ratio in POST /api/cart/checkout). Above the threshold the
+// coupon is created inactive + pending_approval, and admins get notified;
+// admin approves it via the existing PATCH /api/admin/courses/:id/coupons/:couponId
+// (setting active=true also clears pending_approval there). Tutors cannot
+// edit/delete their own coupons post-creation — only admin can, so a tutor
+// can't create a small discount then quietly raise it past the threshold.
+const TUTOR_COUPON_AUTO_APPROVE_PERCENT = 30;
+
+app.get("/api/tutor/courses/:id/coupons", verifyToken, requireTutor, async (req, res) => {
+  try {
+    const owner = await pool.query("SELECT id FROM courses WHERE id=$1 AND tutor_id=$2", [req.params.id, req.user.userId]);
+    if (!owner.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const { rows } = await pool.query(
+      `SELECT id::text, code, description, discount_type AS type, discount_value::numeric AS value,
+              max_discount::numeric, min_order::numeric, active, pending_approval, expires_at, created_at
+       FROM coupons WHERE course_id=$1 ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    return res.json({ coupons: rows });
+  } catch (err) {
+    console.error("GET /api/tutor/courses/:id/coupons error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+app.post("/api/tutor/courses/:id/coupons", verifyToken, requireTutor, async (req, res) => {
+  try {
+    const courseRes = await pool.query("SELECT id, title, price, tutor_id FROM courses WHERE id=$1 AND tutor_id=$2", [req.params.id, req.user.userId]);
+    if (!courseRes.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const course = courseRes.rows[0];
+
+    const v = validateCouponBody(req.body);
+    if (v.error) return res.status(400).json({ message: v.error });
+
+    // Auto-approve threshold: ≤30% off list price either way (percent type
+    // compared directly; fixed type converted to an equivalent percent of price).
+    const price = Number(course.price || 0);
+    const effectivePercent = v.type === 'percent' ? v.value : (price > 0 ? (v.value / price) * 100 : 100);
+    const autoApproved = effectivePercent <= TUTOR_COUPON_AUTO_APPROVE_PERCENT;
+
+    const result = await pool.query(
+      `INSERT INTO coupons (code, description, discount_type, discount_value, max_discount, min_order, expires_at, course_id, created_by, active, pending_approval)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+      [v.cleanCode, v.description, v.type, v.value, v.maxDiscount, v.minOrder, v.expiresAt, req.params.id, req.user.userId, autoApproved, !autoApproved]
+    );
+
+    if (!autoApproved) {
+      const tutorName = (await pool.query("SELECT full_name FROM users WHERE id=$1", [req.user.userId])).rows[0]?.full_name || "Gia sư";
+      const admins = await pool.query("SELECT id FROM users WHERE role='admin'");
+      const discountLabel = v.type === 'percent' ? `${v.value}%` : `${v.value.toLocaleString('vi-VN')}đ`;
+      for (const admin of admins.rows) {
+        await safeNotifyUser(pool, {
+          userId: admin.id, channels: ['IN_APP'],
+          templateKey: 'tutor_coupon_pending_approval', eventType: 'tutor_coupon_pending_approval',
+          data: { tutorName, code: v.cleanCode, discountLabel, courseName: course.title },
+          refId: result.rows[0].id, refType: 'coupon',
+          sourceType: 'coupon', sourceId: result.rows[0].id,
+          idempotencyKey: `coupon:${result.rows[0].id}:pending_approval`,
+        });
+      }
+    }
+
+    return res.status(201).json({ ok: true, id: result.rows[0].id, active: autoApproved, pending_approval: !autoApproved });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ message: "Mã giảm giá đã tồn tại." });
+    console.error("POST /api/tutor/courses/:id/coupons error:", err);
+    return res.status(500).json({ message: "Lỗi khi tạo mã giảm giá." });
   }
 });
 
