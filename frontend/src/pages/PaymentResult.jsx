@@ -8,8 +8,17 @@ export default function PaymentResult() {
     const [message, setMessage] = useState('');
     const [isOrder, setIsOrder] = useState(false);
     const [pendingBookingTutorId, setPendingBookingTutorId] = useState(null);
+    const [paymentSource, setPaymentSource] = useState(null);
 
     useEffect(() => {
+        try {
+            const rawSource = sessionStorage.getItem('edux_payment_source');
+            if (rawSource) {
+                setPaymentSource(JSON.parse(rawSource));
+                sessionStorage.removeItem('edux_payment_source');
+            }
+        } catch { /* ignore */ }
+
         const queryParams = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
         const rspCode = queryParams.get('vnp_ResponseCode');
 
@@ -64,9 +73,36 @@ export default function PaymentResult() {
         }
     }, []);
 
+    const getReturnHash = () => {
+        if (paymentSource?.returnHash) {
+            return paymentSource.returnHash.startsWith('#') ? paymentSource.returnHash.slice(1) : paymentSource.returnHash;
+        }
+        if (pendingBookingTutorId) return `/booking/${pendingBookingTutorId}`;
+        if (isOrder) return '/cart';
+        return '/dashboard';
+    };
+
     const goPrimary = () => {
         if (pendingBookingTutorId) { window.location.hash = `/booking/${pendingBookingTutorId}`; return; }
-        window.location.hash = isOrder ? '/my-courses' : '/dashboard';
+        if (isOrder) { window.location.hash = '/my-courses'; return; }
+        window.location.hash = getReturnHash();
+    };
+
+    const goErrorReturn = () => {
+        window.location.hash = getReturnHash();
+    };
+
+    const getErrorButtonLabel = () => {
+        const src = paymentSource?.source;
+        if (src === 'booking' || pendingBookingTutorId) return 'Quay lại đặt lịch';
+        if (src === 'cart' || isOrder) return 'Quay lại giỏ hàng';
+        return 'Quay về Bảng Điều Khiển';
+    };
+
+    const getSuccessButtonLabel = () => {
+        if (pendingBookingTutorId || paymentSource?.source === 'booking') return 'Quay lại đặt lịch';
+        if (isOrder) return 'Vào Khóa học của tôi';
+        return 'Quay về Bảng Điều Khiển';
     };
 
     return (
@@ -91,7 +127,7 @@ export default function PaymentResult() {
                             onClick={goPrimary}
                             className="w-full h-12 bg-[#00288e] text-white font-semibold rounded-xl hover:bg-[#00288e]/90 transition-colors"
                         >
-                            {pendingBookingTutorId ? 'Quay lại đặt lịch' : (isOrder ? 'Vào Khóa học của tôi' : 'Quay về Bảng Điều Khiển')}
+                            {getSuccessButtonLabel()}
                         </button>
                     </>
                 )}
@@ -104,10 +140,10 @@ export default function PaymentResult() {
                         <h2 className="text-2xl font-bold text-gray-800 mb-3">Giao Dịch Thất Bại</h2>
                         <p className="text-gray-600 mb-8 leading-relaxed">{message}</p>
                         <button
-                            onClick={() => window.location.hash = '/cart'}
+                            onClick={goErrorReturn}
                             className="w-full h-12 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
                         >
-                            Quay lại giỏ hàng
+                            {getErrorButtonLabel()}
                         </button>
                     </>
                 )}

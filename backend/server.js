@@ -12115,7 +12115,12 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       
       if (Number(payerWallet.balance) < price) {
         await client.query("ROLLBACK");
-        return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư trong ví không đủ. Vui lòng nạp thêm tiền." });
+        return res.status(400).json({
+          code: "INSUFFICIENT_FUNDS",
+          message: "Số dư trong ví không đủ. Vui lòng nạp thêm tiền.",
+          needed: price,
+          balance: Number(payerWallet.balance)
+        });
       }
 
       // 2. Lấy ví gia sư
@@ -14950,9 +14955,26 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
 // POST /api/bookings/instant
 app.post('/api/bookings/instant', verifyToken, async (req, res) => {
   try {
-    const { tutor_id, tutor_name, subject, time_slot, note, child_name, duration_mins } = req.body;
+    const { tutor_id, tutor_name, subject, time_slot, note, child_name, duration_mins, targetStudentId, target_student_id, selectedChildId } = req.body;
     
     if (!tutor_id) return res.status(400).json({ message: 'Thiếu tutor_id.' });
+
+    // ── Parent Delegation ──
+    const targetId = targetStudentId || target_student_id || selectedChildId;
+    let effectiveStudentId = req.user.userId;
+    let student_name = req.user.fullName || req.user.full_name || 'Học viên';
+
+    if (req.user.role === 'parent' && targetId) {
+      const checkLink = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, targetId]);
+      if (checkLink.rows.length === 0) {
+        return res.status(403).json({ message: 'Học sinh không hợp lệ hoặc chưa được liên kết với bạn.' });
+      }
+      effectiveStudentId = targetId;
+      const childUser = await pool.query('SELECT full_name FROM users WHERE id=$1', [targetId]);
+      if (childUser.rows.length > 0) {
+        student_name = childUser.rows[0].full_name;
+      }
+    }
 
     // ── Rate Limit / Cooldown chống spam ──
     // Kiểm tra xem học sinh có vừa tạo yêu cầu Học Ngay nào trong vòng 2 phút qua không
@@ -14960,7 +14982,7 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
       `SELECT created_at FROM bookings 
        WHERE student_id = $1 AND booking_type = 'Instant' 
        ORDER BY created_at DESC LIMIT 1`,
-      [req.user.userId]
+      [effectiveStudentId]
     );
     if (recentRes.rows.length > 0) {
       const lastBookingTime = new Date(recentRes.rows[0].created_at).getTime();
@@ -14984,13 +15006,28 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
     }
     
     const price = tRes.rows[0].instant_price;
-    const student_name = req.user.fullName || req.user.full_name || 'Học viên';
     
+    // ── Pre-check Ví người thanh toán (Phụ huynh / Học sinh) ──
+    const payerWalletRes = await pool.query('SELECT id, balance FROM wallets WHERE user_id = $1', [req.user.userId]);
+    if (!payerWalletRes.rows.length) {
+      return res.status(400).json({ message: 'Không tìm thấy ví thanh toán của bạn.' });
+    }
+    const payerBalance = Number(payerWalletRes.rows[0].balance || 0);
+    if (payerBalance < Number(price)) {
+      return res.status(400).json({
+        code: 'INSUFFICIENT_FUNDS',
+        message: 'Số dư ví của bạn không đủ để thực hiện yêu cầu Học Ngay. Vui lòng nạp thêm tiền.',
+        needed: Number(price),
+        balance: payerBalance,
+        missing: Number(price) - payerBalance
+      });
+    }
+
     let response;
     try {
       const result = await pool.query(
         `SELECT process_instant_booking($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) AS response`,
-        [req.user.userId, tutor_id, price, time_slot || null, note || null, child_name || null, student_name, tutor_name || null, subject || 'Môn học', duration_mins || 30]
+        [effectiveStudentId, tutor_id, price, time_slot || null, note || null, child_name || null, student_name, tutor_name || null, subject || 'Môn học', duration_mins || 30]
       );
       response = result.rows[0].response;
     } catch (fnErr) {
@@ -15001,29 +15038,29 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
       try {
         await fbClient.query('BEGIN');
 
-        // Kiểm tra ví học sinh (lock để tránh race condition)
+        // Kiểm tra ví phụ huynh/người thanh toán (lock để tránh race condition)
         const walletRes = await fbClient.query(
           'SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE',
           [req.user.userId]
         );
         if (!walletRes.rows.length) {
           await fbClient.query('ROLLBACK');
-          return res.status(400).json({ message: 'Không tìm thấy ví học sinh.' });
+          return res.status(400).json({ message: 'Không tìm thấy ví thanh toán.' });
         }
         const { id: walletId, balance } = walletRes.rows[0];
         if (Number(balance) < Number(price)) {
           await fbClient.query('ROLLBACK');
-          return res.status(400).json({ message: 'Số dư không đủ. Vui lòng nạp thêm tiền.' });
+          return res.status(400).json({ code: 'INSUFFICIENT_FUNDS', message: 'Số dư ví không đủ. Vui lòng nạp thêm tiền.', needed: Number(price), balance: Number(balance) });
         }
 
         // Kiểm tra pending
         const pendingStudentRes = await fbClient.query(
           `SELECT COUNT(*) FROM bookings WHERE student_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
-          [req.user.userId]
+          [effectiveStudentId]
         );
         if (parseInt(pendingStudentRes.rows[0].count) > 0) {
           await fbClient.query('ROLLBACK');
-          return res.status(400).json({ message: 'Bạn đã có một yêu cầu Học ngay đang chờ xử lý.' });
+          return res.status(400).json({ message: 'Học sinh đã có một yêu cầu Học ngay đang chờ xử lý.' });
         }
 
         const pendingTutorRes = await fbClient.query(
@@ -15035,25 +15072,24 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
           return res.status(400).json({ message: 'Gia sư vừa nhận một buổi học khác.' });
         }
 
-        // Trừ ví (trong cùng transaction)
+        // Trừ ví người thanh toán (trong cùng transaction)
         await fbClient.query(
           `UPDATE wallets SET balance = balance - $1, frozen_balance = COALESCE(frozen_balance, 0) + $1 WHERE id = $2`,
           [price, walletId]
         );
 
-        // Tạo booking — nếu INSERT lỗi, transaction sẽ ROLLBACK hoàn tiền tự động
+        // Tạo booking cho học sinh
         const resolved_time_slot = time_slot || null;
         const bookingRes = await fbClient.query(
           `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, child_name, student_name, booking_type, lesson_fee, duration_mins, payer_wallet_id, created_at)
            VALUES ($1,$2,$3,$4,CURRENT_DATE,COALESCE($5, to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI')),$6,'Pending',$7,$8,'Instant',$9,$10,$11,NOW()) RETURNING id`,
-          [req.user.userId, tutor_id, tutor_name || null, subject || 'Môn học', resolved_time_slot, note || null, child_name || null, student_name, price, duration_mins || 30, walletId]
+          [effectiveStudentId, tutor_id, tutor_name || null, subject || 'Môn học', resolved_time_slot, note || null, child_name || null, student_name, price, duration_mins || 30, walletId]
         );
 
         await fbClient.query('COMMIT');
         response = { success: true, booking_id: bookingRes.rows[0].id };
       } catch (fbErr) {
         await fbClient.query('ROLLBACK');
-        // Transaction đã rollback → tiền học sinh được hoàn tự động
         throw new Error(fbErr.message || 'Lỗi khi tạo yêu cầu Học Ngay. Tiền của bạn chưa bị trừ.');
       } finally {
         fbClient.release();
@@ -15164,6 +15200,16 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
 
     const totalFee = lessonFeeForBooking * bookingSessions.length;
 
+    const targetStudentId = body.targetStudentId || body.target_student_id || body.selectedChildId;
+    let effectiveStudentId = req.user.userId;
+    if (req.user.role === 'parent' && targetStudentId) {
+      const checkLink = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, targetStudentId]);
+      if (checkLink.rows.length === 0) {
+        return res.status(403).json({ message: "Học sinh không hợp lệ hoặc chưa được liên kết với bạn." });
+      }
+      effectiveStudentId = targetStudentId;
+    }
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -15212,7 +15258,7 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
           `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at, package_id`,
-          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId]
+          [effectiveStudentId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId]
         );
         const booking = result.rows[0];
 

@@ -50,6 +50,10 @@ export default function WalletWidget({ token }) {
         setLoading(true);
         try {
             const returnUrl = `${window.location.origin}/#/payment/result`;
+            sessionStorage.setItem('edux_payment_source', JSON.stringify({
+                returnHash: window.location.hash || '#/dashboard',
+                source: 'wallet'
+            }));
             const res = await fetch(`${API_BASE}/api/payment/create-url`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },

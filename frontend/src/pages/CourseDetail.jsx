@@ -49,6 +49,12 @@ export default function CourseDetail({ courseId }) {
   const [showChildSelect, setShowChildSelect] = useState(false);
   const [selectedChildId, setSelectedChildId] = useState('');
 
+  // ── State Nạp Tiền Bù ──
+  const [showTopupModal, setShowTopupModal] = useState(false);
+  const [topupInfo, setTopupInfo] = useState({ needed: 0, balance: 0, missing: 0, targetStudentId: null });
+  const [topupAmount, setTopupAmount] = useState('');
+  const [topupLoading, setTopupLoading] = useState(false);
+
   // ── Giỏ hàng (localStorage edux_cart — cùng định dạng CartPage/Marketplace) ──
   const CART_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const readCartIds = () => {
@@ -135,6 +141,18 @@ export default function CourseDetail({ courseId }) {
     }
   }, [courseId, user, token]);
 
+  // ── Auto-Resume đăng ký sau khi nạp VNPAY thành công quay lại ──
+  useEffect(() => {
+    if (!course || !user || !token) return;
+    try {
+      const pendingEnroll = JSON.parse(sessionStorage.getItem('edux_pending_enroll') || 'null');
+      if (pendingEnroll && String(pendingEnroll.courseId) === String(course.id)) {
+        sessionStorage.removeItem('edux_pending_enroll');
+        handleEnroll(pendingEnroll.targetStudentId);
+      }
+    } catch { /* ignore */ }
+  }, [course, user, token]);
+
   const handleEnroll = async (targetStudentId) => {
     if (!user) {
       try { sessionStorage.setItem('redirectAfterLogin', window.location.hash); } catch (e) {}
@@ -180,15 +198,65 @@ export default function CourseDetail({ courseId }) {
       setToast('Đăng ký khóa học thành công!');
       setTimeout(() => setToast(''), 3000);
     } catch (err) {
-      if (err.message && err.message.includes('INSUFFICIENT_FUNDS') || err.code === 'INSUFFICIENT_FUNDS') {
-        setToast('Số dư ví không đủ. Vui lòng vào Nền tảng học tập để Nạp tiền.');
-        setTimeout(() => setToast(''), 5000);
+      if ((err.message && err.message.includes('INSUFFICIENT_FUNDS')) || err.code === 'INSUFFICIENT_FUNDS') {
+        const needed = Number(err.needed || course?.price || 0);
+        const balance = Number(err.balance || 0);
+        const missing = Math.max(needed - balance, 10000);
+        setTopupInfo({ needed, balance, missing, targetStudentId });
+        setTopupAmount(missing);
+        setShowChildSelect(false);
+        setShowTopupModal(true);
       } else {
         setToast(err.message || 'Lỗi khi đăng ký khóa học.');
         setTimeout(() => setToast(''), 3000);
       }
     } finally {
       setEnrollLoading(false);
+    }
+  };
+
+  const handleTopUpVNPAY = async () => {
+    if (!topupAmount || isNaN(topupAmount) || Number(topupAmount) < 10000) {
+      return alert('Số tiền nạp tối thiểu là 10.000 VNĐ.');
+    }
+    setTopupLoading(true);
+    try {
+      sessionStorage.setItem('edux_payment_source', JSON.stringify({
+        returnHash: window.location.hash,
+        source: 'course_detail'
+      }));
+      sessionStorage.setItem('edux_pending_enroll', JSON.stringify({
+        courseId: course.id,
+        targetStudentId: topupInfo.targetStudentId
+      }));
+
+      const returnUrl = `${window.location.origin}/#/payment/result`;
+      const res = await fetch(`${API_BASE}/api/payment/create-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ amount: Number(topupAmount), returnUrl })
+      });
+      const data = await res.json();
+      if (data.success && data.vnpUrl && data.params) {
+        const form = document.createElement('form');
+        form.method = 'GET';
+        form.action = data.vnpUrl;
+        for (const [key, value] of Object.entries(data.params)) {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = key;
+          input.value = value;
+          form.appendChild(input);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      } else {
+        alert(data.message || 'Không thể tạo liên kết thanh toán VNPAY');
+        setTopupLoading(false);
+      }
+    } catch {
+      alert('Lỗi kết nối máy chủ');
+      setTopupLoading(false);
     }
   };
 
@@ -591,6 +659,78 @@ export default function CourseDetail({ courseId }) {
               </button>
               <button onClick={() => handleEnroll(selectedChildId)} disabled={!selectedChildId} className="flex-1 py-2.5 rounded-xl font-semibold bg-[#00288e] text-white hover:bg-[#001d6e] disabled:opacity-50 transition-colors">
                 Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal nạp tiền bù khi thiếu số dư ví */}
+      {showTopupModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
+            <button onClick={() => setShowTopupModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
+              <span className="material-symbols-outlined">close</span>
+            </button>
+
+            <h3 className="text-xl font-bold text-[#111827] mb-2 flex items-center gap-2">
+              <span className="material-symbols-outlined text-amber-600 text-[26px]">account_balance_wallet</span>
+              Số Dư Ví Không Đủ
+            </h3>
+            <p className="text-sm text-gray-500 mb-4 leading-relaxed">
+              Bạn cần nạp thêm tiền vào ví để hoàn tất đăng ký khóa học này. Hệ thống sẽ tự động đăng ký ngay sau khi nạp thành công.
+            </p>
+
+            <div className="bg-amber-50 rounded-xl p-4 mb-4 border border-amber-200 text-sm space-y-1.5">
+              <div className="flex justify-between text-gray-700">
+                <span>Giá khóa học:</span>
+                <span className="font-bold">{topupInfo.needed?.toLocaleString('vi-VN')} VNĐ</span>
+              </div>
+              <div className="flex justify-between text-gray-700">
+                <span>Số dư hiện tại:</span>
+                <span className="font-semibold text-green-700">{topupInfo.balance?.toLocaleString('vi-VN')} VNĐ</span>
+              </div>
+              <div className="border-t border-amber-200/60 pt-1.5 flex justify-between font-bold text-red-600">
+                <span>Số tiền thiếu cần nạp bù:</span>
+                <span>{topupInfo.missing?.toLocaleString('vi-VN')} VNĐ</span>
+              </div>
+            </div>
+
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Số tiền nạp qua VNPAY (VNĐ)</label>
+            <input
+              type="number"
+              value={topupAmount}
+              onChange={e => setTopupAmount(e.target.value)}
+              placeholder="Nhập số tiền nạp"
+              className="w-full h-12 px-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#00288e] outline-none text-lg font-bold mb-3"
+            />
+
+            {/* Quick selection */}
+            <div className="flex gap-2 mb-6 flex-wrap">
+              {[topupInfo.missing, 100000, 200000, 500000, 1000000].filter(v => v > 0).map((val, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setTopupAmount(val)}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${Number(topupAmount) === val ? 'border-[#00288e] bg-[#eef4ff] text-[#00288e]' : 'border-gray-300 text-gray-600 hover:border-gray-400'}`}
+                >
+                  {val === topupInfo.missing ? `Nạp bù ${val / 1000}K` : `${val / 1000}K`}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowTopupModal(false)}
+                className="flex-1 py-3 rounded-xl font-semibold border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Đóng
+              </button>
+              <button
+                onClick={handleTopUpVNPAY}
+                disabled={topupLoading}
+                className="flex-1 py-3 rounded-xl font-bold bg-[#00288e] text-white hover:bg-[#001d6e] disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+              >
+                {topupLoading ? 'Đang tạo giao dịch...' : 'Nạp tiền VNPAY'}
               </button>
             </div>
           </div>
