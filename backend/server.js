@@ -15422,7 +15422,7 @@ app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
 // ── Đánh giá chất lượng ngầm sau buổi học (Internal Lesson Evaluations) ─────
 // ════════════════════════════════════════════════════════════════════════════
 
-// Khởi tạo bảng lesson_evaluations nếu chưa có
+// Khởi tạo bảng lesson_evaluations nếu chưa có (kèm các cột kiểm soát độc hại & outlier)
 (async () => {
   try {
     await pool.query(`
@@ -15436,6 +15436,9 @@ app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
         positive_tags JSONB DEFAULT '[]'::jsonb,
         improvement_tags JSONB DEFAULT '[]'::jsonb,
         private_feedback TEXT,
+        is_flagged BOOLEAN DEFAULT FALSE,
+        flagged_reason TEXT,
+        is_outlier BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_lesson_eval_tutor ON lesson_evaluations(tutor_id);
@@ -15446,7 +15449,7 @@ app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
   }
 })();
 
-// Helper function: Tự động điều chỉnh reputation_score ngầm cho Gia Sư
+// Helper function: Tự động điều chỉnh reputation_score ngầm cho Gia Sư (Đã lọc bỏ toxic & outlier)
 async function updateTutorReputationScore(tutorUserId) {
   try {
     const tpRes = await pool.query('SELECT id, reputation_score FROM tutor_profiles WHERE user_id = $1', [tutorUserId]);
@@ -15454,9 +15457,11 @@ async function updateTutorReputationScore(tutorUserId) {
     const tutorProfileId = tpRes.rows[0].id;
     let currentReputation = Number(tpRes.rows[0].reputation_score || 100);
 
+    // Chỉ lấy các đánh giá HỢP LỆ (không bị flagged độc hại và không bị coi là hater outlier)
     const evalRes = await pool.query(
       `SELECT rating_score, comprehension_rate, positive_tags, improvement_tags 
-       FROM lesson_evaluations WHERE tutor_id = $1`,
+       FROM lesson_evaluations 
+       WHERE tutor_id = $1 AND is_flagged = FALSE AND is_outlier = FALSE`,
       [tutorUserId]
     );
     if (!evalRes.rows.length) return;
@@ -15485,7 +15490,7 @@ async function updateTutorReputationScore(tutorUserId) {
     await pool.query(
       `UPDATE tutor_profiles 
        SET reputation_score = $1,
-           avg_rating = (SELECT ROUND(AVG(rating_score)::numeric, 1) FROM lesson_evaluations WHERE tutor_id = $2)
+           avg_rating = (SELECT ROUND(AVG(rating_score)::numeric, 1) FROM lesson_evaluations WHERE tutor_id = $2 AND is_flagged = FALSE AND is_outlier = FALSE)
        WHERE id = $3`,
       [newReputation, tutorUserId, tutorProfileId]
     );
@@ -15494,7 +15499,7 @@ async function updateTutorReputationScore(tutorUserId) {
   }
 }
 
-// POST /api/bookings/:id/evaluate — Học sinh gửi đánh giá chất lượng ngầm sau buổi học
+// POST /api/bookings/:id/evaluate — Học sinh gửi đánh giá chất lượng ngầm sau buổi học (Có AI Filter & Check kết thúc buổi học)
 app.post("/api/bookings/:id/evaluate", verifyToken, async (req, res) => {
   try {
     const bookingId = req.params.id;
@@ -15504,12 +15509,31 @@ app.post("/api/bookings/:id/evaluate", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Số sao đánh giá (1-5) là bắt buộc." });
     }
 
+    // 1. Kiểm tra booking có tồn tại
     const bRes = await pool.query(`SELECT * FROM bookings WHERE id = $1`, [bookingId]);
     if (!bRes.rows.length) {
       return res.status(404).json({ message: "Không tìm thấy buổi học." });
     }
     const booking = bRes.rows[0];
 
+    // 2. RÀNG BUỘC THỜI GIAN: Chỉ cho đánh giá khi buổi học ĐÃ KẾT THÚC
+    const isCompleted = ['completed', 'Completed'].includes(booking.status);
+    let isPastTime = false;
+    if (booking.lesson_date) {
+      const lessonTime = new Date(booking.lesson_date).getTime();
+      isPastTime = lessonTime < Date.now();
+    }
+    if (!isCompleted && !isPastTime) {
+      return res.status(400).json({ message: "Bạn chỉ có thể đánh giá khi buổi học đã thực sự kết thúc." });
+    }
+
+    // 3. Kiểm tra điểm danh (nếu học sinh vắng mặt thì không cho đánh giá)
+    const attRes = await pool.query(`SELECT status FROM attendance WHERE booking_id = $1 LIMIT 1`, [bookingId]);
+    if (attRes.rows.length > 0 && ['absent', 'vắng mặt'].includes(String(attRes.rows[0].status).toLowerCase())) {
+      return res.status(400).json({ message: "Bạn không thể đánh giá buổi học do hệ thống ghi nhận bạn đã vắng mặt." });
+    }
+
+    // 4. Kiểm tra quyền sở hữu học sinh hoặc phụ huynh liên kết
     let isAuthorized = String(booking.student_id) === String(req.user.userId);
     if (!isAuthorized && req.user.role === 'parent') {
       const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
@@ -15524,9 +15548,38 @@ app.post("/api/bookings/:id/evaluate", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Buổi học này chưa có thông tin gia sư." });
     }
 
+    // 5. Chống đánh giá trùng
     const dup = await pool.query(`SELECT id FROM lesson_evaluations WHERE booking_id = $1`, [bookingId]);
     if (dup.rows.length > 0) {
       return res.status(409).json({ message: "Buổi học này đã được đánh giá chất lượng." });
+    }
+
+    // 6. KIỂM TRA ĐỘC HẠI BẰNG AI & LỌC SPAM (Semantic Moderation & Outlier Check)
+    let isFlagged = false;
+    let flaggedReason = null;
+    let isOutlier = false;
+
+    // A. Kiểm tra nhận xét có chứa ngôn từ độc hại / thù địch không
+    if (private_feedback && typeof private_feedback === 'string' && private_feedback.trim()) {
+      const modResult = classifyTextModeration(private_feedback.trim(), { sourceType: 'LESSON_EVALUATION' });
+      if (modResult && modResult.flagged) {
+        isFlagged = true;
+        flaggedReason = modResult.flagged_category || 'Chứa ngôn từ không phù hợp';
+      }
+    }
+
+    // B. Kiểm tra mô hình Serial Hater (Nếu học sinh liên tục cho 1-2 sao > 80% trên mọi gia sư)
+    if (parseInt(rating_score) <= 2) {
+      const prevEvals = await pool.query(
+        `SELECT rating_score FROM lesson_evaluations WHERE student_id = $1`,
+        [booking.student_id]
+      );
+      if (prevEvals.rows.length >= 3) {
+        const lowCount = prevEvals.rows.filter(r => r.rating_score <= 2).length;
+        if ((lowCount / prevEvals.rows.length) >= 0.8) {
+          isOutlier = true; // Phát hiện chuỗi đánh giá tiêu cực bất thường
+        }
+      }
     }
 
     const posJson = JSON.stringify(Array.isArray(positive_tags) ? positive_tags : []);
@@ -15534,8 +15587,8 @@ app.post("/api/bookings/:id/evaluate", verifyToken, async (req, res) => {
 
     const ins = await pool.query(
       `INSERT INTO lesson_evaluations 
-       (booking_id, student_id, tutor_id, rating_score, comprehension_rate, positive_tags, improvement_tags, private_feedback)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)
+       (booking_id, student_id, tutor_id, rating_score, comprehension_rate, positive_tags, improvement_tags, private_feedback, is_flagged, flagged_reason, is_outlier)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11)
        RETURNING *`,
       [
         bookingId,
@@ -15545,11 +15598,17 @@ app.post("/api/bookings/:id/evaluate", verifyToken, async (req, res) => {
         parseInt(comprehension_rate) || 100,
         posJson,
         impJson,
-        private_feedback ? String(private_feedback).trim() : null
+        private_feedback ? String(private_feedback).trim() : null,
+        isFlagged,
+        flaggedReason,
+        isOutlier
       ]
     );
 
-    updateTutorReputationScore(booking.tutor_id).catch(e => console.error(e));
+    // Chỉ tính điểm uy tín nếu đánh giá KHÔNG bị nghi ngờ độc hại / hater spam
+    if (!isFlagged && !isOutlier) {
+      updateTutorReputationScore(booking.tutor_id).catch(e => console.error(e));
+    }
 
     return res.status(201).json({
       success: true,
