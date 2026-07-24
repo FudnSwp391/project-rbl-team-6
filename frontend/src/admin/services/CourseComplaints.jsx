@@ -38,6 +38,13 @@ const RESOLUTION_TYPE_CONFIG = {
   partial:  { label: 'Chấp nhận một phần',  color: '#d97706', bg: '#fffbeb', icon: 'check_circle' },
 };
 
+const PENALTY_LABELS = {
+  WARNING: 'Cảnh cáo',
+  DEDUCT_REP: 'Trừ điểm uy tín (-10 điểm)',
+  SUSPEND_3_DAYS: 'Đình chỉ tạm thời (-20 điểm)',
+  BAN: 'Khóa tài khoản vĩnh viễn',
+};
+
 function StatusBadge({ status }) {
   const cfg = STATUS_CONFIG[status] || { label: status, color: '#6b7280', bg: '#f3f4f6', icon: 'info' };
   return (
@@ -95,6 +102,15 @@ function TimelineItem({ item }) {
               <p className="text-xs text-gray-600">Phương án: {rd.note}</p>
             </div>
           )}
+          {meta.tutor_penalty && (
+            <div className="mt-2 flex items-center gap-1.5">
+              <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#b45309' }}>gavel</span>
+              <p className="text-xs font-semibold text-amber-700">
+                Xử lý gia sư: {PENALTY_LABELS[meta.tutor_penalty.penalty_type] || meta.tutor_penalty.penalty_type}
+                {meta.tutor_penalty.auto_banned ? ' — đã tự động khóa tài khoản' : ''}
+              </p>
+            </div>
+          )}
           <p className="text-xs text-gray-400 mt-2">{new Date(item.created_at).toLocaleString('vi-VN')}</p>
         </div>
       </div>
@@ -126,6 +142,7 @@ function DecisionModal({ type, requestedResolution, saving, onClose, onConfirm }
   const [adminResp, setAdminResp] = useState('');
   const [refundEnabled, setRefundEnabled] = useState(false);
   const [refundAmount, setRefundAmount] = useState('');
+  const [penaltyType, setPenaltyType] = useState('NONE');
 
   const isAccept = type === 'accept';
   const isRefund = ['REFUND', 'refund'].includes(requestedResolution);
@@ -166,6 +183,22 @@ function DecisionModal({ type, requestedResolution, saving, onClose, onConfirm }
             )}
           </div>
         )}
+        {isAccept && (
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Xử lý gia sư</label>
+            <select value={penaltyType} onChange={e => setPenaltyType(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-blue-500 bg-white">
+              <option value="NONE">Không phạt</option>
+              <option value="WARNING">Cảnh cáo (Gửi thông báo)</option>
+              <option value="DEDUCT_REP">Trừ điểm uy tín (-10 điểm)</option>
+              <option value="SUSPEND_3_DAYS">Đình chỉ tạm thời (-20 điểm)</option>
+              <option value="BAN">Khóa tài khoản vĩnh viễn</option>
+            </select>
+            {penaltyType !== 'NONE' && (
+              <p className="text-xs text-gray-400 mt-1.5">* Nếu điểm uy tín của gia sư rơi xuống dưới 30, hệ thống sẽ tự động khóa tài khoản.</p>
+            )}
+          </div>
+        )}
         <div>
           <label className="block text-xs font-semibold text-gray-600 mb-1.5">
             {isAccept ? 'Lý do xử lý' : 'Lý do từ chối'} <span className="text-red-500">*</span>
@@ -188,7 +221,7 @@ function DecisionModal({ type, requestedResolution, saving, onClose, onConfirm }
           className="px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-white disabled:opacity-40 transition-colors">
           Hủy
         </button>
-        <button onClick={() => onConfirm({ replyMsg, adminResp, refundEnabled, refundAmount })}
+        <button onClick={() => onConfirm({ replyMsg, adminResp, refundEnabled, refundAmount, penaltyType })}
           disabled={saving || !replyMsg.trim() || !adminResp.trim() || (refundEnabled && parseInt(refundAmount) <= 0)}
           className={`px-5 py-2.5 rounded-xl text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${isAccept ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
           {saving ? (
@@ -255,13 +288,14 @@ function DetailDrawer({ id, token, onClose, onUpdated }) {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const handleDecision = async ({ replyMsg: msg, adminResp: resp, refundEnabled, refundAmount }) => {
+  const handleDecision = async ({ replyMsg: msg, adminResp: resp, refundEnabled, refundAmount, penaltyType }) => {
     setSaving(true);
     try {
       const resType = actionMode === 'accept' ? 'accepted' : 'rejected';
       const finalStatus = actionMode === 'accept' ? 'resolved' : 'rejected';
       const body = { status: finalStatus, resolution_type: resType, message: msg.trim(), admin_response: resp.trim() || undefined };
       if (actionMode === 'accept' && refundEnabled && refundAmount) body.refund_amount = parseInt(refundAmount) || undefined;
+      if (actionMode === 'accept' && penaltyType && penaltyType !== 'NONE') body.penalty_type = penaltyType;
       const res = await fetch(`${API_BASE}/api/admin/course-complaints/${id}`, { method: 'PUT', headers, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) { showToast('error', data.message || 'Không thể xử lý khiếu nại.'); setSaving(false); return; }
@@ -344,7 +378,7 @@ function DetailDrawer({ id, token, onClose, onUpdated }) {
               </div>
 
               {detail.resolution_request && (
-                <div className={`rounded-xl p-3 ${detail.resolution_request === 'refund' ? 'bg-amber-50 border border-amber-200' : 'bg-blue-50'}`}>
+                <div className={`rounded-xl p-3 ${['refund', 'REFUND'].includes(detail.resolution_request) ? 'bg-amber-50 border border-amber-200' : 'bg-blue-50'}`}>
                   <p className="text-xs text-gray-400 mb-1">Học viên mong muốn</p>
                   <p className="text-sm font-semibold text-gray-800">{RESOLUTION_LABELS[detail.resolution_request] || detail.resolution_request}</p>
                   {detail.refund_reason && (
@@ -660,7 +694,7 @@ export default function CourseComplaintsAdminView({ token }) {
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <StatusBadge status={c.status} />
-                        {c.resolution_request === 'refund' && (
+                        {['refund', 'REFUND'].includes(c.resolution_request) && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">
                             <span className="material-symbols-outlined" style={{ fontSize: 11, fontVariationSettings: "'FILL' 1" }}>currency_exchange</span>
                             Refund

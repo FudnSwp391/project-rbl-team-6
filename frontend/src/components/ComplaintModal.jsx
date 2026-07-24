@@ -198,6 +198,7 @@ export default function ComplaintModal({ isOpen, onClose, onSuccess, courseId, c
   const [reason, setReason]             = useState('');
   const [customReason, setCustomReason] = useState('');
   const [description, setDescription]   = useState('');
+  const [resolutionRequest, setResolutionRequest] = useState('refund');
   const [files, setFiles]               = useState([]);
   const [uploading, setUploading]       = useState(false);
   const [submitting, setSubmitting]     = useState(false);
@@ -215,7 +216,7 @@ export default function ComplaintModal({ isOpen, onClose, onSuccess, courseId, c
 
   const resetForm = () => {
     setTitle(''); setCategory(''); setReason(''); setCustomReason('');
-    setDescription('');
+    setDescription(''); setResolutionRequest('refund');
     setFiles([]); setFormError('');
   };
 
@@ -312,7 +313,7 @@ export default function ComplaintModal({ isOpen, onClose, onSuccess, courseId, c
         reason: finalReason,
         description: trimDesc || undefined,
         attachments: files,
-        resolution_request: 'REFUND',
+        resolution_request: resolutionRequest,
       };
 
       const res = await fetch(`${API_BASE}/api/complaints`, {
@@ -502,22 +503,46 @@ export default function ComplaintModal({ isOpen, onClose, onSuccess, courseId, c
                 </div>
               )}
 
-              {/* Mong muốn của học viên — giá trị cố định, không phải lựa chọn */}
+              {/* Mong muốn của học viên */}
               <div>
                 <label className="block text-sm font-semibold text-[#191c1e] mb-2">Mong muốn của học viên</label>
-                <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 border-[#00288e] bg-[#e8eeff] text-[#00288e] font-semibold text-sm w-fit">
-                  <span className="material-symbols-outlined shrink-0 text-green-500" style={{ fontSize: 10, fontVariationSettings: "'FILL' 1" }}>circle</span>
-                  Yêu cầu hoàn tiền
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setResolutionRequest('report_only')}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 text-left transition-all text-sm ${
+                      resolutionRequest === 'report_only'
+                        ? 'border-[#00288e] bg-[#e8eeff] text-[#00288e] font-semibold'
+                        : 'border-[#e5e7eb] text-[#444653] hover:border-[#00288e]/40'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined shrink-0" style={{ fontSize: 17, fontVariationSettings: resolutionRequest === 'report_only' ? "'FILL' 1" : "'FILL' 0" }}>flag</span>
+                    Chỉ phản ánh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setResolutionRequest('refund')}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 text-left transition-all text-sm ${
+                      resolutionRequest === 'refund'
+                        ? 'border-[#00288e] bg-[#e8eeff] text-[#00288e] font-semibold'
+                        : 'border-[#e5e7eb] text-[#444653] hover:border-[#00288e]/40'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined shrink-0" style={{ fontSize: 17, fontVariationSettings: resolutionRequest === 'refund' ? "'FILL' 1" : "'FILL' 0" }}>payments</span>
+                    Yêu cầu hoàn tiền
+                  </button>
                 </div>
-                <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-4">
-                  <p className="text-sm font-semibold text-amber-800 mb-2 flex items-center gap-2">
-                    <span className="material-symbols-outlined shrink-0" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>warning</span>
-                    Hoàn tiền không được đảm bảo
-                  </p>
-                  <p className="text-xs text-amber-700 leading-relaxed">
-                    Mức hoàn tiền do hệ thống và Admin quyết định dựa trên chính sách, tiến độ học, thời gian và minh chứng bạn cung cấp. Bạn không cần tự chọn mức hoàn tiền.
-                  </p>
-                </div>
+                {resolutionRequest === 'refund' && (
+                  <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-4">
+                    <p className="text-sm font-semibold text-amber-800 mb-2 flex items-center gap-2">
+                      <span className="material-symbols-outlined shrink-0" style={{ fontSize: 18, fontVariationSettings: "'FILL' 1" }}>warning</span>
+                      Hoàn tiền không được đảm bảo
+                    </p>
+                    <p className="text-xs text-amber-700 leading-relaxed">
+                      Mức hoàn tiền do hệ thống và Admin quyết định dựa trên chính sách, tiến độ học, thời gian và minh chứng bạn cung cấp. Bạn không cần tự chọn mức hoàn tiền.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Mô tả chi tiết */}

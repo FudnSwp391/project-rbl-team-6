@@ -3052,16 +3052,19 @@ const NOTIFICATION_TEMPLATES = {
     icon: d.forAdmin ? 'gavel' : 'report', priority: 'high',
   }),
   dispute_resolved_refund: d => ({
-    subject: '[EduX] Khiếu nại: Đã hoàn tiền', title: 'Khiếu nại: Đã hoàn tiền',
+    subject: '[EduX] Khiếu nại: Đã hoàn tiền', title: d.forTutor ? 'Khiếu nại về bạn đã được xử lý' : 'Khiếu nại: Đã hoàn tiền',
     body: d.forTutor
-      ? `Admin hoàn tiền cho học sinh.${d.repDeduct ? ` Điểm uy tín bị trừ ${d.repDeduct}.` : ''}`
+      ? `Admin đã xem xét khiếu nại buổi học và quyết định hoàn tiền cho học sinh.${d.reason ? ` Lý do khiếu nại: ${d.reason}.` : ''}${d.adminNote ? ` Ghi chú của Admin: ${d.adminNote}.` : ''}${d.repDeduct ? ` Điểm uy tín bị trừ ${d.repDeduct}.` : ''}${d.autoBanned ? (d.penaltyType === 'BAN' ? ' Tài khoản của bạn đã bị khóa vĩnh viễn theo quyết định của Admin.' : ' Tài khoản của bạn đã bị khóa do điểm uy tín xuống dưới 30.') : ''}`
       : `Admin phán quyết: Hoàn ${fmtVnd(d.amount)} (${Math.round((d.rate ?? 1) * 100)}%) vào ví bạn.`,
-    icon: d.forTutor ? 'gavel' : 'check_circle', priority: 'high',
+    icon: d.forTutor ? 'gavel' : 'check_circle', priority: d.forTutor && (d.repDeduct || d.autoBanned) ? 'high' : 'normal',
   }),
   dispute_resolved_release: d => ({
-    subject: '[EduX] Khiếu nại đã được xử lý', title: 'Khiếu nại không được chấp nhận',
-    body: 'Admin xem xét và phán quyết gia sư không vi phạm.',
-    icon: 'gavel', priority: 'normal',
+    subject: d.forTutor ? '[EduX] Khieu nai ve ban da duoc xu ly' : '[EduX] Khiếu nại đã được xử lý',
+    title: d.forTutor ? 'Khiếu nại về bạn đã được xử lý' : 'Khiếu nại không được chấp nhận',
+    body: d.forTutor
+      ? `Admin đã xem xét khiếu nại buổi học và quyết định giữ nguyên khoản thanh toán cho bạn.${d.reason ? ` Lý do khiếu nại: ${d.reason}.` : ''}${d.adminNote ? ` Ghi chú của Admin: ${d.adminNote}.` : ''}${d.repDeduct ? ` Điểm uy tín bị trừ ${d.repDeduct}.` : ''}${d.autoBanned ? (d.penaltyType === 'BAN' ? ' Tài khoản của bạn đã bị khóa vĩnh viễn theo quyết định của Admin.' : ' Tài khoản của bạn đã bị khóa do điểm uy tín xuống dưới 30.') : ''}`
+      : 'Admin xem xét và phán quyết gia sư không vi phạm.',
+    icon: 'gavel', priority: d.forTutor && (d.repDeduct || d.autoBanned) ? 'high' : 'normal',
   }),
   dispute_withdrawn: d => ({
     subject: '[EduX] Khiếu nại đã được rút', title: d.forAdmin ? 'Học sinh đã rút khiếu nại' : 'Khiếu nại đã được rút',
@@ -3251,6 +3254,13 @@ const NOTIFICATION_TEMPLATES = {
     body: `Gia sư ${d.tutorName || ''} yêu cầu rút ${fmtVnd(d.amount)}. Vui lòng xử lý trong trang quản trị.`,
     icon: 'account_balance', priority: 'high',
     ctaLabel: 'Xử lý ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/admin`,
+  }),
+  complaint_penalty: d => ({
+    subject: '[EduX] Ban bi ap dung bien phap xu ly do khieu nai khoa hoc',
+    title: 'Bạn bị áp dụng biện pháp xử lý',
+    body: `Khiếu nại #${d.complaintNumber || ''}${d.courseTitle ? ` về khóa học "${d.courseTitle}"` : ''} đã được Admin xem xét và chấp nhận. Lý do khiếu nại: ${d.reason || 'Không có'}. Hình thức xử lý: ${d.penaltyLabel || ''}.${d.adminNote ? ` Ghi chú của Admin: ${d.adminNote}.` : ''}${d.autoBanned ? (d.penaltyType === 'BAN' ? ' Tài khoản của bạn đã bị khóa vĩnh viễn theo quyết định của Admin.' : ' Tài khoản của bạn đã bị khóa do điểm uy tín xuống dưới 30.') : ''}`,
+    icon: 'gavel', priority: d.autoBanned ? 'critical' : 'high',
+    ctaLabel: 'Xem chi tiết', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
   }),
 };
 
@@ -13661,13 +13671,16 @@ app.get('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
 
 // PUT /api/admin/course-complaints/:id
 app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (req, res) => {
-  const { status, message, admin_response, resolution_type, refund_amount, resolution_details } = req.body;
+  const { status, message, admin_response, resolution_type, refund_amount, resolution_details, penalty_type } = req.body;
   const validStatuses = ['pending','processing','waiting_student','waiting_tutor','resolved','rejected','closed'];
   if (status && !validStatuses.includes(status)) {
     return res.status(400).json({ message: 'Trạng thái không hợp lệ.' });
   }
   if (resolution_type && !['accepted','rejected','partial'].includes(resolution_type)) {
     return res.status(400).json({ message: 'Kết quả không hợp lệ.' });
+  }
+  if (penalty_type && !['NONE','WARNING','DEDUCT_REP','SUSPEND_3_DAYS','BAN'].includes(penalty_type)) {
+    return res.status(400).json({ message: 'Hình thức xử phạt không hợp lệ.' });
   }
   const client = await pool.connect();
   try {
@@ -13687,6 +13700,62 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
         return res.status(400).json({ message: 'Số tiền hoàn không được vượt quá giá khóa học.' });
       }
     }
+
+    // Tutor penalty (Gắn hệ thống điểm uy tín gia sư vào luồng khiếu nại khóa học)
+    let tutorPenaltyMeta = null;
+    if (['accepted', 'partial'].includes(resolution_type) && penalty_type && penalty_type !== 'NONE') {
+      const courseTutorRes = await client.query(`SELECT tutor_id, title AS course_title FROM courses WHERE id=$1`, [comp.course_id]);
+      const tutorId = courseTutorRes.rows[0]?.tutor_id;
+      const courseTitle = courseTutorRes.rows[0]?.course_title;
+      if (tutorId) {
+        let repDeduct = 0;
+        if (penalty_type === 'DEDUCT_REP') repDeduct = 10;
+        else if (penalty_type === 'SUSPEND_3_DAYS') repDeduct = 20;
+        else if (penalty_type === 'BAN') repDeduct = 50;
+
+        let newReputationScore = null;
+        let autoBanned = false;
+        if (repDeduct > 0) {
+          const tp = await client.query(
+            `UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`,
+            [repDeduct, tutorId]
+          );
+          newReputationScore = tp.rows[0]?.reputation_score ?? null;
+          if (newReputationScore !== null && newReputationScore < 30) {
+            await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+            autoBanned = true;
+          }
+        }
+        if (penalty_type === 'BAN') {
+          await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+          autoBanned = true;
+        }
+
+        const penaltyLabels = {
+          WARNING: 'Cảnh cáo',
+          DEDUCT_REP: 'Trừ điểm uy tín (-10 điểm)',
+          SUSPEND_3_DAYS: 'Đình chỉ tạm thời (-20 điểm)',
+          BAN: 'Khóa tài khoản vĩnh viễn',
+        };
+        await safeNotifyUser(client, {
+          userId: tutorId, channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'complaint_penalty', eventType: 'complaint_penalty',
+          data: {
+            complaintNumber: comp.complaint_number,
+            courseTitle: courseTitle || null,
+            reason: comp.reason,
+            penaltyLabel: penaltyLabels[penalty_type] || penalty_type,
+            adminNote: admin_response?.trim() || message?.trim() || null,
+            autoBanned, penaltyType: penalty_type,
+          },
+          refId: req.params.id, refType: 'complaint', sourceType: 'complaint', sourceId: req.params.id,
+          idempotencyKey: `complaint_penalty:${req.params.id}:${tutorId}`,
+        });
+
+        tutorPenaltyMeta = { tutor_id: tutorId, penalty_type, rep_deduct: repDeduct, new_reputation_score: newReputationScore, auto_banned: autoBanned };
+      }
+    }
+
     const oldStatus = comp.status;
     const newStatus = status || (resolution_type === 'accepted' ? 'resolved' : resolution_type === 'rejected' ? 'rejected' : resolution_type === 'partial' ? 'resolved' : oldStatus);
     const isTerminal = ['resolved','rejected','closed'].includes(newStatus);
@@ -13712,7 +13781,7 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
       await client.query(
         `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type, metadata)
          VALUES ($1,$2,'admin',$3,'resolution',$4)`,
-        [req.params.id, req.user.userId, message.trim(), JSON.stringify({ resolution_type, refund_amount: refund_amount ? parseInt(refund_amount) : null, resolution_details: resolution_details || null })]
+        [req.params.id, req.user.userId, message.trim(), JSON.stringify({ resolution_type, refund_amount: refund_amount ? parseInt(refund_amount) : null, resolution_details: resolution_details || null, tutor_penalty: tutorPenaltyMeta })]
       );
     } else if (message?.trim()) {
       await client.query(
@@ -13754,7 +13823,7 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
       [comp.student_id, notifTitle, message?.trim() || notifTitle, req.params.id]
     );
     await client.query('COMMIT');
-    return res.json({ complaint: updated.rows[0] });
+    return res.json({ complaint: updated.rows[0], tutor_penalty: tutorPenaltyMeta });
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Admin update complaint error:', e);
@@ -18658,11 +18727,13 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
     else if (penaltyType === 'SUSPEND_3_DAYS') repDeduct = 20;
     else if (penaltyType === 'BAN') repDeduct = 50;
 
+    let autoBanned = false;
     if (repDeduct > 0) {
       const tp = await client.query(`UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`, [repDeduct, tutorId]);
       // Auto-ban check
       if (tp.rows.length && tp.rows[0].reputation_score < 30) {
         await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+        autoBanned = true;
         // Batch 20.1: safeNotifyUser, same client, priority critical
         await safeNotifyUser(client, {
           userId: tutorId, type: 'system', channels: ['IN_APP'],
@@ -18677,6 +18748,7 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
 
     if (penaltyType === 'BAN') {
       await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+      autoBanned = true;
     }
 
     if (decision === 'REFUND_TO_STUDENT') {
@@ -18763,7 +18835,7 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
       await safeNotifyUser(client, {
         userId: tutorId, channels: ['IN_APP', 'EMAIL'],
         templateKey: 'dispute_resolved_refund', eventType: 'dispute_resolved_refund',
-        data: { forTutor: true, repDeduct },
+        data: { forTutor: true, repDeduct, reason: dispute.reason, adminNote: adminNote || null, autoBanned, penaltyType },
         refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
         idempotencyKey: `dispute:${disputeId}:resolved:refund:${tutorId}`,
       });
@@ -18800,6 +18872,13 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
         templateKey: 'dispute_resolved_release', eventType: 'dispute_resolved_release',
         refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
         idempotencyKey: `dispute:${disputeId}:resolved:release:${studentId}`,
+      });
+      await safeNotifyUser(client, {
+        userId: tutorId, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_resolved_release', eventType: 'dispute_resolved_release',
+        data: { forTutor: true, repDeduct, reason: dispute.reason, adminNote: adminNote || null, autoBanned, penaltyType },
+        refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
+        idempotencyKey: `dispute:${disputeId}:resolved:release:${tutorId}`,
       });
     }
 
