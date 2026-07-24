@@ -14669,6 +14669,255 @@ app.post("/api/tutor/bookings/:id/checkin", verifyToken, requireTutor, async (re
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// ── BẢO MẬT CHECK-IN OFFLINE 2 CHIỀU (MÃ PIN 4 SỐ & MÃ QR CODE) ─────────────
+// ════════════════════════════════════════════════════════════════════════════
+
+// Khởi tạo các cột bổ sung cho bảng bookings
+(async () => {
+  try {
+    await pool.query(`
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_checkin_pin VARCHAR(6) DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_pin_created_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_verified_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_verification_method VARCHAR(20) DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_failed_attempts INT DEFAULT 0;
+    `);
+  } catch (err) {
+    console.error("Init offline check-in columns error:", err.message);
+  }
+})();
+
+// Helper sinh Mã PIN 4 số ngẫu nhiên ngầm
+function generateOfflinePIN() {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
+// GET /api/bookings/:id/offline-pin — Học sinh / Phụ huynh lấy Mã PIN & QR Code của buổi học Offline
+app.get("/api/bookings/:id/offline-pin", verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bRes = await pool.query(
+      `SELECT b.id, b.student_id, b.tutor_id, b.teaching_method, b.lesson_date, b.time_slot,
+              b.offline_checkin_pin, b.offline_pin_created_at, b.offline_verified_at,
+              b.offline_verification_method, u_tutor.full_name AS tutor_name, u_student.full_name AS student_name
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       LEFT JOIN users u_student ON u_student.id = b.student_id
+       WHERE b.id = $1`,
+      [bookingId]
+    );
+
+    if (bRes.rows.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy buổi học." });
+    }
+
+    const booking = bRes.rows[0];
+
+    // Check auth (học sinh, phụ huynh hoặc gia sư)
+    let isAuthorized = String(booking.student_id) === String(req.user.userId) || String(booking.tutor_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: "Bạn không có quyền truy cập mã PIN của buổi học này." });
+    }
+
+    // Tự tạo Mã PIN 4 số nếu chưa có
+    let currentPin = booking.offline_checkin_pin;
+    if (!currentPin) {
+      currentPin = generateOfflinePIN();
+      await pool.query(
+        `UPDATE bookings SET offline_checkin_pin = $1, offline_pin_created_at = NOW() WHERE id = $2`,
+        [currentPin, bookingId]
+      );
+    }
+
+    const qrData = `EDUX_OFFLINE:${booking.id}:${currentPin}`;
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+
+    return res.json({
+      success: true,
+      bookingId: booking.id,
+      pin: currentPin,
+      qrData,
+      qrImageUrl,
+      verified: !!booking.offline_verified_at,
+      verifiedAt: booking.offline_verified_at,
+      verificationMethod: booking.offline_verification_method,
+      tutorName: booking.tutor_name,
+      studentName: booking.student_name
+    });
+  } catch (err) {
+    console.error("GET /api/bookings/:id/offline-pin error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ khi lấy mã PIN." });
+  }
+});
+
+// POST /api/bookings/:id/regenerate-offline-pin — Học sinh / Phụ huynh yêu cầu đổi Mã PIN mới
+app.post("/api/bookings/:id/regenerate-offline-pin", verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bRes = await pool.query(`SELECT student_id FROM bookings WHERE id = $1`, [bookingId]);
+    if (!bRes.rows.length) return res.status(404).json({ message: "Không tìm thấy buổi học." });
+
+    const booking = bRes.rows[0];
+    let isAuthorized = String(booking.student_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+    if (!isAuthorized) return res.status(403).json({ message: "Bạn không có quyền thực hiện thao tác này." });
+
+    const newPin = generateOfflinePIN();
+    await pool.query(
+      `UPDATE bookings 
+       SET offline_checkin_pin = $1, offline_pin_created_at = NOW(), offline_failed_attempts = 0 
+       WHERE id = $2`,
+      [newPin, bookingId]
+    );
+
+    const qrData = `EDUX_OFFLINE:${bookingId}:${newPin}`;
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+
+    return res.json({
+      success: true,
+      message: "Đã tạo mã PIN mới thành công!",
+      pin: newPin,
+      qrData,
+      qrImageUrl
+    });
+  } catch (err) {
+    console.error("POST /api/bookings/:id/regenerate-offline-pin error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// POST /api/bookings/:id/verify-offline-checkin — Gia sư nhập mã PIN 4 số hoặc quét QR để Check-in Offline
+app.post("/api/bookings/:id/verify-offline-checkin", verifyToken, requireTutor, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const { pin, qrData } = req.body || {};
+
+    const bRes = await pool.query(
+      `SELECT b.id, b.tutor_id, b.student_id, b.subject, b.lesson_date, b.time_slot,
+              b.offline_checkin_pin, b.offline_verified_at, b.offline_failed_attempts,
+              u_tutor.full_name AS tutor_name
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       WHERE b.id = $1 AND b.tutor_id = $2`,
+      [bookingId, req.user.userId]
+    );
+
+    if (bRes.rows.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    }
+
+    const booking = bRes.rows[0];
+
+    // Chặn nếu đã xác nhận trước đó
+    if (booking.offline_verified_at) {
+      return res.json({
+        success: true,
+        alreadyVerified: true,
+        message: "Buổi học này đã được xác nhận điểm danh Offline trước đó.",
+        verifiedAt: booking.offline_verified_at
+      });
+    }
+
+    // Chống Bruteforce: Khóa nếu sai quá 5 lần
+    if (booking.offline_failed_attempts >= 5) {
+      return res.status(429).json({
+        message: "Gia sư đã nhập sai mã PIN quá 5 lần. Vui lòng nhờ Học sinh / Phụ huynh đổi Mã PIN mới trên ứng dụng."
+      });
+    }
+
+    // Ràng buộc Khung thời gian Check-in
+    const winStart = lessonStartFrom(booking.lesson_date, booking.time_slot);
+    const winEnd = lessonEndFrom(booking.lesson_date, booking.time_slot);
+    if (winStart && Date.now() < winStart.getTime() - 30 * 60000) {
+      return res.status(400).json({ message: "Chưa đến giờ check-in. Bạn chỉ có thể nhập PIN / QR từ 30 phút trước giờ học." });
+    }
+    if (winEnd && Date.now() > winEnd.getTime() + 60 * 60000) {
+      return res.status(400).json({ message: "Đã quá thời hạn check-in cho buổi học này (60 phút sau khi kết thúc)." });
+    }
+
+    // Kiểm tra khớp PIN hoặc QR String
+    let inputPin = String(pin || '').trim();
+    if (qrData && typeof qrData === 'string') {
+      const parts = qrData.split(':');
+      if (parts.length >= 3 && parts[0] === 'EDUX_OFFLINE' && parts[1] === bookingId) {
+        inputPin = parts[2];
+      }
+    }
+
+    if (!inputPin || inputPin !== String(booking.offline_checkin_pin)) {
+      const newFailedCount = Number(booking.offline_failed_attempts || 0) + 1;
+      await pool.query(`UPDATE bookings SET offline_failed_attempts = $1 WHERE id = $2`, [newFailedCount, bookingId]);
+
+      const remaining = Math.max(0, 5 - newFailedCount);
+      return res.status(400).json({
+        message: `Mã PIN / QR không chính xác! Bạn còn ${remaining} lần thử lại.`,
+        remainingAttempts: remaining
+      });
+    }
+
+    // XÁC NHẬN THÀNH CÔNG (MATCH)
+    const verificationMethod = qrData ? 'QR' : 'PIN';
+    await pool.query(
+      `UPDATE bookings 
+       SET tutor_check_in_at = NOW(), 
+           offline_verified_at = NOW(), 
+           offline_verification_method = $1,
+           offline_failed_attempts = 0
+       WHERE id = $2`,
+      [verificationMethod, bookingId]
+    );
+
+    // Tự động ghi nhận điểm danh present cho buổi học
+    await pool.query(
+      `INSERT INTO attendance (booking_id, tutor_id, student_id, status, note, marked_at)
+       VALUES ($1, $2, $3, 'present', 'Điểm danh Offline 2 chiều qua Mã ' || $4, NOW())
+       ON CONFLICT (booking_id)
+       DO UPDATE SET status = 'present', note = 'Điểm danh Offline 2 chiều qua Mã ' || $4, marked_at = NOW()`,
+      [bookingId, booking.tutor_id, booking.student_id, verificationMethod]
+    );
+
+    // Bắn thông báo Socket.io & Realtime tới Học sinh & Phụ huynh
+    if (req.app && req.app.get('io')) {
+      req.app.get('io').to(`user-${booking.student_id}`).emit('offlineCheckinVerified', {
+        booking_id: bookingId,
+        tutor_name: booking.tutor_name,
+        verification_method: verificationMethod,
+        verified_at: new Date()
+      });
+    }
+
+    // Gửi notification in-app
+    await safeNotifyUser(pool, {
+      userId: booking.student_id,
+      type: 'attendance',
+      channels: ['IN_APP'],
+      templateKey: 'generic',
+      eventType: 'offline_checkin_success',
+      refId: bookingId,
+      refType: 'booking',
+      data: { message: `Gia sư ${booking.tutor_name || 'Gia sư'} đã xác nhận có mặt tại buổi học Offline thành công qua Mã ${verificationMethod}.` }
+    });
+
+    return res.json({
+      success: true,
+      message: `Xác nhận có mặt Offline thành công qua Mã ${verificationMethod}! Hệ thống đã ghi nhận điểm danh có mặt cho buổi học.`,
+      verifiedAt: new Date()
+    });
+  } catch (err) {
+    console.error("POST /api/bookings/:id/verify-offline-checkin error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ khi xác nhận check-in." });
+  }
+});
+
 
 // GET /api/bookings — danh sách lịch học của user hiện tại
 app.get("/api/bookings", verifyToken, async (req, res) => {

@@ -3,6 +3,8 @@ import { useAuth } from '../AuthContext';
 import { requestMethodChange } from '../services/api';
 import ReportSessionModal from './ReportSessionModal';
 import LessonEvaluationModal from './LessonEvaluationModal';
+import OfflineCheckinModal from './OfflineCheckinModal';
+import TutorVerifyCheckinModal from './TutorVerifyCheckinModal';
 import { API_BASE_URL } from '../config';
 
 const API_BASE = API_BASE_URL;
@@ -16,6 +18,10 @@ const SchedulePage = () => {
   // Evaluated bookings & modal
   const [evaluatedBookingIds, setEvaluatedBookingIds] = useState([]);
   const [evaluateSession, setEvaluateSession] = useState(null);
+
+  // Offline Check-in modals
+  const [offlinePinBooking, setOfflinePinBooking] = useState(null);
+  const [verifyCheckinBooking, setVerifyCheckinBooking] = useState(null);
 
   // Filters
   const [searchInput, setSearchInput] = useState('');   // what user types
@@ -739,6 +745,9 @@ const SchedulePage = () => {
           onWithdrawDispute={() => handleWithdrawDispute(detailSession.open_dispute_id)}
           isEvaluated={evaluatedBookingIds.includes(detailSession.id || detailSession.booking_id)}
           onOpenEvaluateModal={setEvaluateSession}
+          isTutor={user?.role === 'tutor'}
+          onOpenOfflinePinModal={setOfflinePinBooking}
+          onOpenVerifyCheckinModal={setVerifyCheckinBooking}
         />
       )}
 
@@ -880,6 +889,27 @@ const SchedulePage = () => {
           setEvaluatedBookingIds(prev => [...prev, bookingId]);
         }}
       />
+
+      {/* Modal hiển thị Mã PIN & QR điểm danh Offline cho Học sinh / Phụ huynh */}
+      <OfflineCheckinModal
+        isOpen={!!offlinePinBooking}
+        onClose={() => setOfflinePinBooking(null)}
+        booking={offlinePinBooking}
+        token={token}
+        API_BASE={API_BASE}
+      />
+
+      {/* Modal Gia sư nhập Mã PIN 4 số hoặc Quét QR xác nhận có mặt Offline */}
+      <TutorVerifyCheckinModal
+        isOpen={!!verifyCheckinBooking}
+        onClose={() => setVerifyCheckinBooking(null)}
+        booking={verifyCheckinBooking}
+        token={token}
+        API_BASE={API_BASE}
+        onSuccess={() => {
+          fetchSchedule();
+        }}
+      />
     </div>
   );
 };
@@ -887,7 +917,7 @@ const SchedulePage = () => {
 export default SchedulePage;
 
 // ─── Session Detail Modal ────────────────────────────────────────────────────
-function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute, isEvaluated, onOpenEvaluateModal }) {
+function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute, isEvaluated, onOpenEvaluateModal, isTutor, onOpenOfflinePinModal, onOpenVerifyCheckinModal }) {
   const [copied, setCopied] = useState(false);
   const [copiedPwd, setCopiedPwd] = useState(false);
   const [checkedMaterials, setCheckedMaterials] = useState({});
@@ -1331,12 +1361,25 @@ function SessionDetailModal({ session, info, onClose, onRequested, reportStatus,
               Tham gia lớp học
             </button>
           )}
+          {mode === 'offline' && session.status !== 'completed' && (
+            <button
+              onClick={() => {
+                onClose();
+                if (isTutor && onOpenVerifyCheckinModal) onOpenVerifyCheckinModal(session);
+                if (!isTutor && onOpenOfflinePinModal) onOpenOfflinePinModal(session);
+              }}
+              className="flex-1 h-10 bg-emerald-600 text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-emerald-700 transition-colors shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[18px]">vpn_key</span>
+              {isTutor ? 'Check-in Offline (PIN/QR)' : 'Mã PIN / QR Offline'}
+            </button>
+          )}
           {mode === 'offline' && info?.location && session.status !== 'completed' && (
             <a
               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.location)}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex-1 h-10 bg-[#16a34a] text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors shadow-sm"
+              className="h-10 px-4 bg-[#16a34a] text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors shadow-sm"
             >
               <span className="material-symbols-outlined text-[16px]">map</span>
               Chỉ đường
