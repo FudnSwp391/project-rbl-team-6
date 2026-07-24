@@ -115,7 +115,6 @@ const NAV_ITEMS = [
   { id: 'wallet-management', label: 'Duyệt giao dịch Ví',  icon: 'account_balance_wallet', section: 'Tài chính & Dịch vụ' },
   { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology',           section: 'Hệ thống' },
   { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu',          section: 'Hệ thống' },
-  { id: 'settings',        label: 'Cài đặt',               icon: 'settings',             section: 'Hệ thống' },
 ]
 
 // Bản đồ nhãn dùng cho breadcrumb ở thanh trên cùng
@@ -558,7 +557,6 @@ export default function AdminDashboard() {
 
           {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
           {activeView === 'audit-logs'       && <AuditLogs token={token} />}
-          {activeView === 'settings'         && <SettingsView />}
         </Suspense>
         </div>
       </main>
@@ -4126,126 +4124,6 @@ function AIInsightsView({ token }) {
         </>
       )}
     </div>
-  )
-}
-
-// ─── Settings View ────────────────────────────────────────────────────────────
-function SettingsView() {
-  // Read-only: no settings store exists in the DB, so values are display-only
-  // defaults and cannot be persisted. No mutation is performed here.
-  const [form, setForm] = useState({
-    siteName: 'EduX',
-    supportEmail: 'support@academiaflow.com',
-    maxPendingDays: '7',
-    autoRejectDays: '30',
-    minTutorRating: '3.5',
-    commissionRate: '15',
-    maintenanceMode: false,
-    emailNotifications: true,
-    aiAnomalyDetection: true,
-    auditLogRetention: '90',
-  })
-
-  return (
-    <div className="p-10 max-w-[900px] mx-auto">
-      <div className="mb-8">
-        <h2 className="text-3xl font-bold text-on-background">Cài đặt</h2>
-        <p className="text-sm text-on-surface-variant mt-1">Cấu hình cài đặt và chính sách toàn nền tảng.</p>
-      </div>
-
-      <div className="mb-6 bg-sky-50 border border-sky-200 rounded-xl p-4 flex items-start gap-3">
-        <span className="material-symbols-outlined text-sky-600 mt-0.5">visibility</span>
-        <div>
-          <p className="text-sm font-semibold text-sky-800">Chế độ chỉ xem</p>
-          <p className="text-sm text-sky-700">Các giá trị dưới đây là mặc định hiển thị và chưa được kết nối với kho lưu trữ cấu hình thực — không thể chỉnh sửa hoặc lưu tại đây.</p>
-        </div>
-      </div>
-
-      <fieldset disabled className="space-y-6 border-0 p-0 m-0 min-w-0">
-        {/* General */}
-        <SettingsSection title="Chung" icon="settings">
-          <SettingsField label="Tên nền tảng" sub="Hiển thị trên toàn bộ trang và trong email.">
-            <input className="settings-input" value={form.siteName} onChange={e => setForm(f => ({ ...f, siteName: e.target.value }))} />
-          </SettingsField>
-          <SettingsField label="Email hỗ trợ" sub="Phản hồi email hệ thống sẽ được gửi đến đây.">
-            <input className="settings-input" type="email" value={form.supportEmail} onChange={e => setForm(f => ({ ...f, supportEmail: e.target.value }))} />
-          </SettingsField>
-        </SettingsSection>
-
-        {/* Tutor Approval */}
-        <SettingsSection title="Chính sách duyệt gia sư" icon="how_to_reg">
-          <SettingsField label="Số ngày chờ tối đa" sub="Hồ sơ quá ngày này sẽ được tô nổi để xem xét.">
-            <input className="settings-input w-32" type="number" min="1" value={form.maxPendingDays} onChange={e => setForm(f => ({ ...f, maxPendingDays: e.target.value }))} />
-          </SettingsField>
-          <SettingsField label="Tự động từ chối sau (ngày)" sub="Tự động từ chối hồ sơ chưa hoàn thiện sau số ngày này.">
-            <input className="settings-input w-32" type="number" min="1" value={form.autoRejectDays} onChange={e => setForm(f => ({ ...f, autoRejectDays: e.target.value }))} />
-          </SettingsField>
-          <SettingsField label="Xếp hạng gia sư tối thiểu" sub="Gia sư dưới mức này sẽ bị gắn cờ để xem xét.">
-            <input className="settings-input w-32" type="number" min="1" max="5" step="0.1" value={form.minTutorRating} onChange={e => setForm(f => ({ ...f, minTutorRating: e.target.value }))} />
-          </SettingsField>
-        </SettingsSection>
-
-        {/* Financial */}
-        <SettingsSection title="Tài chính" icon="payments">
-          <SettingsField label="Tỷ lệ hoa hồng nền tảng (%)" sub="Phần trăm trích từ mỗi khoản thanh toán cho gia sư.">
-            <input className="settings-input w-32" type="number" min="0" max="100" value={form.commissionRate} onChange={e => setForm(f => ({ ...f, commissionRate: e.target.value }))} />
-          </SettingsField>
-        </SettingsSection>
-
-        {/* System */}
-        <SettingsSection title="Hệ thống" icon="manage_accounts">
-          <SettingsField label="Chế độ bảo trì" sub="Tắt quyền truy cập cho người dùng không phải admin.">
-            <Toggle checked={form.maintenanceMode} onChange={v => setForm(f => ({ ...f, maintenanceMode: v }))} />
-          </SettingsField>
-          <SettingsField label="Thông báo email" sub="Gửi cảnh báo hệ thống và email duyệt hồ sơ.">
-            <Toggle checked={form.emailNotifications} onChange={v => setForm(f => ({ ...f, emailNotifications: v }))} />
-          </SettingsField>
-          <SettingsField label="Phát hiện bất thường AI" sub="Tự động gắn cờ các hoạt động đáng ngờ.">
-            <Toggle checked={form.aiAnomalyDetection} onChange={v => setForm(f => ({ ...f, aiAnomalyDetection: v }))} />
-          </SettingsField>
-          <SettingsField label="Thời gian lưu nhật ký (ngày)" sub="Nhật ký cũ hơn số ngày này sẽ tự động bị xóa.">
-            <input className="settings-input w-32" type="number" min="30" value={form.auditLogRetention} onChange={e => setForm(f => ({ ...f, auditLogRetention: e.target.value }))} />
-          </SettingsField>
-        </SettingsSection>
-      </fieldset>
-
-      <style>{`.settings-input { width: 100%; padding: 8px 12px; border: 1px solid #c4c5d5; border-radius: 8px; font-size: 14px; background: #f9fafb; outline: none; transition: border-color .2s; } .settings-input:focus { border-color: #00288e; box-shadow: 0 0 0 2px rgba(0,40,142,.1); } fieldset[disabled] .settings-input { background: #f3f4f6; color: #6b7280; cursor: not-allowed; }`}</style>
-    </div>
-  )
-}
-
-function SettingsSection({ title, icon, children }) {
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-outline-variant bg-gray-50">
-        <span className="material-symbols-outlined text-primary text-[20px]">{icon}</span>
-        <h3 className="text-sm font-bold text-on-surface">{title}</h3>
-      </div>
-      <div className="divide-y divide-outline-variant">{children}</div>
-    </div>
-  )
-}
-
-function SettingsField({ label, sub, children }) {
-  return (
-    <div className="flex items-center justify-between px-6 py-4 gap-8">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-on-surface">{label}</p>
-        <p className="text-xs text-on-surface-variant mt-0.5">{sub}</p>
-      </div>
-      <div className="flex-shrink-0">{children}</div>
-    </div>
-  )
-}
-
-function Toggle({ checked, onChange }) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${checked ? 'bg-primary' : 'bg-gray-300'}`}
-    >
-      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
-    </button>
   )
 }
 
