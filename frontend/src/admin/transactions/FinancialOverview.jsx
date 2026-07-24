@@ -102,7 +102,7 @@ export default function FinancialOverview({ onNavigate, token }) {
     { icon: 'percent',        label: 'Phí Nền Tảng',     value: fmtCompact(ov.platform_fees || 0),                change: null, color: 'purple', nav: 'tx-commissions',      subtitle: 'Hoa hồng đã thu' },
     { icon: 'gavel',          label: 'Tranh Chấp Mở',    value: `${ov.open_disputes ?? '—'} vụ`,                  change: null, color: 'red',    nav: 'tx-disputes',         subtitle: 'Cần xử lý' },
     { icon: 'account_balance',label: 'Rút Tiền Chờ',     value: `${ov.pending_withdrawals || 0} yêu cầu`,         change: null, color: 'orange', nav: 'tx-withdrawals',      subtitle: 'Đang xem xét' },
-    { icon: 'warning',        label: 'Fraud Alerts',     value: `${ov.fraud_alerts || 0} cảnh báo`,               change: null, color: 'red',    nav: 'tx-fraud',            subtitle: 'Cần kiểm tra' },
+    { icon: 'warning',        label: 'Fraud Alerts',     value: `${fraudAlerts.length} cảnh báo`,                 change: null, color: 'red',    nav: 'tx-fraud',            subtitle: 'Cần kiểm tra' },
   ]
 
   const quickStats = [

@@ -11,7 +11,7 @@ const fmtDate  = iso => iso
 const STATUS_CFG = {
   PENDING:   { label: 'Chờ duyệt',   cls: 'bg-amber-100 text-amber-700' },
   APPROVED:  { label: 'Đã duyệt',    cls: 'bg-blue-100 text-blue-700' },
-  PAID:      { label: 'Đã chi',      cls: 'bg-emerald-100 text-emerald-700' },
+  COMPLETED: { label: 'Đã chi',      cls: 'bg-emerald-100 text-emerald-700' },
   REJECTED:  { label: 'Từ chối',     cls: 'bg-red-100 text-red-700' },
   CANCELLED: { label: 'Đã hủy',      cls: 'bg-gray-100 text-gray-600' },
 }
@@ -130,7 +130,7 @@ export default function WithdrawalRequests({ token }) {
           <option value="">Tất cả trạng thái</option>
           <option value="PENDING">Chờ duyệt</option>
           <option value="APPROVED">Đã duyệt</option>
-          <option value="PAID">Đã chi</option>
+          <option value="COMPLETED">Đã chi</option>
           <option value="REJECTED">Từ chối</option>
           <option value="CANCELLED">Đã hủy</option>
         </select>
@@ -181,22 +181,26 @@ export default function WithdrawalRequests({ token }) {
                         {actionable ? (
                           <div className="flex gap-1.5">
                             {it.status === 'PENDING' && (
-                              <button
-                                onClick={() => act(it.id, 'approve', `Duyệt yêu cầu rút ${fmtMoney(it.amount)} của ${it.tutor_name}?`)}
-                                disabled={busyId === it.id}
-                                className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                              >Duyệt</button>
+                              <>
+                                <button
+                                  onClick={() => act(it.id, 'approve', `Duyệt yêu cầu rút ${fmtMoney(it.amount)} của ${it.tutor_name}?`)}
+                                  disabled={busyId === it.id}
+                                  className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                                >Duyệt</button>
+                                <button
+                                  onClick={() => act(it.id, 'reject', 'Lý do từ chối yêu cầu rút tiền:')}
+                                  disabled={busyId === it.id}
+                                  className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50"
+                                >Từ chối</button>
+                              </>
                             )}
-                            <button
-                              onClick={() => act(it.id, 'mark-paid', `Xác nhận ĐÃ chuyển khoản ${fmtMoney(it.amount)} cho ${it.tutor_name}? Thao tác này không thể hoàn tác.`)}
-                              disabled={busyId === it.id}
-                              className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                            >Đã chi</button>
-                            <button
-                              onClick={() => act(it.id, 'reject', 'Lý do từ chối yêu cầu rút tiền:')}
-                              disabled={busyId === it.id}
-                              className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50"
-                            >Từ chối</button>
+                            {it.status === 'APPROVED' && (
+                              <button
+                                onClick={() => act(it.id, 'mark-paid', `Xác nhận ĐÃ chuyển khoản ${fmtMoney(it.amount)} cho ${it.tutor_name}? Thao tác này không thể hoàn tác.`)}
+                                disabled={busyId === it.id}
+                                className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                              >Đã chi</button>
+                            )}
                           </div>
                         ) : <span className="text-xs text-gray-300">—</span>}
                       </td>
