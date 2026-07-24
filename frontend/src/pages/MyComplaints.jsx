@@ -104,6 +104,7 @@ export default function MyComplaints({ token }) {
       reason:             c.reason || '',
       customReason:       c.category === 'other' ? (c.reason || '') : '',
       description:        c.description || '',
+      resolutionRequest:  c.resolution_request === 'report_only' ? 'report_only' : 'refund',
     });
   };
 
@@ -126,7 +127,7 @@ export default function MyComplaints({ token }) {
           category:           editForm.category,
           reason:             finalReason,
           description:        editForm.description.trim() || undefined,
-          resolution_request: 'REFUND',
+          resolution_request: editForm.resolutionRequest || 'refund',
         }),
       });
       const data = await res.json();
@@ -384,12 +385,34 @@ export default function MyComplaints({ token }) {
                         </div>
                       )}
 
-                      {/* Mong muốn của học viên — giá trị cố định, không phải lựa chọn */}
+                      {/* Mong muốn của học viên */}
                       <div>
                         <label className="block text-xs font-semibold text-on-surface mb-1.5">Mong muốn của học viên</label>
-                        <div className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-primary bg-primary/10 text-primary font-semibold text-xs">
-                          <span className="material-symbols-outlined shrink-0 text-green-500" style={{ fontSize: 10, fontVariationSettings: "'FILL' 1" }}>circle</span>
-                          Yêu cầu hoàn tiền
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditForm(f => ({ ...f, resolutionRequest: 'report_only' }))}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-left transition-all text-xs ${
+                              editForm.resolutionRequest === 'report_only'
+                                ? 'border-primary bg-primary/10 text-primary font-semibold'
+                                : 'border-outline-variant text-on-surface-variant hover:border-primary/40'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined shrink-0" style={{ fontSize: 15, fontVariationSettings: editForm.resolutionRequest === 'report_only' ? "'FILL' 1" : "'FILL' 0" }}>flag</span>
+                            Chỉ phản ánh
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditForm(f => ({ ...f, resolutionRequest: 'refund' }))}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-left transition-all text-xs ${
+                              editForm.resolutionRequest === 'refund'
+                                ? 'border-primary bg-primary/10 text-primary font-semibold'
+                                : 'border-outline-variant text-on-surface-variant hover:border-primary/40'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined shrink-0" style={{ fontSize: 15, fontVariationSettings: editForm.resolutionRequest === 'refund' ? "'FILL' 1" : "'FILL' 0" }}>payments</span>
+                            Yêu cầu hoàn tiền
+                          </button>
                         </div>
                       </div>
 

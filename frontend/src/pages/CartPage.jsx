@@ -190,6 +190,10 @@ export default function CartPage({ onGoSignIn, user }) {
         targetStudentId: user?.role === 'parent' ? selectedChildId : undefined
       }));
       const returnUrl = `${window.location.origin}/#/payment/result`;
+      sessionStorage.setItem('edux_payment_source', JSON.stringify({
+        returnHash: '#/cart',
+        source: 'cart'
+      }));
       const res = await fetch(`${API_BASE}/api/payment/create-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },

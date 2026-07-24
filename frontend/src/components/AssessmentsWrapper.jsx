@@ -1,9 +1,19 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import QuizList from '../QuizList'
 import ExamPapers from '../ExamPapers'
 
+function getTabFromHash() {
+  return window.location.hash.endsWith('/exam') ? 'exam' : 'quiz'
+}
+
 export default function AssessmentsWrapper({ token }) {
-  const [activeTab, setActiveTab] = useState('quiz')
+  const [activeTab, setActiveTab] = useState(getTabFromHash())
+
+  useEffect(() => {
+    const handler = () => setActiveTab(getTabFromHash())
+    window.addEventListener('hashchange', handler)
+    return () => window.removeEventListener('hashchange', handler)
+  }, [])
 
   return (
     <div className="flex flex-col gap-lg max-w-7xl mx-auto w-full animate-in fade-in slide-in-from-bottom-4 duration-500">

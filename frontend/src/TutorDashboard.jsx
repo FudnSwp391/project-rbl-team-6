@@ -874,11 +874,11 @@ export default function TutorDashboard() {
           )}
 
           {activeTab === 'WalletDeposit' && (
-            <WalletDeposit onBack={() => setActiveTab('Wallet')} />
+            <WalletDeposit onBack={() => setActiveTab('Ví Tiền')} />
           )}
 
           {activeTab === 'WalletWithdraw' && (
-            <WalletWithdraw onBack={() => setActiveTab('Wallet')} />
+            <WalletWithdraw onBack={() => setActiveTab('Ví Tiền')} />
           )}
 
           {/* Instant Request Modal */}
@@ -1330,9 +1330,6 @@ function TutorEarningsTab() {
           </div>
         )}
       </div>
-
-      {/* Withdrawal / payout panel (Batch 19) */}
-      <TutorWithdrawalPanel />
     </div>
   )
 }

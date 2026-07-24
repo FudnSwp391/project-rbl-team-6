@@ -3,6 +3,10 @@ import { useAuth } from '../AuthContext';
 import { requestMethodChange } from '../services/api';
 import ReportSessionModal from './ReportSessionModal';
 import RescheduleModal from './RescheduleModal';
+import LessonEvaluationModal from './LessonEvaluationModal';
+import OfflineCheckinModal from './OfflineCheckinModal';
+import TutorVerifyCheckinModal from './TutorVerifyCheckinModal';
+import StudentEvaluationReportModal from './StudentEvaluationReportModal';
 import { API_BASE_URL } from '../config';
 
 const API_BASE = API_BASE_URL;
@@ -12,6 +16,15 @@ const SchedulePage = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Evaluated bookings & modal
+  const [evaluatedBookingIds, setEvaluatedBookingIds] = useState([]);
+  const [evaluateSession, setEvaluateSession] = useState(null);
+  const [tutorReportBooking, setTutorReportBooking] = useState(null);
+
+  // Offline Check-in modals
+  const [offlinePinBooking, setOfflinePinBooking] = useState(null);
+  const [verifyCheckinBooking, setVerifyCheckinBooking] = useState(null);
 
   // Filters
   const [searchInput, setSearchInput] = useState('');   // what user types
@@ -52,6 +65,15 @@ const SchedulePage = () => {
         setData(json.data);
       } else {
         throw new Error(json.error || 'API Error');
+      }
+
+      // Fetch evaluations mine
+      const evalRes = await fetch(`${API_BASE}/api/bookings/evaluations/mine`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (evalRes.ok) {
+        const evalJson = await evalRes.json();
+        setEvaluatedBookingIds(evalJson.evaluatedBookingIds || []);
       }
     } catch (err) {
       setError(err.message);
@@ -730,6 +752,12 @@ const SchedulePage = () => {
             setDetailSession(null);
             setRescheduleSession(detailSession);
           }}
+          isEvaluated={evaluatedBookingIds.includes(detailSession.id || detailSession.booking_id)}
+          onOpenEvaluateModal={setEvaluateSession}
+          isTutor={user?.role === 'tutor'}
+          onOpenOfflinePinModal={setOfflinePinBooking}
+          onOpenVerifyCheckinModal={setVerifyCheckinBooking}
+          onOpenTutorReportModal={setTutorReportBooking}
         />
       )}
 
@@ -835,9 +863,19 @@ const SchedulePage = () => {
                             </button>
                           )}
                           {session.status === 'completed' && (
-                            <button type="button" className="bg-secondary-container/20 text-secondary px-4 py-2 rounded-lg text-label-md font-bold hover:bg-secondary-container/30 transition-colors">
-                              View Notes
-                            </button>
+                            evaluatedBookingIds.includes(session.id || session.booking_id) ? (
+                              <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1">
+                                <span className="material-symbols-outlined text-[16px]">check_circle</span> Đã đánh giá
+                              </span>
+                            ) : (
+                              <button 
+                                type="button" 
+                                onClick={() => setEvaluateSession(session)} 
+                                className="bg-[#00288e] text-white px-3.5 py-1.5 rounded-lg text-xs font-bold hover:bg-[#1e40af] transition-colors shadow-sm flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">star</span> Đánh giá buổi học
+                              </button>
+                            )
                           )}
                         </div>
                       </div>
@@ -880,6 +918,48 @@ const SchedulePage = () => {
           }}
         />
       )}
+
+      {/* Modal đánh giá chất lượng ngầm sau buổi học */}
+      <LessonEvaluationModal
+        isOpen={!!evaluateSession}
+        onClose={() => setEvaluateSession(null)}
+        booking={evaluateSession}
+        token={token}
+        API_BASE={API_BASE}
+        onSuccess={(bookingId) => {
+          setEvaluatedBookingIds(prev => [...prev, bookingId]);
+        }}
+      />
+
+      {/* Modal hiển thị Mã PIN & QR điểm danh Offline cho Học sinh / Phụ huynh */}
+      <OfflineCheckinModal
+        isOpen={!!offlinePinBooking}
+        onClose={() => setOfflinePinBooking(null)}
+        booking={offlinePinBooking}
+        token={token}
+        API_BASE={API_BASE}
+      />
+
+      {/* Modal Gia sư nhập Mã PIN 4 số hoặc Quét QR xác nhận có mặt Offline */}
+      <TutorVerifyCheckinModal
+        isOpen={!!verifyCheckinBooking}
+        onClose={() => setVerifyCheckinBooking(null)}
+        booking={verifyCheckinBooking}
+        token={token}
+        API_BASE={API_BASE}
+        onSuccess={() => {
+          fetchSchedule();
+        }}
+      />
+
+      {/* Modal Phụ huynh & Học sinh xem Báo cáo Đánh giá của Gia sư */}
+      <StudentEvaluationReportModal
+        isOpen={!!tutorReportBooking}
+        onClose={() => setTutorReportBooking(null)}
+        booking={tutorReportBooking}
+        token={token}
+        API_BASE={API_BASE}
+      />
     </div>
   );
 };
@@ -887,7 +967,7 @@ const SchedulePage = () => {
 export default SchedulePage;
 
 // ─── Session Detail Modal ────────────────────────────────────────────────────
-function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute, onReschedule }) {
+function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute, onReschedule, isEvaluated, onOpenEvaluateModal, isTutor, onOpenOfflinePinModal, onOpenVerifyCheckinModal, onOpenTutorReportModal }) {
   const [copied, setCopied] = useState(false);
   const [copiedPwd, setCopiedPwd] = useState(false);
   const [checkedMaterials, setCheckedMaterials] = useState({});
@@ -1308,7 +1388,6 @@ function SessionDetailModal({ session, info, onClose, onRequested, reportStatus,
           >
             Đóng
           </button>
-          
           {['upcoming', 'pending', 'Approved', 'Pending'].includes(session.status) && onReschedule && (
             <button
               onClick={onReschedule}
@@ -1318,7 +1397,30 @@ function SessionDetailModal({ session, info, onClose, onRequested, reportStatus,
               Đổi lịch
             </button>
           )}
-          {meetLink && (
+          {session.status === 'completed' && (
+            <button
+              onClick={() => { onClose(); if (onOpenTutorReportModal) onOpenTutorReportModal(session); }}
+              className="flex-1 h-10 bg-indigo-600 text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-indigo-700 transition-colors shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[18px]">analytics</span>
+              Báo cáo của Gia sư
+            </button>
+          )}
+          {session.status === 'completed' && (
+            isEvaluated ? (
+              <span className="h-10 px-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[12px] font-bold flex items-center justify-center gap-1">
+                <span className="material-symbols-outlined text-[16px]">check_circle</span> Đã đánh giá ngầm
+              </span>
+            ) : (
+              <button
+                onClick={() => { onClose(); if (onOpenEvaluateModal) onOpenEvaluateModal(session); }}
+                className="h-10 px-3 bg-[#00288e] text-white rounded-xl font-bold text-[12px] flex items-center justify-center gap-1 hover:bg-[#1e40af] transition-colors shadow-sm"
+              >
+                <span className="material-symbols-outlined text-[16px]">star</span> Đánh giá
+              </button>
+            )
+          )}
+          {meetLink && session.status !== 'completed' && (
             <button
               onClick={() => window.open(meetLink, '_blank')}
               className="flex-1 h-10 bg-primary text-on-primary rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[#1e40af] transition-colors shadow-sm"
@@ -1327,12 +1429,25 @@ function SessionDetailModal({ session, info, onClose, onRequested, reportStatus,
               Tham gia lớp học
             </button>
           )}
-          {mode === 'offline' && info?.location && (
+          {mode === 'offline' && session.status !== 'completed' && (
+            <button
+              onClick={() => {
+                onClose();
+                if (isTutor && onOpenVerifyCheckinModal) onOpenVerifyCheckinModal(session);
+                if (!isTutor && onOpenOfflinePinModal) onOpenOfflinePinModal(session);
+              }}
+              className="flex-1 h-10 bg-emerald-600 text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-emerald-700 transition-colors shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[18px]">vpn_key</span>
+              {isTutor ? 'Check-in Offline (PIN/QR)' : 'Mã PIN / QR Offline'}
+            </button>
+          )}
+          {mode === 'offline' && info?.location && session.status !== 'completed' && (
             <a
               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.location)}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex-1 h-10 bg-[#16a34a] text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors shadow-sm"
+              className="h-10 px-4 bg-[#16a34a] text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[#15803d] transition-colors shadow-sm"
             >
               <span className="material-symbols-outlined text-[16px]">map</span>
               Chỉ đường

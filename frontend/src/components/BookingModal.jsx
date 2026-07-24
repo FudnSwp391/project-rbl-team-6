@@ -82,8 +82,21 @@ export default function BookingModal({ tutor, onClose }) {
 
   const topUpQR = async () => {
     try {
-      // Lưu lại pending booking nếu cần (optional), ở đây user nạp xong sẽ phải đặt lại
+      // Lưu lại pending booking và thông tin bé đã chọn
+      sessionStorage.setItem('edux_pending_booking', JSON.stringify({
+        tutorId: tutor?.id || tutor?.user_id,
+        selectedChildId,
+        date,
+        slot,
+        subject,
+        method,
+        note
+      }));
       const returnUrl = `${window.location.origin}/#/payment/result`;
+      sessionStorage.setItem('edux_payment_source', JSON.stringify({
+        returnHash: window.location.hash || '#/dashboard',
+        source: 'booking'
+      }));
       const res = await fetch(`${API_BASE}/api/payment/create-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
