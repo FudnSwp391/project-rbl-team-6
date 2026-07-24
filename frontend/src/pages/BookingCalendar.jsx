@@ -131,6 +131,13 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     let pending;
     try { pending = JSON.parse(sessionStorage.getItem('edux_pending_booking') || 'null'); } catch { pending = null; }
     if (!pending || String(pending.tutorId) !== String(tutorId)) return;
+    
+    // Kiểm tra hết hạn 30 phút
+    if (pending.createdAt && (Date.now() - pending.createdAt > 30 * 60 * 1000)) {
+      sessionStorage.removeItem('edux_pending_booking');
+      return;
+    }
+
     sessionStorage.removeItem('edux_pending_booking');
     if (pending.bookingMode) setBookingMode(pending.bookingMode);
     if (pending.selectedBookings) setSelectedBookings(pending.selectedBookings);
@@ -457,6 +464,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
         monthlyStartDate,
         monthlySelectedSlots,
         selectedChild,
+        createdAt: Date.now()
       }));
       const token = localStorage.getItem('token');
       // Phải quay về /payment/result trước (trang này gọi IPN để cộng tiền vào ví),

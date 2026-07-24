@@ -106,6 +106,16 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
   const [topupLoading, setTopupLoading] = useState(false)
 
   useEffect(() => {
+    const handlePopState = () => {
+      setShowChildSelectInstantModal(false);
+      setShowTopupModal(false);
+      setShowInstantModal(false);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
     if (user?.role === 'parent' && token) {
       fetch(`${API_BASE}/api/parent/children`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : { children: [] })

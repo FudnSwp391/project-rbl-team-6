@@ -11,11 +11,13 @@ export default function PaymentResult() {
     const [paymentSource, setPaymentSource] = useState(null);
 
     useEffect(() => {
+        let srcObj = null;
         try {
-            const rawSource = sessionStorage.getItem('edux_payment_source');
+            const rawSource = sessionStorage.getItem('edux_payment_source') || sessionStorage.getItem('edux_last_payment_source');
             if (rawSource) {
-                setPaymentSource(JSON.parse(rawSource));
-                sessionStorage.removeItem('edux_payment_source');
+                srcObj = JSON.parse(rawSource);
+                setPaymentSource(srcObj);
+                sessionStorage.setItem('edux_last_payment_source', JSON.stringify(srcObj));
             }
         } catch { /* ignore */ }
 
@@ -24,6 +26,7 @@ export default function PaymentResult() {
 
         if (rspCode === '00') {
             setStatus('success');
+            sessionStorage.setItem('edux_payment_returned', 'true');
             const pendingRaw = localStorage.getItem('edux_pending_order');
 
             if (pendingRaw) {
@@ -73,6 +76,11 @@ export default function PaymentResult() {
         }
     }, []);
 
+    const clearPaymentSession = () => {
+        sessionStorage.removeItem('edux_payment_source');
+        sessionStorage.removeItem('edux_last_payment_source');
+    };
+
     const getReturnHash = () => {
         if (paymentSource?.returnHash) {
             return paymentSource.returnHash.startsWith('#') ? paymentSource.returnHash.slice(1) : paymentSource.returnHash;
@@ -83,13 +91,17 @@ export default function PaymentResult() {
     };
 
     const goPrimary = () => {
+        const dest = getReturnHash();
+        clearPaymentSession();
         if (pendingBookingTutorId) { window.location.hash = `/booking/${pendingBookingTutorId}`; return; }
         if (isOrder) { window.location.hash = '/my-courses'; return; }
-        window.location.hash = getReturnHash();
+        window.location.hash = dest;
     };
 
     const goErrorReturn = () => {
-        window.location.hash = getReturnHash();
+        const dest = getReturnHash();
+        clearPaymentSession();
+        window.location.hash = dest;
     };
 
     const getErrorButtonLabel = () => {

@@ -141,14 +141,33 @@ export default function CourseDetail({ courseId }) {
     }
   }, [courseId, user, token]);
 
+  // ── Đóng modal khi bấm nút Back của trình duyệt ──
+  useEffect(() => {
+    const handlePopState = () => {
+      setShowChildSelect(false);
+      setShowTopupModal(false);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   // ── Auto-Resume đăng ký sau khi nạp VNPAY thành công quay lại ──
   useEffect(() => {
     if (!course || !user || !token) return;
     try {
       const pendingEnroll = JSON.parse(sessionStorage.getItem('edux_pending_enroll') || 'null');
+      const isReturned = sessionStorage.getItem('edux_payment_returned') === 'true';
+      
       if (pendingEnroll && String(pendingEnroll.courseId) === String(course.id)) {
+        // Kiểm tra thời gian hết hạn (15 phút)
+        const isExpired = pendingEnroll.createdAt && (Date.now() - pendingEnroll.createdAt > 15 * 60 * 1000);
+        
         sessionStorage.removeItem('edux_pending_enroll');
-        handleEnroll(pendingEnroll.targetStudentId);
+        sessionStorage.removeItem('edux_payment_returned');
+
+        if (!isExpired && isReturned) {
+          handleEnroll(pendingEnroll.targetStudentId);
+        }
       }
     } catch { /* ignore */ }
   }, [course, user, token]);
@@ -227,7 +246,8 @@ export default function CourseDetail({ courseId }) {
       }));
       sessionStorage.setItem('edux_pending_enroll', JSON.stringify({
         courseId: course.id,
-        targetStudentId: topupInfo.targetStudentId
+        targetStudentId: topupInfo.targetStudentId,
+        createdAt: Date.now()
       }));
 
       const returnUrl = `${window.location.origin}/#/payment/result`;
