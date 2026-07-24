@@ -21181,7 +21181,46 @@ app.post('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req
       ]
     );
 
-    return res.status(201).json({ evaluation: result.rows[0], message: 'Đánh giá đã được lưu thành công.' });
+    // Lấy thông tin gia sư và môn học để bắn thông báo
+    const tInfo = await pool.query('SELECT full_name FROM users WHERE id = $1', [tutorId]);
+    const tutorName = tInfo.rows[0]?.full_name || 'Gia sư';
+    const bSubject = booking.subject || 'Buổi học';
+
+    // Bắn thông báo Realtime & In-App cho Học sinh
+    await safeNotifyUser(pool, {
+      userId: booking.student_id,
+      type: 'generic',
+      channels: ['IN_APP'],
+      templateKey: 'generic',
+      eventType: 'tutor_evaluation_submitted',
+      refId: booking_id,
+      refType: 'booking',
+      data: { message: `Gia sư ${tutorName} đã gửi nhận xét đánh giá buổi học môn ${bSubject}!` }
+    });
+
+    // Tìm và bắn thông báo cho Phụ huynh (nếu có)
+    const parents = await pool.query('SELECT parent_id FROM parent_children WHERE student_id = $1', [booking.student_id]);
+    for (const p of parents.rows) {
+      await safeNotifyUser(pool, {
+        userId: p.parent_id,
+        type: 'generic',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'generic',
+        eventType: 'tutor_evaluation_submitted',
+        refId: booking_id,
+        refType: 'booking',
+        data: { message: `Gia sư ${tutorName} đã gửi báo cáo đánh giá buổi học môn ${bSubject} của con bạn! Hãy mở để xem lời khuyên.` }
+      });
+      if (req.app && req.app.get('io')) {
+        req.app.get('io').to(`user-${p.parent_id}`).emit('tutorEvaluationSubmitted', {
+          booking_id,
+          tutor_name: tutorName,
+          subject: bSubject
+        });
+      }
+    }
+
+    return res.status(201).json({ evaluation: result.rows[0], message: 'Đánh giá đã được lưu và gửi báo cáo tới Phụ huynh thành công.' });
   } catch (e) {
     console.error('POST /api/tutor/session-evaluations error:', e);
     return res.status(500).json({ message: 'Server error' });
@@ -21241,6 +21280,57 @@ app.put('/api/tutor/session-evaluations/:evaluationId', verifyToken, requireTuto
   } catch (e) {
     console.error('PUT /api/tutor/session-evaluations/:id error:', e);
     return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── GET /api/bookings/:id/tutor-evaluation — Phụ huynh & Học sinh xem báo cáo đánh giá của Gia sư
+app.get('/api/bookings/:id/tutor-evaluation', verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bRes = await pool.query(
+      `SELECT b.id, b.student_id, b.tutor_id, b.subject, b.lesson_date, b.time_slot,
+              u_tutor.full_name AS tutor_name, u_tutor.picture AS tutor_picture,
+              u_student.full_name AS student_name
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       LEFT JOIN users u_student ON u_student.id = b.student_id
+       WHERE b.id = $1`,
+      [bookingId]
+    );
+
+    if (!bRes.rows.length) {
+      return res.status(404).json({ message: 'Không tìm thấy buổi học.' });
+    }
+    const booking = bRes.rows[0];
+
+    // Auth check
+    let isAuthorized = String(booking.student_id) === String(req.user.userId) || String(booking.tutor_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: 'Bạn không có quyền xem báo cáo đánh giá của buổi học này.' });
+    }
+
+    const evalRes = await pool.query(
+      `SELECT * FROM session_evaluations WHERE booking_id = $1`,
+      [bookingId]
+    );
+
+    if (!evalRes.rows.length) {
+      return res.status(404).json({ message: 'Gia sư chưa tạo báo cáo đánh giá cho buổi học này.' });
+    }
+
+    return res.json({
+      success: true,
+      booking,
+      evaluation: evalRes.rows[0]
+    });
+  } catch (e) {
+    console.error('GET /api/bookings/:id/tutor-evaluation error:', e);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 });
 

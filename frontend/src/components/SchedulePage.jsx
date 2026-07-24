@@ -5,6 +5,7 @@ import ReportSessionModal from './ReportSessionModal';
 import LessonEvaluationModal from './LessonEvaluationModal';
 import OfflineCheckinModal from './OfflineCheckinModal';
 import TutorVerifyCheckinModal from './TutorVerifyCheckinModal';
+import StudentEvaluationReportModal from './StudentEvaluationReportModal';
 import { API_BASE_URL } from '../config';
 
 const API_BASE = API_BASE_URL;
@@ -18,6 +19,7 @@ const SchedulePage = () => {
   // Evaluated bookings & modal
   const [evaluatedBookingIds, setEvaluatedBookingIds] = useState([]);
   const [evaluateSession, setEvaluateSession] = useState(null);
+  const [tutorReportBooking, setTutorReportBooking] = useState(null);
 
   // Offline Check-in modals
   const [offlinePinBooking, setOfflinePinBooking] = useState(null);
@@ -748,6 +750,7 @@ const SchedulePage = () => {
           isTutor={user?.role === 'tutor'}
           onOpenOfflinePinModal={setOfflinePinBooking}
           onOpenVerifyCheckinModal={setVerifyCheckinBooking}
+          onOpenTutorReportModal={setTutorReportBooking}
         />
       )}
 
@@ -910,6 +913,15 @@ const SchedulePage = () => {
           fetchSchedule();
         }}
       />
+
+      {/* Modal Phụ huynh & Học sinh xem Báo cáo Đánh giá của Gia sư */}
+      <StudentEvaluationReportModal
+        isOpen={!!tutorReportBooking}
+        onClose={() => setTutorReportBooking(null)}
+        booking={tutorReportBooking}
+        token={token}
+        API_BASE={API_BASE}
+      />
     </div>
   );
 };
@@ -917,7 +929,7 @@ const SchedulePage = () => {
 export default SchedulePage;
 
 // ─── Session Detail Modal ────────────────────────────────────────────────────
-function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute, isEvaluated, onOpenEvaluateModal, isTutor, onOpenOfflinePinModal, onOpenVerifyCheckinModal }) {
+function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute, isEvaluated, onOpenEvaluateModal, isTutor, onOpenOfflinePinModal, onOpenVerifyCheckinModal, onOpenTutorReportModal }) {
   const [copied, setCopied] = useState(false);
   const [copiedPwd, setCopiedPwd] = useState(false);
   const [checkedMaterials, setCheckedMaterials] = useState({});
@@ -1339,16 +1351,25 @@ function SessionDetailModal({ session, info, onClose, onRequested, reportStatus,
             Đóng
           </button>
           {session.status === 'completed' && (
+            <button
+              onClick={() => { onClose(); if (onOpenTutorReportModal) onOpenTutorReportModal(session); }}
+              className="flex-1 h-10 bg-indigo-600 text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-indigo-700 transition-colors shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[18px]">analytics</span>
+              Báo cáo của Gia sư
+            </button>
+          )}
+          {session.status === 'completed' && (
             isEvaluated ? (
-              <span className="flex-1 h-10 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[13px] font-bold flex items-center justify-center gap-1.5">
-                <span className="material-symbols-outlined text-[18px]">check_circle</span> Đã đánh giá ngầm
+              <span className="h-10 px-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[12px] font-bold flex items-center justify-center gap-1">
+                <span className="material-symbols-outlined text-[16px]">check_circle</span> Đã đánh giá ngầm
               </span>
             ) : (
               <button
                 onClick={() => { onClose(); if (onOpenEvaluateModal) onOpenEvaluateModal(session); }}
-                className="flex-1 h-10 bg-[#00288e] text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-[#1e40af] transition-colors shadow-sm"
+                className="h-10 px-3 bg-[#00288e] text-white rounded-xl font-bold text-[12px] flex items-center justify-center gap-1 hover:bg-[#1e40af] transition-colors shadow-sm"
               >
-                <span className="material-symbols-outlined text-[18px]">star</span> Đánh giá chất lượng
+                <span className="material-symbols-outlined text-[16px]">star</span> Đánh giá
               </button>
             )
           )}
