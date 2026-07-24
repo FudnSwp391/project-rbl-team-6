@@ -6235,7 +6235,8 @@ app.get("/api/admin/reviews", verifyToken, requireAdmin, async (req, res) => {
              COALESCE(u.role, 'student') AS reviewer_role,
              r.rating,
              r.comment AS content,
-             r.created_at
+             r.created_at,
+             COALESCE(r.is_visible, true) AS is_visible
       FROM reviews r
       LEFT JOIN users u ON u.id = r.user_id
       ORDER BY r.created_at DESC
@@ -6245,6 +6246,33 @@ app.get("/api/admin/reviews", verifyToken, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("GET /api/admin/reviews error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy danh sách đánh giá." });
+  }
+});
+
+// ── PATCH /api/admin/reviews/:id/hide — moderation action ────────────────────
+// Hides a review from the course's public reviews list (GET
+// /api/admin/courses/:id/reviews already filters on is_visible). Reversible
+// via /show — this is a visibility toggle, not a delete.
+app.patch("/api/admin/reviews/:id/hide", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(`UPDATE reviews SET is_visible = false WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ message: "Không tìm thấy đánh giá." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /api/admin/reviews/:id/hide error:", err);
+    return res.status(500).json({ message: "Lỗi khi ẩn đánh giá." });
+  }
+});
+
+// ── PATCH /api/admin/reviews/:id/show — undo /hide ────────────────────────────
+app.patch("/api/admin/reviews/:id/show", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(`UPDATE reviews SET is_visible = true WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ message: "Không tìm thấy đánh giá." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /api/admin/reviews/:id/show error:", err);
+    return res.status(500).json({ message: "Lỗi khi hiện lại đánh giá." });
   }
 });
 
@@ -7182,6 +7210,7 @@ app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) =>
         detail: `Doanh thu tháng này ${thisRev.toLocaleString('vi-VN')}đ, giảm ${Math.abs(pct)}% so với tháng trước (${lastRev.toLocaleString('vi-VN')}đ).`,
         level: 'Cao', icon: 'trending_down',
         color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200',
+        nav: 'tx-overview', navLabel: 'Xem Tổng Quan Tài Chính',
       });
     }
 
@@ -7192,6 +7221,7 @@ app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) =>
         detail: `Phát hiện ${dispStudentRes.rows.length} học sinh có từ 2 tranh chấp: ${names}.`,
         level: 'Cao', icon: 'report_problem',
         color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200',
+        nav: 'tx-disputes', navLabel: 'Xem Quản Lý Tranh Chấp',
       });
     }
 
@@ -7202,6 +7232,7 @@ app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) =>
         detail: `${dispTutorRes.rows.length} gia sư bị khiếu nại. Cao nhất: ${r.full_name || r.email} (${r.n} tranh chấp).`,
         level: 'Trung bình', icon: 'person_alert',
         color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200',
+        nav: 'tx-disputes', navLabel: 'Xem Quản Lý Tranh Chấp',
       });
     }
 
@@ -7212,6 +7243,7 @@ app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) =>
         detail: `${pendingN} hồ sơ gia sư đang chờ xét duyệt. Xử lý để tránh tồn đọng.`,
         level: 'Trung bình', icon: 'pending_actions',
         color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200',
+        nav: 'tutor-approval', navLabel: 'Xem Duyệt Gia Sư',
       });
     }
 
@@ -7222,6 +7254,7 @@ app.get("/api/admin/ai-insights", verifyToken, requireAdmin, async (req, res) =>
         detail: `${zeroRes.rows.length} khóa học chưa có lượt đăng ký: ${titles}…`,
         level: 'Thấp', icon: 'school',
         color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200',
+        nav: 'lessons', navLabel: 'Xem Khóa Học',
       });
     }
 

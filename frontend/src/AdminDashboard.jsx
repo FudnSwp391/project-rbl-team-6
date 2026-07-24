@@ -22,7 +22,7 @@ const AuditLogs             = lazy(() => import('./admin/transactions/AuditLogs'
 const WalletLedger          = lazy(() => import('./admin/transactions/WalletLedger'))
 const CommissionLogs        = lazy(() => import('./admin/transactions/CommissionLogs'))
 const NotificationOutbox     = lazy(() => import('./admin/transactions/NotificationOutbox'))
-const WithdrawalRequests     = lazy(() => import('./admin/transactions/WithdrawalRequests'))
+const WalletRequests         = lazy(() => import('./admin/transactions/WalletRequests'))
 const AICaseResolutions      = lazy(() => import('./admin/transactions/AICaseResolutions'))
 const DataEntryView          = lazy(() => import('./admin/DataEntryView'))
 
@@ -66,13 +66,11 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('vi-VN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-const AdminWalletDashboard = lazy(() => import('./components/AdminWalletDashboard'))
-
 const TX_SUB_ITEMS = [
   { id: 'tx-overview',     label: 'Tổng Quan Tài Chính',    icon: 'bar_chart' },
   { id: 'tx-lessons',      label: 'Thanh Toán Buổi Học',       icon: 'receipt_long' },
   { id: 'tx-courses',      label: 'Giao Dịch Khóa Học',   icon: 'school' },
-  { id: 'tx-withdrawals',  label: 'Duyệt Rút Tiền',      icon: 'account_balance' },
+  { id: 'tx-withdrawals',  label: 'Duyệt giao dịch Ví',  icon: 'account_balance' },
   { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
   { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
   { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
@@ -112,7 +110,6 @@ const NAV_ITEMS = [
   { id: 'lessons',         label: 'Khóa học',              icon: 'school',               section: 'Học tập' },
   { id: 'transactions',    label: 'Giao dịch',             icon: 'payments', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
   { id: 'services',        label: 'Quản lý dịch vụ',       icon: 'support_agent', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
-  { id: 'wallet-management', label: 'Duyệt giao dịch Ví',  icon: 'account_balance_wallet', section: 'Tài chính & Dịch vụ' },
   { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology',           section: 'Hệ thống' },
   { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu',          section: 'Hệ thống' },
 ]
@@ -501,9 +498,6 @@ export default function AdminDashboard() {
               onRefreshChart={fetchChartData}
             />
           )}
-          {activeView === 'wallet-management' && (
-            <AdminWalletDashboard />
-          )}
           {activeView === 'tutor-approval' && (
             <TutorApprovalView
               tutors={tutors}
@@ -529,7 +523,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} token={token} />}
           {activeView === 'tx-lessons'       && <LessonPayments token={token} />}
           {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
-          {activeView === 'tx-withdrawals'   && <WithdrawalRequests token={token} />}
+          {activeView === 'tx-withdrawals'   && <WalletRequests token={token} />}
           {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
           {activeView === 'tx-disputes'      && <DisputesCenterView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
@@ -555,7 +549,7 @@ export default function AdminDashboard() {
           {activeView === 'sm-fraud'         && <FraudIntel token={token} />}
           {activeView === 'sm-analytics'     && <SafeAnalytics token={token} />}
 
-          {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
+          {activeView === 'ai-insights'      && <AIInsightsView token={token} onNavigate={setActiveView} />}
           {activeView === 'audit-logs'       && <AuditLogs token={token} />}
         </Suspense>
         </div>
@@ -3854,6 +3848,7 @@ function ReviewsView({ token }) {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState(null)
   const [tick,    setTick]    = useState(0)
+  const [busyId,  setBusyId]  = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -3862,6 +3857,23 @@ function ReviewsView({ token }) {
       .then(data => { setReviews(data); setLoading(false) })
       .catch(err  => { setError(err.message); setLoading(false) })
   }, [token, tick])
+
+  const toggleVisibility = async r => {
+    const action = r.is_visible ? 'hide' : 'show'
+    const confirmMsg = r.is_visible
+      ? `Ẩn đánh giá của ${r.reviewer_name || 'người dùng này'}? Đánh giá sẽ không còn hiện công khai.`
+      : `Hiện lại đánh giá của ${r.reviewer_name || 'người dùng này'}?`
+    if (!window.confirm(confirmMsg)) return
+    setBusyId(r.id)
+    try {
+      await authFetch(`${API}/api/admin/reviews/${r.id}/${action}`, token, { method: 'PATCH' })
+      setReviews(prev => prev.map(x => x.id === r.id ? { ...x, is_visible: !r.is_visible } : x))
+    } catch (err) {
+      alert('Lỗi: ' + err.message)
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   const avg = reviews.length
     ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
@@ -3946,7 +3958,7 @@ function ReviewsView({ token }) {
             ) : (
               <div className="divide-y divide-outline-variant">
                 {reviews.map(r => (
-                  <div key={r.id} className="p-6 hover:bg-gray-50 transition-colors">
+                  <div key={r.id} className={`p-6 hover:bg-gray-50 transition-colors ${r.is_visible === false ? 'opacity-50' : ''}`}>
                     <div className="flex items-start gap-3">
                       <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
                         {(r.reviewer_name || '?').charAt(0)}
@@ -3960,11 +3972,26 @@ function ReviewsView({ token }) {
                           {r.subject && (
                             <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-medium rounded-full">{r.subject}</span>
                           )}
+                          {r.is_visible === false && (
+                            <span className="px-2 py-0.5 bg-red-50 text-red-600 text-xs font-medium rounded-full">Đã ẩn</span>
+                          )}
                         </div>
                         <Stars n={r.rating} />
                         <p className="text-sm text-on-surface-variant mt-1">{r.content}</p>
                         <p className="text-xs text-on-surface-variant mt-1">{fmtDate(r.created_at)}</p>
                       </div>
+                      <button
+                        onClick={() => toggleVisibility(r)}
+                        disabled={busyId === r.id}
+                        className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 ${
+                          r.is_visible === false
+                            ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                            : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[16px]">{r.is_visible === false ? 'visibility' : 'visibility_off'}</span>
+                        {r.is_visible === false ? 'Hiện' : 'Ẩn'}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -3978,7 +4005,7 @@ function ReviewsView({ token }) {
 }
 
 // ─── AI Insights View ─────────────────────────────────────────────────────────
-function AIInsightsView({ token }) {
+function AIInsightsView({ token, onNavigate }) {
   const [data,    setData]    = useState(null)
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState(null)
@@ -4059,6 +4086,15 @@ function AIInsightsView({ token }) {
                       </span>
                     </div>
                     <p className="text-xs text-on-surface-variant">{f.detail}</p>
+                    {f.nav && onNavigate && (
+                      <button
+                        onClick={() => onNavigate(f.nav)}
+                        className="mt-2 flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
+                      >
+                        {f.navLabel || 'Xem chi tiết'}
+                        <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
