@@ -23,11 +23,12 @@ const adminAuthMiddleware = (req, res, next) => {
 router.get('/deposit-requests', adminAuthMiddleware, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT dr.*, u.email, u.full_name, u.role
+      SELECT dr.*, u.email, u.full_name, u.role, w.balance as wallet_balance
       FROM deposit_requests dr
       JOIN wallets w ON dr.wallet_id = w.id
       JOIN users u ON w.user_id = u.id
       ORDER BY dr.created_at DESC
+      LIMIT 200
     `);
     res.json(result.rows);
   } catch (error) {
@@ -76,7 +77,7 @@ router.get('/withdraw-requests', adminAuthMiddleware, async (req, res) => {
         SUM(CASE WHEN status = 'PENDING' THEN amount ELSE 0 END) as pending_amount,
         COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_count,
         SUM(CASE WHEN status = 'APPROVED' THEN amount ELSE 0 END) as approved_amount,
-        SUM(CASE WHEN status = 'PAID' THEN amount ELSE 0 END) as paid_amount,
+        SUM(CASE WHEN status = 'COMPLETED' THEN amount ELSE 0 END) as paid_amount,
         SUM(CASE WHEN status = 'REJECTED' THEN amount ELSE 0 END) as rejected_amount,
         SUM(CASE WHEN status = 'CANCELLED' THEN amount ELSE 0 END) as cancelled_amount
       FROM withdraw_requests
@@ -195,6 +196,51 @@ router.patch('/withdraw-requests/:id/approve', adminAuthMiddleware, async (req, 
   } catch (error) {
     await client.query('ROLLBACK');
     console.error("Error approving withdrawal:", error);
+    res.status(400).json({ error: error.message || 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// --- MARK Withdraw Request as Paid (admin confirms manual bank payout done,
+// as an alternative to waiting on the tutor's own /withdraw-requests/:id/confirm
+// in walletRoutes.js — whichever happens first wins, the other then finds the
+// row no longer APPROVED and reports already-processed) ---
+router.patch('/withdraw-requests/:id/mark-paid', adminAuthMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { note } = req.body;
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const reqResult = await client.query('SELECT * FROM withdraw_requests WHERE id = $1 FOR UPDATE', [id]);
+    if (reqResult.rows.length === 0) throw new Error('Request not found');
+    const withdrawReq = reqResult.rows[0];
+
+    if (withdrawReq.status !== 'APPROVED') throw new Error('Request must be APPROVED before it can be marked as paid');
+
+    // Update status to COMPLETED (the constraint has no separate PAID value —
+    // COMPLETED is the same terminal state the tutor-confirm path uses).
+    await client.query(
+      'UPDATE withdraw_requests SET status = $1, admin_note = $2, updated_at = NOW() WHERE id = $3',
+      ['COMPLETED', note || null, id]
+    );
+
+    // Create transaction log (mirrors the tutor-confirm path in walletRoutes.js,
+    // since balance was already deducted when the request was created).
+    const desc = `Admin xác nhận đã chi trả qua ${withdrawReq.method}`;
+    await client.query(
+      `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
+       VALUES ($1, $2, 'WITHDRAW', 'SUCCESS', $3, $4)`,
+      [withdrawReq.wallet_id, withdrawReq.amount, withdrawReq.method, desc]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Đã xác nhận chi trả cho gia sư' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error marking withdrawal as paid:", error);
     res.status(400).json({ error: error.message || 'Server error' });
   } finally {
     client.release();

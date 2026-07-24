@@ -109,7 +109,7 @@ export default function AICaseResolutions({ token }) {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Xử Lý Khiếu Nại Bằng AI" subtitle="AI đánh giá khiếu nại và đề xuất hướng xử lý — có cổng chống lạm dụng và cơ chế kháng cáo.">
+      <PageHeader title="AI Gợi Ý Xử Lý Tranh Chấp" subtitle="AI đánh giá tranh chấp giao dịch (escrow) và đề xuất hướng xử lý — có cổng chống lạm dụng và cơ chế kháng cáo.">
         <button
           onClick={runPending}
           disabled={running}

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
-import { deleteTutorCourse, getTutorCourses, saveTutorCourse } from '../services/api'
+import { deleteTutorCourse, getTutorCourses, saveTutorCourse, getTutorCourseCoupons, createTutorCourseCoupon } from '../services/api'
 import { getSignedStorageUrl, uploadCourseThumbnail, uploadCourseVideo } from '../services/upload'
 import CourseEditor from './CourseEditor'
+
+const TUTOR_COUPON_AUTO_APPROVE_PERCENT = 30
 
 const SUBJECTS = ['Toán học', 'Tiếng Anh', 'Lập trình', 'Ngữ văn', 'Khoa học', 'Nghệ thuật']
 const LEVELS = ['Mất gốc', 'Cơ bản', 'Nâng cao', 'Luyện thi']
@@ -121,6 +123,7 @@ export default function TutorCoursesTab({ user }) {
   const [uploadingKey, setUploadingKey] = useState('')
   const [viewMode, setViewMode] = useState('list')
   const [editingCourse, setEditingCourse] = useState(null)
+  const [couponCourse, setCouponCourse] = useState(null)
 
   const loadCourses = async () => {
     setLoading(true)
@@ -337,8 +340,10 @@ export default function TutorCoursesTab({ user }) {
           onEdit={editCourse}
           onArchive={archiveCourse}
           onCreate={startCreateCourse}
+          onCoupons={setCouponCourse}
           compact
         />
+        {couponCourse && <CourseCouponModal course={couponCourse} onClose={() => setCouponCourse(null)} />}
       </div>
     )
   }
@@ -845,7 +850,7 @@ function LessonMediaRow({ index, lesson, uploading, onChange, onUpload }) {
   )
 }
 
-function CourseStore({ courses, loading, onEdit, onArchive, onCreate, compact = false }) {
+function CourseStore({ courses, loading, onEdit, onArchive, onCreate, onCoupons, compact = false }) {
   return (
     <section className={`${compact ? '' : 'mt-10'} rounded-xl border border-[#c8cedd] bg-white p-5 md:p-8 shadow-sm`}>
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -864,14 +869,14 @@ function CourseStore({ courses, loading, onEdit, onArchive, onCreate, compact = 
         <div className="py-10 text-center text-[#51586a]">Chưa có khóa học nào.</div>
       ) : (
         <div className="mt-5 grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {courses.map((course) => <CourseCard key={course.id} course={course} onEdit={() => onEdit(course)} onArchive={() => onArchive(course.id)} />)}
+          {courses.map((course) => <CourseCard key={course.id} course={course} onEdit={() => onEdit(course)} onArchive={() => onArchive(course.id)} onCoupons={() => onCoupons(course)} />)}
         </div>
       )}
     </section>
   )
 }
 
-function CourseCard({ course, onEdit, onArchive }) {
+function CourseCard({ course, onEdit, onArchive, onCoupons }) {
   const lessonCount = course.lessonCount || course.lessons?.length || 0
   return (
     <article className="overflow-hidden rounded-xl border border-[#d7dce8] bg-white shadow-sm">
@@ -894,11 +899,134 @@ function CourseCard({ course, onEdit, onArchive }) {
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" onClick={onEdit} className="h-9 px-3 rounded-lg border border-[#c8cedd] font-bold text-[#343949]">Chỉnh sửa</button>
             {course.status === 'published' && <button type="button" onClick={() => { window.location.hash = `/course/${course.id}` }} className="h-9 px-3 rounded-lg bg-[#00288e] text-white font-bold">Xem chi tiết</button>}
+            <button type="button" onClick={onCoupons} className="h-9 px-3 rounded-lg border border-[#c8cedd] font-bold text-[#00288e] inline-flex items-center gap-1">
+              <span className="material-symbols-outlined text-[18px]">sell</span>Mã giảm giá
+            </button>
             <button type="button" onClick={onArchive} className="h-9 px-3 rounded-lg text-red-600 font-bold hover:bg-red-50">Lưu trữ</button>
           </div>
         </div>
       </div>
     </article>
+  )
+}
+
+// ─── Tutor self-service coupon modal ───────────────────────────────────────────
+// Create + view only — editing/deleting a coupon after creation is admin-only
+// (see server.js), so tutors can't quietly raise a discount past the
+// auto-approve threshold after the fact.
+function CourseCouponModal({ course, onClose }) {
+  const [coupons, setCoupons] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ code: '', description: '', discount_type: 'percent', discount_value: '', max_discount: '', min_order: '', expires_at: '' })
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  const [notice, setNotice] = useState(null)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const data = await getTutorCourseCoupons(course.id)
+      setCoupons(data.coupons || [])
+    } catch (e) { setErr(e.message || 'Không thể tải mã giảm giá.') }
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [course.id])
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const submit = async () => {
+    setSaving(true); setErr(''); setNotice(null)
+    try {
+      const res = await createTutorCourseCoupon(course.id, {
+        code: form.code, description: form.description, discount_type: form.discount_type,
+        discount_value: Number(form.discount_value),
+        max_discount: form.max_discount === '' ? null : Number(form.max_discount),
+        min_order: Number(form.min_order) || 0, expires_at: form.expires_at || null,
+      })
+      setNotice(res.active
+        ? 'Đã tạo mã và kích hoạt ngay.'
+        : `Đã gửi — mức giảm vượt ${TUTOR_COUPON_AUTO_APPROVE_PERCENT}% nên cần admin duyệt trước khi mã có hiệu lực.`)
+      setShowForm(false)
+      setForm({ code: '', description: '', discount_type: 'percent', discount_value: '', max_discount: '', min_order: '', expires_at: '' })
+      await load()
+    } catch (e) { setErr(e.message || 'Lỗi tạo mã.') }
+    setSaving(false)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#e5e8f0]">
+          <div>
+            <h3 className="font-black text-[#141824]">Mã giảm giá — {course.title}</h3>
+            <p className="text-xs text-[#697083] mt-0.5">Giảm ≤{TUTOR_COUPON_AUTO_APPROVE_PERCENT}% được kích hoạt ngay. Cao hơn cần admin duyệt.</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"><span className="material-symbols-outlined">close</span></button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {notice && <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-700">{notice}</div>}
+          {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">{err}</div>}
+
+          {loading ? (
+            <div className="py-8 text-center text-[#697083] text-sm">Đang tải...</div>
+          ) : coupons.length === 0 ? (
+            <p className="text-sm text-[#697083] text-center py-4">Chưa có mã giảm giá nào cho khóa này.</p>
+          ) : (
+            <div className="space-y-2">
+              {coupons.map(c => (
+                <div key={c.id} className="border border-[#e5e8f0] rounded-lg px-3 py-2.5 flex items-center justify-between">
+                  <div>
+                    <code className="text-xs font-mono font-bold text-[#00288e]">{c.code}</code>
+                    <p className="text-xs text-[#697083] mt-0.5">{c.type === 'percent' ? `${c.value}%` : formatMoney(c.value)} · {c.description || 'Không có mô tả'}</p>
+                  </div>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                    c.pending_approval ? 'bg-amber-100 text-amber-700' : c.active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
+                  }`}>
+                    {c.pending_approval ? 'Chờ admin duyệt' : c.active ? 'Đang chạy' : 'Ngừng'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {showForm ? (
+            <div className="space-y-3 border-t border-[#e5e8f0] pt-4">
+              <input value={form.code} onChange={e => set('code', e.target.value.toUpperCase())} placeholder="Mã code, vd: SALE30"
+                className="w-full px-3 py-2 border border-[#c8cedd] rounded-lg text-sm font-mono" />
+              <input value={form.description} onChange={e => set('description', e.target.value)} placeholder="Mô tả ngắn"
+                className="w-full px-3 py-2 border border-[#c8cedd] rounded-lg text-sm" />
+              <div className="grid grid-cols-2 gap-2">
+                <select value={form.discount_type} onChange={e => set('discount_type', e.target.value)} className="px-3 py-2 border border-[#c8cedd] rounded-lg text-sm bg-white">
+                  <option value="percent">Phần trăm (%)</option>
+                  <option value="fixed">Cố định (đ)</option>
+                </select>
+                <input type="number" min="1" value={form.discount_value} onChange={e => set('discount_value', e.target.value)} placeholder="Giá trị"
+                  className="px-3 py-2 border border-[#c8cedd] rounded-lg text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input type="number" min="0" value={form.min_order} onChange={e => set('min_order', e.target.value)} placeholder="Đơn tối thiểu (đ)"
+                  className="px-3 py-2 border border-[#c8cedd] rounded-lg text-sm" />
+                <input type="date" value={form.expires_at} onChange={e => set('expires_at', e.target.value)}
+                  className="px-3 py-2 border border-[#c8cedd] rounded-lg text-sm" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowForm(false)} disabled={saving} className="h-9 px-3 rounded-lg border border-[#c8cedd] font-bold text-[#343949] text-sm">Hủy</button>
+                <button onClick={submit} disabled={saving || !form.code.trim() || !String(form.discount_value).trim()}
+                  className="h-9 px-4 rounded-lg bg-[#00288e] text-white font-bold text-sm disabled:opacity-40">
+                  {saving ? 'Đang gửi...' : 'Tạo mã'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setShowForm(true)} className="w-full h-10 rounded-lg border-2 border-dashed border-[#c8cedd] text-[#00288e] font-bold text-sm hover:bg-[#eef3ff]">
+              + Tạo mã mới
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 

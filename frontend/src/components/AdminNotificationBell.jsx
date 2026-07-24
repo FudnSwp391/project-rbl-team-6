@@ -314,16 +314,10 @@ export default function AdminNotificationBell({ token, onNavigate }) {
 
           {/* Footer */}
           {alerts.length > 0 && (
-            <div className="border-t border-gray-100 px-4 py-2.5 flex items-center justify-between">
+            <div className="border-t border-gray-100 px-4 py-2.5">
               <p className="text-[11px] text-on-surface-variant">
                 Tự động cập nhật mỗi 1 phút
               </p>
-              <button
-                onClick={() => { if (onNavigate) onNavigate('reports'); setOpen(false) }}
-                className="text-[11px] text-primary font-semibold hover:underline"
-              >
-                Xem báo cáo đầy đủ →
-              </button>
             </div>
           )}
         </div>,

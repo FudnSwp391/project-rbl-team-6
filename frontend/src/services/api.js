@@ -600,6 +600,17 @@ export async function deleteTutorCourse(courseId) {
   return request(`/api/tutor/courses/${courseId}`, { method: 'DELETE' })
 }
 
+export async function getTutorCourseCoupons(courseId) {
+  return request(`/api/tutor/courses/${courseId}/coupons`)
+}
+
+export async function createTutorCourseCoupon(courseId, payload) {
+  return request(`/api/tutor/courses/${courseId}/coupons`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function getCourseDetail(courseId) {
   return request(`/api/courses/${courseId}`)
 }
@@ -753,9 +764,3 @@ export const depositRequest = async (data) => request('/api/wallet/deposit-reque
 export const withdrawRequest = async (data) => request('/api/wallet/withdraw-request', { method: 'POST', body: JSON.stringify(data) });
 export const getWithdrawRequests = async () => request('/api/wallet/withdraw-requests');
 export const confirmWithdrawRequest = async (id) => request(`/api/wallet/withdraw-requests/${id}/confirm`, { method: 'PATCH' });
-export const getAdminDepositRequests = async () => request('/api/admin/wallet/deposit-requests');
-export const getAdminWithdrawRequests = async () => request('/api/admin/wallet/withdraw-requests');
-export const approveDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });
-export const rejectDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ note }) });
-export const approveWithdrawRequest = async (id, note) => request(`/api/admin/wallet/withdraw-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });
-export const rejectWithdrawRequest = async (id, note) => request(`/api/admin/wallet/withdraw-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ note }) });
