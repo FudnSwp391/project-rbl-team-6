@@ -20,7 +20,6 @@ import MessagesSection from './components/MessagesSection'
 import TutorAssessmentManager from './components/TutorAssessmentManager'
 import TutorGradingDashboard from './components/TutorGradingDashboard'
 import WalletWidget from './components/WalletWidget'
-import TutorWithdrawalPanel from './components/TutorWithdrawalPanel'
 import NotificationDropdown from './components/NotificationDropdown'
 import MessageIcon from './components/MessageIcon'
 import WalletDashboard from './components/Wallet/WalletDashboard'
@@ -817,11 +816,11 @@ export default function TutorDashboard() {
           )}
 
           {activeTab === 'WalletDeposit' && (
-            <WalletDeposit onBack={() => setActiveTab('Wallet')} />
+            <WalletDeposit onBack={() => setActiveTab('Ví Tiền')} />
           )}
 
           {activeTab === 'WalletWithdraw' && (
-            <WalletWithdraw onBack={() => setActiveTab('Wallet')} />
+            <WalletWithdraw onBack={() => setActiveTab('Ví Tiền')} />
           )}
 
           {/* Instant Request Modal */}
@@ -1273,9 +1272,6 @@ function TutorEarningsTab() {
           </div>
         )}
       </div>
-
-      {/* Withdrawal / payout panel (Batch 19) */}
-      <TutorWithdrawalPanel />
     </div>
   )
 }
