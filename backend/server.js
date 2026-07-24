@@ -14820,16 +14820,23 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
           studentAvatar: row.studentAvatar,
           childName: row.childName,
           subjects: new Set(),
-          lessons: [],
+          lessonsMap: new Map(),
         });
       }
       const student = grouped.get(key);
       if (row.subject) student.subjects.add(row.subject);
-      student.lessons.push(row);
+      
+      if (!student.lessonsMap.has(row.bookingId)) {
+        student.lessonsMap.set(row.bookingId, row);
+      } else {
+        const existing = student.lessonsMap.get(row.bookingId);
+        if (row.isEvaluated) existing.isEvaluated = true;
+      }
     }
 
     const students = Array.from(grouped.values()).map((student) => {
-      const approvedLessons = student.lessons.filter((lesson) => lesson.bookingStatus === 'Approved');
+      const lessonsArray = Array.from(student.lessonsMap.values());
+      const approvedLessons = lessonsArray.filter((lesson) => lesson.bookingStatus === 'Approved');
       const marked = approvedLessons.filter((lesson) => lesson.attendanceStatus);
       const absences = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'absent');
       const present = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'present');
@@ -14849,11 +14856,15 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
            return new Date(`${a.date}T${timeA}:00`) - new Date(`${b.date}T${timeB}:00`);
         })[0] || null;
 
+      const resultObj = { ...student };
+      delete resultObj.lessonsMap;
+
       return {
-        ...student,
+        ...resultObj,
+        lessons: lessonsArray,
         subjects: Array.from(student.subjects),
         totalLessons: approvedLessons.length,
-        pendingRequests: student.lessons.filter((lesson) => lesson.bookingStatus === 'Pending').length,
+        pendingRequests: lessonsArray.filter((lesson) => lesson.bookingStatus === 'Pending').length,
         markedLessons: marked.length,
         absentCount: absences.length,
         presentCount: present.length,
