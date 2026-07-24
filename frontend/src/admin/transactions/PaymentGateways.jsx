@@ -6,8 +6,10 @@ import { API_BASE_URL as API } from '../../config'
 
 const GW_META = {
   'VNPay':           { icon: 'credit_card',            from: 'from-blue-600',    to: 'to-blue-400',    light: 'bg-blue-50 text-blue-600' },
+  'VNPAY':           { icon: 'credit_card',            from: 'from-blue-600',    to: 'to-blue-400',    light: 'bg-blue-50 text-blue-600' },
   'MoMo':            { icon: 'account_balance_wallet',  from: 'from-pink-600',    to: 'to-pink-400',    light: 'bg-pink-50 text-pink-600' },
   'Bank Transfer':   { icon: 'account_balance',         from: 'from-purple-600',  to: 'to-purple-400',  light: 'bg-purple-50 text-purple-600' },
+  'Visa/MasterCard': { icon: 'credit_card',             from: 'from-indigo-600',  to: 'to-indigo-400',  light: 'bg-indigo-50 text-indigo-600' },
   'Internal Wallet': { icon: 'savings',                 from: 'from-emerald-600', to: 'to-emerald-400', light: 'bg-emerald-50 text-emerald-600' },
 }
 

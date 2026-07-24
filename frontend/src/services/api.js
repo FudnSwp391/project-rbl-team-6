@@ -315,22 +315,6 @@ export async function getTransactionHistory() {
   return request('/api/payment/transactions');
 }
 
-// ── Tutor Withdrawal / Payout APIs (Batch 19) ──────────────────────────────
-export async function getMyWithdrawals() {
-  return request('/api/tutor/withdrawals');
-}
-
-export async function createWithdrawal(payload) {
-  return request('/api/tutor/withdrawals', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function cancelWithdrawal(id) {
-  return request(`/api/tutor/withdrawals/${id}/cancel`, { method: 'PATCH' });
-}
-
 // ── Admin Dispute APIs ─────────────────────────────────────────────────────
 export async function getAdminDisputes() {
   return request('/api/admin/disputes');
@@ -486,51 +470,6 @@ export async function updateTutorAvailability(availability, monthly_availability
     localStorage.setItem('tutor_slot_duration_local', String(slot_duration_mins));
     return { message: 'Saved locally.', slots: Object.values(availability).flat().length };
   }
-}
-
-/**
- * Admin: láº¥y credentials Ä‘ang chá» duyá»‡t.
- */
-export async function getAdminPendingCredentials() {
-  return request('/api/admin/credentials/pending');
-}
-
-/**
- * Admin: approve 1 credential.
- */
-export async function approveCredential(id) {
-  return request(`/api/admin/credentials/${id}/approve`, { method: 'PATCH' });
-}
-
-/**
- * Admin: reject 1 credential.
- */
-export async function rejectCredential(id, reason) {
-  return request(`/api/admin/credentials/${id}/reject`, {
-    method: 'PATCH',
-    body: JSON.stringify({ reason }),
-  });
-}
-
-/**
- * Admin: láº¥y bio Ä‘ang chá» duyá»‡t.
- */
-export async function getAdminPendingBios() {
-  return request('/api/admin/bio/pending');
-}
-
-/**
- * Admin: approve bio.
- */
-export async function approveBio(id) {
-  return request(`/api/admin/bio/${id}/approve`, { method: 'PATCH' });
-}
-
-/**
- * Admin: reject bio.
- */
-export async function rejectBio(id) {
-  return request(`/api/admin/bio/${id}/reject`, { method: 'PATCH' });
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

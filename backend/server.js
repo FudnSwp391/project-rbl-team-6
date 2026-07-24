@@ -4776,57 +4776,6 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
 
 // ─── GET /api/admin/tutors/stats ──────────────────────────────────────────────
 // Returns count of pending / approved / rejected tutor profiles
-app.get("/api/admin/tutors/stats", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE status = 'pending')  AS pending,
-        COUNT(*) FILTER (WHERE status = 'approved') AS approved,
-        COUNT(*) FILTER (WHERE status = 'rejected') AS rejected
-      FROM tutor_profiles
-    `);
-    const row = result.rows[0];
-    return res.json({
-      pending:  Number(row.pending),
-      approved: Number(row.approved),
-      rejected: Number(row.rejected),
-    });
-  } catch (error) {
-    console.error("Stats error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// ─── GET /api/admin/tutors/pending (duplicate route kept for compatibility) ───
-app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        tp.id, tp.user_id, u.full_name, u.email,
-        tp.bio, tp.subjects, tp.experience_years,
-        tp.certificate_url, tp.cccd_url, tp.cccd_back_url, tp.status, tp.reject_reason,
-        tp.created_at, tp.profile_photo_url, tp.hourly_rate,
-        tp.teaching_methods, tp.suitable_students,
-        tp.first_name, tp.last_name, tp.display_name,
-        tp.birthday, tp.gender, tp.country, tp.city, tp.phone,
-        tp.education, tp.language, tp.teaching_style, tp.qualifications,
-        COALESCE(
-          (SELECT json_agg(json_build_object('id', tc.id, 'name', tc.name, 'url', tc.url, 'cert_type', tc.cert_type, 'issuer', tc.issuer, 'issue_year', tc.issue_year) ORDER BY tc.created_at)
-           FROM tutor_certificates tc WHERE tc.tutor_profile_id = tp.id),
-          '[]'::json
-        ) AS certificates
-      FROM tutor_profiles tp
-      JOIN users u ON u.id = tp.user_id
-      WHERE tp.status = 'pending'
-      ORDER BY tp.created_at ASC
-    `);
-    return res.json(result.rows);
-  } catch (error) {
-    console.error("Pending tutors error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -5122,9 +5071,9 @@ app.post("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
       `INSERT INTO courses
          (tutor_id, title, short_description, description, subject, level, price, original_price,
           thumbnail_url, total_lessons, session_duration, class_type, learning_outcomes, requirements,
-          target_students, language, has_trial, status, published_at, learning_mode,
+          target_students, language, has_trial, status, learning_mode,
           avg_rating, review_count, enrollment_count)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb,$15,$16,$17,'published',NOW(),$18,0,0,0)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb,$15,$16,$17,'draft',$18,0,0,0)
        RETURNING id`,
       [tutorId, title, b.short_description || null, b.description || null, b.subject || null,
        b.level || null, Number(b.price || 0), b.original_price ? Number(b.original_price) : null,
@@ -5133,7 +5082,16 @@ app.post("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
        b.target_students || null, b.language || "Tiếng Việt", b.has_trial !== false,
        b.learning_mode || "Online"]
     );
-    return res.status(201).json({ message: "Đã tạo khóa học.", id: c.rows[0].id });
+    const newId = c.rows[0].id;
+    await writeCourseAuditLog(newId, 'CREATE', req.user.userId, null, 'draft', null, { title, tutor_id: tutorId });
+    await safeNotifyUser(pool, {
+      userId: tutorId, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'course_created_by_admin', eventType: 'course_created_by_admin',
+      data: { courseName: title },
+      refId: newId, refType: 'course', sourceType: 'course', sourceId: newId,
+      idempotencyKey: `course:${newId}:created`,
+    });
+    return res.status(201).json({ message: "Đã tạo khóa học.", ok: true, id: newId });
   } catch (err) {
     console.error("POST /api/admin/courses error:", err);
     return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
@@ -5335,6 +5293,14 @@ app.patch("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) 
   const { id } = req.params;
   const b = req.body || {};
   try {
+    const before = await pool.query(`SELECT title, status, tutor_id FROM courses WHERE id = $1`, [id]);
+    if (!before.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const prev = before.rows[0];
+
+    if (b.status !== undefined && !ADMIN_COURSE_STATUSES.has(b.status)) {
+      return res.status(400).json({ message: "Trạng thái không hợp lệ." });
+    }
+
     const r = await pool.query(
       `UPDATE courses SET
          title = COALESCE($1, title), subject = COALESCE($2, subject), level = COALESCE($3, level),
@@ -5351,7 +5317,37 @@ app.patch("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) 
        b.class_type || null, b.total_lessons != null ? Number(b.total_lessons) : null,
        b.tutor_id || null, b.status || null, id]);
     if (!r.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
-    return res.json({ message: "Đã cập nhật khóa học." });
+
+    const statusChanged = b.status !== undefined && b.status !== prev.status;
+    await writeCourseAuditLog(
+      id, statusChanged ? 'STATUS_CHANGE' : 'UPDATE', req.user.userId,
+      statusChanged ? prev.status : null, statusChanged ? b.status : null, b.reason,
+      { fields: Object.keys(b) }
+    );
+
+    // Best-effort: let the tutor know an admin touched their course. Never
+    // blocks or fails the request (safeNotifyUser swallows its own errors).
+    if (prev.tutor_id) {
+      if (statusChanged) {
+        await safeNotifyUser(pool, {
+          userId: prev.tutor_id, channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'course_status_changed_by_admin', eventType: 'course_status_changed_by_admin',
+          data: { courseName: prev.title, newStatus: b.status, newStatusLabel: COURSE_STATUS_LABEL_VI[b.status] || b.status, reason: b.reason },
+          refId: id, refType: 'course', sourceType: 'course', sourceId: id,
+          idempotencyKey: `course:${id}:status:${b.status}:${Date.now()}`,
+        });
+      } else {
+        await safeNotifyUser(pool, {
+          userId: prev.tutor_id, channels: ['IN_APP'],
+          templateKey: 'course_updated_by_admin', eventType: 'course_updated_by_admin',
+          data: { courseName: prev.title },
+          refId: id, refType: 'course', sourceType: 'course', sourceId: id,
+          idempotencyKey: `course:${id}:updated:${Date.now()}`,
+        });
+      }
+    }
+
+    return res.json({ message: "Đã cập nhật khóa học.", ok: true, id });
   } catch (err) {
     console.error("PATCH courses error:", err);
     return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
@@ -6400,76 +6396,10 @@ async function writeCourseAuditLog(courseId, action, adminId, previousStatus, ne
   );
 }
 
-// ── PATCH /api/admin/courses/:id — edit fields and/or change status ──────────
-// Same courses.status vocabulary the tutor-facing endpoints use (courses_status_check).
-// Used for both the edit form (title/description/price/subject) and the
-// archive/hide row actions (status only) — partial update, only sent fields change.
+// ADMIN_COURSE_STATUSES / COURSE_STATUS_LABEL_VI — courses_status_check vocabulary,
+// used by the POST/PATCH /api/admin/courses routes above.
 const ADMIN_COURSE_STATUSES = new Set(['draft', 'pending_review', 'published', 'rejected', 'archived']);
 const COURSE_STATUS_LABEL_VI = { draft: 'Bản nháp', pending_review: 'Chờ duyệt', published: 'Hoạt động', rejected: 'Bị báo cáo', archived: 'Đã lưu trữ' };
-app.patch("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const { title, description, price, subject, thumbnail_url, status, reason } = req.body || {};
-    const before = await pool.query(`SELECT title, status, tutor_id FROM courses WHERE id = $1`, [req.params.id]);
-    if (!before.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
-    const prev = before.rows[0];
-
-    const sets = [], params = [];
-    if (title !== undefined)         { params.push(String(title).trim());  sets.push(`title = $${params.length}`); }
-    if (description !== undefined)   { params.push(String(description));   sets.push(`description = $${params.length}`); }
-    if (subject !== undefined)       { params.push(String(subject).trim());sets.push(`subject = $${params.length}`); }
-    if (thumbnail_url !== undefined) { params.push(String(thumbnail_url).trim() || null); sets.push(`thumbnail_url = $${params.length}`); }
-    if (price !== undefined) {
-      const p = Number(price);
-      if (!Number.isFinite(p) || p < 0) return res.status(400).json({ message: "Giá không hợp lệ." });
-      params.push(p); sets.push(`price = $${params.length}`);
-    }
-    if (status !== undefined) {
-      if (!ADMIN_COURSE_STATUSES.has(status)) return res.status(400).json({ message: "Trạng thái không hợp lệ." });
-      params.push(status); sets.push(`status = $${params.length}`);
-    }
-    if (sets.length === 0) return res.status(400).json({ message: "Không có trường nào để cập nhật." });
-    sets.push(`updated_at = NOW()`);
-    params.push(req.params.id);
-    const result = await pool.query(
-      `UPDATE courses SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id`,
-      params
-    );
-
-    const statusChanged = status !== undefined && status !== prev.status;
-    await writeCourseAuditLog(
-      req.params.id, statusChanged ? 'STATUS_CHANGE' : 'UPDATE', req.user.userId,
-      statusChanged ? prev.status : null, statusChanged ? status : null, reason,
-      { fields: Object.keys(req.body || {}) }
-    );
-
-    // Best-effort: let the tutor know an admin touched their course. Never
-    // blocks or fails the request (safeNotifyUser swallows its own errors).
-    if (prev.tutor_id) {
-      if (statusChanged) {
-        await safeNotifyUser(pool, {
-          userId: prev.tutor_id, channels: ['IN_APP', 'EMAIL'],
-          templateKey: 'course_status_changed_by_admin', eventType: 'course_status_changed_by_admin',
-          data: { courseName: prev.title, newStatus: status, newStatusLabel: COURSE_STATUS_LABEL_VI[status] || status, reason },
-          refId: req.params.id, refType: 'course', sourceType: 'course', sourceId: req.params.id,
-          idempotencyKey: `course:${req.params.id}:status:${status}:${Date.now()}`,
-        });
-      } else {
-        await safeNotifyUser(pool, {
-          userId: prev.tutor_id, channels: ['IN_APP'],
-          templateKey: 'course_updated_by_admin', eventType: 'course_updated_by_admin',
-          data: { courseName: prev.title },
-          refId: req.params.id, refType: 'course', sourceType: 'course', sourceId: req.params.id,
-          idempotencyKey: `course:${req.params.id}:updated:${Date.now()}`,
-        });
-      }
-    }
-
-    return res.json({ ok: true, id: result.rows[0].id });
-  } catch (err) {
-    console.error("PATCH /api/admin/courses/:id error:", err);
-    return res.status(500).json({ message: "Lỗi khi cập nhật khóa học." });
-  }
-});
 
 // ── GET /api/admin/courses/:id/audit-log ──────────────────────────────────────
 app.get("/api/admin/courses/:id/audit-log", verifyToken, requireAdmin, async (req, res) => {
@@ -6858,38 +6788,6 @@ app.delete("/api/admin/coupons/:id", verifyToken, requireAdmin, async (req, res)
 // Always created as 'draft'; admin uses the existing Edit modal to set
 // status/other fields afterward, so this endpoint only needs the minimum to
 // create a valid row (mirrors upsertTutorCourse's required fields).
-app.post("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const { title, description, subject, price, tutor_id } = req.body || {};
-    const cleanTitle = String(title || '').trim();
-    if (!cleanTitle) return res.status(400).json({ message: "Tên khóa học là bắt buộc." });
-    if (!tutor_id) return res.status(400).json({ message: "Vui lòng chọn gia sư phụ trách." });
-    const p = Number(price) || 0;
-    if (p < 0) return res.status(400).json({ message: "Giá không hợp lệ." });
-    const tutorCheck = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'tutor'`, [tutor_id]);
-    if (!tutorCheck.rows.length) return res.status(400).json({ message: "Không tìm thấy gia sư." });
-
-    const result = await pool.query(
-      `INSERT INTO courses (tutor_id, title, description, subject, price, status)
-       VALUES ($1, $2, $3, $4, $5, 'draft') RETURNING id`,
-      [tutor_id, cleanTitle, String(description || '').trim() || null, String(subject || '').trim() || null, p]
-    );
-    const newId = result.rows[0].id;
-    await writeCourseAuditLog(newId, 'CREATE', req.user.userId, null, 'draft', null, { title: cleanTitle, tutor_id });
-    await safeNotifyUser(pool, {
-      userId: tutor_id, channels: ['IN_APP', 'EMAIL'],
-      templateKey: 'course_created_by_admin', eventType: 'course_created_by_admin',
-      data: { courseName: cleanTitle },
-      refId: newId, refType: 'course', sourceType: 'course', sourceId: newId,
-      idempotencyKey: `course:${newId}:created`,
-    });
-    return res.status(201).json({ ok: true, id: newId });
-  } catch (err) {
-    console.error("POST /api/admin/courses error:", err);
-    return res.status(500).json({ message: "Lỗi khi tạo khóa học." });
-  }
-});
-
 // ── GET /api/admin/transactions/failed ────────────────────────────────────────
 // CAP-3.8: Transactions with non-standard statuses (failed / unknown).
 app.get("/api/admin/transactions/failed", verifyToken, requireAdmin, async (req, res) => {
