@@ -22,7 +22,7 @@ const AuditLogs             = lazy(() => import('./admin/transactions/AuditLogs'
 const WalletLedger          = lazy(() => import('./admin/transactions/WalletLedger'))
 const CommissionLogs        = lazy(() => import('./admin/transactions/CommissionLogs'))
 const NotificationOutbox     = lazy(() => import('./admin/transactions/NotificationOutbox'))
-const WithdrawalRequests     = lazy(() => import('./admin/transactions/WithdrawalRequests'))
+const WalletRequests         = lazy(() => import('./admin/transactions/WalletRequests'))
 const AICaseResolutions      = lazy(() => import('./admin/transactions/AICaseResolutions'))
 const DataEntryView          = lazy(() => import('./admin/DataEntryView'))
 
@@ -32,10 +32,10 @@ const Moderation = lazy(() => import('./admin/services/Moderation'))
 const SemanticModeration = lazy(() => import('./admin/semantic/SemanticModeration'))
 const FraudIntel = lazy(() => import('./admin/fraud/FraudIntel'))
 const SafeAnalytics = lazy(() => import('./admin/analytics/SafeAnalytics'))
+const PinnedWidgets = lazy(() => import('./admin/analytics/PinnedWidgets'))
 const SubjectsView = lazy(() => import('./admin/subjects/SubjectsView'))
 import { subjectMeta as sharedSubjectMeta } from './admin/subjects/subjectMeta'
 import { uploadCourseThumbnail } from './services/upload'
-const ReportsView = lazy(() => import('./admin/reports/ReportsView'))
 
 import { API_BASE_URL as API } from './config'
 
@@ -66,16 +66,13 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('vi-VN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-const AdminWalletDashboard = lazy(() => import('./components/AdminWalletDashboard'))
-
 const TX_SUB_ITEMS = [
   { id: 'tx-overview',     label: 'Tổng Quan Tài Chính',    icon: 'bar_chart' },
   { id: 'tx-lessons',      label: 'Thanh Toán Buổi Học',       icon: 'receipt_long' },
   { id: 'tx-courses',      label: 'Giao Dịch Khóa Học',   icon: 'school' },
-  { id: 'tx-withdrawals',  label: 'Duyệt Rút Tiền',      icon: 'account_balance' },
+  { id: 'tx-withdrawals',  label: 'Duyệt giao dịch Ví',  icon: 'account_balance' },
   { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
   { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
-  { id: 'tx-ai-cases',     label: 'Xử Lý AI Khiếu Nại',    icon: 'smart_toy' },
   { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
   { id: 'tx-gateways',     label: 'Cổng Thanh Toán',      icon: 'credit_card' },
   { id: 'tx-commissions',  label: 'Quản Lý Hoa Hồng',       icon: 'percent' },
@@ -89,16 +86,15 @@ const TX_SUB_ITEMS = [
   { id: 'tx-wallet-ledger',    label: 'Sổ Cái Ví',            icon: 'account_balance_wallet' },
   { id: 'tx-commission-logs', label: 'Nhật Ký Hoa Hồng',    icon: 'receipt_long' },
   { id: 'notifications-outbox', label: 'Email / Hàng Đợi Thông Báo', icon: 'mark_email_read' },
-  { id: 'tx-audit',        label: 'Nhật Ký Admin',            icon: 'history_edu' },
 ]
 
 const TX_VIEW_IDS = new Set(TX_SUB_ITEMS.map(i => i.id))
 
 const SM_SUB_ITEMS = [
-  { id: 'sm-complaints',   label: 'Khiếu nại',             icon: 'report_problem' },
+  { id: 'sm-complaints',   label: 'Khiếu nại Dịch vụ',     icon: 'report_problem' },
   { id: 'sm-reviews',      label: 'Đánh giá',              icon: 'reviews' },
   { id: 'sm-violations',   label: 'Báo cáo vi phạm',       icon: 'gavel' },
-  { id: 'sm-moderation',   label: 'Kiểm duyệt nội dung',   icon: 'policy' },
+  { id: 'sm-moderation',   label: 'Giám sát nội dung',     icon: 'policy' },
   { id: 'sm-semantic',     label: 'AI Kiểm duyệt Nội dung', icon: 'smart_toy' },
   { id: 'sm-fraud',        label: 'AI Phát hiện Gian lận', icon: 'security' },
   { id: 'sm-analytics',    label: 'AI Phân tích Dữ liệu',  icon: 'query_stats' },
@@ -114,11 +110,8 @@ const NAV_ITEMS = [
   { id: 'lessons',         label: 'Khóa học',              icon: 'school',               section: 'Học tập' },
   { id: 'transactions',    label: 'Giao dịch',             icon: 'payments', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
   { id: 'services',        label: 'Quản lý dịch vụ',       icon: 'support_agent', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
-  { id: 'wallet-management', label: 'Duyệt giao dịch Ví',  icon: 'account_balance_wallet', section: 'Tài chính & Dịch vụ' },
-  { id: 'reports',         label: 'Báo cáo',               icon: 'assessment',           section: 'Hệ thống' },
   { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology',           section: 'Hệ thống' },
   { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu',          section: 'Hệ thống' },
-  { id: 'settings',        label: 'Cài đặt',               icon: 'settings',             section: 'Hệ thống' },
 ]
 
 // Bản đồ nhãn dùng cho breadcrumb ở thanh trên cùng
@@ -492,6 +485,7 @@ export default function AdminDashboard() {
               loading={loading}
               onNavigate={setActiveView}
               displayName={displayName}
+              token={token}
               kpiStats={kpiStats}
               kpiLoading={kpiLoading}
               kpiError={kpiError}
@@ -503,9 +497,6 @@ export default function AdminDashboard() {
               onRangeChange={setChartRange}
               onRefreshChart={fetchChartData}
             />
-          )}
-          {activeView === 'wallet-management' && (
-            <AdminWalletDashboard />
           )}
           {activeView === 'tutor-approval' && (
             <TutorApprovalView
@@ -532,10 +523,9 @@ export default function AdminDashboard() {
           {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} token={token} />}
           {activeView === 'tx-lessons'       && <LessonPayments token={token} />}
           {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
-          {activeView === 'tx-withdrawals'   && <WithdrawalRequests token={token} />}
+          {activeView === 'tx-withdrawals'   && <WalletRequests token={token} />}
           {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
-          {activeView === 'tx-disputes'      && <ComplaintsView token={token} />}
-          {activeView === 'tx-ai-cases'      && <AICaseResolutions token={token} />}
+          {activeView === 'tx-disputes'      && <DisputesCenterView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
           {activeView === 'tx-gateways'      && <PaymentGateways token={token} />}
           {activeView === 'tx-commissions'   && <CommissionManagement token={token} />}
@@ -549,8 +539,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-wallet-ledger'    && <WalletLedger token={token} />}
           {activeView === 'tx-commission-logs' && <CommissionLogs token={token} />}
           {activeView === 'notifications-outbox' && <NotificationOutbox token={token} />}
-          {activeView === 'tx-audit'         && <AuditLogs token={token} />}
-          
+
           {/* ── Service Management Module ── */}
           {activeView === 'sm-complaints'    && <CourseComplaintsAdminView token={token} />}
           {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
@@ -560,10 +549,8 @@ export default function AdminDashboard() {
           {activeView === 'sm-fraud'         && <FraudIntel token={token} />}
           {activeView === 'sm-analytics'     && <SafeAnalytics token={token} />}
 
-          {activeView === 'reports'          && <ReportsView token={token} />}
-          {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
+          {activeView === 'ai-insights'      && <AIInsightsView token={token} onNavigate={setActiveView} />}
           {activeView === 'audit-logs'       && <AuditLogs token={token} />}
-          {activeView === 'settings'         && <SettingsView />}
         </Suspense>
         </div>
       </main>
@@ -679,7 +666,7 @@ const fmtCompact = (n) => {
 }
 
 function DashboardView({
-  stats, loading, onNavigate, displayName = 'Admin',
+  stats, loading, onNavigate, displayName = 'Admin', token,
   kpiStats, kpiLoading, kpiError, onRefreshKpi,
   chartData, chartLoading, chartError, chartRange, onRangeChange, onRefreshChart,
 }) {
@@ -971,7 +958,7 @@ function DashboardView({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-6">
         {[
           { id: 'tutor-approval', icon: 'how_to_reg',     label: 'Duyệt gia sư', desc: 'Xem xét hồ sơ chờ duyệt',          tile: 'bg-blue-50 text-blue-600',       count: kpiLoading ? null : (K.pending_tutors || null) },
-          { id: 'sm-complaints',  icon: 'report_problem', label: 'Khiếu nại',    desc: 'Xem và xử lý khiếu nại tranh chấp', tile: 'bg-amber-50 text-amber-600',     count: null },
+          { id: 'sm-complaints',  icon: 'report_problem', label: 'Khiếu nại Dịch vụ', desc: 'Xem và xử lý khiếu nại chất lượng dịch vụ', tile: 'bg-amber-50 text-amber-600',     count: null },
           { id: 'transactions',   icon: 'payments',       label: 'Giao dịch',    desc: 'Theo dõi hoạt động thanh toán',     tile: 'bg-emerald-50 text-emerald-600', count: null },
         ].map(item => (
           <button
@@ -996,6 +983,12 @@ function DashboardView({
             </div>
           </button>
         ))}
+      </div>
+
+      <div className="mt-8">
+        <Suspense fallback={null}>
+          <PinnedWidgets token={token} />
+        </Suspense>
       </div>
     </div>
   )
@@ -2335,8 +2328,9 @@ function CourseDrawer({ course, show, tab, onTab, onClose, token, onChanged }) {
 
   const toggleCouponActive = async coupon => {
     try {
-      await authFetch(`${API}/api/admin/courses/${course.id}/coupons/${coupon.id}`, token, { method: 'PATCH', body: JSON.stringify({ active: !coupon.active }) })
-      setCoupons(cs => cs.map(c => c.id === coupon.id ? { ...c, active: !c.active } : c))
+      const nextActive = !coupon.active
+      await authFetch(`${API}/api/admin/courses/${course.id}/coupons/${coupon.id}`, token, { method: 'PATCH', body: JSON.stringify({ active: nextActive }) })
+      setCoupons(cs => cs.map(c => c.id === coupon.id ? { ...c, active: nextActive, pending_approval: nextActive ? false : c.pending_approval } : c))
     } catch (err) { window.alert(err.message) }
   }
 
@@ -2587,21 +2581,34 @@ function CourseDrawer({ course, show, tab, onTab, onClose, token, onChanged }) {
               ) : (
                 <div className="space-y-2">
                   {coupons.map(c => (
-                    <div key={c.id} className="bg-white rounded-xl border border-outline-variant p-3 flex items-center justify-between gap-3">
+                    <div key={c.id} className={`bg-white rounded-xl border p-3 flex items-center justify-between gap-3 ${c.pending_approval ? 'border-amber-300 bg-amber-50/40' : 'border-outline-variant'}`}>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-mono font-bold text-sm text-on-surface">{c.code}</span>
-                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>{c.active ? 'Đang bật' : 'Đã tắt'}</span>
+                          {c.pending_approval ? (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">Chờ duyệt</span>
+                          ) : (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>{c.active ? 'Đang bật' : 'Đã tắt'}</span>
+                          )}
                         </div>
                         <p className="text-xs text-on-surface-variant mt-0.5">
                           Giảm {c.discount_type === 'percent' ? `${c.discount_value}%` : fmtVND(c.discount_value)}
                           {c.max_discount ? ` (tối đa ${fmtVND(c.max_discount)})` : ''}
                         </p>
+                        <p className="text-[11px] text-on-surface-variant/70 mt-0.5">
+                          {c.creator_role === 'tutor' ? `Do gia sư ${c.creator_name || ''} tạo` : c.creator_name ? `Do admin ${c.creator_name} tạo` : 'Do admin tạo'}
+                        </p>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <button onClick={() => toggleCouponActive(c)} className="text-xs font-semibold px-2 py-1 rounded-lg text-on-surface-variant hover:bg-gray-100">
-                          {c.active ? 'Tắt' : 'Bật'}
-                        </button>
+                        {c.pending_approval ? (
+                          <button onClick={() => toggleCouponActive(c)} className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-primary text-white hover:opacity-90">
+                            Duyệt
+                          </button>
+                        ) : (
+                          <button onClick={() => toggleCouponActive(c)} className="text-xs font-semibold px-2 py-1 rounded-lg text-on-surface-variant hover:bg-gray-100">
+                            {c.active ? 'Tắt' : 'Bật'}
+                          </button>
+                        )}
                         <button onClick={() => deleteCoupon(c)} className="p-1.5 text-red-500 hover:text-red-700"><span className="material-symbols-outlined text-[18px]">delete</span></button>
                       </div>
                     </div>
@@ -3492,6 +3499,30 @@ function TransactionsView({ token }) {
   )
 }
 
+// Gộp "Quản Lý Tranh Chấp" + "AI Gợi Ý Xử Lý Tranh Chấp" vào 1 trang, 2 tab —
+// trước đây là 2 mục sidebar riêng nhưng AI Gợi Ý chỉ là lớp gợi ý trên chính
+// dữ liệu disputes (ai_case_resolutions.dispute_id khóa 1-1 vào disputes.id),
+// không phải một loại khiếu nại độc lập, nên tách riêng gây hiểu lầm.
+function DisputesCenterView({ token }) {
+  const [tab, setTab] = useState('disputes')
+  return (
+    <div>
+      <div className="flex gap-2 border-b border-outline-variant px-10 pt-6">
+        {[
+          { key: 'disputes', label: 'Tranh Chấp Giao Dịch', icon: 'gavel' },
+          { key: 'ai',       label: 'AI Gợi Ý Xử Lý',       icon: 'smart_toy' },
+        ].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors ${tab === t.key ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}>
+            <span className="material-symbols-outlined text-[18px]">{t.icon}</span>{t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'disputes' ? <ComplaintsView token={token} /> : <AICaseResolutions token={token} />}
+    </div>
+  )
+}
+
 function ComplaintsView({ token }) {
   const API_BASE = API
   const [disputes, setDisputes] = useState([])
@@ -3558,8 +3589,8 @@ function ComplaintsView({ token }) {
     <div className="p-10 max-w-[1280px] mx-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
-          <h2 className="text-3xl font-bold text-on-background">Khiếu nại & Tranh chấp</h2>
-          <p className="text-sm text-on-surface-variant mt-1">Xem xét và phán quyết các khiếu nại liên quan đến học phí.</p>
+          <h2 className="text-3xl font-bold text-on-background">Tranh Chấp Giao Dịch (Escrow)</h2>
+          <p className="text-sm text-on-surface-variant mt-1">Xem xét và phán quyết các tranh chấp học phí đang bị tạm giữ (escrow). Không bao gồm khiếu nại chất lượng dịch vụ — xem mục "Khiếu nại Dịch vụ".</p>
         </div>
         <button onClick={fetchDisputes} className="flex items-center gap-2 px-4 py-2 rounded-xl border border-outline-variant text-sm hover:bg-gray-50 transition-colors">
           <span className="material-symbols-outlined text-[18px]">refresh</span>Làm mới
@@ -3616,7 +3647,15 @@ function ComplaintsView({ token }) {
                   <td className="py-3 px-4 text-sm text-on-surface">{d.tutor_full_name || d.tutor_name || d.d_tutor_id}</td>
                   <td className="py-3 px-4 text-sm">
                     {d.target_type === 'course' ? (
-                      <p><span className="bg-primary/10 text-primary text-[10px] px-1 rounded uppercase mr-1">Khóa học</span>{d.course_title}</p>
+                      <>
+                        <p><span className="bg-primary/10 text-primary text-[10px] px-1 rounded uppercase mr-1">Khóa học</span>{d.course_title}</p>
+                        {d.related_complaint_id && (
+                          <p className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-amber-700" title="Học viên này cũng có khiếu nại dịch vụ cho cùng khóa học — xem mục Khiếu nại Dịch vụ">
+                            <span className="material-symbols-outlined text-[12px]">report_problem</span>
+                            Có khiếu nại dịch vụ liên quan ({d.related_complaint_status})
+                          </p>
+                        )}
+                      </>
                     ) : (
                       <><p>{d.subject}</p><p className="text-xs text-on-surface-variant">{fmtDate(d.lesson_date)}</p></>
                     )}
@@ -3675,6 +3714,15 @@ function ComplaintsView({ token }) {
                   <span className="text-on-surface-variant">Lý do:</span>
                   <p className="text-on-surface mt-1 italic">"{resolveModal.reason}"</p>
                 </div>
+                {resolveModal.related_complaint_id && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-amber-700 bg-amber-100">
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>report_problem</span>
+                      Có khiếu nại dịch vụ liên quan ({resolveModal.related_complaint_status})
+                    </span>
+                    <p className="text-xs text-on-surface-variant mt-1">Kiểm tra mục "Khiếu nại Dịch vụ" trước khi phán quyết để tránh hoàn tiền trùng lặp.</p>
+                  </div>
+                )}
                 {resolveModal.withdrawn_at && (
                   <div className="pt-2 border-t border-gray-200">
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-orange-700 bg-orange-100">
@@ -3800,6 +3848,7 @@ function ReviewsView({ token }) {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState(null)
   const [tick,    setTick]    = useState(0)
+  const [busyId,  setBusyId]  = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -3808,6 +3857,23 @@ function ReviewsView({ token }) {
       .then(data => { setReviews(data); setLoading(false) })
       .catch(err  => { setError(err.message); setLoading(false) })
   }, [token, tick])
+
+  const toggleVisibility = async r => {
+    const action = r.is_visible ? 'hide' : 'show'
+    const confirmMsg = r.is_visible
+      ? `Ẩn đánh giá của ${r.reviewer_name || 'người dùng này'}? Đánh giá sẽ không còn hiện công khai.`
+      : `Hiện lại đánh giá của ${r.reviewer_name || 'người dùng này'}?`
+    if (!window.confirm(confirmMsg)) return
+    setBusyId(r.id)
+    try {
+      await authFetch(`${API}/api/admin/reviews/${r.id}/${action}`, token, { method: 'PATCH' })
+      setReviews(prev => prev.map(x => x.id === r.id ? { ...x, is_visible: !r.is_visible } : x))
+    } catch (err) {
+      alert('Lỗi: ' + err.message)
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   const avg = reviews.length
     ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
@@ -3892,7 +3958,7 @@ function ReviewsView({ token }) {
             ) : (
               <div className="divide-y divide-outline-variant">
                 {reviews.map(r => (
-                  <div key={r.id} className="p-6 hover:bg-gray-50 transition-colors">
+                  <div key={r.id} className={`p-6 hover:bg-gray-50 transition-colors ${r.is_visible === false ? 'opacity-50' : ''}`}>
                     <div className="flex items-start gap-3">
                       <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
                         {(r.reviewer_name || '?').charAt(0)}
@@ -3906,11 +3972,26 @@ function ReviewsView({ token }) {
                           {r.subject && (
                             <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-medium rounded-full">{r.subject}</span>
                           )}
+                          {r.is_visible === false && (
+                            <span className="px-2 py-0.5 bg-red-50 text-red-600 text-xs font-medium rounded-full">Đã ẩn</span>
+                          )}
                         </div>
                         <Stars n={r.rating} />
                         <p className="text-sm text-on-surface-variant mt-1">{r.content}</p>
                         <p className="text-xs text-on-surface-variant mt-1">{fmtDate(r.created_at)}</p>
                       </div>
+                      <button
+                        onClick={() => toggleVisibility(r)}
+                        disabled={busyId === r.id}
+                        className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 ${
+                          r.is_visible === false
+                            ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                            : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[16px]">{r.is_visible === false ? 'visibility' : 'visibility_off'}</span>
+                        {r.is_visible === false ? 'Hiện' : 'Ẩn'}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -3924,7 +4005,7 @@ function ReviewsView({ token }) {
 }
 
 // ─── AI Insights View ─────────────────────────────────────────────────────────
-function AIInsightsView({ token }) {
+function AIInsightsView({ token, onNavigate }) {
   const [data,    setData]    = useState(null)
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState(null)
@@ -4005,6 +4086,15 @@ function AIInsightsView({ token }) {
                       </span>
                     </div>
                     <p className="text-xs text-on-surface-variant">{f.detail}</p>
+                    {f.nav && onNavigate && (
+                      <button
+                        onClick={() => onNavigate(f.nav)}
+                        className="mt-2 flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
+                      >
+                        {f.navLabel || 'Xem chi tiết'}
+                        <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -4070,126 +4160,6 @@ function AIInsightsView({ token }) {
         </>
       )}
     </div>
-  )
-}
-
-// ─── Settings View ────────────────────────────────────────────────────────────
-function SettingsView() {
-  // Read-only: no settings store exists in the DB, so values are display-only
-  // defaults and cannot be persisted. No mutation is performed here.
-  const [form, setForm] = useState({
-    siteName: 'EduX',
-    supportEmail: 'support@academiaflow.com',
-    maxPendingDays: '7',
-    autoRejectDays: '30',
-    minTutorRating: '3.5',
-    commissionRate: '15',
-    maintenanceMode: false,
-    emailNotifications: true,
-    aiAnomalyDetection: true,
-    auditLogRetention: '90',
-  })
-
-  return (
-    <div className="p-10 max-w-[900px] mx-auto">
-      <div className="mb-8">
-        <h2 className="text-3xl font-bold text-on-background">Cài đặt</h2>
-        <p className="text-sm text-on-surface-variant mt-1">Cấu hình cài đặt và chính sách toàn nền tảng.</p>
-      </div>
-
-      <div className="mb-6 bg-sky-50 border border-sky-200 rounded-xl p-4 flex items-start gap-3">
-        <span className="material-symbols-outlined text-sky-600 mt-0.5">visibility</span>
-        <div>
-          <p className="text-sm font-semibold text-sky-800">Chế độ chỉ xem</p>
-          <p className="text-sm text-sky-700">Các giá trị dưới đây là mặc định hiển thị và chưa được kết nối với kho lưu trữ cấu hình thực — không thể chỉnh sửa hoặc lưu tại đây.</p>
-        </div>
-      </div>
-
-      <fieldset disabled className="space-y-6 border-0 p-0 m-0 min-w-0">
-        {/* General */}
-        <SettingsSection title="Chung" icon="settings">
-          <SettingsField label="Tên nền tảng" sub="Hiển thị trên toàn bộ trang và trong email.">
-            <input className="settings-input" value={form.siteName} onChange={e => setForm(f => ({ ...f, siteName: e.target.value }))} />
-          </SettingsField>
-          <SettingsField label="Email hỗ trợ" sub="Phản hồi email hệ thống sẽ được gửi đến đây.">
-            <input className="settings-input" type="email" value={form.supportEmail} onChange={e => setForm(f => ({ ...f, supportEmail: e.target.value }))} />
-          </SettingsField>
-        </SettingsSection>
-
-        {/* Tutor Approval */}
-        <SettingsSection title="Chính sách duyệt gia sư" icon="how_to_reg">
-          <SettingsField label="Số ngày chờ tối đa" sub="Hồ sơ quá ngày này sẽ được tô nổi để xem xét.">
-            <input className="settings-input w-32" type="number" min="1" value={form.maxPendingDays} onChange={e => setForm(f => ({ ...f, maxPendingDays: e.target.value }))} />
-          </SettingsField>
-          <SettingsField label="Tự động từ chối sau (ngày)" sub="Tự động từ chối hồ sơ chưa hoàn thiện sau số ngày này.">
-            <input className="settings-input w-32" type="number" min="1" value={form.autoRejectDays} onChange={e => setForm(f => ({ ...f, autoRejectDays: e.target.value }))} />
-          </SettingsField>
-          <SettingsField label="Xếp hạng gia sư tối thiểu" sub="Gia sư dưới mức này sẽ bị gắn cờ để xem xét.">
-            <input className="settings-input w-32" type="number" min="1" max="5" step="0.1" value={form.minTutorRating} onChange={e => setForm(f => ({ ...f, minTutorRating: e.target.value }))} />
-          </SettingsField>
-        </SettingsSection>
-
-        {/* Financial */}
-        <SettingsSection title="Tài chính" icon="payments">
-          <SettingsField label="Tỷ lệ hoa hồng nền tảng (%)" sub="Phần trăm trích từ mỗi khoản thanh toán cho gia sư.">
-            <input className="settings-input w-32" type="number" min="0" max="100" value={form.commissionRate} onChange={e => setForm(f => ({ ...f, commissionRate: e.target.value }))} />
-          </SettingsField>
-        </SettingsSection>
-
-        {/* System */}
-        <SettingsSection title="Hệ thống" icon="manage_accounts">
-          <SettingsField label="Chế độ bảo trì" sub="Tắt quyền truy cập cho người dùng không phải admin.">
-            <Toggle checked={form.maintenanceMode} onChange={v => setForm(f => ({ ...f, maintenanceMode: v }))} />
-          </SettingsField>
-          <SettingsField label="Thông báo email" sub="Gửi cảnh báo hệ thống và email duyệt hồ sơ.">
-            <Toggle checked={form.emailNotifications} onChange={v => setForm(f => ({ ...f, emailNotifications: v }))} />
-          </SettingsField>
-          <SettingsField label="Phát hiện bất thường AI" sub="Tự động gắn cờ các hoạt động đáng ngờ.">
-            <Toggle checked={form.aiAnomalyDetection} onChange={v => setForm(f => ({ ...f, aiAnomalyDetection: v }))} />
-          </SettingsField>
-          <SettingsField label="Thời gian lưu nhật ký (ngày)" sub="Nhật ký cũ hơn số ngày này sẽ tự động bị xóa.">
-            <input className="settings-input w-32" type="number" min="30" value={form.auditLogRetention} onChange={e => setForm(f => ({ ...f, auditLogRetention: e.target.value }))} />
-          </SettingsField>
-        </SettingsSection>
-      </fieldset>
-
-      <style>{`.settings-input { width: 100%; padding: 8px 12px; border: 1px solid #c4c5d5; border-radius: 8px; font-size: 14px; background: #f9fafb; outline: none; transition: border-color .2s; } .settings-input:focus { border-color: #00288e; box-shadow: 0 0 0 2px rgba(0,40,142,.1); } fieldset[disabled] .settings-input { background: #f3f4f6; color: #6b7280; cursor: not-allowed; }`}</style>
-    </div>
-  )
-}
-
-function SettingsSection({ title, icon, children }) {
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-outline-variant bg-gray-50">
-        <span className="material-symbols-outlined text-primary text-[20px]">{icon}</span>
-        <h3 className="text-sm font-bold text-on-surface">{title}</h3>
-      </div>
-      <div className="divide-y divide-outline-variant">{children}</div>
-    </div>
-  )
-}
-
-function SettingsField({ label, sub, children }) {
-  return (
-    <div className="flex items-center justify-between px-6 py-4 gap-8">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-on-surface">{label}</p>
-        <p className="text-xs text-on-surface-variant mt-0.5">{sub}</p>
-      </div>
-      <div className="flex-shrink-0">{children}</div>
-    </div>
-  )
-}
-
-function Toggle({ checked, onChange }) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${checked ? 'bg-primary' : 'bg-gray-300'}`}
-    >
-      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
-    </button>
   )
 }
 

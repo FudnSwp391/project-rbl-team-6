@@ -14,8 +14,8 @@ export default function TimeSlotPicker({ slots = [], selectedSlot, onSelectSlot,
     return (
       <div className="flex flex-col items-center justify-center p-6 text-center bg-surface-container-low/50 rounded-xl border border-dashed border-outline-variant/30 text-on-surface-variant">
         <span className="material-symbols-outlined text-[32px] text-outline mb-2">event_busy</span>
-        <p className="font-label-md text-label-md">No available time slots on this day.</p>
-        <p className="font-label-sm text-label-sm text-outline mt-1">Please select another date on the calendar.</p>
+        <p className="font-label-md text-label-md">Không có khung giờ trống trong ngày này.</p>
+        <p className="font-label-sm text-label-sm text-outline mt-1">Vui lòng chọn ngày khác trên lịch.</p>
       </div>
     );
   }
@@ -24,7 +24,7 @@ export default function TimeSlotPicker({ slots = [], selectedSlot, onSelectSlot,
     <div className="space-y-3">
       <p className="font-label-md text-label-md text-on-surface font-semibold flex items-center gap-1.5">
         <span className="material-symbols-outlined text-primary text-[18px]">schedule</span>
-        Select Available Time
+        Chọn Khung Giờ Còn Trống
       </p>
       
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">

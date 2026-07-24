@@ -300,7 +300,7 @@ export default function MyCourses() {
                 {suggestedCourses.length === 0 ? (
                   <p className="text-label-sm text-secondary text-center py-md">Chưa có khóa học gợi ý nào.</p>
                 ) : suggestedCourses.map(sc => (
-                  <div key={sc.id} className="flex gap-md p-xs hover:bg-surface rounded-lg transition-colors cursor-pointer group" onClick={() => window.location.hash = `#/course/${sc.id}`}>
+                  <div key={sc.id} className="flex gap-md p-xs hover:bg-surface rounded-lg transition-colors cursor-pointer group" onClick={() => window.location.hash = `/course/${sc.id}`}>
                     {sc.thumbnail_url ? (
                       <img alt={sc.title} className="w-20 h-16 rounded-md object-cover border border-outline-variant" src={sc.thumbnail_url} />
                     ) : (

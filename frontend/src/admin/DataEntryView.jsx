@@ -618,7 +618,7 @@ function SubjectTab({ api, notify }) {
   useEffect(() => { reload(); }, [reload]);
 
   const filtered = items.filter(s =>
-    !search || (s.name || '').toLowerCase().includes(search.toLowerCase()) || (s.category || '').toLowerCase().includes(search.toLowerCase()));
+    !search || (s.name || '').toLowerCase().includes(search.toLowerCase()) || (s.description || '').toLowerCase().includes(search.toLowerCase()));
 
   async function handleDelete(id) {
     try {
@@ -643,8 +643,8 @@ function SubjectTab({ api, notify }) {
         renderItem={s => ({
           avatar: <Avatar icon="subject" />,
           title: s.name,
-          subtitle: s.category || 'Chưa phân nhóm',
-          badges: <Badge tone={s.is_active === false ? 'gray' : 'green'}>{s.is_active === false ? 'Tắt' : 'Đang bật'}</Badge>,
+          subtitle: s.description || 'Chưa có mô tả',
+          badges: <Badge tone={s.status === 'active' ? 'green' : 'gray'}>{s.status === 'active' ? 'Đang bật' : 'Tắt'}</Badge>,
         })}
       />
     </>
@@ -652,14 +652,14 @@ function SubjectTab({ api, notify }) {
 }
 
 function SubjectForm({ api, notify, editing, onDone, onCancel }) {
-  const empty = { name: '', category: '', is_active: true };
+  const empty = { name: '', description: '', status: 'active' };
   const [f, setF] = useState(empty);
   const [loading, setLoading] = useState(false);
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   useEffect(() => {
     if (editing) {
-      setF({ name: editing.name || '', category: editing.category || '', is_active: editing.is_active !== false });
+      setF({ name: editing.name || '', description: editing.description || '', status: editing.status || 'active' });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else setF(empty);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -687,11 +687,11 @@ function SubjectForm({ api, notify, editing, onDone, onCancel }) {
     <form onSubmit={submit} className="grid grid-cols-2 gap-4">
       <EditBanner editing={editing} name={editing?.name} onCancel={onCancel} />
       <Field label="Tên môn học" required><input className={inputCls} value={f.name} onChange={e => set('name', e.target.value)} placeholder="Tiếng Pháp" /></Field>
-      <Field label="Nhóm (tùy chọn)"><input className={inputCls} value={f.category} onChange={e => set('category', e.target.value)} placeholder="Ngoại ngữ" /></Field>
+      <Field label="Mô tả (tùy chọn)"><input className={inputCls} value={f.description} onChange={e => set('description', e.target.value)} placeholder="Ngoại ngữ" /></Field>
       {editing && (
         <Field label="Trạng thái">
-          <select className={inputCls} value={f.is_active ? '1' : '0'} onChange={e => set('is_active', e.target.value === '1')}>
-            <option value="1">Đang bật</option><option value="0">Tắt</option>
+          <select className={inputCls} value={f.status} onChange={e => set('status', e.target.value)}>
+            <option value="active">Đang bật</option><option value="disabled">Tắt</option>
           </select>
         </Field>
       )}
