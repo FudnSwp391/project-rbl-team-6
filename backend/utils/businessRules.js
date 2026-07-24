@@ -193,9 +193,9 @@ function parseMethodSupport(teachingMethods) {
 
 // Combine booking.lesson_date (date) + booking.time_slot ('HH:MM') into a Date.
 function parseBookingStartDateTime(booking) {
-  const d = String(booking.lesson_date).slice(0, 10);
+  const dStr = lessonDateStr(booking.lesson_date);
   const t = (booking.time_slot || '00:00').slice(0, 5);
-  return new Date(`${d}T${t}:00`);
+  return new Date(`${dStr}T${t}:00+07:00`);
 }
 
 module.exports = {

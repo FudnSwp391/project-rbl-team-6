@@ -1,26 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { getWalletOverview, getWalletTransactions, getWithdrawRequests, confirmWithdrawRequest } from '../../services/api';
+import { getWalletOverview, getWalletTransactions, getWithdrawRequests, confirmWithdrawRequest, getCashflowStats } from '../../services/api';
 
 export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
   const [wallet, setWallet] = useState(null);
   const [stats, setStats] = useState({ totalDeposited: 0, totalWithdrawn: 0, pendingWithdraw: 0 });
   const [transactions, setTransactions] = useState([]);
   const [withdrawRequests, setWithdrawRequests] = useState([]);
+  const [cashflow, setCashflow] = useState([]);
   const [loading, setLoading] = useState(true);
   const [confirmingId, setConfirmingId] = useState(null);
 
   const fetchWalletData = async () => {
     setLoading(true);
     try {
-      const [overviewRes, txRes, withdrawRes] = await Promise.all([
+      const [overviewRes, txRes, withdrawRes, cashflowRes] = await Promise.all([
         getWalletOverview(),
         getWalletTransactions(),
-        getWithdrawRequests()
+        getWithdrawRequests(),
+        getCashflowStats()
       ]);
       setWallet(overviewRes.wallet);
       setStats(overviewRes.stats);
       setTransactions(txRes.transactions || []);
       setWithdrawRequests(withdrawRes.requests || []);
+      setCashflow(cashflowRes.stats || []);
     } catch (err) {
       console.error("Error fetching wallet data", err);
     } finally {
@@ -208,22 +211,30 @@ export default function WalletDashboard({ onDepositClick, onWithdrawClick }) {
               <div className="w-full border-t border-dashed border-outline-variant/30"></div>
               <div className="w-full border-t border-dashed border-outline-variant/30"></div>
             </div>
-            {/* Hardcoded chart for visual as per template */}
-            {[
-              { m: 'Feb', d: '60%', w: '40%' },
-              { m: 'Mar', d: '75%', w: '55%' },
-              { m: 'Apr', d: '45%', w: '30%' },
-              { m: 'May', d: '90%', w: '60%' },
-              { m: 'Jun', d: '65%', w: '45%' },
-              { m: 'Jul', d: '80%', w: '70%' },
-            ].map((col) => (
-              <div key={col.m} className="flex flex-col items-center flex-1 z-10 group">
-                <div className="flex items-end space-x-1 h-48 w-full justify-center">
-                  <div className="w-4 bg-secondary-container rounded-t-sm transition-all duration-500 group-hover:w-5 group-hover:bg-secondary" style={{height: col.w}}></div>
-                </div>
-                <span className="text-xs mt-3 text-on-surface-variant">{col.m}</span>
-              </div>
-            ))}
+            {/* Dynamic chart based on database */}
+            {(() => {
+              const maxCashflow = Math.max(...cashflow.map(c => Number(c.total)), 1);
+              const dataToRender = cashflow.length > 0 ? cashflow : [
+                { m: 'Feb', total: 0 }, { m: 'Mar', total: 0 }, { m: 'Apr', total: 0 },
+                { m: 'May', total: 0 }, { m: 'Jun', total: 0 }, { m: 'Jul', total: 0 }
+              ];
+              return dataToRender.map((col) => {
+                const totalNum = Number(col.total);
+                // Ensure minimum height of 4px if > 0, 0px if 0
+                const wPercent = totalNum === 0 ? '0%' : Math.max((totalNum / maxCashflow) * 100, 2) + '%';
+                return (
+                  <div key={col.m} className="flex flex-col items-center flex-1 z-10 group relative">
+                    <div className="opacity-0 group-hover:opacity-100 absolute -top-8 bg-gray-800 text-white text-[10px] font-bold px-2 py-1 rounded transition-opacity pointer-events-none whitespace-nowrap z-50">
+                      {totalNum.toLocaleString('vi-VN')}đ
+                    </div>
+                    <div className="flex items-end space-x-1 h-48 w-full justify-center">
+                      <div className="w-4 bg-secondary-container rounded-t-sm transition-all duration-500 group-hover:w-5 group-hover:bg-secondary" style={{height: wPercent}}></div>
+                    </div>
+                    <span className="text-xs mt-3 text-on-surface-variant">{col.m}</span>
+                  </div>
+                );
+              });
+            })()}
           </div>
           <div className="mt-8 flex justify-center space-x-8">
             <div className="flex items-center">

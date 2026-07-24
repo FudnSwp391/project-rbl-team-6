@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { requestMethodChange } from '../services/api';
 import ReportSessionModal from './ReportSessionModal';
+import RescheduleModal from './RescheduleModal';
 import LessonEvaluationModal from './LessonEvaluationModal';
 import OfflineCheckinModal from './OfflineCheckinModal';
 import TutorVerifyCheckinModal from './TutorVerifyCheckinModal';
@@ -42,6 +43,8 @@ const SchedulePage = () => {
   const [detailSession, setDetailSession] = useState(null);
   const [sessionInfoMap, setSessionInfoMap] = useState({});
   const [reportSession, setReportSession] = useState(null);
+  const [rescheduleSession, setRescheduleSession] = useState(null);
+  const [rescheduleToast, setRescheduleToast] = useState('');
 
   const fetchSchedule = async () => {
     if (!token) return;
@@ -745,6 +748,10 @@ const SchedulePage = () => {
           reportStatus={getReportStatus(detailSession)}
           onReport={() => { setDetailSession(null); setReportSession(detailSession); }}
           onWithdrawDispute={() => handleWithdrawDispute(detailSession.open_dispute_id)}
+          onReschedule={() => {
+            setDetailSession(null);
+            setRescheduleSession(detailSession);
+          }}
           isEvaluated={evaluatedBookingIds.includes(detailSession.id || detailSession.booking_id)}
           onOpenEvaluateModal={setEvaluateSession}
           isTutor={user?.role === 'tutor'}
@@ -881,6 +888,37 @@ const SchedulePage = () => {
         </div>
       )}
 
+      {/* Toast thông báo thành công sau khi gửi request đổi lịch */}
+      {rescheduleToast && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 bg-green-600 text-white px-6 py-3 rounded-2xl shadow-2xl text-sm font-semibold animate-bounce"
+          style={{ minWidth: 280 }}
+        >
+          <span className="material-symbols-outlined text-base">check_circle</span>
+          {rescheduleToast}
+          <button
+            onClick={() => setRescheduleToast('')}
+            className="ml-2 text-white/70 hover:text-white"
+            aria-label="Đóng thông báo"
+          >
+            <span className="material-symbols-outlined text-base">close</span>
+          </button>
+        </div>
+      )}
+
+      {/* Reschedule Modal */}
+      {rescheduleSession && (
+        <RescheduleModal
+          booking={rescheduleSession}
+          onClose={() => setRescheduleSession(null)}
+          onSuccess={(msg) => {
+            setRescheduleToast(msg);
+            setTimeout(() => setRescheduleToast(''), 5000);
+            fetchSchedule(); // Reload schedule để cập nhật
+          }}
+        />
+      )}
+
       {/* Modal đánh giá chất lượng ngầm sau buổi học */}
       <LessonEvaluationModal
         isOpen={!!evaluateSession}
@@ -929,7 +967,7 @@ const SchedulePage = () => {
 export default SchedulePage;
 
 // ─── Session Detail Modal ────────────────────────────────────────────────────
-function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute, isEvaluated, onOpenEvaluateModal, isTutor, onOpenOfflinePinModal, onOpenVerifyCheckinModal, onOpenTutorReportModal }) {
+function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute, onReschedule, isEvaluated, onOpenEvaluateModal, isTutor, onOpenOfflinePinModal, onOpenVerifyCheckinModal, onOpenTutorReportModal }) {
   const [copied, setCopied] = useState(false);
   const [copiedPwd, setCopiedPwd] = useState(false);
   const [checkedMaterials, setCheckedMaterials] = useState({});
@@ -1350,6 +1388,15 @@ function SessionDetailModal({ session, info, onClose, onRequested, reportStatus,
           >
             Đóng
           </button>
+          {['upcoming', 'pending', 'Approved', 'Pending'].includes(session.status) && onReschedule && (
+            <button
+              onClick={onReschedule}
+              className="h-10 px-5 rounded-xl border border-primary text-primary text-[13px] font-bold flex items-center justify-center gap-2 hover:bg-primary/5 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[16px]">edit_calendar</span>
+              Đổi lịch
+            </button>
+          )}
           {session.status === 'completed' && (
             <button
               onClick={() => { onClose(); if (onOpenTutorReportModal) onOpenTutorReportModal(session); }}
