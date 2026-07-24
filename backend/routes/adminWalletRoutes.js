@@ -23,7 +23,7 @@ const adminAuthMiddleware = (req, res, next) => {
 router.get('/deposit-requests', adminAuthMiddleware, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT dr.*, u.email, u.full_name, u.role
+      SELECT dr.*, u.email, u.full_name, u.role, w.balance as wallet_balance
       FROM deposit_requests dr
       JOIN wallets w ON dr.wallet_id = w.id
       JOIN users u ON w.user_id = u.id

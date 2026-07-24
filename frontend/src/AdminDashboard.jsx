@@ -22,7 +22,7 @@ const AuditLogs             = lazy(() => import('./admin/transactions/AuditLogs'
 const WalletLedger          = lazy(() => import('./admin/transactions/WalletLedger'))
 const CommissionLogs        = lazy(() => import('./admin/transactions/CommissionLogs'))
 const NotificationOutbox     = lazy(() => import('./admin/transactions/NotificationOutbox'))
-const WithdrawalRequests     = lazy(() => import('./admin/transactions/WithdrawalRequests'))
+const WalletRequests         = lazy(() => import('./admin/transactions/WalletRequests'))
 const AICaseResolutions      = lazy(() => import('./admin/transactions/AICaseResolutions'))
 const DataEntryView          = lazy(() => import('./admin/DataEntryView'))
 
@@ -66,13 +66,11 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('vi-VN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-const AdminWalletDashboard = lazy(() => import('./components/AdminWalletDashboard'))
-
 const TX_SUB_ITEMS = [
   { id: 'tx-overview',     label: 'Tổng Quan Tài Chính',    icon: 'bar_chart' },
   { id: 'tx-lessons',      label: 'Thanh Toán Buổi Học',       icon: 'receipt_long' },
   { id: 'tx-courses',      label: 'Giao Dịch Khóa Học',   icon: 'school' },
-  { id: 'tx-withdrawals',  label: 'Duyệt Rút Tiền',      icon: 'account_balance' },
+  { id: 'tx-withdrawals',  label: 'Duyệt giao dịch Ví',  icon: 'account_balance' },
   { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
   { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
   { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
@@ -112,7 +110,6 @@ const NAV_ITEMS = [
   { id: 'lessons',         label: 'Khóa học',              icon: 'school',               section: 'Học tập' },
   { id: 'transactions',    label: 'Giao dịch',             icon: 'payments', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
   { id: 'services',        label: 'Quản lý dịch vụ',       icon: 'support_agent', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
-  { id: 'wallet-management', label: 'Duyệt giao dịch Ví',  icon: 'account_balance_wallet', section: 'Tài chính & Dịch vụ' },
   { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology',           section: 'Hệ thống' },
   { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu',          section: 'Hệ thống' },
 ]
@@ -501,9 +498,6 @@ export default function AdminDashboard() {
               onRefreshChart={fetchChartData}
             />
           )}
-          {activeView === 'wallet-management' && (
-            <AdminWalletDashboard />
-          )}
           {activeView === 'tutor-approval' && (
             <TutorApprovalView
               tutors={tutors}
@@ -529,7 +523,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-overview'      && <FinancialOverview onNavigate={setActiveView} token={token} />}
           {activeView === 'tx-lessons'       && <LessonPayments token={token} />}
           {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
-          {activeView === 'tx-withdrawals'   && <WithdrawalRequests token={token} />}
+          {activeView === 'tx-withdrawals'   && <WalletRequests token={token} />}
           {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
           {activeView === 'tx-disputes'      && <DisputesCenterView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
