@@ -30,22 +30,31 @@ export default function CommissionManagement({ token }) {
       .finally(() => setLoading(false))
   }, [token])
 
+  const isTracked = summary?.source === 'commission_logs'
+
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
       <PageHeader
         title="Quản Lý Hoa Hồng"
-        subtitle="Dữ liệu hoa hồng ước tính từ giao dịch thực — tỷ lệ 10% cố định (chỉ xem)"
+        subtitle={isTracked
+          ? 'Dữ liệu hoa hồng thực từ commission_logs (chỉ xem)'
+          : 'Dữ liệu hoa hồng ước tính từ giao dịch thực — tỷ lệ 10% cố định (chỉ xem)'}
       />
 
       {/* KPI cards */}
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          {[
-            { label: 'Tổng doanh thu',         value: fmtMoney(summary.total_gross_revenue),            icon: 'payments',      color: 'bg-blue-50 text-blue-600' },
-            { label: 'Hoa hồng nền tảng (~10%)', value: fmtMoney(summary.estimated_platform_commission), icon: 'percent',       color: 'bg-emerald-50 text-emerald-600' },
-            { label: 'Thu nhập gia sư (~90%)',   value: fmtMoney(summary.estimated_tutor_earnings),       icon: 'account_balance_wallet', color: 'bg-purple-50 text-purple-600' },
-            { label: 'Số giao dịch',            value: summary.total_payment_count,                      icon: 'receipt_long',  color: 'bg-amber-50 text-amber-600' },
-          ].map(c => (
+          {(isTracked ? [
+            { label: 'Tổng doanh thu',            value: fmtMoney(summary.total_gross_earned),       icon: 'payments',      color: 'bg-blue-50 text-blue-600' },
+            { label: 'Hoa hồng nền tảng',         value: fmtMoney(summary.net_platform_commission),  icon: 'percent',       color: 'bg-emerald-50 text-emerald-600' },
+            { label: 'Thu nhập gia sư',           value: fmtMoney(summary.total_tutor_earned),        icon: 'account_balance_wallet', color: 'bg-purple-50 text-purple-600' },
+            { label: 'Số giao dịch',              value: summary.total_events,                        icon: 'receipt_long',  color: 'bg-amber-50 text-amber-600' },
+          ] : [
+            { label: 'Tổng doanh thu',            value: fmtMoney(summary.total_gross_revenue),            icon: 'payments',      color: 'bg-blue-50 text-blue-600' },
+            { label: 'Hoa hồng nền tảng (~10%)',  value: fmtMoney(summary.estimated_platform_commission), icon: 'percent',       color: 'bg-emerald-50 text-emerald-600' },
+            { label: 'Thu nhập gia sư (~90%)',    value: fmtMoney(summary.estimated_tutor_earnings),       icon: 'account_balance_wallet', color: 'bg-purple-50 text-purple-600' },
+            { label: 'Số giao dịch',              value: summary.total_payment_count,                      icon: 'receipt_long',  color: 'bg-amber-50 text-amber-600' },
+          ]).map(c => (
             <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
               <div className={`w-9 h-9 rounded-lg ${c.color} flex items-center justify-center mb-3`}>
                 <span className="material-symbols-outlined text-[18px]">{c.icon}</span>

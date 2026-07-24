@@ -4827,88 +4827,6 @@ app.get("/api/admin/tutors/pending", verifyToken, requireAdmin, async (req, res)
   }
 });
 
-// ─── PATCH /api/admin/tutors/:id/approve ─────────────────────────────────────
-// Approves a tutor application and optionally sends them an email
-app.patch("/api/admin/tutors/:id/approve", verifyToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await pool.query(
-      `UPDATE tutor_profiles
-       SET status = 'approved', reject_reason = NULL
-       WHERE id = $1
-       RETURNING *`,
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor profile not found." });
-    }
-
-    const profile = result.rows[0];
-
-    // Also update the user's role to 'tutor' (if not already)
-    await pool.query(
-      `UPDATE users SET role = 'tutor' WHERE id = $1 AND role != 'admin'`,
-      [profile.user_id]
-    );
-
-    // Fetch user email to send notification
-    const userResult = await pool.query(
-      "SELECT email FROM users WHERE id = $1",
-      [profile.user_id]
-    );
-    if (userResult.rows.length > 0) {
-      sendTutorReviewEmail(userResult.rows[0].email, "approved", null);
-    }
-
-    return res.json(profile);
-  } catch (error) {
-    console.error("Approve error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
-// ─── PATCH /api/admin/tutors/:id/reject ──────────────────────────────────────
-// Rejects a tutor application with a reason and optionally sends them an email
-app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  const { reason } = req.body || {};
-
-  if (!reason || !reason.trim()) {
-    return res.status(400).json({ message: "Reject reason is required." });
-  }
-
-  try {
-    const result = await pool.query(
-      `UPDATE tutor_profiles
-       SET status = 'rejected', reject_reason = $1
-       WHERE id = $2
-       RETURNING *`,
-      [reason.trim(), id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Tutor profile not found." });
-    }
-
-    const profile = result.rows[0];
-
-    // Fetch user email to send notification
-    const userResult = await pool.query(
-      "SELECT email FROM users WHERE id = $1",
-      [profile.user_id]
-    );
-    if (userResult.rows.length > 0) {
-      sendTutorReviewEmail(userResult.rows[0].email, "rejected", reason);
-    }
-
-    return res.json(profile);
-  } catch (error) {
-    console.error("Reject error:", error);
-    return res.status(500).json({ message: "Server error." });
-  }
-});
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── PERSON 4: Class Workspace Routes ─────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -5222,25 +5140,6 @@ app.post("/api/admin/courses", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
-// ── POST /api/admin/subjects ── thêm môn học ────────────────────────────────
-app.post("/api/admin/subjects", verifyToken, requireAdmin, async (req, res) => {
-  const name = String(req.body?.name || "").trim();
-  const category = String(req.body?.category || "").trim() || null;
-  if (!name) return res.status(400).json({ message: "Tên môn học là bắt buộc." });
-  try {
-    const dup = await pool.query("SELECT id FROM subjects WHERE LOWER(name) = LOWER($1)", [name]);
-    if (dup.rows.length) return res.status(409).json({ message: "Môn học đã tồn tại." });
-    const s = await pool.query(
-      `INSERT INTO subjects (name, category, is_active) VALUES ($1,$2,TRUE) RETURNING id, name, category`,
-      [name, category]
-    );
-    return res.status(201).json({ message: "Đã thêm môn học.", subject: s.rows[0] });
-  } catch (err) {
-    console.error("POST /api/admin/subjects error:", err);
-    return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
-  }
-});
-
 // ═══ QUẢN LÝ (list + sửa + xóa) cho trang Nhập liệu ═════════════════════════
 
 // ── GET danh sách gia sư (mọi trạng thái) ───────────────────────────────────
@@ -5460,56 +5359,52 @@ app.patch("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) 
 });
 
 // ── DELETE khóa học ─────────────────────────────────────────────────────────
+// ── DELETE /api/admin/courses/:id ─────────────────────────────────────────────
+// Guarded hard delete — mirrors the Subject Management Center's own rule
+// (archive is always safe/reversible; real delete only when nothing depends on
+// the record). A course with any enrollment is refused with a clear message
+// pointing at Archive instead, so paying students never lose access silently.
 app.delete("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
   try {
-    await pool.query("DELETE FROM course_enrollments WHERE course_id = $1", [id]).catch(() => {});
-    await pool.query("DELETE FROM reviews WHERE course_id = $1", [id]).catch(() => {});
-    const r = await pool.query("DELETE FROM courses WHERE id = $1 RETURNING id", [id]);
-    if (!r.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
-    return res.json({ message: "Đã xóa khóa học." });
+    const { rows: enrolled } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM course_enrollments WHERE course_id = $1`, [req.params.id]
+    );
+    if (enrolled[0].n > 0) {
+      return res.status(409).json({ message: `Khóa học đã có ${enrolled[0].n} học viên đăng ký — không thể xóa. Hãy dùng "Lưu trữ" thay thế.` });
+    }
+    const before = await pool.query(`SELECT title, status, tutor_id FROM courses WHERE id = $1`, [req.params.id]);
+    if (!before.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+    const prev = before.rows[0];
+
+    await pool.query("DELETE FROM reviews WHERE course_id = $1", [req.params.id]).catch(() => {});
+    const result = await pool.query(`DELETE FROM courses WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
+
+    await writeCourseAuditLog(req.params.id, 'DELETE', req.user.userId, prev.status, null, req.body?.reason, { title: prev.title });
+    if (prev.tutor_id) {
+      await safeNotifyUser(pool, {
+        userId: prev.tutor_id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'course_deleted_by_admin', eventType: 'course_deleted_by_admin',
+        data: { courseName: prev.title },
+        refId: req.params.id, refType: 'course', sourceType: 'course', sourceId: req.params.id,
+        idempotencyKey: `course:${req.params.id}:deleted:${Date.now()}`,
+      });
+    }
+    return res.json({ ok: true, message: "Đã xóa khóa học." });
   } catch (err) {
-    console.error("DELETE courses error:", err);
-    return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
+    console.error("DELETE /api/admin/courses/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi xóa khóa học: " + err.message });
   }
 });
 
 // ── GET / PATCH / DELETE môn học (bảng subjects) ────────────────────────────
 app.get("/api/admin/manage/subjects", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const r = await pool.query("SELECT id, name, category, is_active, created_at FROM subjects ORDER BY name ASC");
+    const r = await pool.query("SELECT id, name, description, status, created_at FROM subjects ORDER BY name ASC");
     return res.json({ subjects: r.rows });
   } catch (err) {
     console.error("GET manage/subjects error:", err);
     return res.status(500).json({ message: "Lỗi máy chủ." });
-  }
-});
-
-app.patch("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  const b = req.body || {};
-  try {
-    const r = await pool.query(
-      `UPDATE subjects SET name = COALESCE($1, name), category = COALESCE($2, category),
-         is_active = COALESCE($3, is_active) WHERE id = $4 RETURNING id`,
-      [b.name || null, b.category || null, typeof b.is_active === "boolean" ? b.is_active : null, id]);
-    if (!r.rows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
-    return res.json({ message: "Đã cập nhật môn học." });
-  } catch (err) {
-    console.error("PATCH subjects error:", err);
-    return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
-  }
-});
-
-app.delete("/api/admin/subjects/:id", verifyToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  try {
-    const r = await pool.query("DELETE FROM subjects WHERE id = $1 RETURNING id", [id]);
-    if (!r.rows.length) return res.status(404).json({ message: "Không tìm thấy môn học." });
-    return res.json({ message: "Đã xóa môn học." });
-  } catch (err) {
-    console.error("DELETE subjects error:", err);
-    return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
   }
 });
 
@@ -6545,43 +6440,6 @@ app.patch("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) 
   } catch (err) {
     console.error("PATCH /api/admin/courses/:id error:", err);
     return res.status(500).json({ message: "Lỗi khi cập nhật khóa học." });
-  }
-});
-
-// ── DELETE /api/admin/courses/:id ─────────────────────────────────────────────
-// Guarded hard delete — mirrors the Subject Management Center's own rule
-// (archive is always safe/reversible; real delete only when nothing depends on
-// the record). A course with any enrollment is refused with a clear message
-// pointing at Archive instead, so paying students never lose access silently.
-app.delete("/api/admin/courses/:id", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const { rows: enrolled } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM course_enrollments WHERE course_id = $1`, [req.params.id]
-    );
-    if (enrolled[0].n > 0) {
-      return res.status(409).json({ message: `Khóa học đã có ${enrolled[0].n} học viên đăng ký — không thể xóa. Hãy dùng "Lưu trữ" thay thế.` });
-    }
-    const before = await pool.query(`SELECT title, status, tutor_id FROM courses WHERE id = $1`, [req.params.id]);
-    if (!before.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
-    const prev = before.rows[0];
-
-    const result = await pool.query(`DELETE FROM courses WHERE id = $1 RETURNING id`, [req.params.id]);
-    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy khóa học." });
-
-    await writeCourseAuditLog(req.params.id, 'DELETE', req.user.userId, prev.status, null, req.body?.reason, { title: prev.title });
-    if (prev.tutor_id) {
-      await safeNotifyUser(pool, {
-        userId: prev.tutor_id, channels: ['IN_APP', 'EMAIL'],
-        templateKey: 'course_deleted_by_admin', eventType: 'course_deleted_by_admin',
-        data: { courseName: prev.title },
-        refId: req.params.id, refType: 'course', sourceType: 'course', sourceId: req.params.id,
-        idempotencyKey: `course:${req.params.id}:deleted:${Date.now()}`,
-      });
-    }
-    return res.json({ ok: true });
-  } catch (err) {
-    console.error("DELETE /api/admin/courses/:id error:", err);
-    return res.status(500).json({ message: "Lỗi khi xóa khóa học." });
   }
 });
 
@@ -9161,6 +9019,7 @@ app.get("/api/admin/financial/overview", verifyToken, requireAdmin, async (req, 
       failedCountRes,
       disputeRes,
       releasedRes,
+      pendingWithdrawRes,
     ] = await Promise.all([
       // All-time student payment volume
       pool.query(`
@@ -9198,6 +9057,8 @@ app.get("/api/admin/financial/overview", verifyToken, requireAdmin, async (req, 
         WHERE type = 'DEPOSIT' AND status = 'SUCCESS' AND amount > 0
           AND (gateway IS NULL OR gateway = 'SYSTEM')
       `),
+      // Withdrawal requests awaiting admin action (see WithdrawalRequests.jsx / tx-withdrawals).
+      pool.query(`SELECT COUNT(*) AS count FROM withdraw_requests WHERE status = 'PENDING'`),
     ]);
 
     return res.json({
@@ -9209,6 +9070,8 @@ app.get("/api/admin/financial/overview", verifyToken, requireAdmin, async (req, 
       released_to_tutors:       Math.round(Number(releasedRes.rows[0].total)),
       platform_fees:            0,
       total_refunds:            0,
+      pending_payouts:          parseInt(pendingWithdrawRes.rows[0].count, 10),
+      pending_withdrawals:      parseInt(pendingWithdrawRes.rows[0].count, 10),
       successful_transactions:  parseInt(successCountRes.rows[0].count, 10),
       failed_transactions:      parseInt(failedCountRes.rows[0].count, 10),
       open_disputes:            parseInt(disputeRes.rows[0].count, 10),
