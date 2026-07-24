@@ -3150,6 +3150,16 @@ const NOTIFICATION_TEMPLATES = {
     body: `Hồ sơ đăng ký gia sư chưa đáp ứng điều kiện.${d.reason ? ` Lý do: ${d.reason}` : ''}`,
     icon: 'gavel', priority: 'high',
   }),
+  tutor_credential_approved: d => ({
+    subject: '[EduX] Bằng cấp/chứng chỉ đã được duyệt', title: 'Bằng cấp/chứng chỉ đã được duyệt',
+    body: `${d.credTitle ? `"${d.credTitle}"` : 'Mục bạn thêm vào hồ sơ'} đã được admin duyệt.`,
+    icon: 'verified', priority: 'normal',
+  }),
+  tutor_credential_rejected: d => ({
+    subject: '[EduX] Bằng cấp/chứng chỉ chưa được duyệt', title: 'Bằng cấp/chứng chỉ chưa được duyệt',
+    body: `${d.credTitle ? `"${d.credTitle}"` : 'Mục bạn thêm vào hồ sơ'} chưa được duyệt. Vui lòng kiểm tra lại thông tin/minh chứng rồi thử lại.`,
+    icon: 'cancel', priority: 'normal',
+  }),
   system_alert_admin: d => ({
     subject: `[EduX] ${d.title || 'Cảnh báo hệ thống'}`, title: d.title || 'Cảnh báo hệ thống',
     body: d.message || '',
@@ -4195,9 +4205,72 @@ app.get("/api/tutor/profile", verifyToken, async (req, res) => {
       [req.user.userId]
     );
     if (result.rows.length === 0) return res.status(404).json({ message: "Không tìm thấy hồ sơ." });
-    return res.json(result.rows[0]);
+    const profile = result.rows[0];
+
+    const credsResult = await pool.query(
+      `SELECT id, type, name AS title, description, url AS proof_url, status, created_at
+       FROM tutor_certificates WHERE tutor_profile_id = $1 ORDER BY created_at DESC`,
+      [profile.id]
+    );
+    profile.credentials = credsResult.rows;
+
+    return res.json(profile);
   } catch (error) {
     console.error("Get tutor profile error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// POST /api/tutor/credentials — gia sư (đã duyệt hoặc chưa) thêm 1 chứng chỉ/bằng
+// cấp/kinh nghiệm mới, chờ admin duyệt riêng. KHÔNG đụng tới tutor_profiles.status,
+// nên gia sư đã approved vẫn hiện trong tìm kiếm/đặt lịch trong lúc chờ duyệt.
+app.post("/api/tutor/credentials", verifyToken, async (req, res) => {
+  try {
+    const { type, title, description, proof_url } = req.body || {};
+    const validTypes = ['education', 'certificate', 'experience'];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({ message: "Loại thông tin không hợp lệ." });
+    }
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ message: "Tiêu đề là bắt buộc." });
+    }
+    if (type !== 'experience' && !proof_url) {
+      return res.status(400).json({ message: "Ảnh/file minh chứng là bắt buộc." });
+    }
+
+    const profileRes = await pool.query(
+      "SELECT id FROM tutor_profiles WHERE user_id = $1",
+      [req.user.userId]
+    );
+    if (!profileRes.rows.length) return res.status(404).json({ message: "Không tìm thấy hồ sơ gia sư." });
+    const profileId = profileRes.rows[0].id;
+
+    const result = await pool.query(
+      `INSERT INTO tutor_certificates (tutor_profile_id, name, url, type, description, status)
+       VALUES ($1, $2, $3, $4, $5, 'pending')
+       RETURNING id, type, name AS title, description, url AS proof_url, status, created_at`,
+      [profileId, String(title).trim(), proof_url || null, type, description || null]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error("Add tutor credential error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// DELETE /api/tutor/credentials/:id — gia sư xoá 1 mục do chính mình thêm
+app.delete("/api/tutor/credentials/:id", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM tutor_certificates tc USING tutor_profiles tp
+       WHERE tc.id = $1 AND tc.tutor_profile_id = tp.id AND tp.user_id = $2
+       RETURNING tc.id`,
+      [req.params.id, req.user.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy mục này." });
+    return res.json({ message: "Đã xoá." });
+  } catch (error) {
+    console.error("Delete tutor credential error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
@@ -4768,6 +4841,77 @@ app.patch("/api/admin/tutors/:id/reject", verifyToken, requireAdmin, async (req,
   }
 });
 
+// ─── Tutor credentials added after initial approval (education/certificate/experience) ───
+// Separate review queue from the initial-application one above: approving/rejecting
+// here only touches this one tutor_certificates row, never tutor_profiles.status.
+app.get("/api/admin/tutor-certificates/pending", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT tc.id, tc.type, tc.name AS title, tc.description, tc.url AS proof_url, tc.created_at,
+              tp.id AS tutor_profile_id, u.id AS tutor_user_id, u.full_name AS tutor_name, u.email AS tutor_email
+       FROM tutor_certificates tc
+       JOIN tutor_profiles tp ON tp.id = tc.tutor_profile_id
+       JOIN users u ON u.id = tp.user_id
+       WHERE tc.status = 'pending'
+       ORDER BY tc.created_at ASC`
+    );
+    return res.json({ credentials: result.rows });
+  } catch (error) {
+    console.error("Get pending tutor credentials error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+app.patch("/api/admin/tutor-certificates/:id/approve", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE tutor_certificates tc SET status = 'approved'
+       FROM tutor_profiles tp
+       WHERE tc.id = $1 AND tc.tutor_profile_id = tp.id
+       RETURNING tc.id, tc.status, tc.name, tp.user_id`,
+      [req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy mục này." });
+    const row = result.rows[0];
+    await safeNotifyUser(pool, {
+      userId: row.user_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'tutor_credential_approved', eventType: 'tutor_credential_approved',
+      data: { credTitle: row.name },
+      refId: row.id, refType: 'tutor_certificate', sourceType: 'tutor_certificate', sourceId: row.id,
+      idempotencyKey: `tutor_cert:${row.id}:approved`,
+    });
+    return res.json({ id: row.id, status: row.status });
+  } catch (error) {
+    console.error("Approve tutor credential error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+app.patch("/api/admin/tutor-certificates/:id/reject", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE tutor_certificates tc SET status = 'rejected'
+       FROM tutor_profiles tp
+       WHERE tc.id = $1 AND tc.tutor_profile_id = tp.id
+       RETURNING tc.id, tc.status, tc.name, tp.user_id`,
+      [req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: "Không tìm thấy mục này." });
+    const row = result.rows[0];
+    await safeNotifyUser(pool, {
+      userId: row.user_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'tutor_credential_rejected', eventType: 'tutor_credential_rejected',
+      data: { credTitle: row.name },
+      refId: row.id, refType: 'tutor_certificate', sourceType: 'tutor_certificate', sourceId: row.id,
+      idempotencyKey: `tutor_cert:${row.id}:rejected`,
+    });
+    return res.json({ id: row.id, status: row.status });
+  } catch (error) {
+    console.error("Reject tutor credential error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4885,6 +5029,26 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
         [id]
       );
       user.quiz_attempts = parseInt(attemptsResult.rows[0].count);
+
+      const parentsResult = await pool.query(
+        `SELECT u.id, u.full_name, u.email, u.picture, pc.nickname, pc.linked_at
+         FROM parent_children pc JOIN users u ON u.id = pc.parent_id
+         WHERE pc.student_id = $1
+         ORDER BY pc.linked_at DESC`,
+        [id]
+      );
+      user.linked_parents = parentsResult.rows;
+    }
+
+    if (user.role === "parent") {
+      const childrenResult = await pool.query(
+        `SELECT u.id, u.full_name, u.email, u.picture, pc.nickname, pc.linked_at
+         FROM parent_children pc JOIN users u ON u.id = pc.student_id
+         WHERE pc.parent_id = $1
+         ORDER BY pc.linked_at DESC`,
+        [id]
+      );
+      user.linked_children = childrenResult.rows;
     }
 
     // Lịch sử đăng nhập gần nhất (10 lần)
@@ -4901,6 +5065,28 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
       [id]
     );
     user.wallet = walletRes.rows[0] || { balance: 0, held_balance: 0 };
+
+    // Cờ cảnh báo: tranh chấp/điều tra gian lận có liên quan tới user này
+    const disputesRes = await pool.query(
+      `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'OPEN')::int AS open
+       FROM disputes WHERE raised_by = $1 OR tutor_id = $1`,
+      [id]
+    );
+    const fraudInvRes = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM fraud_investigations WHERE subject_user_id = $1`,
+      [id]
+    );
+    const fraudIntelRes = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM fraud_intel_reports
+       WHERE primary_user_id = $1 OR secondary_user_id = $1 OR tutor_id = $1 OR student_id = $1`,
+      [id]
+    );
+    user.flags = {
+      disputes_total: disputesRes.rows[0].total,
+      disputes_open: disputesRes.rows[0].open,
+      fraud_investigations_total: fraudInvRes.rows[0].total,
+      fraud_intel_reports_total: fraudIntelRes.rows[0].total,
+    };
 
     return res.json(user);
   } catch (err) {
@@ -13891,6 +14077,20 @@ async function startServer() {
     console.log("✅ DB migration: tutor_certificates extended columns ready");
   } catch (err) {
     console.error("⚠️  DB migration (cert extended cols) warning:", err.message);
+  }
+
+  // Auto-migrate: tutor_certificates gains status/type/description columns.
+  try {
+    await pool.query(`ALTER TABLE tutor_certificates ALTER COLUMN url DROP NOT NULL`);
+    await pool.query(`
+      ALTER TABLE tutor_certificates
+        ADD COLUMN IF NOT EXISTS status      TEXT NOT NULL DEFAULT 'approved',
+        ADD COLUMN IF NOT EXISTS type        TEXT NOT NULL DEFAULT 'certificate',
+        ADD COLUMN IF NOT EXISTS description TEXT
+    `);
+    console.log("✅ DB migration: tutor_certificates status/type/description ready");
+  } catch (err) {
+    console.error("⚠️  DB migration (cert status/type) warning:", err.message);
   }
 
   // Auto-migrate: create reviews table
