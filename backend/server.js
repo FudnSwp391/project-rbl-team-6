@@ -15418,6 +15418,171 @@ app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// ── Đánh giá chất lượng ngầm sau buổi học (Internal Lesson Evaluations) ─────
+// ════════════════════════════════════════════════════════════════════════════
+
+// Khởi tạo bảng lesson_evaluations nếu chưa có
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lesson_evaluations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id UUID UNIQUE NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        rating_score INT NOT NULL CHECK (rating_score BETWEEN 1 AND 5),
+        comprehension_rate INT NOT NULL DEFAULT 100,
+        positive_tags JSONB DEFAULT '[]'::jsonb,
+        improvement_tags JSONB DEFAULT '[]'::jsonb,
+        private_feedback TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lesson_eval_tutor ON lesson_evaluations(tutor_id);
+      CREATE INDEX IF NOT EXISTS idx_lesson_eval_student ON lesson_evaluations(student_id);
+    `);
+  } catch (err) {
+    console.error("Init lesson_evaluations table error:", err.message);
+  }
+})();
+
+// Helper function: Tự động điều chỉnh reputation_score ngầm cho Gia Sư
+async function updateTutorReputationScore(tutorUserId) {
+  try {
+    const tpRes = await pool.query('SELECT id, reputation_score FROM tutor_profiles WHERE user_id = $1', [tutorUserId]);
+    if (!tpRes.rows.length) return;
+    const tutorProfileId = tpRes.rows[0].id;
+    let currentReputation = Number(tpRes.rows[0].reputation_score || 100);
+
+    const evalRes = await pool.query(
+      `SELECT rating_score, comprehension_rate, positive_tags, improvement_tags 
+       FROM lesson_evaluations WHERE tutor_id = $1`,
+      [tutorUserId]
+    );
+    if (!evalRes.rows.length) return;
+
+    let totalScore = 0;
+    evalRes.rows.forEach(ev => {
+      const ratingPart = (Number(ev.rating_score) / 5) * 4.0;
+      const compPart = (Number(ev.comprehension_rate || 100) / 100) * 1.0;
+      const posCount = Array.isArray(ev.positive_tags) ? ev.positive_tags.length : 0;
+      const impCount = Array.isArray(ev.improvement_tags) ? ev.improvement_tags.length : 0;
+      const tagBonus = (posCount * 0.1) - (impCount * 0.2);
+      
+      const sessionScore = Math.max(1, Math.min(5, ratingPart + compPart + tagBonus));
+      totalScore += sessionScore;
+    });
+
+    const avgSessionQuality = totalScore / evalRes.rows.length;
+
+    let newReputation = currentReputation;
+    if (avgSessionQuality >= 4.2) {
+      newReputation = Math.min(150, currentReputation + 1);
+    } else if (avgSessionQuality <= 2.8) {
+      newReputation = Math.max(50, currentReputation - 2);
+    }
+
+    await pool.query(
+      `UPDATE tutor_profiles 
+       SET reputation_score = $1,
+           avg_rating = (SELECT ROUND(AVG(rating_score)::numeric, 1) FROM lesson_evaluations WHERE tutor_id = $2)
+       WHERE id = $3`,
+      [newReputation, tutorUserId, tutorProfileId]
+    );
+  } catch (err) {
+    console.error("updateTutorReputationScore error:", err.message);
+  }
+}
+
+// POST /api/bookings/:id/evaluate — Học sinh gửi đánh giá chất lượng ngầm sau buổi học
+app.post("/api/bookings/:id/evaluate", verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const { rating_score, comprehension_rate, positive_tags, improvement_tags, private_feedback } = req.body || {};
+
+    if (!rating_score || rating_score < 1 || rating_score > 5) {
+      return res.status(400).json({ message: "Số sao đánh giá (1-5) là bắt buộc." });
+    }
+
+    const bRes = await pool.query(`SELECT * FROM bookings WHERE id = $1`, [bookingId]);
+    if (!bRes.rows.length) {
+      return res.status(404).json({ message: "Không tìm thấy buổi học." });
+    }
+    const booking = bRes.rows[0];
+
+    let isAuthorized = String(booking.student_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: "Bạn không có quyền đánh giá buổi học này." });
+    }
+
+    if (!booking.tutor_id) {
+      return res.status(400).json({ message: "Buổi học này chưa có thông tin gia sư." });
+    }
+
+    const dup = await pool.query(`SELECT id FROM lesson_evaluations WHERE booking_id = $1`, [bookingId]);
+    if (dup.rows.length > 0) {
+      return res.status(409).json({ message: "Buổi học này đã được đánh giá chất lượng." });
+    }
+
+    const posJson = JSON.stringify(Array.isArray(positive_tags) ? positive_tags : []);
+    const impJson = JSON.stringify(Array.isArray(improvement_tags) ? improvement_tags : []);
+
+    const ins = await pool.query(
+      `INSERT INTO lesson_evaluations 
+       (booking_id, student_id, tutor_id, rating_score, comprehension_rate, positive_tags, improvement_tags, private_feedback)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)
+       RETURNING *`,
+      [
+        bookingId,
+        booking.student_id,
+        booking.tutor_id,
+        parseInt(rating_score),
+        parseInt(comprehension_rate) || 100,
+        posJson,
+        impJson,
+        private_feedback ? String(private_feedback).trim() : null
+      ]
+    );
+
+    updateTutorReputationScore(booking.tutor_id).catch(e => console.error(e));
+
+    return res.status(201).json({
+      success: true,
+      message: "Cảm ơn bạn đã gửi đánh giá chất lượng buổi học! Ý kiến của bạn giúp hệ thống nâng cao chất lượng gia sư.",
+      evaluation: ins.rows[0]
+    });
+  } catch (err) {
+    console.error("POST /api/bookings/:id/evaluate error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ khi gửi đánh giá." });
+  }
+});
+
+// GET /api/bookings/evaluations/mine — Lấy danh sách booking_id mà học sinh đã đánh giá
+app.get("/api/bookings/evaluations/mine", verifyToken, async (req, res) => {
+  try {
+    let studentIds = [req.user.userId];
+    if (req.user.role === 'parent') {
+      const childRes = await pool.query('SELECT student_id FROM parent_children WHERE parent_id = $1', [req.user.userId]);
+      studentIds = studentIds.concat(childRes.rows.map(c => c.student_id));
+    }
+    const result = await pool.query(
+      `SELECT booking_id, rating_score, comprehension_rate, created_at 
+       FROM lesson_evaluations 
+       WHERE student_id = ANY($1)`,
+      [studentIds]
+    );
+    return res.json({ evaluatedBookingIds: result.rows.map(r => r.booking_id), evaluations: result.rows });
+  } catch (err) {
+    console.error("GET /api/bookings/evaluations/mine error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
 // POST /api/bookings/:id/request-method-change — học sinh xin đổi hình thức học
 // (vd: hôm nay ốm không đến được, xin chuyển buổi offline sang online)
 app.post("/api/bookings/:id/request-method-change", verifyToken, async (req, res) => {

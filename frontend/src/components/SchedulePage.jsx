@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { requestMethodChange } from '../services/api';
 import ReportSessionModal from './ReportSessionModal';
+import LessonEvaluationModal from './LessonEvaluationModal';
 import { API_BASE_URL } from '../config';
 
 const API_BASE = API_BASE_URL;
@@ -11,6 +12,10 @@ const SchedulePage = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Evaluated bookings & modal
+  const [evaluatedBookingIds, setEvaluatedBookingIds] = useState([]);
+  const [evaluateSession, setEvaluateSession] = useState(null);
 
   // Filters
   const [searchInput, setSearchInput] = useState('');   // what user types
@@ -49,6 +54,15 @@ const SchedulePage = () => {
         setData(json.data);
       } else {
         throw new Error(json.error || 'API Error');
+      }
+
+      // Fetch evaluations mine
+      const evalRes = await fetch(`${API_BASE}/api/bookings/evaluations/mine`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (evalRes.ok) {
+        const evalJson = await evalRes.json();
+        setEvaluatedBookingIds(evalJson.evaluatedBookingIds || []);
       }
     } catch (err) {
       setError(err.message);
@@ -723,6 +737,8 @@ const SchedulePage = () => {
           reportStatus={getReportStatus(detailSession)}
           onReport={() => { setDetailSession(null); setReportSession(detailSession); }}
           onWithdrawDispute={() => handleWithdrawDispute(detailSession.open_dispute_id)}
+          isEvaluated={evaluatedBookingIds.includes(detailSession.id || detailSession.booking_id)}
+          onOpenEvaluateModal={setEvaluateSession}
         />
       )}
 
@@ -828,9 +844,19 @@ const SchedulePage = () => {
                             </button>
                           )}
                           {session.status === 'completed' && (
-                            <button type="button" className="bg-secondary-container/20 text-secondary px-4 py-2 rounded-lg text-label-md font-bold hover:bg-secondary-container/30 transition-colors">
-                              View Notes
-                            </button>
+                            evaluatedBookingIds.includes(session.id || session.booking_id) ? (
+                              <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1">
+                                <span className="material-symbols-outlined text-[16px]">check_circle</span> Đã đánh giá
+                              </span>
+                            ) : (
+                              <button 
+                                type="button" 
+                                onClick={() => setEvaluateSession(session)} 
+                                className="bg-[#00288e] text-white px-3.5 py-1.5 rounded-lg text-xs font-bold hover:bg-[#1e40af] transition-colors shadow-sm flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">star</span> Đánh giá buổi học
+                              </button>
+                            )
                           )}
                         </div>
                       </div>
@@ -842,6 +868,18 @@ const SchedulePage = () => {
           </div>
         </div>
       )}
+
+      {/* Modal đánh giá chất lượng ngầm sau buổi học */}
+      <LessonEvaluationModal
+        isOpen={!!evaluateSession}
+        onClose={() => setEvaluateSession(null)}
+        booking={evaluateSession}
+        token={token}
+        API_BASE={API_BASE}
+        onSuccess={(bookingId) => {
+          setEvaluatedBookingIds(prev => [...prev, bookingId]);
+        }}
+      />
     </div>
   );
 };
@@ -849,7 +887,7 @@ const SchedulePage = () => {
 export default SchedulePage;
 
 // ─── Session Detail Modal ────────────────────────────────────────────────────
-function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute }) {
+function SessionDetailModal({ session, info, onClose, onRequested, reportStatus, onReport, onWithdrawDispute, isEvaluated, onOpenEvaluateModal }) {
   const [copied, setCopied] = useState(false);
   const [copiedPwd, setCopiedPwd] = useState(false);
   const [checkedMaterials, setCheckedMaterials] = useState({});
@@ -1270,7 +1308,21 @@ function SessionDetailModal({ session, info, onClose, onRequested, reportStatus,
           >
             Đóng
           </button>
-          {meetLink && (
+          {session.status === 'completed' && (
+            isEvaluated ? (
+              <span className="flex-1 h-10 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[13px] font-bold flex items-center justify-center gap-1.5">
+                <span className="material-symbols-outlined text-[18px]">check_circle</span> Đã đánh giá ngầm
+              </span>
+            ) : (
+              <button
+                onClick={() => { onClose(); if (onOpenEvaluateModal) onOpenEvaluateModal(session); }}
+                className="flex-1 h-10 bg-[#00288e] text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-[#1e40af] transition-colors shadow-sm"
+              >
+                <span className="material-symbols-outlined text-[18px]">star</span> Đánh giá chất lượng
+              </button>
+            )
+          )}
+          {meetLink && session.status !== 'completed' && (
             <button
               onClick={() => window.open(meetLink, '_blank')}
               className="flex-1 h-10 bg-primary text-on-primary rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[#1e40af] transition-colors shadow-sm"
@@ -1279,7 +1331,7 @@ function SessionDetailModal({ session, info, onClose, onRequested, reportStatus,
               Tham gia lớp học
             </button>
           )}
-          {mode === 'offline' && info?.location && (
+          {mode === 'offline' && info?.location && session.status !== 'completed' && (
             <a
               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.location)}`}
               target="_blank"
