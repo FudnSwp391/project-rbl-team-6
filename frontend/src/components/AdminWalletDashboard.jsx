@@ -35,7 +35,15 @@ export default function AdminWalletDashboard() {
         setDepositRequests(data);
       } else {
         const data = await getAdminWithdrawRequests();
-        setWithdrawRequests(data);
+        // This endpoint returns { items, pagination, summary } and aliases the
+        // joined user columns as tutor_name/tutor_email (see adminWalletRoutes.js),
+        // unlike deposit-requests' plain full_name/email — normalize both here
+        // so the shared table-rendering JSX below doesn't need to branch on tab.
+        setWithdrawRequests((data.items || []).map(item => ({
+          ...item,
+          full_name: item.tutor_name,
+          email: item.tutor_email,
+        })));
       }
     } catch (err) {
       setError('Lỗi khi tải dữ liệu: ' + (err.response?.data?.error || err.message));

@@ -56,8 +56,8 @@ export default function Moderation({ token }) {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       <PageHeader
-        title="Kiểm duyệt nội dung"
-        subtitle="Tín hiệu kiểm duyệt dựa trên quy tắc — không dùng AI bên ngoài (chỉ xem)"
+        title="Giám sát nội dung"
+        subtitle="Tín hiệu cần chú ý, tổng hợp theo quy tắc — không dùng AI bên ngoài (chỉ xem)"
       />
 
       {/* KPI row */}
