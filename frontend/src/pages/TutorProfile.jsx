@@ -94,6 +94,80 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
   const [instantError, setInstantError] = useState('')
   const [timeLeft, setTimeLeft] = useState(60)
 
+  // ── Parent Delegation cho Học Ngay ──
+  const [parentChildren, setParentChildren] = useState([])
+  const [selectedChildId, setSelectedChildId] = useState('')
+  const [showChildSelectInstantModal, setShowChildSelectInstantModal] = useState(false)
+
+  // ── State Nạp Tiền Bù cho Học Ngay ──
+  const [showTopupModal, setShowTopupModal] = useState(false)
+  const [topupInfo, setTopupInfo] = useState({ needed: 0, balance: 0, missing: 0 })
+  const [topupAmount, setTopupAmount] = useState('')
+  const [topupLoading, setTopupLoading] = useState(false)
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setShowChildSelectInstantModal(false);
+      setShowTopupModal(false);
+      setShowInstantModal(false);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (user?.role === 'parent' && token) {
+      fetch(`${API_BASE}/api/parent/children`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : { children: [] })
+        .then(data => {
+          const list = data?.children || [];
+          setParentChildren(list);
+          if (list.length > 0) setSelectedChildId(list[0].student_id);
+        })
+        .catch(() => setParentChildren([]));
+    }
+  }, [user, token]);
+
+  const handleTopUpVNPAY = async () => {
+    if (!topupAmount || isNaN(topupAmount) || Number(topupAmount) < 10000) {
+      return alert('Số tiền nạp tối thiểu là 10.000 VNĐ.');
+    }
+    setTopupLoading(true);
+    try {
+      sessionStorage.setItem('edux_payment_source', JSON.stringify({
+        returnHash: window.location.hash,
+        source: 'booking'
+      }));
+      const returnUrl = `${window.location.origin}/#/payment/result`;
+      const res = await fetch(`${API_BASE}/api/payment/create-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ amount: Number(topupAmount), returnUrl })
+      });
+      const data = await res.json();
+      if (data.success && data.vnpUrl && data.params) {
+        const form = document.createElement('form');
+        form.method = 'GET';
+        form.action = data.vnpUrl;
+        for (const [key, value] of Object.entries(data.params)) {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = key;
+          input.value = value;
+          form.appendChild(input);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      } else {
+        alert(data.message || 'Không thể tạo liên kết thanh toán VNPAY');
+        setTopupLoading(false);
+      }
+    } catch {
+      alert('Lỗi kết nối máy chủ');
+      setTopupLoading(false);
+    }
+  };
+
   // ── Viết đánh giá ──
   const [showReviewModal, setShowReviewModal] = useState(false)
   const [reviewRating, setReviewRating] = useState(5)
@@ -186,10 +260,25 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
   }
 
   // ── Gửi yêu cầu Học Ngay ──
-  const handleRequestInstantBooking = async () => {
+  const triggerInstantBooking = () => {
+    if (!user) { onGoSignIn(); return; }
+    if (user.role === 'parent') {
+      if (parentChildren.length === 0) {
+        alert('Bạn chưa liên kết với tài khoản học sinh nào. Vui lòng vào trang Bảng Điều Khiển để liên kết trước.');
+        return;
+      }
+      setShowChildSelectInstantModal(true);
+      return;
+    }
+    handleRequestInstantBooking();
+  };
+
+  const handleRequestInstantBooking = async (targetChildId) => {
     if (!user) { onGoSignIn(); return }
     setInstantError('')
     setInstantBookingStatus('creating')
+    setShowInstantModal(true)
+    setShowChildSelectInstantModal(false)
     try {
       const tutorActualId = tutor.user_id || tutor.id || tutorId;
       const subjectFirst = Array.isArray(tutor.subjects)
@@ -203,11 +292,29 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
           tutor_name: tutor.full_name || tutor.display_name || '',
           subject: subjectFirst,
           duration_mins: tutor.instant_duration_mins || 30,
-          note: 'Học Ngay từ profile'
+          note: 'Học Ngay từ profile',
+          targetStudentId: user?.role === 'parent' ? (targetChildId || selectedChildId) : undefined
         })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Lỗi hệ thống khi tạo yêu cầu Học Ngay');
+      if (!res.ok) {
+        if (data.code === 'INSUFFICIENT_FUNDS') {
+          sessionStorage.setItem('edux_payment_source', JSON.stringify({
+            returnHash: window.location.hash || '#/dashboard',
+            source: 'booking'
+          }));
+          const needed = Number(data.needed || 0);
+          const balance = Number(data.balance || 0);
+          const missing = Math.max(Number(data.missing || needed - balance), 10000);
+          setTopupInfo({ needed, balance, missing });
+          setTopupAmount(missing);
+          setShowInstantModal(false);
+          setInstantBookingStatus('idle');
+          setShowTopupModal(true);
+          return;
+        }
+        throw new Error(data.message || 'Lỗi hệ thống khi tạo yêu cầu Học Ngay');
+      }
       const bookingId = data.booking?.id || data.booking_id;
       if (!bookingId) throw new Error('Không nhận được mã booking từ server.');
       setInstantBookingId(bookingId);
@@ -669,7 +776,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
                     </button>
                     {tutor.availability_status === 'Online' && (
                       <button
-                        onClick={() => setShowInstantModal(true)}
+                        onClick={triggerInstantBooking}
                         className="w-full bg-gradient-to-r from-amber-500 to-orange-500 text-white py-3 px-4 rounded-xl font-bold text-sm hover:from-amber-600 hover:to-orange-600 transition-colors shadow-lg shadow-amber-500/30 flex items-center justify-center gap-2 animate-pulse"
                       >
                         <span className="material-symbols-outlined text-[20px]">bolt</span>
@@ -1067,6 +1174,120 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               >
                 {reviewSubmitting && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
                 Gửi đánh giá
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal chọn con cho Phụ huynh khi bấm Học Ngay */}
+      {showChildSelectInstantModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-[400px] shadow-2xl">
+            <h3 className="text-xl font-bold text-[#111827] mb-4">Bạn muốn đăng ký Học Ngay cho bé nào?</h3>
+            <div className="flex flex-col gap-3 mb-6">
+              {parentChildren.map(child => (
+                <label key={child.student_id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${selectedChildId === child.student_id ? 'border-[#00288e] bg-[#eef4ff]' : 'border-[#e5e7eb] hover:bg-gray-50'}`}>
+                  <input 
+                    type="radio" name="child_instant" value={child.student_id} 
+                    checked={selectedChildId === child.student_id} 
+                    onChange={(e) => setSelectedChildId(e.target.value)} 
+                    className="w-4 h-4 accent-[#00288e]" 
+                  />
+                  <div className="flex items-center gap-3">
+                    {child.student_picture ? (
+                       <img src={child.student_picture} alt="Avatar" className="w-9 h-9 rounded-full object-cover" />
+                    ) : (
+                       <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center font-bold text-gray-600">
+                          {child.student_name?.[0]?.toUpperCase()}
+                       </div>
+                    )}
+                    <div>
+                      <div className="font-semibold text-sm text-[#111827]">{child.nickname || child.student_name}</div>
+                      <div className="text-xs text-gray-500">{child.student_email || 'Chưa cập nhật email'}</div>
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowChildSelectInstantModal(false)} className="flex-1 py-2.5 rounded-xl font-semibold border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors">
+                Hủy
+              </button>
+              <button onClick={() => handleRequestInstantBooking(selectedChildId)} disabled={!selectedChildId} className="flex-1 py-2.5 rounded-xl font-semibold bg-[#00288e] text-white hover:bg-[#001d6e] disabled:opacity-50 transition-colors">
+                Xác nhận Học Ngay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal nạp tiền bù cho Học Ngay khi thiếu số dư ví */}
+      {showTopupModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
+            <button onClick={() => setShowTopupModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
+              <span className="material-symbols-outlined">close</span>
+            </button>
+
+            <h3 className="text-xl font-bold text-[#111827] mb-2 flex items-center gap-2">
+              <span className="material-symbols-outlined text-amber-600 text-[26px]">account_balance_wallet</span>
+              Số Dư Ví Không Đủ
+            </h3>
+            <p className="text-sm text-gray-500 mb-4 leading-relaxed">
+              Ví của bạn không đủ số dư để gửi yêu cầu Học Ngay. Vui lòng nạp thêm tiền qua VNPAY để tiếp tục.
+            </p>
+
+            <div className="bg-amber-50 rounded-xl p-4 mb-4 border border-amber-200 text-sm space-y-1.5">
+              <div className="flex justify-between text-gray-700">
+                <span>Phí buổi Học Ngay:</span>
+                <span className="font-bold">{topupInfo.needed?.toLocaleString('vi-VN')} VNĐ</span>
+              </div>
+              <div className="flex justify-between text-gray-700">
+                <span>Số dư hiện tại:</span>
+                <span className="font-semibold text-green-700">{topupInfo.balance?.toLocaleString('vi-VN')} VNĐ</span>
+              </div>
+              <div className="border-t border-amber-200/60 pt-1.5 flex justify-between font-bold text-red-600">
+                <span>Số tiền thiếu cần nạp bù:</span>
+                <span>{topupInfo.missing?.toLocaleString('vi-VN')} VNĐ</span>
+              </div>
+            </div>
+
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Số tiền nạp qua VNPAY (VNĐ)</label>
+            <input
+              type="number"
+              value={topupAmount}
+              onChange={e => setTopupAmount(e.target.value)}
+              placeholder="Nhập số tiền nạp"
+              className="w-full h-12 px-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#00288e] outline-none text-lg font-bold mb-3"
+            />
+
+            {/* Quick selection */}
+            <div className="flex gap-2 mb-6 flex-wrap">
+              {[topupInfo.missing, 100000, 200000, 500000, 1000000].filter(v => v > 0).map((val, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setTopupAmount(val)}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${Number(topupAmount) === val ? 'border-[#00288e] bg-[#eef4ff] text-[#00288e]' : 'border-gray-300 text-gray-600 hover:border-gray-400'}`}
+                >
+                  {val === topupInfo.missing ? `Nạp bù ${val / 1000}K` : `${val / 1000}K`}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowTopupModal(false)}
+                className="flex-1 py-3 rounded-xl font-semibold border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Đóng
+              </button>
+              <button
+                onClick={handleTopUpVNPAY}
+                disabled={topupLoading}
+                className="flex-1 py-3 rounded-xl font-bold bg-[#00288e] text-white hover:bg-[#001d6e] disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+              >
+                {topupLoading ? 'Đang tạo giao dịch...' : 'Nạp tiền VNPAY'}
               </button>
             </div>
           </div>

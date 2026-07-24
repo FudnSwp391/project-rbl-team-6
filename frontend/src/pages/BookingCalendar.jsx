@@ -131,6 +131,13 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     let pending;
     try { pending = JSON.parse(sessionStorage.getItem('edux_pending_booking') || 'null'); } catch { pending = null; }
     if (!pending || String(pending.tutorId) !== String(tutorId)) return;
+    
+    // Kiểm tra hết hạn 30 phút
+    if (pending.createdAt && (Date.now() - pending.createdAt > 30 * 60 * 1000)) {
+      sessionStorage.removeItem('edux_pending_booking');
+      return;
+    }
+
     sessionStorage.removeItem('edux_pending_booking');
     if (pending.bookingMode) setBookingMode(pending.bookingMode);
     if (pending.selectedBookings) setSelectedBookings(pending.selectedBookings);
@@ -142,6 +149,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     if (typeof pending.monthlyDuration === 'number') setMonthlyDuration(pending.monthlyDuration);
     if (pending.monthlyStartDate) setMonthlyStartDate(pending.monthlyStartDate);
     if (pending.monthlySelectedSlots) setMonthlySelectedSlots(pending.monthlySelectedSlots);
+    if (pending.selectedChild) setSelectedChild(pending.selectedChild);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, tutorId]);
 
@@ -455,11 +463,18 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
         monthlyDuration,
         monthlyStartDate,
         monthlySelectedSlots,
+        selectedChild,
+        createdAt: Date.now()
       }));
       const token = localStorage.getItem('token');
       // Phải quay về /payment/result trước (trang này gọi IPN để cộng tiền vào ví),
       // trang đó sẽ tự chuyển tiếp về đúng trang đặt lịch nhờ "edux_pending_booking".
       const returnUrl = `${window.location.origin}/#/payment/result`;
+      sessionStorage.setItem('edux_payment_source', JSON.stringify({
+        returnHash: window.location.hash || `#/booking/${tutorId}`,
+        source: 'booking',
+        tutorId: tutorId
+      }));
       const res = await fetch(`${API_BASE_URL}/api/payment/create-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
