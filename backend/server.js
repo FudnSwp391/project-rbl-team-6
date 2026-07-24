@@ -14636,6 +14636,255 @@ app.post("/api/tutor/bookings/:id/checkin", verifyToken, requireTutor, async (re
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// ── BẢO MẬT CHECK-IN OFFLINE 2 CHIỀU (MÃ PIN 4 SỐ & MÃ QR CODE) ─────────────
+// ════════════════════════════════════════════════════════════════════════════
+
+// Khởi tạo các cột bổ sung cho bảng bookings
+(async () => {
+  try {
+    await pool.query(`
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_checkin_pin VARCHAR(6) DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_pin_created_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_verified_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_verification_method VARCHAR(20) DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_failed_attempts INT DEFAULT 0;
+    `);
+  } catch (err) {
+    console.error("Init offline check-in columns error:", err.message);
+  }
+})();
+
+// Helper sinh Mã PIN 4 số ngẫu nhiên ngầm
+function generateOfflinePIN() {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
+// GET /api/bookings/:id/offline-pin — Học sinh / Phụ huynh lấy Mã PIN & QR Code của buổi học Offline
+app.get("/api/bookings/:id/offline-pin", verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bRes = await pool.query(
+      `SELECT b.id, b.student_id, b.tutor_id, b.teaching_method, b.lesson_date, b.time_slot,
+              b.offline_checkin_pin, b.offline_pin_created_at, b.offline_verified_at,
+              b.offline_verification_method, u_tutor.full_name AS tutor_name, u_student.full_name AS student_name
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       LEFT JOIN users u_student ON u_student.id = b.student_id
+       WHERE b.id = $1`,
+      [bookingId]
+    );
+
+    if (bRes.rows.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy buổi học." });
+    }
+
+    const booking = bRes.rows[0];
+
+    // Check auth (học sinh, phụ huynh hoặc gia sư)
+    let isAuthorized = String(booking.student_id) === String(req.user.userId) || String(booking.tutor_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: "Bạn không có quyền truy cập mã PIN của buổi học này." });
+    }
+
+    // Tự tạo Mã PIN 4 số nếu chưa có
+    let currentPin = booking.offline_checkin_pin;
+    if (!currentPin) {
+      currentPin = generateOfflinePIN();
+      await pool.query(
+        `UPDATE bookings SET offline_checkin_pin = $1, offline_pin_created_at = NOW() WHERE id = $2`,
+        [currentPin, bookingId]
+      );
+    }
+
+    const qrData = `EDUX_OFFLINE:${booking.id}:${currentPin}`;
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+
+    return res.json({
+      success: true,
+      bookingId: booking.id,
+      pin: currentPin,
+      qrData,
+      qrImageUrl,
+      verified: !!booking.offline_verified_at,
+      verifiedAt: booking.offline_verified_at,
+      verificationMethod: booking.offline_verification_method,
+      tutorName: booking.tutor_name,
+      studentName: booking.student_name
+    });
+  } catch (err) {
+    console.error("GET /api/bookings/:id/offline-pin error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ khi lấy mã PIN." });
+  }
+});
+
+// POST /api/bookings/:id/regenerate-offline-pin — Học sinh / Phụ huynh yêu cầu đổi Mã PIN mới
+app.post("/api/bookings/:id/regenerate-offline-pin", verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bRes = await pool.query(`SELECT student_id FROM bookings WHERE id = $1`, [bookingId]);
+    if (!bRes.rows.length) return res.status(404).json({ message: "Không tìm thấy buổi học." });
+
+    const booking = bRes.rows[0];
+    let isAuthorized = String(booking.student_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+    if (!isAuthorized) return res.status(403).json({ message: "Bạn không có quyền thực hiện thao tác này." });
+
+    const newPin = generateOfflinePIN();
+    await pool.query(
+      `UPDATE bookings 
+       SET offline_checkin_pin = $1, offline_pin_created_at = NOW(), offline_failed_attempts = 0 
+       WHERE id = $2`,
+      [newPin, bookingId]
+    );
+
+    const qrData = `EDUX_OFFLINE:${bookingId}:${newPin}`;
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+
+    return res.json({
+      success: true,
+      message: "Đã tạo mã PIN mới thành công!",
+      pin: newPin,
+      qrData,
+      qrImageUrl
+    });
+  } catch (err) {
+    console.error("POST /api/bookings/:id/regenerate-offline-pin error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// POST /api/bookings/:id/verify-offline-checkin — Gia sư nhập mã PIN 4 số hoặc quét QR để Check-in Offline
+app.post("/api/bookings/:id/verify-offline-checkin", verifyToken, requireTutor, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const { pin, qrData } = req.body || {};
+
+    const bRes = await pool.query(
+      `SELECT b.id, b.tutor_id, b.student_id, b.subject, b.lesson_date, b.time_slot,
+              b.offline_checkin_pin, b.offline_verified_at, b.offline_failed_attempts,
+              u_tutor.full_name AS tutor_name
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       WHERE b.id = $1 AND b.tutor_id = $2`,
+      [bookingId, req.user.userId]
+    );
+
+    if (bRes.rows.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    }
+
+    const booking = bRes.rows[0];
+
+    // Chặn nếu đã xác nhận trước đó
+    if (booking.offline_verified_at) {
+      return res.json({
+        success: true,
+        alreadyVerified: true,
+        message: "Buổi học này đã được xác nhận điểm danh Offline trước đó.",
+        verifiedAt: booking.offline_verified_at
+      });
+    }
+
+    // Chống Bruteforce: Khóa nếu sai quá 5 lần
+    if (booking.offline_failed_attempts >= 5) {
+      return res.status(429).json({
+        message: "Gia sư đã nhập sai mã PIN quá 5 lần. Vui lòng nhờ Học sinh / Phụ huynh đổi Mã PIN mới trên ứng dụng."
+      });
+    }
+
+    // Ràng buộc Khung thời gian Check-in
+    const winStart = lessonStartFrom(booking.lesson_date, booking.time_slot);
+    const winEnd = lessonEndFrom(booking.lesson_date, booking.time_slot);
+    if (winStart && Date.now() < winStart.getTime() - 30 * 60000) {
+      return res.status(400).json({ message: "Chưa đến giờ check-in. Bạn chỉ có thể nhập PIN / QR từ 30 phút trước giờ học." });
+    }
+    if (winEnd && Date.now() > winEnd.getTime() + 60 * 60000) {
+      return res.status(400).json({ message: "Đã quá thời hạn check-in cho buổi học này (60 phút sau khi kết thúc)." });
+    }
+
+    // Kiểm tra khớp PIN hoặc QR String
+    let inputPin = String(pin || '').trim();
+    if (qrData && typeof qrData === 'string') {
+      const parts = qrData.split(':');
+      if (parts.length >= 3 && parts[0] === 'EDUX_OFFLINE' && parts[1] === bookingId) {
+        inputPin = parts[2];
+      }
+    }
+
+    if (!inputPin || inputPin !== String(booking.offline_checkin_pin)) {
+      const newFailedCount = Number(booking.offline_failed_attempts || 0) + 1;
+      await pool.query(`UPDATE bookings SET offline_failed_attempts = $1 WHERE id = $2`, [newFailedCount, bookingId]);
+
+      const remaining = Math.max(0, 5 - newFailedCount);
+      return res.status(400).json({
+        message: `Mã PIN / QR không chính xác! Bạn còn ${remaining} lần thử lại.`,
+        remainingAttempts: remaining
+      });
+    }
+
+    // XÁC NHẬN THÀNH CÔNG (MATCH)
+    const verificationMethod = qrData ? 'QR' : 'PIN';
+    await pool.query(
+      `UPDATE bookings 
+       SET tutor_check_in_at = NOW(), 
+           offline_verified_at = NOW(), 
+           offline_verification_method = $1,
+           offline_failed_attempts = 0
+       WHERE id = $2`,
+      [verificationMethod, bookingId]
+    );
+
+    // Tự động ghi nhận điểm danh present cho buổi học
+    await pool.query(
+      `INSERT INTO attendance (booking_id, tutor_id, student_id, status, note, marked_at)
+       VALUES ($1, $2, $3, 'present', 'Điểm danh Offline 2 chiều qua Mã ' || $4, NOW())
+       ON CONFLICT (booking_id)
+       DO UPDATE SET status = 'present', note = 'Điểm danh Offline 2 chiều qua Mã ' || $4, marked_at = NOW()`,
+      [bookingId, booking.tutor_id, booking.student_id, verificationMethod]
+    );
+
+    // Bắn thông báo Socket.io & Realtime tới Học sinh & Phụ huynh
+    if (req.app && req.app.get('io')) {
+      req.app.get('io').to(`user-${booking.student_id}`).emit('offlineCheckinVerified', {
+        booking_id: bookingId,
+        tutor_name: booking.tutor_name,
+        verification_method: verificationMethod,
+        verified_at: new Date()
+      });
+    }
+
+    // Gửi notification in-app
+    await safeNotifyUser(pool, {
+      userId: booking.student_id,
+      type: 'attendance',
+      channels: ['IN_APP'],
+      templateKey: 'generic',
+      eventType: 'offline_checkin_success',
+      refId: bookingId,
+      refType: 'booking',
+      data: { message: `Gia sư ${booking.tutor_name || 'Gia sư'} đã xác nhận có mặt tại buổi học Offline thành công qua Mã ${verificationMethod}.` }
+    });
+
+    return res.json({
+      success: true,
+      message: `Xác nhận có mặt Offline thành công qua Mã ${verificationMethod}! Hệ thống đã ghi nhận điểm danh có mặt cho buổi học.`,
+      verifiedAt: new Date()
+    });
+  } catch (err) {
+    console.error("POST /api/bookings/:id/verify-offline-checkin error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ khi xác nhận check-in." });
+  }
+});
+
 
 // GET /api/bookings — danh sách lịch học của user hiện tại
 app.get("/api/bookings", verifyToken, async (req, res) => {
@@ -15381,6 +15630,230 @@ app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
     return res.json(result.rows[0]);
   } catch (error) {
     console.error("[session-info] PATCH error:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── Đánh giá chất lượng ngầm sau buổi học (Internal Lesson Evaluations) ─────
+// ════════════════════════════════════════════════════════════════════════════
+
+// Khởi tạo bảng lesson_evaluations nếu chưa có (kèm các cột kiểm soát độc hại & outlier)
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lesson_evaluations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id UUID UNIQUE NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        rating_score INT NOT NULL CHECK (rating_score BETWEEN 1 AND 5),
+        comprehension_rate INT NOT NULL DEFAULT 100,
+        positive_tags JSONB DEFAULT '[]'::jsonb,
+        improvement_tags JSONB DEFAULT '[]'::jsonb,
+        private_feedback TEXT,
+        is_flagged BOOLEAN DEFAULT FALSE,
+        flagged_reason TEXT,
+        is_outlier BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lesson_eval_tutor ON lesson_evaluations(tutor_id);
+      CREATE INDEX IF NOT EXISTS idx_lesson_eval_student ON lesson_evaluations(student_id);
+    `);
+  } catch (err) {
+    console.error("Init lesson_evaluations table error:", err.message);
+  }
+})();
+
+// Helper function: Tự động điều chỉnh reputation_score ngầm cho Gia Sư (Đã lọc bỏ toxic & outlier)
+async function updateTutorReputationScore(tutorUserId) {
+  try {
+    const tpRes = await pool.query('SELECT id, reputation_score FROM tutor_profiles WHERE user_id = $1', [tutorUserId]);
+    if (!tpRes.rows.length) return;
+    const tutorProfileId = tpRes.rows[0].id;
+    let currentReputation = Number(tpRes.rows[0].reputation_score || 100);
+
+    // Chỉ lấy các đánh giá HỢP LỆ (không bị flagged độc hại và không bị coi là hater outlier)
+    const evalRes = await pool.query(
+      `SELECT rating_score, comprehension_rate, positive_tags, improvement_tags 
+       FROM lesson_evaluations 
+       WHERE tutor_id = $1 AND is_flagged = FALSE AND is_outlier = FALSE`,
+      [tutorUserId]
+    );
+    if (!evalRes.rows.length) return;
+
+    let totalScore = 0;
+    evalRes.rows.forEach(ev => {
+      const ratingPart = (Number(ev.rating_score) / 5) * 4.0;
+      const compPart = (Number(ev.comprehension_rate || 100) / 100) * 1.0;
+      const posCount = Array.isArray(ev.positive_tags) ? ev.positive_tags.length : 0;
+      const impCount = Array.isArray(ev.improvement_tags) ? ev.improvement_tags.length : 0;
+      const tagBonus = (posCount * 0.1) - (impCount * 0.2);
+      
+      const sessionScore = Math.max(1, Math.min(5, ratingPart + compPart + tagBonus));
+      totalScore += sessionScore;
+    });
+
+    const avgSessionQuality = totalScore / evalRes.rows.length;
+
+    let newReputation = currentReputation;
+    if (avgSessionQuality >= 4.2) {
+      newReputation = Math.min(150, currentReputation + 1);
+    } else if (avgSessionQuality <= 2.8) {
+      newReputation = Math.max(50, currentReputation - 2);
+    }
+
+    await pool.query(
+      `UPDATE tutor_profiles 
+       SET reputation_score = $1,
+           avg_rating = (SELECT ROUND(AVG(rating_score)::numeric, 1) FROM lesson_evaluations WHERE tutor_id = $2 AND is_flagged = FALSE AND is_outlier = FALSE)
+       WHERE id = $3`,
+      [newReputation, tutorUserId, tutorProfileId]
+    );
+  } catch (err) {
+    console.error("updateTutorReputationScore error:", err.message);
+  }
+}
+
+// POST /api/bookings/:id/evaluate — Học sinh gửi đánh giá chất lượng ngầm sau buổi học (Có AI Filter & Check kết thúc buổi học)
+app.post("/api/bookings/:id/evaluate", verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const { rating_score, comprehension_rate, positive_tags, improvement_tags, private_feedback } = req.body || {};
+
+    if (!rating_score || rating_score < 1 || rating_score > 5) {
+      return res.status(400).json({ message: "Số sao đánh giá (1-5) là bắt buộc." });
+    }
+
+    // 1. Kiểm tra booking có tồn tại
+    const bRes = await pool.query(`SELECT * FROM bookings WHERE id = $1`, [bookingId]);
+    if (!bRes.rows.length) {
+      return res.status(404).json({ message: "Không tìm thấy buổi học." });
+    }
+    const booking = bRes.rows[0];
+
+    // 2. RÀNG BUỘC THỜI GIAN: Chỉ cho đánh giá khi buổi học ĐÃ KẾT THÚC
+    const isCompleted = ['completed', 'Completed'].includes(booking.status);
+    let isPastTime = false;
+    if (booking.lesson_date) {
+      const lessonTime = new Date(booking.lesson_date).getTime();
+      isPastTime = lessonTime < Date.now();
+    }
+    if (!isCompleted && !isPastTime) {
+      return res.status(400).json({ message: "Bạn chỉ có thể đánh giá khi buổi học đã thực sự kết thúc." });
+    }
+
+    // 3. Kiểm tra điểm danh (nếu học sinh vắng mặt thì không cho đánh giá)
+    const attRes = await pool.query(`SELECT status FROM attendance WHERE booking_id = $1 LIMIT 1`, [bookingId]);
+    if (attRes.rows.length > 0 && ['absent', 'vắng mặt'].includes(String(attRes.rows[0].status).toLowerCase())) {
+      return res.status(400).json({ message: "Bạn không thể đánh giá buổi học do hệ thống ghi nhận bạn đã vắng mặt." });
+    }
+
+    // 4. Kiểm tra quyền sở hữu học sinh hoặc phụ huynh liên kết
+    let isAuthorized = String(booking.student_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: "Bạn không có quyền đánh giá buổi học này." });
+    }
+
+    if (!booking.tutor_id) {
+      return res.status(400).json({ message: "Buổi học này chưa có thông tin gia sư." });
+    }
+
+    // 5. Chống đánh giá trùng
+    const dup = await pool.query(`SELECT id FROM lesson_evaluations WHERE booking_id = $1`, [bookingId]);
+    if (dup.rows.length > 0) {
+      return res.status(409).json({ message: "Buổi học này đã được đánh giá chất lượng." });
+    }
+
+    // 6. KIỂM TRA ĐỘC HẠI BẰNG AI & LỌC SPAM (Semantic Moderation & Outlier Check)
+    let isFlagged = false;
+    let flaggedReason = null;
+    let isOutlier = false;
+
+    // A. Kiểm tra nhận xét có chứa ngôn từ độc hại / thù địch không
+    if (private_feedback && typeof private_feedback === 'string' && private_feedback.trim()) {
+      const modResult = classifyTextModeration(private_feedback.trim(), { sourceType: 'LESSON_EVALUATION' });
+      if (modResult && modResult.flagged) {
+        isFlagged = true;
+        flaggedReason = modResult.flagged_category || 'Chứa ngôn từ không phù hợp';
+      }
+    }
+
+    // B. Kiểm tra mô hình Serial Hater (Nếu học sinh liên tục cho 1-2 sao > 80% trên mọi gia sư)
+    if (parseInt(rating_score) <= 2) {
+      const prevEvals = await pool.query(
+        `SELECT rating_score FROM lesson_evaluations WHERE student_id = $1`,
+        [booking.student_id]
+      );
+      if (prevEvals.rows.length >= 3) {
+        const lowCount = prevEvals.rows.filter(r => r.rating_score <= 2).length;
+        if ((lowCount / prevEvals.rows.length) >= 0.8) {
+          isOutlier = true; // Phát hiện chuỗi đánh giá tiêu cực bất thường
+        }
+      }
+    }
+
+    const posJson = JSON.stringify(Array.isArray(positive_tags) ? positive_tags : []);
+    const impJson = JSON.stringify(Array.isArray(improvement_tags) ? improvement_tags : []);
+
+    const ins = await pool.query(
+      `INSERT INTO lesson_evaluations 
+       (booking_id, student_id, tutor_id, rating_score, comprehension_rate, positive_tags, improvement_tags, private_feedback, is_flagged, flagged_reason, is_outlier)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11)
+       RETURNING *`,
+      [
+        bookingId,
+        booking.student_id,
+        booking.tutor_id,
+        parseInt(rating_score),
+        parseInt(comprehension_rate) || 100,
+        posJson,
+        impJson,
+        private_feedback ? String(private_feedback).trim() : null,
+        isFlagged,
+        flaggedReason,
+        isOutlier
+      ]
+    );
+
+    // Chỉ tính điểm uy tín nếu đánh giá KHÔNG bị nghi ngờ độc hại / hater spam
+    if (!isFlagged && !isOutlier) {
+      updateTutorReputationScore(booking.tutor_id).catch(e => console.error(e));
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Cảm ơn bạn đã gửi đánh giá chất lượng buổi học! Ý kiến của bạn giúp hệ thống nâng cao chất lượng gia sư.",
+      evaluation: ins.rows[0]
+    });
+  } catch (err) {
+    console.error("POST /api/bookings/:id/evaluate error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ khi gửi đánh giá." });
+  }
+});
+
+// GET /api/bookings/evaluations/mine — Lấy danh sách booking_id mà học sinh đã đánh giá
+app.get("/api/bookings/evaluations/mine", verifyToken, async (req, res) => {
+  try {
+    let studentIds = [req.user.userId];
+    if (req.user.role === 'parent') {
+      const childRes = await pool.query('SELECT student_id FROM parent_children WHERE parent_id = $1', [req.user.userId]);
+      studentIds = studentIds.concat(childRes.rows.map(c => c.student_id));
+    }
+    const result = await pool.query(
+      `SELECT booking_id, rating_score, comprehension_rate, created_at 
+       FROM lesson_evaluations 
+       WHERE student_id = ANY($1)`,
+      [studentIds]
+    );
+    return res.json({ evaluatedBookingIds: result.rows.map(r => r.booking_id), evaluations: result.rows });
+  } catch (err) {
+    console.error("GET /api/bookings/evaluations/mine error:", err);
     return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
@@ -20685,7 +21158,46 @@ app.post('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req
       ]
     );
 
-    return res.status(201).json({ evaluation: result.rows[0], message: 'Đánh giá đã được lưu thành công.' });
+    // Lấy thông tin gia sư và môn học để bắn thông báo
+    const tInfo = await pool.query('SELECT full_name FROM users WHERE id = $1', [tutorId]);
+    const tutorName = tInfo.rows[0]?.full_name || 'Gia sư';
+    const bSubject = booking.subject || 'Buổi học';
+
+    // Bắn thông báo Realtime & In-App cho Học sinh
+    await safeNotifyUser(pool, {
+      userId: booking.student_id,
+      type: 'generic',
+      channels: ['IN_APP'],
+      templateKey: 'generic',
+      eventType: 'tutor_evaluation_submitted',
+      refId: booking_id,
+      refType: 'booking',
+      data: { message: `Gia sư ${tutorName} đã gửi nhận xét đánh giá buổi học môn ${bSubject}!` }
+    });
+
+    // Tìm và bắn thông báo cho Phụ huynh (nếu có)
+    const parents = await pool.query('SELECT parent_id FROM parent_children WHERE student_id = $1', [booking.student_id]);
+    for (const p of parents.rows) {
+      await safeNotifyUser(pool, {
+        userId: p.parent_id,
+        type: 'generic',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'generic',
+        eventType: 'tutor_evaluation_submitted',
+        refId: booking_id,
+        refType: 'booking',
+        data: { message: `Gia sư ${tutorName} đã gửi báo cáo đánh giá buổi học môn ${bSubject} của con bạn! Hãy mở để xem lời khuyên.` }
+      });
+      if (req.app && req.app.get('io')) {
+        req.app.get('io').to(`user-${p.parent_id}`).emit('tutorEvaluationSubmitted', {
+          booking_id,
+          tutor_name: tutorName,
+          subject: bSubject
+        });
+      }
+    }
+
+    return res.status(201).json({ evaluation: result.rows[0], message: 'Đánh giá đã được lưu và gửi báo cáo tới Phụ huynh thành công.' });
   } catch (e) {
     console.error('POST /api/tutor/session-evaluations error:', e);
     return res.status(500).json({ message: 'Server error' });
@@ -20745,6 +21257,57 @@ app.put('/api/tutor/session-evaluations/:evaluationId', verifyToken, requireTuto
   } catch (e) {
     console.error('PUT /api/tutor/session-evaluations/:id error:', e);
     return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── GET /api/bookings/:id/tutor-evaluation — Phụ huynh & Học sinh xem báo cáo đánh giá của Gia sư
+app.get('/api/bookings/:id/tutor-evaluation', verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bRes = await pool.query(
+      `SELECT b.id, b.student_id, b.tutor_id, b.subject, b.lesson_date, b.time_slot,
+              u_tutor.full_name AS tutor_name, u_tutor.picture AS tutor_picture,
+              u_student.full_name AS student_name
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       LEFT JOIN users u_student ON u_student.id = b.student_id
+       WHERE b.id = $1`,
+      [bookingId]
+    );
+
+    if (!bRes.rows.length) {
+      return res.status(404).json({ message: 'Không tìm thấy buổi học.' });
+    }
+    const booking = bRes.rows[0];
+
+    // Auth check
+    let isAuthorized = String(booking.student_id) === String(req.user.userId) || String(booking.tutor_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: 'Bạn không có quyền xem báo cáo đánh giá của buổi học này.' });
+    }
+
+    const evalRes = await pool.query(
+      `SELECT * FROM session_evaluations WHERE booking_id = $1`,
+      [bookingId]
+    );
+
+    if (!evalRes.rows.length) {
+      return res.status(404).json({ message: 'Gia sư chưa tạo báo cáo đánh giá cho buổi học này.' });
+    }
+
+    return res.json({
+      success: true,
+      booking,
+      evaluation: evalRes.rows[0]
+    });
+  } catch (e) {
+    console.error('GET /api/bookings/:id/tutor-evaluation error:', e);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 });
 
