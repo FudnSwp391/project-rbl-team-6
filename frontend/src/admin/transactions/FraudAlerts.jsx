@@ -53,7 +53,7 @@ export default function FraudAlerts({ token, onNavigate }) {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
-      <PageHeader title="Cảnh Báo Gian Lận" subtitle="Tín hiệu rủi ro từ tranh chấp, hoàn tiền và giao dịch bất thường (chỉ xem)">      </PageHeader>
+      <PageHeader title="Cảnh Báo Gian Lận" subtitle="Tín hiệu rủi ro từ tranh chấp, hoàn tiền và giao dịch bất thường — nhấn vào một cảnh báo để điều tra và xử lý">      </PageHeader>
 
       {error && (
         <div className="mb-6 flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">

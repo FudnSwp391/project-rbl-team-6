@@ -36,7 +36,6 @@ const PinnedWidgets = lazy(() => import('./admin/analytics/PinnedWidgets'))
 const SubjectsView = lazy(() => import('./admin/subjects/SubjectsView'))
 import { subjectMeta as sharedSubjectMeta } from './admin/subjects/subjectMeta'
 import { uploadCourseThumbnail } from './services/upload'
-const ReportsView = lazy(() => import('./admin/reports/ReportsView'))
 
 import { API_BASE_URL as API } from './config'
 
@@ -89,7 +88,6 @@ const TX_SUB_ITEMS = [
   { id: 'tx-wallet-ledger',    label: 'Sổ Cái Ví',            icon: 'account_balance_wallet' },
   { id: 'tx-commission-logs', label: 'Nhật Ký Hoa Hồng',    icon: 'receipt_long' },
   { id: 'notifications-outbox', label: 'Email / Hàng Đợi Thông Báo', icon: 'mark_email_read' },
-  { id: 'tx-audit',        label: 'Nhật Ký Admin',            icon: 'history_edu' },
 ]
 
 const TX_VIEW_IDS = new Set(TX_SUB_ITEMS.map(i => i.id))
@@ -98,7 +96,7 @@ const SM_SUB_ITEMS = [
   { id: 'sm-complaints',   label: 'Khiếu nại Dịch vụ',     icon: 'report_problem' },
   { id: 'sm-reviews',      label: 'Đánh giá',              icon: 'reviews' },
   { id: 'sm-violations',   label: 'Báo cáo vi phạm',       icon: 'gavel' },
-  { id: 'sm-moderation',   label: 'Kiểm duyệt nội dung',   icon: 'policy' },
+  { id: 'sm-moderation',   label: 'Giám sát nội dung',     icon: 'policy' },
   { id: 'sm-semantic',     label: 'AI Kiểm duyệt Nội dung', icon: 'smart_toy' },
   { id: 'sm-fraud',        label: 'AI Phát hiện Gian lận', icon: 'security' },
   { id: 'sm-analytics',    label: 'AI Phân tích Dữ liệu',  icon: 'query_stats' },
@@ -115,7 +113,6 @@ const NAV_ITEMS = [
   { id: 'transactions',    label: 'Giao dịch',             icon: 'payments', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
   { id: 'services',        label: 'Quản lý dịch vụ',       icon: 'support_agent', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
   { id: 'wallet-management', label: 'Duyệt giao dịch Ví',  icon: 'account_balance_wallet', section: 'Tài chính & Dịch vụ' },
-  { id: 'reports',         label: 'Báo cáo',               icon: 'assessment',           section: 'Hệ thống' },
   { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology',           section: 'Hệ thống' },
   { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu',          section: 'Hệ thống' },
   { id: 'settings',        label: 'Cài đặt',               icon: 'settings',             section: 'Hệ thống' },
@@ -549,8 +546,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-wallet-ledger'    && <WalletLedger token={token} />}
           {activeView === 'tx-commission-logs' && <CommissionLogs token={token} />}
           {activeView === 'notifications-outbox' && <NotificationOutbox token={token} />}
-          {activeView === 'tx-audit'         && <AuditLogs token={token} />}
-          
+
           {/* ── Service Management Module ── */}
           {activeView === 'sm-complaints'    && <CourseComplaintsAdminView token={token} />}
           {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
@@ -560,7 +556,6 @@ export default function AdminDashboard() {
           {activeView === 'sm-fraud'         && <FraudIntel token={token} />}
           {activeView === 'sm-analytics'     && <SafeAnalytics token={token} />}
 
-          {activeView === 'reports'          && <ReportsView token={token} />}
           {activeView === 'ai-insights'      && <AIInsightsView token={token} />}
           {activeView === 'audit-logs'       && <AuditLogs token={token} />}
           {activeView === 'settings'         && <SettingsView />}
