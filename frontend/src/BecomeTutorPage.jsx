@@ -15,6 +15,26 @@ const fmtShort = n => {
   return String(v);
 };
 
+// 2 gia sư tiêu biểu — hiển thị trong poster award ở hero
+const TUTORS = [
+  {
+    id: 1,
+    name: 'Trịnh Nhật Khánh',
+    photo: '/tutor1.jpg',
+    badge: 'Top Gia Sư 2024',
+    rating: 4.9,
+    courses: ['Toán 10–12', 'Giải tích', 'Lập trình C++'],
+  },
+  {
+    id: 2,
+    name: 'Lê Văn Hùng Linh',
+    photo: '/tutor2.jpg',
+    badge: 'Gia Sư Được Yêu Thích',
+    rating: 4.8,
+    courses: ['Vật Lý 10–12', 'Cơ học', 'Hóa Đại Cương'],
+  },
+];
+
 export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
   const [data, setData] = useState(null);
   const [subject, setSubject] = useState('');
@@ -158,55 +178,146 @@ export default function BecomeTutorPage({ onGoSignIn, onGoSignUp, user }) {
             )}
           </div>
 
-          {/* Mockup bảng điều khiển gia sư — dựng bằng CSS, không dùng ảnh ngoài */}
+          {/* Poster giải thưởng gold luxury — 2 gia sư tiêu biểu (đen + vàng) */}
           <div className="relative">
-            <div className="bt-card p-6 shadow-2xl">
-              <div className="flex items-center justify-between mb-5">
-                <div>
-                  <p className="text-xs text-[#5d5f5f]">Bảng điều khiển gia sư</p>
-                  <p className="text-lg font-bold">Thu nhập tháng này</p>
+            <style>{`
+              @keyframes goldShimmer{0%{background-position:200% center}100%{background-position:-200% center}}
+              @keyframes confettiFall{0%{transform:translateY(-20px) rotate(0deg);opacity:0}10%{opacity:1}90%{opacity:1}100%{transform:translateY(560px) rotate(720deg);opacity:0}}
+              .gold-poster{background:radial-gradient(ellipse at top,#3a2810 0%,#1a0f05 40%,#0a0602 100%);border:1px solid rgba(212,175,55,.35);box-shadow:0 30px 80px -20px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,215,120,.15);}
+              .gold-text{background:linear-gradient(90deg,#c99617 0%,#f8e08e 25%,#fff5c8 50%,#f8e08e 75%,#c99617 100%);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:goldShimmer 3s linear infinite;}
+              .gold-line{height:1px;background:linear-gradient(90deg,transparent,#d4af37 30%,#fff5c8 50%,#d4af37 70%,transparent);}
+              .gold-ring{background:linear-gradient(#1a0f05,#1a0f05) padding-box,conic-gradient(from 0deg,#c99617,#fff5c8,#c99617,#f8e08e,#c99617) border-box;border:2px solid transparent;}
+              .chip-gold{background:linear-gradient(135deg,rgba(212,175,55,.18),rgba(255,215,120,.08));border:1px solid rgba(212,175,55,.45);color:#f8e08e;}
+              .confetti{position:absolute;width:8px;height:14px;border-radius:2px;pointer-events:none;}
+              @media (prefers-reduced-motion:reduce){.confetti,.gold-text{animation:none!important}}
+            `}</style>
+
+            <div className="gold-poster relative rounded-[24px] p-7 overflow-hidden">
+              {/* Confetti */}
+              {[
+                {l:'8%',d:'0s',c:'#d4af37',dur:'4s'},{l:'22%',d:'.6s',c:'#fff5c8',dur:'3.5s'},
+                {l:'38%',d:'1.2s',c:'#c99617',dur:'4.5s'},{l:'55%',d:'.3s',c:'#f8e08e',dur:'3.8s'},
+                {l:'72%',d:'.9s',c:'#d4af37',dur:'4.2s'},{l:'88%',d:'1.5s',c:'#fff5c8',dur:'3.6s'},
+              ].map((f,i) => (
+                <span key={i} className="confetti"
+                  style={{left:f.l,top:'-14px',background:f.c,animation:`confettiFall ${f.dur} ${f.d} linear infinite`}} />
+              ))}
+
+              {/* Ribbon FES-style */}
+              <div className="relative text-center mb-3 z-10">
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full chip-gold text-[10px] font-bold tracking-[.2em]">
+                  <span className="material-symbols-outlined text-[13px]" style={{fontVariationSettings:"'FILL' 1"}}>workspace_premium</span>
+                  EDUX AWARDS 2026
                 </div>
-                <span className="bg-[#dcfce7] text-[#15803d] text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[14px]">trending_up</span>+18%
-                </span>
               </div>
-              <p className="text-4xl font-extrabold text-[#00288e] mb-1">{fmtVnd(calc.net)}</p>
-              <p className="text-xs text-[#5d5f5f] mb-6">Đã trừ 10% phí nền tảng · sẵn sàng rút về ngân hàng</p>
 
-              {/* biểu đồ cột mini */}
-              <div className="flex items-end gap-2 h-28 mb-5">
-                {growth.map((g, i) => (
-                  <div key={g.month} className="flex-1 flex flex-col items-center gap-1.5">
-                    <div className="w-full rounded-t-md bar-anim"
-                      style={{
-                        height: `${Math.max(8, (g.value / maxGrowth) * 100)}%`,
-                        background: i === growth.length - 1 ? '#00288e' : '#a8bdf0',
-                        animationDelay: `${i * 60}ms`,
-                      }} />
-                    <span className="text-[10px] text-[#5d5f5f]">{g.month}</span>
+              <div className="gold-line mb-6" />
+
+              <div className="relative text-center mb-8 z-10">
+                <p className="text-[10px] text-[#c99617] font-bold tracking-[.3em] mb-1">GIA SƯ TIÊU BIỂU</p>
+                <h3 className="gold-text text-2xl font-extrabold tracking-wider" style={{fontFamily:'Georgia,serif',textShadow:'0 0 30px rgba(255,215,120,.3)'}}>
+                  ĐỘI NGŨ EDUX
+                </h3>
+              </div>
+
+              {/* 2 gia sư cùng 1 dòng */}
+              <div className="grid grid-cols-2 gap-3 relative z-10">
+                {TUTORS.map(t => (
+                  <div key={t.id} className="relative text-center">
+                    {/* Avatar + lá nguyệt quế */}
+                    <div className="relative flex items-center justify-center mb-3">
+                      <svg width="150" height="140" viewBox="0 0 150 140" className="absolute inset-0 mx-auto"
+                        style={{filter:'drop-shadow(0 0 8px rgba(212,175,55,.4))'}}>
+                        <defs>
+                          <linearGradient id={`gold-${t.id}`} x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0" stopColor="#c99617"/>
+                            <stop offset=".5" stopColor="#fff5c8"/>
+                            <stop offset="1" stopColor="#c99617"/>
+                          </linearGradient>
+                        </defs>
+                        <g fill="none" stroke={`url(#gold-${t.id})`} strokeWidth="1.2">
+                          <path d="M20 70 Q 15 40 30 20" strokeWidth="1.8"/>
+                          {[0,1,2,3,4,5].map(i => {
+                            const y = 20 + i*10; const x = 30 - i*2;
+                            return <ellipse key={'l'+i} cx={x-6} cy={y} rx="5" ry="9" transform={`rotate(-40 ${x-6} ${y})`} fill={`url(#gold-${t.id})`} opacity="0.85"/>;
+                          })}
+                          {[0,1,2,3,4,5].map(i => {
+                            const y = 20 + i*10; const x = 30 - i*2;
+                            return <ellipse key={'l2'+i} cx={x+2} cy={y+4} rx="5" ry="9" transform={`rotate(-15 ${x+2} ${y+4})`} fill={`url(#gold-${t.id})`} opacity="0.85"/>;
+                          })}
+                          <path d="M130 70 Q 135 40 120 20" strokeWidth="1.8"/>
+                          {[0,1,2,3,4,5].map(i => {
+                            const y = 20 + i*10; const x = 120 + i*2;
+                            return <ellipse key={'r'+i} cx={x+6} cy={y} rx="5" ry="9" transform={`rotate(40 ${x+6} ${y})`} fill={`url(#gold-${t.id})`} opacity="0.85"/>;
+                          })}
+                          {[0,1,2,3,4,5].map(i => {
+                            const y = 20 + i*10; const x = 120 + i*2;
+                            return <ellipse key={'r2'+i} cx={x-2} cy={y+4} rx="5" ry="9" transform={`rotate(15 ${x-2} ${y+4})`} fill={`url(#gold-${t.id})`} opacity="0.85"/>;
+                          })}
+                        </g>
+                      </svg>
+
+                      <div className="relative z-10 gold-ring rounded-full p-1" style={{width:'88px',height:'88px'}}>
+                        <img
+                          src={t.photo}
+                          alt={t.name}
+                          className="w-full h-full rounded-full object-cover block"
+                          onError={e => { e.currentTarget.style.display = 'none'; }}
+                        />
+                        <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center border-2"
+                          style={{background:'linear-gradient(135deg,#c99617,#fff5c8)',borderColor:'#1a0f05'}}>
+                          <span className="material-symbols-outlined text-[13px] text-[#5a3d0a]" style={{fontVariationSettings:"'FILL' 1"}}>verified</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <p className="gold-text text-sm font-extrabold uppercase tracking-wider mb-1 leading-tight" style={{fontFamily:'Georgia,serif'}}>
+                      {t.name}
+                    </p>
+                    <p className="text-[10px] text-[#d4af37] font-semibold mb-2 leading-tight">
+                      {t.badge}
+                    </p>
+
+                    <div className="inline-flex items-center gap-1 mb-2.5">
+                      {[0,1,2,3,4].map(i => (
+                        <span key={i} className="text-[12px]" style={{color:'#f8e08e',textShadow:'0 0 6px rgba(255,215,120,.6)'}}>★</span>
+                      ))}
+                      <span className="text-[10px] font-bold text-[#f8e08e] ml-1">{t.rating}</span>
+                    </div>
+
+                    <div className="flex flex-wrap justify-center gap-1 px-1">
+                      {t.courses.map(c => (
+                        <span key={c} className="chip-gold text-[9px] font-bold px-2 py-0.5 rounded-full">
+                          {c}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 gap-2 pt-4 border-t border-[#e1e2e4]">
-                {[['event_available', sessions * 4, 'buổi/tháng'], ['group', Math.max(2, Math.round(sessions / 2)), 'học sinh'], ['star', '4.8', 'đánh giá']].map(([ic, v, l]) => (
-                  <div key={l} className="text-center">
-                    <span className="material-symbols-outlined text-[#00288e] text-[18px]">{ic}</span>
-                    <p className="text-sm font-bold leading-tight">{v}</p>
-                    <p className="text-[10px] text-[#5d5f5f]">{l}</p>
-                  </div>
-                ))}
+              <div className="gold-line mt-7 mb-3" />
+
+              <div className="text-center relative z-10">
+                <p className="text-[9px] text-[#c99617] font-bold tracking-[.25em]">
+                  KHỐI GIA SƯ NỔI BẬT · SPRING 2026
+                </p>
               </div>
             </div>
 
+            {/* Floating badges quanh poster */}
             <div className="absolute -bottom-5 -left-4 bg-white p-3.5 rounded-xl shadow-xl border border-[#e1e2e4] flex items-center gap-3">
               <div className="w-10 h-10 bg-[#dcfce7] rounded-full flex items-center justify-center">
-                <span className="material-symbols-outlined text-[#15803d] text-[20px]">verified</span>
+                <span className="material-symbols-outlined text-[#15803d] text-[20px]" style={{fontVariationSettings:"'FILL' 1"}}>verified_user</span>
               </div>
               <div>
-                <p className="text-xs font-bold leading-tight">Tiền về ví tự động</p>
-                <p className="text-[11px] text-[#5d5f5f]">sau khi buổi học hoàn thành</p>
+                <p className="text-xs font-bold leading-tight">Đã xác minh danh tính</p>
+                <p className="text-[11px] text-[#5d5f5f]">bằng cấp & CCCD</p>
               </div>
+            </div>
+            <div className="absolute -top-4 -right-4 bg-white px-4 py-2.5 rounded-xl shadow-xl border border-violet-200/50 flex items-center gap-2">
+              <span className="material-symbols-outlined text-violet-500 text-[18px]" style={{fontVariationSettings:"'FILL' 1"}}>auto_awesome</span>
+              <p className="text-xs font-bold">AI gợi ý học sinh phù hợp</p>
             </div>
           </div>
         </section>
