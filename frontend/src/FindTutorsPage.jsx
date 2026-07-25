@@ -147,15 +147,6 @@ function TutorCard({ tutor, isMock, onFav, featured }) {
           )}
         </div>
 
-        {/* Quick action on hover */}
-        <div className="absolute inset-x-3 bottom-14 flex gap-2 opacity-0 translate-y-3 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-300 pointer-events-none group-hover:pointer-events-auto">
-          <button
-            onClick={(e) => { e.stopPropagation(); window.location.hash = `/messages?to=${tutor.user_id || tutor.id}`; }}
-            className="flex-1 flex items-center justify-center gap-1 bg-white/95 backdrop-blur text-[#00288e] text-xs font-semibold py-2 rounded-lg hover:bg-white transition-colors shadow-lg">
-            <span className="material-symbols-outlined text-[16px]">chat</span>
-            Nhắn tin
-          </button>
-        </div>
       </div>
 
       <div className="p-5 flex-grow flex flex-col">
