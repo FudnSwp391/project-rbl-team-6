@@ -13846,6 +13846,257 @@ app.put('/api/complaints/:id', verifyToken, async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// TRUNG TÂM HỖ TRỢ HỌC SINH (support_requests)
+// Khác course_complaints (gắn khóa học video), support_requests phục vụ buổi học
+// gia sư 1-1: đổi gia sư sau khi học thấy không hợp, khiếu nại gia sư, hoàn tiền,
+// sự cố kỹ thuật... Học sinh gửi yêu cầu → admin xử lý → duyệt đổi gia sư sẽ tự
+// hủy các buổi học sắp tới với gia sư cũ để học sinh đặt gia sư mới.
+// ════════════════════════════════════════════════════════════════════════════
+
+const SUPPORT_REQUEST_TYPES = ['change_tutor', 'tutor_complaint', 'refund', 'technical', 'other'];
+const SUPPORT_OPEN_STATUSES = ['pending', 'processing'];
+
+// POST /api/support-requests — học sinh tạo yêu cầu hỗ trợ
+app.post('/api/support-requests', verifyToken, async (req, res) => {
+  const { request_type, tutor_id, booking_id, subject, reason, description, desired_outcome } = req.body;
+  const studentId = req.user.userId;
+  if (!request_type || !SUPPORT_REQUEST_TYPES.includes(request_type)) {
+    return res.status(400).json({ message: 'Loại yêu cầu không hợp lệ.' });
+  }
+  if (!reason || !String(reason).trim()) {
+    return res.status(400).json({ message: 'Vui lòng chọn hoặc nhập lý do.' });
+  }
+  const needsTutor = ['change_tutor', 'tutor_complaint'].includes(request_type);
+  if (needsTutor && !tutor_id) {
+    return res.status(400).json({ message: 'Vui lòng chọn gia sư liên quan.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let tutorName = null;
+    if (tutor_id) {
+      // Chỉ cho khiếu nại/đổi gia sư mà học sinh THẬT SỰ có buổi học cùng —
+      // chặn spam nhắm vào gia sư chưa từng dạy mình.
+      const rel = await client.query(
+        `SELECT b.tutor_name, u.full_name
+         FROM bookings b LEFT JOIN users u ON u.id = b.tutor_id
+         WHERE b.student_id = $1 AND b.tutor_id = $2
+         ORDER BY b.created_at DESC LIMIT 1`,
+        [studentId, tutor_id]
+      );
+      if (!rel.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ message: 'Bạn chưa có buổi học nào với gia sư này.' });
+      }
+      tutorName = rel.rows[0].full_name || rel.rows[0].tutor_name || 'Gia sư';
+    }
+    if (request_type === 'change_tutor') {
+      const dup = await client.query(
+        `SELECT id FROM support_requests
+         WHERE student_id = $1 AND tutor_id = $2 AND request_type = 'change_tutor'
+           AND status = ANY($3) LIMIT 1`,
+        [studentId, tutor_id, SUPPORT_OPEN_STATUSES]
+      );
+      if (dup.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: 'Bạn đã có yêu cầu đổi gia sư này đang chờ xử lý. Vui lòng chờ admin phản hồi.' });
+      }
+    }
+    const ins = await client.query(
+      `INSERT INTO support_requests
+         (student_id, request_type, tutor_id, tutor_name, booking_id, subject, reason, description, desired_outcome)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING *`,
+      [studentId, request_type, tutor_id || null, tutorName, booking_id || null,
+       subject?.trim() || null, String(reason).trim(), description?.trim() || null, desired_outcome?.trim() || null]
+    );
+    const sr = ins.rows[0];
+    const typeLabels = {
+      change_tutor: 'Yêu cầu đổi gia sư', tutor_complaint: 'Khiếu nại gia sư',
+      refund: 'Yêu cầu hoàn tiền', technical: 'Hỗ trợ kỹ thuật', other: 'Yêu cầu hỗ trợ',
+    };
+    const admins = await client.query(`SELECT id FROM users WHERE role='admin' LIMIT 5`);
+    for (const admin of admins.rows) {
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1,'support_request',$2,$3,'support_agent',$4,'support_request')`,
+        [admin.id, `${typeLabels[request_type]} mới`,
+         `${tutorName ? `Gia sư: ${tutorName} — ` : ''}${String(reason).trim().slice(0, 120)}`, sr.id]
+      );
+    }
+    await client.query('COMMIT');
+    return res.status(201).json({
+      id: sr.id,
+      ticket_number: 'SUP-' + String(sr.request_number).padStart(5, '0'),
+      status: sr.status,
+      created_at: sr.created_at,
+    });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('[POST /support-requests]', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/support-requests — danh sách yêu cầu của chính học sinh
+app.get('/api/support-requests', verifyToken, async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, parseInt(req.query.limit) || 10);
+  try {
+    const total = parseInt((await pool.query(
+      `SELECT COUNT(*) FROM support_requests WHERE student_id = $1`, [req.user.userId]
+    )).rows[0].count);
+    const { rows } = await pool.query(
+      `SELECT sr.*, 'SUP-' || LPAD(sr.request_number::text, 5, '0') AS ticket_number,
+              u_admin.full_name AS admin_name, u_tutor.picture AS tutor_picture
+       FROM support_requests sr
+       LEFT JOIN users u_admin ON u_admin.id = sr.admin_id
+       LEFT JOIN users u_tutor ON u_tutor.id = sr.tutor_id
+       WHERE sr.student_id = $1
+       ORDER BY CASE WHEN sr.status IN ('pending','processing') THEN 0 ELSE 1 END, sr.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [req.user.userId, limit, (page - 1) * limit]
+    );
+    return res.json({ requests: rows, total, page, totalPages: Math.ceil(total / limit) || 1 });
+  } catch (e) {
+    console.error('[GET /support-requests]', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// DELETE /api/support-requests/:id — học sinh hủy yêu cầu (chỉ khi pending)
+app.delete('/api/support-requests/:id', verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE support_requests SET status='cancelled', updated_at=NOW()
+       WHERE id = $1 AND student_id = $2 AND status = 'pending'
+       RETURNING id`,
+      [req.params.id, req.user.userId]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Không tìm thấy yêu cầu hoặc yêu cầu đã được xử lý (không thể hủy).' });
+    return res.json({ success: true });
+  } catch (e) {
+    console.error('[DELETE /support-requests/:id]', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/admin/support-requests — admin xem tất cả yêu cầu hỗ trợ
+app.get('/api/admin/support-requests', verifyToken, requireAdmin, async (req, res) => {
+  const { status, type, search, page = 1, limit = 20 } = req.query;
+  const conditions = [];
+  const params = [];
+  if (status && status !== 'all') { params.push(status); conditions.push(`sr.status = $${params.length}`); }
+  if (type && type !== 'all')     { params.push(type);   conditions.push(`sr.request_type = $${params.length}`); }
+  if (search) {
+    params.push(`%${search}%`);
+    const i = params.length;
+    conditions.push(`(u.full_name ILIKE $${i} OR sr.tutor_name ILIKE $${i} OR sr.reason ILIKE $${i})`);
+  }
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  try {
+    const total = parseInt((await pool.query(
+      `SELECT COUNT(*) FROM support_requests sr JOIN users u ON u.id = sr.student_id ${where}`, params
+    )).rows[0].count);
+    const { rows } = await pool.query(
+      `SELECT sr.*, 'SUP-' || LPAD(sr.request_number::text, 5, '0') AS ticket_number,
+              u.full_name AS student_name, u.email AS student_email, u.picture AS student_picture,
+              u_tutor.picture AS tutor_picture,
+              u_admin.full_name AS admin_name
+       FROM support_requests sr
+       JOIN users u ON u.id = sr.student_id
+       LEFT JOIN users u_tutor ON u_tutor.id = sr.tutor_id
+       LEFT JOIN users u_admin ON u_admin.id = sr.admin_id
+       ${where}
+       ORDER BY CASE WHEN sr.status = 'pending' THEN 0 WHEN sr.status = 'processing' THEN 1 ELSE 2 END, sr.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, parseInt(limit), (parseInt(page) - 1) * parseInt(limit)]
+    );
+    return res.json({ requests: rows, total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) || 1 });
+  } catch (e) {
+    console.error('[GET /admin/support-requests]', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// PUT /api/admin/support-requests/:id — admin xử lý yêu cầu
+// Duyệt đổi gia sư (approved + change_tutor): tự hủy các buổi học tương lai
+// chưa diễn ra với gia sư cũ để học sinh rảnh tay đặt gia sư mới.
+app.put('/api/admin/support-requests/:id', verifyToken, requireAdmin, async (req, res) => {
+  const { status, admin_response } = req.body;
+  if (!['processing', 'approved', 'rejected', 'resolved'].includes(status)) {
+    return res.status(400).json({ message: 'Trạng thái không hợp lệ.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const cur = await client.query(`SELECT * FROM support_requests WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    if (!cur.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Không tìm thấy yêu cầu.' });
+    }
+    const sr = cur.rows[0];
+    if (['resolved', 'rejected', 'cancelled'].includes(sr.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Yêu cầu này đã được xử lý xong.' });
+    }
+    let cancelledCount = 0;
+    if (status === 'approved' && sr.request_type === 'change_tutor' && sr.tutor_id) {
+      const cancelled = await client.query(
+        `UPDATE bookings
+         SET status = 'Cancelled',
+             note = COALESCE(note,'') || ' [Hệ thống hủy: admin duyệt yêu cầu đổi gia sư]'
+         WHERE student_id = $1 AND tutor_id = $2
+           AND lesson_date >= CURRENT_DATE
+           AND status IN ('Pending', 'Approved')
+         RETURNING id`,
+        [sr.student_id, sr.tutor_id]
+      );
+      cancelledCount = cancelled.rows.length;
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1,'support_request','Lịch dạy thay đổi',$2,'event_busy',$3,'support_request')`,
+        [sr.tutor_id,
+         `${cancelledCount} buổi học sắp tới với một học sinh đã được hủy theo quyết định của quản trị viên.`,
+         sr.id]
+      );
+    }
+    const finalStatus = (status === 'approved' && sr.request_type !== 'change_tutor') ? 'resolved' : status;
+    const upd = await client.query(
+      `UPDATE support_requests
+       SET status = $1, admin_id = $2, admin_response = COALESCE($3, admin_response),
+           resolved_at = CASE WHEN $1 IN ('approved','rejected','resolved') THEN NOW() ELSE resolved_at END,
+           updated_at = NOW()
+       WHERE id = $4 RETURNING *`,
+      [finalStatus, req.user.userId, admin_response?.trim() || null, req.params.id]
+    );
+    const statusMsgs = {
+      processing: 'Yêu cầu hỗ trợ của bạn đang được xử lý.',
+      approved: sr.request_type === 'change_tutor'
+        ? `Yêu cầu đổi gia sư đã được duyệt${cancelledCount ? ` — ${cancelledCount} buổi học với gia sư cũ đã hủy` : ''}. Bạn có thể đặt gia sư mới ngay.`
+        : 'Yêu cầu của bạn đã được chấp thuận.',
+      rejected: 'Yêu cầu hỗ trợ của bạn đã bị từ chối.' + (admin_response ? ' Xem phản hồi của admin để biết chi tiết.' : ''),
+      resolved: 'Yêu cầu hỗ trợ của bạn đã được giải quyết.',
+    };
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1,'support_request',$2,$3,'support_agent',$4,'support_request')`,
+      [sr.student_id, 'Cập nhật yêu cầu hỗ trợ', statusMsgs[status] || 'Yêu cầu của bạn có cập nhật mới.', sr.id]
+    );
+    await client.query('COMMIT');
+    return res.json({ ...upd.rows[0], cancelled_bookings: cancelledCount });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('[PUT /admin/support-requests/:id]', e.message);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
 // GET /api/admin/course-complaints
 app.get('/api/admin/course-complaints', verifyToken, requireAdmin, async (req, res) => {
   const { status, search, page = 1, limit = 20 } = req.query;
@@ -20930,6 +21181,40 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: subjects table + canonical seed ready (Batch 32)');
   } catch (err) {
     console.error('⚠️  DB migration (subjects Batch 32) warning:', err.message);
+  }
+
+  // ── Auto-migrate: support_requests (Trung tâm Hỗ trợ học sinh) ──────────────
+  // Yêu cầu hỗ trợ cho buổi học gia sư 1-1 (đổi gia sư, khiếu nại, hoàn tiền,
+  // kỹ thuật) — tách khỏi course_complaints vốn bắt buộc gắn khóa học video.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS support_requests (
+        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        request_number  SERIAL,
+        student_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        request_type    TEXT NOT NULL
+          CHECK (request_type IN ('change_tutor','tutor_complaint','refund','technical','other')),
+        tutor_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+        tutor_name      TEXT,
+        booking_id      UUID,
+        subject         TEXT,
+        reason          TEXT NOT NULL,
+        description     TEXT,
+        desired_outcome TEXT,
+        status          TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending','processing','approved','rejected','resolved','cancelled')),
+        admin_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+        admin_response  TEXT,
+        resolved_at     TIMESTAMPTZ,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_support_requests_student ON support_requests(student_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_support_requests_status  ON support_requests(status);
+    `);
+    console.log('✅ DB migration: support_requests table ready');
+  } catch (err) {
+    console.error('⚠️  DB migration (support_requests) warning:', err.message);
   }
 
   // ── Auto-migrate: fraud investigation tables (Batch 35) ─────────────────────

@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { icon: 'psychology', label: 'Luyện tập AI', href: '#/dashboard/practice', id: 'practice' },
   { icon: 'family_restroom', label: 'Mã chia sẻ', href: '#/dashboard/parent-link', id: 'parent-link' },
   { icon: 'report_problem', label: 'Khiếu nại', href: '#/dashboard/complaints', id: 'complaints' },
+  { icon: 'support_agent', label: 'Hỗ trợ', href: '#/dashboard/support', id: 'support' },
 ]
 
 export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRoute, logout }) {
@@ -90,10 +91,10 @@ export default function StudentSidebar({ sidebarOpen, setSidebarOpen, activeRout
           </a>
           <div className="mt-md px-xs">
             <button
-              onClick={() => { window.location.hash = '#/dashboard/complaints'; setSidebarOpen && setSidebarOpen(false) }}
-              className="w-full bg-surface-container border border-outline-variant text-on-surface font-label-md text-label-md h-12 rounded-lg flex items-center justify-center gap-sm hover:bg-surface-container-highest transition-colors duration-200"
+              onClick={() => { window.location.hash = '#/dashboard/support'; setSidebarOpen && setSidebarOpen(false) }}
+              className="w-full bg-primary text-on-primary font-label-md text-label-md h-12 rounded-lg flex items-center justify-center gap-sm hover:opacity-90 transition-opacity duration-200 shadow-sm"
             >
-              <span className="material-symbols-outlined text-[18px]">help_center</span>
+              <span className="material-symbols-outlined text-[18px]">support_agent</span>
               Nhận hỗ trợ
             </button>
           </div>
