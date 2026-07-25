@@ -15643,6 +15643,9 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     if (teachingMethod && !['online', 'offline'].includes(teachingMethod)) {
       return res.status(400).json({ message: "teaching_method phải là 'online' hoặc 'offline'." });
     }
+    // Địa điểm học offline do học sinh cung cấp (gia sư cần biết đến đâu dạy)
+    const bookingLocation     = (body.location || body.address || '').toString().trim() || null;
+    const bookingLocationNote = (body.locationNote || body.location_note || '').toString().trim() || null;
 
     const bookingSessions = sessions && sessions.length > 0
       ? sessions
@@ -15681,6 +15684,11 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         if (support.online && !support.offline) teachingMethod = 'online';
         else if (!support.online && support.offline) teachingMethod = 'offline';
       }
+    }
+
+    // Buổi học offline phải có địa điểm, nếu không gia sư không biết đến đâu dạy
+    if (teachingMethod === 'offline' && !bookingLocation) {
+      return res.status(400).json({ message: "Buổi học offline cần có địa điểm. Vui lòng nhập địa chỉ nơi học." });
     }
 
     if (!finalTutorName) {
@@ -15762,10 +15770,12 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         }
 
         const result = await client.query(
-          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at, package_id`,
-          [effectiveStudentId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId]
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id, location, location_note)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+           RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at, package_id, location, location_note`,
+          [effectiveStudentId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId,
+           teachingMethod === 'offline' ? bookingLocation : null,
+           teachingMethod === 'offline' ? bookingLocationNote : null]
         );
         const booking = result.rows[0];
 

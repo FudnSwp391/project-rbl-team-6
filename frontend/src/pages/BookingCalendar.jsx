@@ -4,6 +4,7 @@ import { getTutorDetail, getTutorAvailability, createBooking } from '../services
 import { API_BASE_URL } from '../config';
 import BookingConfirmationModal from '../components/BookingConfirmationModal';
 import { methodSupport, methodLabel, METHOD_OPTIONS } from '../utils/teachingMethod';
+import { VN_LOCATIONS, VN_PROVINCES, matchProvince } from '../constants/vietnamLocations';
 
 const toDateKey = (date) => {
   const value = new Date(date);
@@ -86,6 +87,11 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   const [subject, setSubject]                   = useState('');
   const [teachingMethod, setTeachingMethod]     = useState('');
   const [notes, setNotes]                       = useState('');
+  // Địa điểm học Offline
+  const [province, setProvince]         = useState('');
+  const [district, setDistrict]         = useState('');
+  const [streetAddress, setStreetAddress] = useState('');
+  const [locationNote, setLocationNote]   = useState('');
   const [selectedChild, setSelectedChild]       = useState('');
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -199,6 +205,10 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
           const ms = methodSupport(tutorData.teaching_methods);
           if (ms.online && !ms.offline) setTeachingMethod('online');
           else if (!ms.online && ms.offline) setTeachingMethod('offline');
+          // Gợi ý sẵn tỉnh/thành theo khu vực gia sư đang dạy (học offline thường
+          // diễn ra cùng khu vực) — học sinh vẫn đổi được nếu muốn.
+          const guessed = matchProvince(tutorData.city || tutorData.location);
+          if (guessed) setProvince(guessed);
           setLoading(false);
         }
       } catch (err) {
@@ -523,6 +533,17 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       return;
     }
 
+    // Học offline bắt buộc có địa điểm — gia sư cần biết đến đâu dạy
+    const effectiveMethod = teachingMethod || (ms.offline && !ms.online ? 'offline' : ms.online && !ms.offline ? 'online' : '');
+    if (effectiveMethod === 'offline') {
+      if (!province)            { setSubmitError('Vui lòng chọn Tỉnh/Thành phố nơi học.'); return; }
+      if (!district.trim())     { setSubmitError('Vui lòng chọn Quận/Huyện nơi học.'); return; }
+      if (!streetAddress.trim()){ setSubmitError('Vui lòng nhập địa chỉ cụ thể nơi học.'); return; }
+    }
+    const fullLocation = effectiveMethod === 'offline'
+      ? [streetAddress.trim(), district.trim(), province].filter(Boolean).join(', ')
+      : null;
+
     // ── Build payload (matches backend: tutor_id, lesson_date, time_slot) ─
     const bookingPayload = {
       tutorId:   String(tutorIdToSend),
@@ -531,6 +552,8 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       subject:   subject || (tutor.subjects?.[0] ?? null),
       notes:     notes || null,
       teachingMethod: teachingMethod || null,
+      location:     fullLocation,
+      locationNote: effectiveMethod === 'offline' ? (locationNote.trim() || null) : null,
       targetStudentId: user?.role === 'parent' ? selectedChild : undefined,
     };
 
@@ -1016,6 +1039,99 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                         {hint}
                       </p>
                     )}
+
+                    {/* Địa điểm học — chỉ hiện khi hình thức là Offline */}
+                    {(teachingMethod || single) === 'offline' && (
+                      <div style={{
+                        marginTop: 12, padding: 14, borderRadius: 12,
+                        background: 'linear-gradient(180deg,#f0fdf4,#f7fdf9)',
+                        border: '1px solid #bbf7d0',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#15803d' }}>pin_drop</span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#14532d' }}>Địa điểm học</span>
+                          <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 600 }}>* bắt buộc</span>
+                        </div>
+
+                        {/* Tỉnh/TP + Quận/Huyện */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                          <div>
+                            <label style={{ ...S.label, fontSize: 11, marginBottom: 4 }}>Tỉnh / Thành phố</label>
+                            <select
+                              value={province}
+                              onChange={e => { setProvince(e.target.value); setDistrict(''); }}
+                              style={{ ...S.input, height: 38, fontSize: 13, padding: '0 8px' }}>
+                              <option value="">— Chọn —</option>
+                              {VN_PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ ...S.label, fontSize: 11, marginBottom: 4 }}>Quận / Huyện</label>
+                            {(VN_LOCATIONS[province] || []).length > 0 ? (
+                              <select
+                                value={district}
+                                onChange={e => setDistrict(e.target.value)}
+                                disabled={!province}
+                                style={{ ...S.input, height: 38, fontSize: 13, padding: '0 8px',
+                                  background: province ? '#fff' : '#f1f2f6', cursor: province ? 'pointer' : 'not-allowed' }}>
+                                <option value="">— Chọn —</option>
+                                {(VN_LOCATIONS[province] || []).map(d => <option key={d} value={d}>{d}</option>)}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                value={district}
+                                onChange={e => setDistrict(e.target.value)}
+                                disabled={!province}
+                                placeholder={province ? 'Nhập quận/huyện' : 'Chọn tỉnh trước'}
+                                style={{ ...S.input, height: 38, fontSize: 13,
+                                  background: province ? '#fff' : '#f1f2f6' }} />
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Địa chỉ cụ thể */}
+                        <div style={{ marginBottom: 8 }}>
+                          <label style={{ ...S.label, fontSize: 11, marginBottom: 4 }}>Địa chỉ cụ thể</label>
+                          <input
+                            type="text"
+                            value={streetAddress}
+                            onChange={e => setStreetAddress(e.target.value)}
+                            placeholder="VD: 123 Nguyễn Văn Cừ, Phường 4"
+                            style={{ ...S.input, height: 38, fontSize: 13 }} />
+                        </div>
+
+                        {/* Ghi chú đường đi */}
+                        <div>
+                          <label style={{ ...S.label, fontSize: 11, marginBottom: 4 }}>Hướng dẫn tìm đường (tuỳ chọn)</label>
+                          <input
+                            type="text"
+                            value={locationNote}
+                            onChange={e => setLocationNote(e.target.value)}
+                            placeholder="VD: Chung cư X, tầng 5, gọi trước khi tới"
+                            style={{ ...S.input, height: 38, fontSize: 13 }} />
+                        </div>
+
+                        {/* Xem trước địa chỉ đầy đủ */}
+                        {(streetAddress.trim() || district || province) && (
+                          <div style={{
+                            marginTop: 10, padding: '8px 10px', borderRadius: 8,
+                            background: '#fff', border: '1px dashed #86efac',
+                            display: 'flex', alignItems: 'flex-start', gap: 6,
+                          }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 15, color: '#15803d', marginTop: 1 }}>location_on</span>
+                            <span style={{ fontSize: 12, color: '#166534', lineHeight: 1.45 }}>
+                              {[streetAddress.trim(), district, province].filter(Boolean).join(', ')}
+                            </span>
+                          </div>
+                        )}
+
+                        <p style={{ margin: '10px 0 0', fontSize: 11, color: '#4d7c5a', display: 'flex', alignItems: 'flex-start', gap: 4, lineHeight: 1.5 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 14, marginTop: 1 }}>shield</span>
+                          Địa chỉ chỉ hiển thị cho gia sư sau khi buổi học được duyệt.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -1181,6 +1297,7 @@ const S = {
   select:       { width: '100%', height: 42, padding: '0 38px 0 12px', background: '#fff', border: '1px solid rgba(196,197,213,0.5)', borderRadius: 11, fontSize: 13, color: 'var(--on-surface)', fontFamily: 'inherit', appearance: 'none', cursor: 'pointer', outline: 'none' },
   selectArrow:  { position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--on-surface-variant)', pointerEvents: 'none', fontSize: 19 },
   textarea:     { width: '100%', padding: '10px 12px', background: '#fff', border: '1px solid rgba(196,197,213,0.5)', borderRadius: 11, fontSize: 13, color: 'var(--on-surface)', fontFamily: 'inherit', resize: 'vertical', outline: 'none', boxSizing: 'border-box', lineHeight: 1.6 },
+  input:        { width: '100%', height: 42, padding: '0 12px', background: '#fff', border: '1px solid rgba(196,197,213,0.5)', borderRadius: 11, fontSize: 13, color: 'var(--on-surface)', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' },
   /* Progress steps */
   progressWrap:    { display: 'flex', alignItems: 'center', gap: 0, marginBottom: 18 },
   progressStep:    { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, fontSize: 10, fontWeight: 600, color: '#c4c4c4', flex: '0 0 auto' },
