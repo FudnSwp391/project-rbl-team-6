@@ -16509,7 +16509,7 @@ async function updateTutorReputationScore(tutorUserId) {
 
     let newReputation = currentReputation;
     if (avgSessionQuality >= 4.2) {
-      newReputation = Math.min(150, currentReputation + 1);
+      newReputation = Math.min(100, currentReputation + 1);
     } else if (avgSessionQuality <= 2.8) {
       newReputation = Math.max(50, currentReputation - 2);
     }
