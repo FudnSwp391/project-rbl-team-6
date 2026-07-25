@@ -173,6 +173,42 @@ router.post('/withdraw-request', authMiddleware, async (req, res) => {
     client.release();
   }
 });
+// --- GET Cashflow Stats ---
+router.get('/cashflow-stats', authMiddleware, async (req, res) => {
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
+  try {
+    const walletResult = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [userId]);
+    if (walletResult.rows.length === 0) {
+      return res.json({ stats: [] });
+    }
+    const walletId = walletResult.rows[0].id;
+    
+    const query = `
+      WITH months AS (
+        SELECT generate_series(
+          date_trunc('month', current_date) - interval '5 months',
+          date_trunc('month', current_date),
+          '1 month'::interval
+        ) AS month
+      )
+      SELECT 
+        to_char(m.month, 'Mon') as m,
+        COALESCE(SUM(wr.amount), 0) as total
+      FROM months m
+      LEFT JOIN withdraw_requests wr 
+        ON date_trunc('month', wr.created_at) = m.month 
+        AND wr.wallet_id = $1
+      GROUP BY m.month
+      ORDER BY m.month;
+    `;
+    const statsResult = await pool.query(query, [walletId]);
+    res.json({ stats: statsResult.rows });
+  } catch (error) {
+    console.error("Error fetching cashflow stats:", error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // --- GET Withdraw Requests ---
 router.get('/withdraw-requests', authMiddleware, async (req, res) => {
   const userId = req.user?.userId || req.user?.id || req.user?.sub;

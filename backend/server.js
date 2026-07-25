@@ -28,6 +28,7 @@ const { buildAnalysis } = require("./services/reconciliation/aiExplanationServic
 const { buildTimeline: buildReconciliationTimeline } = require("./services/reconciliation/timelineService");
 const reconciliationIncidents = require("./services/reconciliation/incidentService");
 const { runReconciliation, listRuns: listReconciliationRuns } = require("./services/reconciliation/runService");
+const { investigateViolation } = require("./services/violations/investigateViolation");
 
 dotenv.config();
 
@@ -3052,16 +3053,19 @@ const NOTIFICATION_TEMPLATES = {
     icon: d.forAdmin ? 'gavel' : 'report', priority: 'high',
   }),
   dispute_resolved_refund: d => ({
-    subject: '[EduX] Khiếu nại: Đã hoàn tiền', title: 'Khiếu nại: Đã hoàn tiền',
+    subject: '[EduX] Khiếu nại: Đã hoàn tiền', title: d.forTutor ? 'Khiếu nại về bạn đã được xử lý' : 'Khiếu nại: Đã hoàn tiền',
     body: d.forTutor
-      ? `Admin hoàn tiền cho học sinh.${d.repDeduct ? ` Điểm uy tín bị trừ ${d.repDeduct}.` : ''}`
+      ? `Admin đã xem xét khiếu nại buổi học và quyết định hoàn tiền cho học sinh.${d.reason ? ` Lý do khiếu nại: ${d.reason}.` : ''}${d.adminNote ? ` Ghi chú của Admin: ${d.adminNote}.` : ''}${d.repDeduct ? ` Điểm uy tín bị trừ ${d.repDeduct}.` : ''}${d.autoBanned ? (d.penaltyType === 'BAN' ? ' Tài khoản của bạn đã bị khóa vĩnh viễn theo quyết định của Admin.' : ' Tài khoản của bạn đã bị khóa do điểm uy tín xuống dưới 30.') : ''}`
       : `Admin phán quyết: Hoàn ${fmtVnd(d.amount)} (${Math.round((d.rate ?? 1) * 100)}%) vào ví bạn.`,
-    icon: d.forTutor ? 'gavel' : 'check_circle', priority: 'high',
+    icon: d.forTutor ? 'gavel' : 'check_circle', priority: d.forTutor && (d.repDeduct || d.autoBanned) ? 'high' : 'normal',
   }),
   dispute_resolved_release: d => ({
-    subject: '[EduX] Khiếu nại đã được xử lý', title: 'Khiếu nại không được chấp nhận',
-    body: 'Admin xem xét và phán quyết gia sư không vi phạm.',
-    icon: 'gavel', priority: 'normal',
+    subject: d.forTutor ? '[EduX] Khieu nai ve ban da duoc xu ly' : '[EduX] Khiếu nại đã được xử lý',
+    title: d.forTutor ? 'Khiếu nại về bạn đã được xử lý' : 'Khiếu nại không được chấp nhận',
+    body: d.forTutor
+      ? `Admin đã xem xét khiếu nại buổi học và quyết định giữ nguyên khoản thanh toán cho bạn.${d.reason ? ` Lý do khiếu nại: ${d.reason}.` : ''}${d.adminNote ? ` Ghi chú của Admin: ${d.adminNote}.` : ''}${d.repDeduct ? ` Điểm uy tín bị trừ ${d.repDeduct}.` : ''}${d.autoBanned ? (d.penaltyType === 'BAN' ? ' Tài khoản của bạn đã bị khóa vĩnh viễn theo quyết định của Admin.' : ' Tài khoản của bạn đã bị khóa do điểm uy tín xuống dưới 30.') : ''}`
+      : 'Admin xem xét và phán quyết gia sư không vi phạm.',
+    icon: 'gavel', priority: d.forTutor && (d.repDeduct || d.autoBanned) ? 'high' : 'normal',
   }),
   dispute_withdrawn: d => ({
     subject: '[EduX] Khiếu nại đã được rút', title: d.forAdmin ? 'Học sinh đã rút khiếu nại' : 'Khiếu nại đã được rút',
@@ -3261,6 +3265,32 @@ const NOTIFICATION_TEMPLATES = {
     body: `Gia sư ${d.tutorName || ''} yêu cầu rút ${fmtVnd(d.amount)}. Vui lòng xử lý trong trang quản trị.`,
     icon: 'account_balance', priority: 'high',
     ctaLabel: 'Xử lý ngay', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/admin`,
+  }),
+  // ── Reschedule templates ──────────────────────────────────────────────────
+  reschedule_requested: d => ({
+    subject: '[EduX] Học sinh yêu cầu đổi lịch học', title: 'Yêu cầu đổi lịch học mới',
+    body: `${d.studentName || 'Học sinh'} muốn đổi buổi học môn ${d.subject || ''} từ ${d.oldDate || ''} (${d.oldSlot || ''}) sang ${d.newDate || ''} (${d.newSlot || ''}).${d.reason ? `\nLý do: ${d.reason}` : ''}\nVui lòng vào Dashboard để chấp nhận hoặc từ chối.`,
+    icon: 'event_repeat', priority: 'high',
+    ctaLabel: 'Xem yêu cầu', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  reschedule_accepted: d => ({
+    subject: '[EduX] Gia sư đã chấp nhận đổi lịch', title: 'Yêu cầu đổi lịch được chấp nhận',
+    body: `Gia sư đã chấp nhận đổi lịch học môn ${d.subject || ''}.\nLịch mới: ${d.newDate || ''} (${d.newSlot || ''}).\nLịch cũ đã được cập nhật thành công.`,
+    icon: 'check_circle', priority: 'normal',
+    ctaLabel: 'Xem lịch học', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  reschedule_rejected: d => ({
+    subject: '[EduX] Gia sư từ chối đổi lịch', title: 'Yêu cầu đổi lịch bị từ chối',
+    body: `Gia sư đã từ chối yêu cầu đổi lịch học môn ${d.subject || ''} sang ${d.newDate || ''} (${d.newSlot || ''}).\nLịch cũ vẫn giữ nguyên: ${d.oldDate || ''} (${d.oldSlot || ''}).${d.rejectReason ? `\nLý do từ chối: ${d.rejectReason}` : ''}`,
+    icon: 'event_busy', priority: 'normal',
+    ctaLabel: 'Xem chi tiết', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
+  }),
+  complaint_penalty: d => ({
+    subject: '[EduX] Ban bi ap dung bien phap xu ly do khieu nai khoa hoc',
+    title: 'Bạn bị áp dụng biện pháp xử lý',
+    body: `Khiếu nại #${d.complaintNumber || ''}${d.courseTitle ? ` về khóa học "${d.courseTitle}"` : ''} đã được Admin xem xét và chấp nhận. Lý do khiếu nại: ${d.reason || 'Không có'}. Hình thức xử lý: ${d.penaltyLabel || ''}.${d.adminNote ? ` Ghi chú của Admin: ${d.adminNote}.` : ''}${d.autoBanned ? (d.penaltyType === 'BAN' ? ' Tài khoản của bạn đã bị khóa vĩnh viễn theo quyết định của Admin.' : ' Tài khoản của bạn đã bị khóa do điểm uy tín xuống dưới 30.') : ''}`,
+    icon: 'gavel', priority: d.autoBanned ? 'critical' : 'high',
+    ctaLabel: 'Xem chi tiết', ctaUrl: `${process.env.FRONTEND_ORIGIN || 'http://localhost:5173'}/#/dashboard`,
   }),
 };
 
@@ -4088,24 +4118,75 @@ app.post("/api/auth/google", async (req, res) => {
 // PUT /api/tutor/availability
 app.put("/api/tutor/availability", verifyToken, async (req, res) => {
   try {
-    const { availability, monthly_availability, slot_duration_mins } = req.body;
+    const { availability, availability_ranges, monthly_availability, monthly_availability_ranges, slot_duration_mins } = req.body;
     // Validate slot_duration_mins: chỉ chấp nhận 60, 120, 180
     const validDurations = [60, 120, 180];
     const duration = validDurations.includes(Number(slot_duration_mins)) ? Number(slot_duration_mins) : 60;
     
-    // Nếu client không gửi monthly_availability, giữ nguyên giá trị cũ
-    if (monthly_availability !== undefined) {
+    // Helper to generate slots from ranges
+    const generateSlotsFromRanges = (rangesObj, durationMins) => {
+      if (!rangesObj) return null;
+      const result = {};
+      const timeToMinutes = (timeStr) => {
+        const [h, m] = timeStr.split(':').map(Number);
+        return h * 60 + m;
+      };
+      const minutesToTime = (mins) => {
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+        const hStr = h12.toString().padStart(2, '0');
+        const mStr = m.toString().padStart(2, '0');
+        return `${hStr}:${mStr} ${ampm}`;
+      };
+
+      for (const day in rangesObj) {
+        result[day] = [];
+        const ranges = rangesObj[day] || [];
+        for (const range of ranges) {
+          if (!range.start || !range.end) continue;
+          const startMins = timeToMinutes(range.start);
+          const endMins = timeToMinutes(range.end);
+          if (startMins >= endMins) continue; // Validation: start < end
+          let current = startMins;
+          // Slot only generated if the entire session fits in the range
+          while (current + durationMins <= endMins) {
+            result[day].push(minutesToTime(current));
+            current += durationMins;
+          }
+        }
+      }
+      return result;
+    };
+
+    let finalAvailability = availability;
+    let finalMonthly = monthly_availability;
+
+    if (availability_ranges) {
+      finalAvailability = generateSlotsFromRanges(availability_ranges, duration);
+    }
+    if (monthly_availability_ranges) {
+      finalMonthly = generateSlotsFromRanges(monthly_availability_ranges, duration);
+    }
+
+    if (monthly_availability !== undefined || monthly_availability_ranges !== undefined) {
       await pool.query(
-        "UPDATE tutor_profiles SET availability = $1, monthly_availability = $2, slot_duration_mins = $3 WHERE user_id = $4",
-        [availability, monthly_availability, duration, req.user.userId]
+        "UPDATE tutor_profiles SET availability = $1, monthly_availability = $2, slot_duration_mins = $3, availability_ranges = $4, monthly_availability_ranges = $5 WHERE user_id = $6",
+        [finalAvailability, finalMonthly, duration, availability_ranges || null, monthly_availability_ranges || null, req.user.userId]
       );
     } else {
       await pool.query(
-        "UPDATE tutor_profiles SET availability = $1, slot_duration_mins = $2 WHERE user_id = $3",
-        [availability, duration, req.user.userId]
+        "UPDATE tutor_profiles SET availability = $1, slot_duration_mins = $2, availability_ranges = $3 WHERE user_id = $4",
+        [finalAvailability, duration, availability_ranges || null, req.user.userId]
       );
     }
-    return res.json({ message: "Cập nhật lịch trống thành công.", slot_duration_mins: duration });
+    return res.json({ 
+      message: "Cập nhật lịch trống thành công.", 
+      slot_duration_mins: duration, 
+      availability: finalAvailability,
+      availability_ranges
+    });
   } catch (error) {
     console.error("PUT /api/tutor/availability error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
@@ -4121,18 +4202,20 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
 
     // Get availability + slot_duration_mins from tutor_profiles (try both user_id and profile id)
     let result = await pool.query(
-      "SELECT availability, monthly_availability, slot_duration_mins FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
+      "SELECT availability, monthly_availability, slot_duration_mins, availability_ranges, monthly_availability_ranges FROM tutor_profiles WHERE user_id = $1 LIMIT 1",
       [tutorId]
     );
     if (!result.rows.length) {
       result = await pool.query(
-        "SELECT availability, monthly_availability, slot_duration_mins FROM tutor_profiles WHERE id::text = $1 LIMIT 1",
+        "SELECT availability, monthly_availability, slot_duration_mins, availability_ranges, monthly_availability_ranges FROM tutor_profiles WHERE id::text = $1 LIMIT 1",
         [tutorId]
       );
     }
 
     const availability = result.rows.length ? (result.rows[0].availability || {}) : {};
     const monthly_availability = result.rows.length ? (result.rows[0].monthly_availability || {}) : {};
+    const availability_ranges = result.rows.length ? (result.rows[0].availability_ranges || {}) : {};
+    const monthly_availability_ranges = result.rows.length ? (result.rows[0].monthly_availability_ranges || {}) : {};
     const slot_duration_mins = result.rows.length ? (result.rows[0].slot_duration_mins || 60) : 60;
 
     // Get booked slots for the date range
@@ -4155,7 +4238,7 @@ app.get("/api/tutors/:id/availability", async (req, res) => {
       }
     }
 
-    return res.json({ availability, monthly_availability, bookedSlots, slot_duration_mins });
+    return res.json({ availability, monthly_availability, bookedSlots, slot_duration_mins, availability_ranges, monthly_availability_ranges });
   } catch (error) {
     console.error("GET /api/tutors/:id/availability error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
@@ -4187,10 +4270,13 @@ app.post("/api/tutor/presigned-url", verifyToken, async (req, res) => {
       return res.status(500).json({ message: "Lỗi cấu hình Storage." });
     }
     
+    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${targetBucket}/${data.path}`;
     return res.json({ 
       signedUrl: data.signedUrl, 
       path: data.path,
-      publicUrl: `${SUPABASE_URL}/storage/v1/object/public/${targetBucket}/${data.path}`
+      publicUrl,
+      viewUrl: publicUrl,  // alias dùng cho ProofUploader preview
+      storageUrl: publicUrl,
     });
   } catch (error) {
     console.error("Presigned URL error:", error);
@@ -4272,6 +4358,23 @@ app.delete("/api/tutor/credentials/:id", verifyToken, async (req, res) => {
   } catch (error) {
     console.error("Delete tutor credential error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// PATCH /api/tutor/profile/avatar — cập nhật ảnh đại diện gia sư
+app.patch("/api/tutor/profile/avatar", verifyToken, async (req, res) => {
+  try {
+    const { picture } = req.body;
+    if (!picture) return res.status(400).json({ message: "Thiếu link ảnh." });
+    const result = await pool.query(
+      "UPDATE users SET picture = $1 WHERE id = $2 RETURNING picture",
+      [picture, req.user.userId]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ message: "Không tìm thấy user." });
+    res.json({ message: "Cập nhật avatar thành công.", picture: result.rows[0].picture });
+  } catch (error) {
+    console.error("PATCH /api/tutor/profile/avatar error:", error);
+    res.status(500).json({ message: "Lỗi server." });
   }
 });
 
@@ -8527,10 +8630,15 @@ app.get("/api/admin/violations", verifyToken, requireAdmin, async (req, res) => 
              reporter.full_name  AS reporter_name,
              reporter.email      AS reporter_email,
              accused.full_name   AS accused_name,
-             accused.email       AS accused_email
+             accused.email       AS accused_email,
+             vi.investigation_status,
+             vi.case_type,
+             vi.verdict,
+             vi.confidence
       FROM disputes d
       LEFT JOIN users reporter ON reporter.id = d.raised_by
       LEFT JOIN users accused  ON accused.id  = d.tutor_id
+      LEFT JOIN violation_investigations vi ON vi.dispute_id = d.id
       ORDER BY d.created_at DESC
     `);
     const violations = result.rows;
@@ -8547,6 +8655,119 @@ app.get("/api/admin/violations", verifyToken, requireAdmin, async (req, res) => 
   } catch (err) {
     console.error("GET /api/admin/violations error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy danh sách vi phạm." });
+  }
+});
+
+// Nội dung thông báo gửi người báo cáo khi hệ thống tự đóng báo cáo vì bằng
+// chứng thật cho thấy không có căn cứ — dùng chung cho cả 2 route bên dưới.
+function buildDismissalNotifyBody(summary) {
+  return `Chúng tôi đã xem xét báo cáo của bạn. ${summary} Dựa trên dữ liệu hệ thống ghi nhận, báo cáo này chưa đủ căn cứ nên đã được đóng. Nếu bạn có thêm thông tin hoặc không đồng ý với kết quả này, vui lòng phản hồi để admin xem xét lại.`;
+}
+async function notifyDismissal(dispute, summary) {
+  if (!dispute.raised_by) return;
+  await safeNotifyUser(pool, {
+    userId: dispute.raised_by, channels: ['IN_APP', 'EMAIL'],
+    templateKey: 'violation_report_dismissed', eventType: 'violation_report_dismissed',
+    title: 'Cập nhật về báo cáo của bạn',
+    body: buildDismissalNotifyBody(summary),
+    icon: 'fact_check', sourceType: 'dispute', sourceId: dispute.id, refId: dispute.id, refType: 'dispute',
+    idempotencyKey: `violation_dismissed:${dispute.id}`,
+  });
+}
+
+// ── POST /api/admin/violations/:id/investigate ─────────────────────────────────
+// Điều tra sơ bộ 1 báo cáo: đối chiếu bằng chứng thật (giờ check-in...). KHÔNG
+// bao giờ tự hoàn tiền/khoá tài khoản/trừ điểm uy tín — chỉ tự đóng báo cáo khi
+// bằng chứng rõ ràng chứng minh báo cáo không có căn cứ (verdict UNSUBSTANTIATED).
+// Mọi verdict khác chỉ lưu bằng chứng + khuyến nghị, admin tự quyết định xử lý.
+app.post("/api/admin/violations/:id/investigate", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await investigateViolation(pool, req.params.id);
+    if (!result) return res.status(404).json({ message: "Không tìm thấy báo cáo vi phạm." });
+
+    if (result.investigationStatus === 'AUTO_DISMISSED') {
+      await notifyDismissal(result.dispute, result.summary);
+    }
+
+    return res.json({
+      caseType: result.caseType, investigationStatus: result.investigationStatus,
+      verdict: result.verdict, confidence: result.confidence,
+      summary: result.summary, recommendation: result.recommendation, evidence: result.evidence,
+    });
+  } catch (err) {
+    console.error("POST /api/admin/violations/:id/investigate error:", err);
+    return res.status(500).json({ message: "Lỗi khi điều tra báo cáo." });
+  }
+});
+
+// ── POST /api/admin/violations/investigate-pending ──────────────────────────────
+// Điều tra hàng loạt báo cáo cũ chưa từng được điều tra (tạo trước khi có tính
+// năng này). Chỉ chạy khi admin bấm — không có cron chạy nền tự động.
+app.post("/api/admin/violations/investigate-pending", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT d.id FROM disputes d
+      LEFT JOIN violation_investigations vi ON vi.dispute_id = d.id
+      WHERE vi.dispute_id IS NULL
+      ORDER BY d.created_at ASC
+      LIMIT 200
+    `);
+    let autoDismissed = 0, needsAdmin = 0, failed = 0;
+    for (const row of rows) {
+      try {
+        const result = await investigateViolation(pool, row.id);
+        if (!result) continue;
+        if (result.investigationStatus === 'AUTO_DISMISSED') {
+          autoDismissed++;
+          await notifyDismissal(result.dispute, result.summary);
+        } else {
+          needsAdmin++;
+        }
+      } catch (e) {
+        failed++;
+        console.error(`investigate-pending: dispute ${row.id} failed:`, e.message);
+      }
+    }
+    return res.json({ message: `Đã điều tra ${rows.length} báo cáo.`, total: rows.length, autoDismissed, needsAdmin, failed });
+  } catch (err) {
+    console.error("POST /api/admin/violations/investigate-pending error:", err);
+    return res.status(500).json({ message: "Lỗi khi điều tra hàng loạt." });
+  }
+});
+
+// ── GET /api/admin/violations/:id ────────────────────────────────────────────────
+// Chi tiết 1 báo cáo: dispute + kết quả điều tra (nếu có) + snapshot buổi học liên quan.
+app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const dRes = await pool.query(`
+      SELECT d.id::text, d.reason, d.status, d.severity, d.target_type, d.created_at, d.admin_note,
+             d.booking_id, d.course_id, d.tutor_id, d.raised_by,
+             reporter.full_name AS reporter_name, reporter.email AS reporter_email,
+             accused.full_name  AS accused_name,  accused.email  AS accused_email
+      FROM disputes d
+      LEFT JOIN users reporter ON reporter.id = d.raised_by
+      LEFT JOIN users accused  ON accused.id  = d.tutor_id
+      WHERE d.id = $1
+    `, [req.params.id]);
+    if (!dRes.rows.length) return res.status(404).json({ message: "Không tìm thấy báo cáo vi phạm." });
+    const dispute = dRes.rows[0];
+
+    const viRes = await pool.query(`SELECT * FROM violation_investigations WHERE dispute_id = $1`, [req.params.id]);
+    dispute.investigation = viRes.rows[0] || null;
+
+    if (dispute.booking_id) {
+      const bRes = await pool.query(
+        `SELECT id, lesson_date, time_slot, tutor_check_in_at, lesson_fee, subject
+         FROM bookings WHERE id = $1`,
+        [dispute.booking_id]
+      );
+      dispute.booking = bRes.rows[0] || null;
+    }
+
+    return res.json(dispute);
+  } catch (err) {
+    console.error("GET /api/admin/violations/:id error:", err);
+    return res.status(500).json({ message: "Lỗi khi lấy chi tiết báo cáo." });
   }
 });
 
@@ -12199,7 +12420,12 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
       
       if (Number(payerWallet.balance) < price) {
         await client.query("ROLLBACK");
-        return res.status(400).json({ code: "INSUFFICIENT_FUNDS", message: "Số dư trong ví không đủ. Vui lòng nạp thêm tiền." });
+        return res.status(400).json({
+          code: "INSUFFICIENT_FUNDS",
+          message: "Số dư trong ví không đủ. Vui lòng nạp thêm tiền.",
+          needed: price,
+          balance: Number(payerWallet.balance)
+        });
       }
 
       // 2. Lấy ví gia sư
@@ -12566,11 +12792,13 @@ app.get("/api/tutors", async (req, res) => {
     }
   }
 
-  // ── Lọc nâng cao (TV3): khoảng giá / hình thức / cấp độ ──
-  const minPrice = parseInt(req.query.min_price);
-  const maxPrice = parseInt(req.query.max_price);
-  const method   = (req.query.method || "").trim();   // 'online' | 'offline'
-  const level    = (req.query.level  || "").trim();   // 'Cấp 1' | 'Cấp 2' | 'Cấp 3' | 'Đại học'
+  // ── Lọc nâng cao (TV3): khoảng giá / hình thức / cấp độ / địa điểm / đánh giá ──
+  const minPrice  = parseInt(req.query.min_price);
+  const maxPrice  = parseInt(req.query.max_price);
+  const method    = (req.query.method  || "").trim();   // 'online' | 'offline'
+  const level     = (req.query.level   || "").trim();   // 'Cấp 1' | 'Cấp 2' | 'Cấp 3' | 'Đại học'
+  const city      = (req.query.city    || "").trim();   // chỉ có ý nghĩa khi method = offline
+  const minRating = parseFloat(req.query.min_rating);
   if (!isNaN(minPrice)) { conditions.push(`tp.hourly_rate >= $${idx}`); values.push(minPrice); idx++; }
   if (!isNaN(maxPrice)) { conditions.push(`tp.hourly_rate <= $${idx}`); values.push(maxPrice); idx++; }
   // ILIKE ANY để khớp không phân biệt hoa/thường ('online' khớp cả 'Online')
@@ -12580,6 +12808,9 @@ app.get("/api/tutors", async (req, res) => {
     conditions.push(`(tp.suitable_students @> $${idx}::jsonb OR COALESCE(jsonb_array_length(tp.suitable_students), 0) = 0)`);
     values.push(JSON.stringify([level])); idx++;
   }
+  // city là free-text do gia sư tự nhập (không chuẩn hóa) → khớp theo substring, không phân biệt hoa/thường
+  if (city)             { conditions.push(`tp.city ILIKE $${idx}`); values.push(`%${city}%`); idx++; }
+  if (!isNaN(minRating)) { conditions.push(`COALESCE(tp.avg_rating, 0) >= $${idx}`); values.push(minRating); idx++; }
 
   const where = `WHERE ${conditions.join(" AND ")}`;
 
@@ -12652,8 +12883,9 @@ app.post("/api/tutors/matches", async (req, res) => {
            u.full_name
          ) AS name,
          COALESCE(tp.profile_photo_url, u.picture) AS avatar_url,
-         0   AS rating,
-         0   AS review_count,
+         COALESCE(tp.avg_rating, 0)      AS rating,
+         COALESCE(tp.review_count, 0)    AS review_count,
+         COALESCE(tp.reputation_score, 100) AS reputation_score,
          tp.bio,
          tp.subjects,
          tp.experience_years,
@@ -12662,7 +12894,7 @@ app.post("/api/tutors/matches", async (req, res) => {
          tp.teaching_methods
        FROM tutor_profiles tp
        JOIN users u ON tp.user_id = u.id
-       WHERE tp.status = 'approved'
+       WHERE tp.status = 'approved' AND NOT COALESCE(u.is_banned, false)
        ORDER BY tp.created_at DESC
        LIMIT 50`
     );
@@ -12708,17 +12940,23 @@ app.post("/api/tutors/matches", async (req, res) => {
       const exp = parseInt(t.experience_years) || 0;
       score += Math.min(exp * 3, 15);
 
-      // Có đánh giá bonus (+5)
-      if (parseFloat(t.rating) > 0) score += 5;
+      // Đánh giá thực tế bonus (tối đa +10, tỉ lệ theo điểm sao trung bình)
+      const avgRating = parseFloat(t.rating) || 0;
+      if (t.review_count > 0) score += Math.round((avgRating / 5) * 10);
 
-      score = Math.min(score, 100);
+      // Điểm uy tín (mặc định 100 = không trừ; càng thấp trừ càng nhiều)
+      const reputationScore = t.reputation_score != null ? Number(t.reputation_score) : 100;
+      score -= Math.round((100 - reputationScore) / 4);
+
+      score = Math.max(0, Math.min(score, 100));
 
       return {
         id:             t.id,
         name:           t.name || "Gia sư EduX",
         avatarUrl:      t.avatar_url || null,
-        rating:         parseFloat(t.rating) || 0,
+        rating:         avgRating,
         reviewCount:    t.review_count || 0,
+        reputationScore,
         bio:            t.bio || null,
         subjects:       t.subjects || null,
         experienceYears: t.experience_years || null,
@@ -13265,7 +13503,9 @@ app.get("/api/reviews/featured", async (req, res) => {
               r.rating,
               COALESCE(tu.full_name, c.title) AS subject,
               r.comment   AS content,
-              r.created_at
+              r.created_at,
+              tu.id       AS tutor_id,
+              c.id        AS course_id
        FROM reviews r
        LEFT JOIN users u           ON u.id  = r.user_id
        LEFT JOIN tutor_profiles tp ON tp.id = r.tutor_id
@@ -13842,13 +14082,16 @@ app.get('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
 
 // PUT /api/admin/course-complaints/:id
 app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (req, res) => {
-  const { status, message, admin_response, resolution_type, refund_amount, resolution_details } = req.body;
+  const { status, message, admin_response, resolution_type, refund_amount, resolution_details, penalty_type } = req.body;
   const validStatuses = ['pending','processing','waiting_student','waiting_tutor','resolved','rejected','closed'];
   if (status && !validStatuses.includes(status)) {
     return res.status(400).json({ message: 'Trạng thái không hợp lệ.' });
   }
   if (resolution_type && !['accepted','rejected','partial'].includes(resolution_type)) {
     return res.status(400).json({ message: 'Kết quả không hợp lệ.' });
+  }
+  if (penalty_type && !['NONE','WARNING','DEDUCT_REP','SUSPEND_3_DAYS','BAN'].includes(penalty_type)) {
+    return res.status(400).json({ message: 'Hình thức xử phạt không hợp lệ.' });
   }
   const client = await pool.connect();
   try {
@@ -13868,6 +14111,62 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
         return res.status(400).json({ message: 'Số tiền hoàn không được vượt quá giá khóa học.' });
       }
     }
+
+    // Tutor penalty (Gắn hệ thống điểm uy tín gia sư vào luồng khiếu nại khóa học)
+    let tutorPenaltyMeta = null;
+    if (['accepted', 'partial'].includes(resolution_type) && penalty_type && penalty_type !== 'NONE') {
+      const courseTutorRes = await client.query(`SELECT tutor_id, title AS course_title FROM courses WHERE id=$1`, [comp.course_id]);
+      const tutorId = courseTutorRes.rows[0]?.tutor_id;
+      const courseTitle = courseTutorRes.rows[0]?.course_title;
+      if (tutorId) {
+        let repDeduct = 0;
+        if (penalty_type === 'DEDUCT_REP') repDeduct = 10;
+        else if (penalty_type === 'SUSPEND_3_DAYS') repDeduct = 20;
+        else if (penalty_type === 'BAN') repDeduct = 50;
+
+        let newReputationScore = null;
+        let autoBanned = false;
+        if (repDeduct > 0) {
+          const tp = await client.query(
+            `UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`,
+            [repDeduct, tutorId]
+          );
+          newReputationScore = tp.rows[0]?.reputation_score ?? null;
+          if (newReputationScore !== null && newReputationScore < 30) {
+            await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+            autoBanned = true;
+          }
+        }
+        if (penalty_type === 'BAN') {
+          await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+          autoBanned = true;
+        }
+
+        const penaltyLabels = {
+          WARNING: 'Cảnh cáo',
+          DEDUCT_REP: 'Trừ điểm uy tín (-10 điểm)',
+          SUSPEND_3_DAYS: 'Đình chỉ tạm thời (-20 điểm)',
+          BAN: 'Khóa tài khoản vĩnh viễn',
+        };
+        await safeNotifyUser(client, {
+          userId: tutorId, channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'complaint_penalty', eventType: 'complaint_penalty',
+          data: {
+            complaintNumber: comp.complaint_number,
+            courseTitle: courseTitle || null,
+            reason: comp.reason,
+            penaltyLabel: penaltyLabels[penalty_type] || penalty_type,
+            adminNote: admin_response?.trim() || message?.trim() || null,
+            autoBanned, penaltyType: penalty_type,
+          },
+          refId: req.params.id, refType: 'complaint', sourceType: 'complaint', sourceId: req.params.id,
+          idempotencyKey: `complaint_penalty:${req.params.id}:${tutorId}`,
+        });
+
+        tutorPenaltyMeta = { tutor_id: tutorId, penalty_type, rep_deduct: repDeduct, new_reputation_score: newReputationScore, auto_banned: autoBanned };
+      }
+    }
+
     const oldStatus = comp.status;
     const newStatus = status || (resolution_type === 'accepted' ? 'resolved' : resolution_type === 'rejected' ? 'rejected' : resolution_type === 'partial' ? 'resolved' : oldStatus);
     const isTerminal = ['resolved','rejected','closed'].includes(newStatus);
@@ -13893,7 +14192,7 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
       await client.query(
         `INSERT INTO course_complaint_messages (complaint_id, sender_id, sender_role, message, message_type, metadata)
          VALUES ($1,$2,'admin',$3,'resolution',$4)`,
-        [req.params.id, req.user.userId, message.trim(), JSON.stringify({ resolution_type, refund_amount: refund_amount ? parseInt(refund_amount) : null, resolution_details: resolution_details || null })]
+        [req.params.id, req.user.userId, message.trim(), JSON.stringify({ resolution_type, refund_amount: refund_amount ? parseInt(refund_amount) : null, resolution_details: resolution_details || null, tutor_penalty: tutorPenaltyMeta })]
       );
     } else if (message?.trim()) {
       await client.query(
@@ -13935,7 +14234,7 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
       [comp.student_id, notifTitle, message?.trim() || notifTitle, req.params.id]
     );
     await client.query('COMMIT');
-    return res.json({ complaint: updated.rows[0] });
+    return res.json({ complaint: updated.rows[0], tutor_penalty: tutorPenaltyMeta });
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Admin update complaint error:', e);
@@ -14654,10 +14953,12 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
          a.status AS "attendanceStatus",
          a.note AS "attendanceNote",
          a.marked_at AS "markedAt",
-         b.tutor_check_in_at AS "tutorCheckInAt"
+         b.tutor_check_in_at AS "tutorCheckInAt",
+         CASE WHEN f.id IS NOT NULL THEN true ELSE false END AS "isEvaluated"
        FROM bookings b
        LEFT JOIN users s ON s.id = b.student_id
        LEFT JOIN attendance a ON a.booking_id = b.id
+       LEFT JOIN lesson_feedbacks f ON f.lesson_id = b.id
        WHERE b.tutor_id = $1
          AND b.status IN ('Approved', 'Pending')
        ORDER BY b.lesson_date DESC, b.time_slot DESC`,
@@ -14666,7 +14967,7 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
 
     const grouped = new Map();
     for (const row of result.rows) {
-      const key = `${row.studentId}:${row.childName || ''}`;
+      const key = `${row.studentId}`;
       if (!grouped.has(key)) {
         grouped.set(key, {
           studentId: row.studentId,
@@ -14675,31 +14976,51 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
           studentAvatar: row.studentAvatar,
           childName: row.childName,
           subjects: new Set(),
-          lessons: [],
+          lessonsMap: new Map(),
         });
       }
       const student = grouped.get(key);
       if (row.subject) student.subjects.add(row.subject);
-      student.lessons.push(row);
+      
+      if (!student.lessonsMap.has(row.bookingId)) {
+        student.lessonsMap.set(row.bookingId, row);
+      } else {
+        const existing = student.lessonsMap.get(row.bookingId);
+        if (row.isEvaluated) existing.isEvaluated = true;
+      }
     }
 
     const students = Array.from(grouped.values()).map((student) => {
-      const approvedLessons = student.lessons.filter((lesson) => lesson.bookingStatus === 'Approved');
+      const lessonsArray = Array.from(student.lessonsMap.values());
+      const approvedLessons = lessonsArray.filter((lesson) => lesson.bookingStatus === 'Approved');
       const marked = approvedLessons.filter((lesson) => lesson.attendanceStatus);
       const absences = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'absent');
       const present = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'present');
       const excused = approvedLessons.filter((lesson) => lesson.attendanceStatus === 'excused');
-      const rateBase = marked.length - excused.length;
+      const rateBase = present.length + absences.length;
       
+      const now = new Date();
       const upcoming = approvedLessons
-        .filter((lesson) => new Date(`${lesson.date}T00:00:00`) >= new Date(new Date().toDateString()))
-        .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.timeSlot).localeCompare(String(b.timeSlot)))[0] || null;
+        .filter((lesson) => {
+           const startTime = lesson.timeSlot ? lesson.timeSlot.split('-')[0].trim() : '00:00';
+           const lessonDateTime = new Date(`${lesson.date}T${startTime}:00`);
+           return lessonDateTime > now;
+        })
+        .sort((a, b) => {
+           const timeA = a.timeSlot ? a.timeSlot.split('-')[0].trim() : '00:00';
+           const timeB = b.timeSlot ? b.timeSlot.split('-')[0].trim() : '00:00';
+           return new Date(`${a.date}T${timeA}:00`) - new Date(`${b.date}T${timeB}:00`);
+        })[0] || null;
+
+      const resultObj = { ...student };
+      delete resultObj.lessonsMap;
 
       return {
-        ...student,
+        ...resultObj,
+        lessons: lessonsArray,
         subjects: Array.from(student.subjects),
         totalLessons: approvedLessons.length,
-        pendingRequests: student.lessons.filter((lesson) => lesson.bookingStatus === 'Pending').length,
+        pendingRequests: lessonsArray.filter((lesson) => lesson.bookingStatus === 'Pending').length,
         markedLessons: marked.length,
         absentCount: absences.length,
         presentCount: present.length,
@@ -14759,6 +15080,255 @@ app.post("/api/tutor/bookings/:id/checkin", verifyToken, requireTutor, async (re
   } catch (error) {
     console.error("Tutor check-in error:", error);
     return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── BẢO MẬT CHECK-IN OFFLINE 2 CHIỀU (MÃ PIN 4 SỐ & MÃ QR CODE) ─────────────
+// ════════════════════════════════════════════════════════════════════════════
+
+// Khởi tạo các cột bổ sung cho bảng bookings
+(async () => {
+  try {
+    await pool.query(`
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_checkin_pin VARCHAR(6) DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_pin_created_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_verified_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_verification_method VARCHAR(20) DEFAULT NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS offline_failed_attempts INT DEFAULT 0;
+    `);
+  } catch (err) {
+    console.error("Init offline check-in columns error:", err.message);
+  }
+})();
+
+// Helper sinh Mã PIN 4 số ngẫu nhiên ngầm
+function generateOfflinePIN() {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
+// GET /api/bookings/:id/offline-pin — Học sinh / Phụ huynh lấy Mã PIN & QR Code của buổi học Offline
+app.get("/api/bookings/:id/offline-pin", verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bRes = await pool.query(
+      `SELECT b.id, b.student_id, b.tutor_id, b.teaching_method, b.lesson_date, b.time_slot,
+              b.offline_checkin_pin, b.offline_pin_created_at, b.offline_verified_at,
+              b.offline_verification_method, u_tutor.full_name AS tutor_name, u_student.full_name AS student_name
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       LEFT JOIN users u_student ON u_student.id = b.student_id
+       WHERE b.id = $1`,
+      [bookingId]
+    );
+
+    if (bRes.rows.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy buổi học." });
+    }
+
+    const booking = bRes.rows[0];
+
+    // Check auth (học sinh, phụ huynh hoặc gia sư)
+    let isAuthorized = String(booking.student_id) === String(req.user.userId) || String(booking.tutor_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: "Bạn không có quyền truy cập mã PIN của buổi học này." });
+    }
+
+    // Tự tạo Mã PIN 4 số nếu chưa có
+    let currentPin = booking.offline_checkin_pin;
+    if (!currentPin) {
+      currentPin = generateOfflinePIN();
+      await pool.query(
+        `UPDATE bookings SET offline_checkin_pin = $1, offline_pin_created_at = NOW() WHERE id = $2`,
+        [currentPin, bookingId]
+      );
+    }
+
+    const qrData = `EDUX_OFFLINE:${booking.id}:${currentPin}`;
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+
+    return res.json({
+      success: true,
+      bookingId: booking.id,
+      pin: currentPin,
+      qrData,
+      qrImageUrl,
+      verified: !!booking.offline_verified_at,
+      verifiedAt: booking.offline_verified_at,
+      verificationMethod: booking.offline_verification_method,
+      tutorName: booking.tutor_name,
+      studentName: booking.student_name
+    });
+  } catch (err) {
+    console.error("GET /api/bookings/:id/offline-pin error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ khi lấy mã PIN." });
+  }
+});
+
+// POST /api/bookings/:id/regenerate-offline-pin — Học sinh / Phụ huynh yêu cầu đổi Mã PIN mới
+app.post("/api/bookings/:id/regenerate-offline-pin", verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bRes = await pool.query(`SELECT student_id FROM bookings WHERE id = $1`, [bookingId]);
+    if (!bRes.rows.length) return res.status(404).json({ message: "Không tìm thấy buổi học." });
+
+    const booking = bRes.rows[0];
+    let isAuthorized = String(booking.student_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+    if (!isAuthorized) return res.status(403).json({ message: "Bạn không có quyền thực hiện thao tác này." });
+
+    const newPin = generateOfflinePIN();
+    await pool.query(
+      `UPDATE bookings 
+       SET offline_checkin_pin = $1, offline_pin_created_at = NOW(), offline_failed_attempts = 0 
+       WHERE id = $2`,
+      [newPin, bookingId]
+    );
+
+    const qrData = `EDUX_OFFLINE:${bookingId}:${newPin}`;
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+
+    return res.json({
+      success: true,
+      message: "Đã tạo mã PIN mới thành công!",
+      pin: newPin,
+      qrData,
+      qrImageUrl
+    });
+  } catch (err) {
+    console.error("POST /api/bookings/:id/regenerate-offline-pin error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// POST /api/bookings/:id/verify-offline-checkin — Gia sư nhập mã PIN 4 số hoặc quét QR để Check-in Offline
+app.post("/api/bookings/:id/verify-offline-checkin", verifyToken, requireTutor, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const { pin, qrData } = req.body || {};
+
+    const bRes = await pool.query(
+      `SELECT b.id, b.tutor_id, b.student_id, b.subject, b.lesson_date, b.time_slot,
+              b.offline_checkin_pin, b.offline_verified_at, b.offline_failed_attempts,
+              u_tutor.full_name AS tutor_name
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       WHERE b.id = $1 AND b.tutor_id = $2`,
+      [bookingId, req.user.userId]
+    );
+
+    if (bRes.rows.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy lịch học của bạn." });
+    }
+
+    const booking = bRes.rows[0];
+
+    // Chặn nếu đã xác nhận trước đó
+    if (booking.offline_verified_at) {
+      return res.json({
+        success: true,
+        alreadyVerified: true,
+        message: "Buổi học này đã được xác nhận điểm danh Offline trước đó.",
+        verifiedAt: booking.offline_verified_at
+      });
+    }
+
+    // Chống Bruteforce: Khóa nếu sai quá 5 lần
+    if (booking.offline_failed_attempts >= 5) {
+      return res.status(429).json({
+        message: "Gia sư đã nhập sai mã PIN quá 5 lần. Vui lòng nhờ Học sinh / Phụ huynh đổi Mã PIN mới trên ứng dụng."
+      });
+    }
+
+    // Ràng buộc Khung thời gian Check-in
+    const winStart = lessonStartFrom(booking.lesson_date, booking.time_slot);
+    const winEnd = lessonEndFrom(booking.lesson_date, booking.time_slot);
+    if (winStart && Date.now() < winStart.getTime() - 30 * 60000) {
+      return res.status(400).json({ message: "Chưa đến giờ check-in. Bạn chỉ có thể nhập PIN / QR từ 30 phút trước giờ học." });
+    }
+    if (winEnd && Date.now() > winEnd.getTime() + 60 * 60000) {
+      return res.status(400).json({ message: "Đã quá thời hạn check-in cho buổi học này (60 phút sau khi kết thúc)." });
+    }
+
+    // Kiểm tra khớp PIN hoặc QR String
+    let inputPin = String(pin || '').trim();
+    if (qrData && typeof qrData === 'string') {
+      const parts = qrData.split(':');
+      if (parts.length >= 3 && parts[0] === 'EDUX_OFFLINE' && parts[1] === bookingId) {
+        inputPin = parts[2];
+      }
+    }
+
+    if (!inputPin || inputPin !== String(booking.offline_checkin_pin)) {
+      const newFailedCount = Number(booking.offline_failed_attempts || 0) + 1;
+      await pool.query(`UPDATE bookings SET offline_failed_attempts = $1 WHERE id = $2`, [newFailedCount, bookingId]);
+
+      const remaining = Math.max(0, 5 - newFailedCount);
+      return res.status(400).json({
+        message: `Mã PIN / QR không chính xác! Bạn còn ${remaining} lần thử lại.`,
+        remainingAttempts: remaining
+      });
+    }
+
+    // XÁC NHẬN THÀNH CÔNG (MATCH)
+    const verificationMethod = qrData ? 'QR' : 'PIN';
+    await pool.query(
+      `UPDATE bookings 
+       SET tutor_check_in_at = NOW(), 
+           offline_verified_at = NOW(), 
+           offline_verification_method = $1,
+           offline_failed_attempts = 0
+       WHERE id = $2`,
+      [verificationMethod, bookingId]
+    );
+
+    // Tự động ghi nhận điểm danh present cho buổi học
+    await pool.query(
+      `INSERT INTO attendance (booking_id, tutor_id, student_id, status, note, marked_at)
+       VALUES ($1, $2, $3, 'present', 'Điểm danh Offline 2 chiều qua Mã ' || $4, NOW())
+       ON CONFLICT (booking_id)
+       DO UPDATE SET status = 'present', note = 'Điểm danh Offline 2 chiều qua Mã ' || $4, marked_at = NOW()`,
+      [bookingId, booking.tutor_id, booking.student_id, verificationMethod]
+    );
+
+    // Bắn thông báo Socket.io & Realtime tới Học sinh & Phụ huynh
+    if (req.app && req.app.get('io')) {
+      req.app.get('io').to(`user-${booking.student_id}`).emit('offlineCheckinVerified', {
+        booking_id: bookingId,
+        tutor_name: booking.tutor_name,
+        verification_method: verificationMethod,
+        verified_at: new Date()
+      });
+    }
+
+    // Gửi notification in-app
+    await safeNotifyUser(pool, {
+      userId: booking.student_id,
+      type: 'attendance',
+      channels: ['IN_APP'],
+      templateKey: 'generic',
+      eventType: 'offline_checkin_success',
+      refId: bookingId,
+      refType: 'booking',
+      data: { message: `Gia sư ${booking.tutor_name || 'Gia sư'} đã xác nhận có mặt tại buổi học Offline thành công qua Mã ${verificationMethod}.` }
+    });
+
+    return res.json({
+      success: true,
+      message: `Xác nhận có mặt Offline thành công qua Mã ${verificationMethod}! Hệ thống đã ghi nhận điểm danh có mặt cho buổi học.`,
+      verifiedAt: new Date()
+    });
+  } catch (err) {
+    console.error("POST /api/bookings/:id/verify-offline-checkin error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ khi xác nhận check-in." });
   }
 });
 
@@ -15048,9 +15618,26 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
 // POST /api/bookings/instant
 app.post('/api/bookings/instant', verifyToken, async (req, res) => {
   try {
-    const { tutor_id, tutor_name, subject, time_slot, note, child_name, duration_mins } = req.body;
+    const { tutor_id, tutor_name, subject, time_slot, note, child_name, duration_mins, targetStudentId, target_student_id, selectedChildId } = req.body;
     
     if (!tutor_id) return res.status(400).json({ message: 'Thiếu tutor_id.' });
+
+    // ── Parent Delegation ──
+    const targetId = targetStudentId || target_student_id || selectedChildId;
+    let effectiveStudentId = req.user.userId;
+    let student_name = req.user.fullName || req.user.full_name || 'Học viên';
+
+    if (req.user.role === 'parent' && targetId) {
+      const checkLink = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, targetId]);
+      if (checkLink.rows.length === 0) {
+        return res.status(403).json({ message: 'Học sinh không hợp lệ hoặc chưa được liên kết với bạn.' });
+      }
+      effectiveStudentId = targetId;
+      const childUser = await pool.query('SELECT full_name FROM users WHERE id=$1', [targetId]);
+      if (childUser.rows.length > 0) {
+        student_name = childUser.rows[0].full_name;
+      }
+    }
 
     // ── Rate Limit / Cooldown chống spam ──
     // Kiểm tra xem học sinh có vừa tạo yêu cầu Học Ngay nào trong vòng 2 phút qua không
@@ -15058,7 +15645,7 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
       `SELECT created_at FROM bookings 
        WHERE student_id = $1 AND booking_type = 'Instant' 
        ORDER BY created_at DESC LIMIT 1`,
-      [req.user.userId]
+      [effectiveStudentId]
     );
     if (recentRes.rows.length > 0) {
       const lastBookingTime = new Date(recentRes.rows[0].created_at).getTime();
@@ -15082,13 +15669,28 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
     }
     
     const price = tRes.rows[0].instant_price;
-    const student_name = req.user.fullName || req.user.full_name || 'Học viên';
     
+    // ── Pre-check Ví người thanh toán (Phụ huynh / Học sinh) ──
+    const payerWalletRes = await pool.query('SELECT id, balance FROM wallets WHERE user_id = $1', [req.user.userId]);
+    if (!payerWalletRes.rows.length) {
+      return res.status(400).json({ message: 'Không tìm thấy ví thanh toán của bạn.' });
+    }
+    const payerBalance = Number(payerWalletRes.rows[0].balance || 0);
+    if (payerBalance < Number(price)) {
+      return res.status(400).json({
+        code: 'INSUFFICIENT_FUNDS',
+        message: 'Số dư ví của bạn không đủ để thực hiện yêu cầu Học Ngay. Vui lòng nạp thêm tiền.',
+        needed: Number(price),
+        balance: payerBalance,
+        missing: Number(price) - payerBalance
+      });
+    }
+
     let response;
     try {
       const result = await pool.query(
         `SELECT process_instant_booking($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) AS response`,
-        [req.user.userId, tutor_id, price, time_slot || null, note || null, child_name || null, student_name, tutor_name || null, subject || 'Môn học', duration_mins || 30]
+        [effectiveStudentId, tutor_id, price, time_slot || null, note || null, child_name || null, student_name, tutor_name || null, subject || 'Môn học', duration_mins || 30]
       );
       response = result.rows[0].response;
     } catch (fnErr) {
@@ -15099,29 +15701,29 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
       try {
         await fbClient.query('BEGIN');
 
-        // Kiểm tra ví học sinh (lock để tránh race condition)
+        // Kiểm tra ví phụ huynh/người thanh toán (lock để tránh race condition)
         const walletRes = await fbClient.query(
           'SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE',
           [req.user.userId]
         );
         if (!walletRes.rows.length) {
           await fbClient.query('ROLLBACK');
-          return res.status(400).json({ message: 'Không tìm thấy ví học sinh.' });
+          return res.status(400).json({ message: 'Không tìm thấy ví thanh toán.' });
         }
         const { id: walletId, balance } = walletRes.rows[0];
         if (Number(balance) < Number(price)) {
           await fbClient.query('ROLLBACK');
-          return res.status(400).json({ message: 'Số dư không đủ. Vui lòng nạp thêm tiền.' });
+          return res.status(400).json({ code: 'INSUFFICIENT_FUNDS', message: 'Số dư ví không đủ. Vui lòng nạp thêm tiền.', needed: Number(price), balance: Number(balance) });
         }
 
         // Kiểm tra pending
         const pendingStudentRes = await fbClient.query(
           `SELECT COUNT(*) FROM bookings WHERE student_id = $1 AND booking_type = 'Instant' AND status = 'Pending'`,
-          [req.user.userId]
+          [effectiveStudentId]
         );
         if (parseInt(pendingStudentRes.rows[0].count) > 0) {
           await fbClient.query('ROLLBACK');
-          return res.status(400).json({ message: 'Bạn đã có một yêu cầu Học ngay đang chờ xử lý.' });
+          return res.status(400).json({ message: 'Học sinh đã có một yêu cầu Học ngay đang chờ xử lý.' });
         }
 
         const pendingTutorRes = await fbClient.query(
@@ -15133,25 +15735,24 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
           return res.status(400).json({ message: 'Gia sư vừa nhận một buổi học khác.' });
         }
 
-        // Trừ ví (trong cùng transaction)
+        // Trừ ví người thanh toán (trong cùng transaction)
         await fbClient.query(
           `UPDATE wallets SET balance = balance - $1, frozen_balance = COALESCE(frozen_balance, 0) + $1 WHERE id = $2`,
           [price, walletId]
         );
 
-        // Tạo booking — nếu INSERT lỗi, transaction sẽ ROLLBACK hoàn tiền tự động
+        // Tạo booking cho học sinh
         const resolved_time_slot = time_slot || null;
         const bookingRes = await fbClient.query(
           `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, status, child_name, student_name, booking_type, lesson_fee, duration_mins, payer_wallet_id, created_at)
            VALUES ($1,$2,$3,$4,CURRENT_DATE,COALESCE($5, to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI')),$6,'Pending',$7,$8,'Instant',$9,$10,$11,NOW()) RETURNING id`,
-          [req.user.userId, tutor_id, tutor_name || null, subject || 'Môn học', resolved_time_slot, note || null, child_name || null, student_name, price, duration_mins || 30, walletId]
+          [effectiveStudentId, tutor_id, tutor_name || null, subject || 'Môn học', resolved_time_slot, note || null, child_name || null, student_name, price, duration_mins || 30, walletId]
         );
 
         await fbClient.query('COMMIT');
         response = { success: true, booking_id: bookingRes.rows[0].id };
       } catch (fbErr) {
         await fbClient.query('ROLLBACK');
-        // Transaction đã rollback → tiền học sinh được hoàn tự động
         throw new Error(fbErr.message || 'Lỗi khi tạo yêu cầu Học Ngay. Tiền của bạn chưa bị trừ.');
       } finally {
         fbClient.release();
@@ -15262,6 +15863,16 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
 
     const totalFee = lessonFeeForBooking * bookingSessions.length;
 
+    const targetStudentId = body.targetStudentId || body.target_student_id || body.selectedChildId;
+    let effectiveStudentId = req.user.userId;
+    if (req.user.role === 'parent' && targetStudentId) {
+      const checkLink = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, targetStudentId]);
+      if (checkLink.rows.length === 0) {
+        return res.status(403).json({ message: "Học sinh không hợp lệ hoặc chưa được liên kết với bạn." });
+      }
+      effectiveStudentId = targetStudentId;
+    }
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -15310,7 +15921,7 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
           `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at, package_id`,
-          [req.user.userId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId]
+          [effectiveStudentId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId]
         );
         const booking = result.rows[0];
 
@@ -15470,6 +16081,230 @@ app.patch("/api/bookings/:id/session-info", verifyToken, async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// ── Đánh giá chất lượng ngầm sau buổi học (Internal Lesson Evaluations) ─────
+// ════════════════════════════════════════════════════════════════════════════
+
+// Khởi tạo bảng lesson_evaluations nếu chưa có (kèm các cột kiểm soát độc hại & outlier)
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lesson_evaluations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id UUID UNIQUE NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tutor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        rating_score INT NOT NULL CHECK (rating_score BETWEEN 1 AND 5),
+        comprehension_rate INT NOT NULL DEFAULT 100,
+        positive_tags JSONB DEFAULT '[]'::jsonb,
+        improvement_tags JSONB DEFAULT '[]'::jsonb,
+        private_feedback TEXT,
+        is_flagged BOOLEAN DEFAULT FALSE,
+        flagged_reason TEXT,
+        is_outlier BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lesson_eval_tutor ON lesson_evaluations(tutor_id);
+      CREATE INDEX IF NOT EXISTS idx_lesson_eval_student ON lesson_evaluations(student_id);
+    `);
+  } catch (err) {
+    console.error("Init lesson_evaluations table error:", err.message);
+  }
+})();
+
+// Helper function: Tự động điều chỉnh reputation_score ngầm cho Gia Sư (Đã lọc bỏ toxic & outlier)
+async function updateTutorReputationScore(tutorUserId) {
+  try {
+    const tpRes = await pool.query('SELECT id, reputation_score FROM tutor_profiles WHERE user_id = $1', [tutorUserId]);
+    if (!tpRes.rows.length) return;
+    const tutorProfileId = tpRes.rows[0].id;
+    let currentReputation = Number(tpRes.rows[0].reputation_score || 100);
+
+    // Chỉ lấy các đánh giá HỢP LỆ (không bị flagged độc hại và không bị coi là hater outlier)
+    const evalRes = await pool.query(
+      `SELECT rating_score, comprehension_rate, positive_tags, improvement_tags 
+       FROM lesson_evaluations 
+       WHERE tutor_id = $1 AND is_flagged = FALSE AND is_outlier = FALSE`,
+      [tutorUserId]
+    );
+    if (!evalRes.rows.length) return;
+
+    let totalScore = 0;
+    evalRes.rows.forEach(ev => {
+      const ratingPart = (Number(ev.rating_score) / 5) * 4.0;
+      const compPart = (Number(ev.comprehension_rate || 100) / 100) * 1.0;
+      const posCount = Array.isArray(ev.positive_tags) ? ev.positive_tags.length : 0;
+      const impCount = Array.isArray(ev.improvement_tags) ? ev.improvement_tags.length : 0;
+      const tagBonus = (posCount * 0.1) - (impCount * 0.2);
+      
+      const sessionScore = Math.max(1, Math.min(5, ratingPart + compPart + tagBonus));
+      totalScore += sessionScore;
+    });
+
+    const avgSessionQuality = totalScore / evalRes.rows.length;
+
+    let newReputation = currentReputation;
+    if (avgSessionQuality >= 4.2) {
+      newReputation = Math.min(150, currentReputation + 1);
+    } else if (avgSessionQuality <= 2.8) {
+      newReputation = Math.max(50, currentReputation - 2);
+    }
+
+    await pool.query(
+      `UPDATE tutor_profiles 
+       SET reputation_score = $1,
+           avg_rating = (SELECT ROUND(AVG(rating_score)::numeric, 1) FROM lesson_evaluations WHERE tutor_id = $2 AND is_flagged = FALSE AND is_outlier = FALSE)
+       WHERE id = $3`,
+      [newReputation, tutorUserId, tutorProfileId]
+    );
+  } catch (err) {
+    console.error("updateTutorReputationScore error:", err.message);
+  }
+}
+
+// POST /api/bookings/:id/evaluate — Học sinh gửi đánh giá chất lượng ngầm sau buổi học (Có AI Filter & Check kết thúc buổi học)
+app.post("/api/bookings/:id/evaluate", verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const { rating_score, comprehension_rate, positive_tags, improvement_tags, private_feedback } = req.body || {};
+
+    if (!rating_score || rating_score < 1 || rating_score > 5) {
+      return res.status(400).json({ message: "Số sao đánh giá (1-5) là bắt buộc." });
+    }
+
+    // 1. Kiểm tra booking có tồn tại
+    const bRes = await pool.query(`SELECT * FROM bookings WHERE id = $1`, [bookingId]);
+    if (!bRes.rows.length) {
+      return res.status(404).json({ message: "Không tìm thấy buổi học." });
+    }
+    const booking = bRes.rows[0];
+
+    // 2. RÀNG BUỘC THỜI GIAN: Chỉ cho đánh giá khi buổi học ĐÃ KẾT THÚC
+    const isCompleted = ['completed', 'Completed'].includes(booking.status);
+    let isPastTime = false;
+    if (booking.lesson_date) {
+      const lessonTime = new Date(booking.lesson_date).getTime();
+      isPastTime = lessonTime < Date.now();
+    }
+    if (!isCompleted && !isPastTime) {
+      return res.status(400).json({ message: "Bạn chỉ có thể đánh giá khi buổi học đã thực sự kết thúc." });
+    }
+
+    // 3. Kiểm tra điểm danh (nếu học sinh vắng mặt thì không cho đánh giá)
+    const attRes = await pool.query(`SELECT status FROM attendance WHERE booking_id = $1 LIMIT 1`, [bookingId]);
+    if (attRes.rows.length > 0 && ['absent', 'vắng mặt'].includes(String(attRes.rows[0].status).toLowerCase())) {
+      return res.status(400).json({ message: "Bạn không thể đánh giá buổi học do hệ thống ghi nhận bạn đã vắng mặt." });
+    }
+
+    // 4. Kiểm tra quyền sở hữu học sinh hoặc phụ huynh liên kết
+    let isAuthorized = String(booking.student_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: "Bạn không có quyền đánh giá buổi học này." });
+    }
+
+    if (!booking.tutor_id) {
+      return res.status(400).json({ message: "Buổi học này chưa có thông tin gia sư." });
+    }
+
+    // 5. Chống đánh giá trùng
+    const dup = await pool.query(`SELECT id FROM lesson_evaluations WHERE booking_id = $1`, [bookingId]);
+    if (dup.rows.length > 0) {
+      return res.status(409).json({ message: "Buổi học này đã được đánh giá chất lượng." });
+    }
+
+    // 6. KIỂM TRA ĐỘC HẠI BẰNG AI & LỌC SPAM (Semantic Moderation & Outlier Check)
+    let isFlagged = false;
+    let flaggedReason = null;
+    let isOutlier = false;
+
+    // A. Kiểm tra nhận xét có chứa ngôn từ độc hại / thù địch không
+    if (private_feedback && typeof private_feedback === 'string' && private_feedback.trim()) {
+      const modResult = classifyTextModeration(private_feedback.trim(), { sourceType: 'LESSON_EVALUATION' });
+      if (modResult && modResult.flagged) {
+        isFlagged = true;
+        flaggedReason = modResult.flagged_category || 'Chứa ngôn từ không phù hợp';
+      }
+    }
+
+    // B. Kiểm tra mô hình Serial Hater (Nếu học sinh liên tục cho 1-2 sao > 80% trên mọi gia sư)
+    if (parseInt(rating_score) <= 2) {
+      const prevEvals = await pool.query(
+        `SELECT rating_score FROM lesson_evaluations WHERE student_id = $1`,
+        [booking.student_id]
+      );
+      if (prevEvals.rows.length >= 3) {
+        const lowCount = prevEvals.rows.filter(r => r.rating_score <= 2).length;
+        if ((lowCount / prevEvals.rows.length) >= 0.8) {
+          isOutlier = true; // Phát hiện chuỗi đánh giá tiêu cực bất thường
+        }
+      }
+    }
+
+    const posJson = JSON.stringify(Array.isArray(positive_tags) ? positive_tags : []);
+    const impJson = JSON.stringify(Array.isArray(improvement_tags) ? improvement_tags : []);
+
+    const ins = await pool.query(
+      `INSERT INTO lesson_evaluations 
+       (booking_id, student_id, tutor_id, rating_score, comprehension_rate, positive_tags, improvement_tags, private_feedback, is_flagged, flagged_reason, is_outlier)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11)
+       RETURNING *`,
+      [
+        bookingId,
+        booking.student_id,
+        booking.tutor_id,
+        parseInt(rating_score),
+        parseInt(comprehension_rate) || 100,
+        posJson,
+        impJson,
+        private_feedback ? String(private_feedback).trim() : null,
+        isFlagged,
+        flaggedReason,
+        isOutlier
+      ]
+    );
+
+    // Chỉ tính điểm uy tín nếu đánh giá KHÔNG bị nghi ngờ độc hại / hater spam
+    if (!isFlagged && !isOutlier) {
+      updateTutorReputationScore(booking.tutor_id).catch(e => console.error(e));
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Cảm ơn bạn đã gửi đánh giá chất lượng buổi học! Ý kiến của bạn giúp hệ thống nâng cao chất lượng gia sư.",
+      evaluation: ins.rows[0]
+    });
+  } catch (err) {
+    console.error("POST /api/bookings/:id/evaluate error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ khi gửi đánh giá." });
+  }
+});
+
+// GET /api/bookings/evaluations/mine — Lấy danh sách booking_id mà học sinh đã đánh giá
+app.get("/api/bookings/evaluations/mine", verifyToken, async (req, res) => {
+  try {
+    let studentIds = [req.user.userId];
+    if (req.user.role === 'parent') {
+      const childRes = await pool.query('SELECT student_id FROM parent_children WHERE parent_id = $1', [req.user.userId]);
+      studentIds = studentIds.concat(childRes.rows.map(c => c.student_id));
+    }
+    const result = await pool.query(
+      `SELECT booking_id, rating_score, comprehension_rate, created_at 
+       FROM lesson_evaluations 
+       WHERE student_id = ANY($1)`,
+      [studentIds]
+    );
+    return res.json({ evaluatedBookingIds: result.rows.map(r => r.booking_id), evaluations: result.rows });
+  } catch (err) {
+    console.error("GET /api/bookings/evaluations/mine error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
 // POST /api/bookings/:id/request-method-change — học sinh xin đổi hình thức học
 // (vd: hôm nay ốm không đến được, xin chuyển buổi offline sang online)
 app.post("/api/bookings/:id/request-method-change", verifyToken, async (req, res) => {
@@ -15587,6 +16422,330 @@ app.patch("/api/bookings/:id/method-change", verifyToken, async (req, res) => {
   } catch (error) {
     console.error("[method-change] PATCH error:", error);
     return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESCHEDULE REQUEST — Đổi lịch học (không tính phí hủy)
+// Business rules:
+//   - Chỉ booking status Approved mới được đổi lịch
+//   - Yêu cầu phải gửi trước ít nhất 2 giờ
+//   - Mỗi booking chỉ có 1 PENDING request tại một thời điểm
+//   - Slot mới phải không bị trùng lịch của tutor
+//   - Accept → UPDATE booking lesson_date/time_slot, không đụng tiền/escrow
+//   - Reject → booking giữ nguyên, chỉ UPDATE reschedule_requests
+// ═══════════════════════════════════════════════════════════════════════════
+
+// POST /api/bookings/:id/reschedule-request — Học sinh gửi yêu cầu đổi lịch
+app.post('/api/bookings/:id/reschedule-request', verifyToken, async (req, res) => {
+  try {
+    const { new_lesson_date, new_time_slot, reason } = req.body || {};
+
+    // Validate input
+    if (!new_lesson_date || !new_time_slot) {
+      return res.status(400).json({ message: 'Vui lòng cung cấp ngày và khung giờ mới.' });
+    }
+    const newDate = new Date(new_lesson_date);
+    if (isNaN(newDate.getTime())) {
+      return res.status(400).json({ message: 'Ngày mới không hợp lệ.' });
+    }
+
+    // Lấy booking — chỉ học sinh của booking mới được gửi request
+    const bookingRes = await pool.query(
+      `SELECT b.*, u_student.full_name AS student_full_name
+       FROM bookings b
+       LEFT JOIN users u_student ON u_student.id = b.student_id
+       WHERE b.id = $1 AND b.student_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (!bookingRes.rows.length) {
+      return res.status(404).json({ message: 'Không tìm thấy lịch học của bạn.' });
+    }
+    const booking = bookingRes.rows[0];
+
+    // Chỉ cho phép với booking đã Approved
+    if (!['Approved', 'approved'].includes(booking.status)) {
+      return res.status(400).json({ message: 'Chỉ đổi lịch cho buổi học đã được xác nhận (Approved).' });
+    }
+
+    // Kiểm tra buổi học còn ít nhất 2 tiếng (bao gồm cả check chưa diễn ra)
+    const startDT = parseBookingStartDateTime(booking);
+    const hoursUntilLesson = (startDT.getTime() - Date.now()) / 3_600_000;
+    if (hoursUntilLesson < 2) {
+      return res.status(400).json({ message: 'Yêu cầu đổi lịch phải được gửi trước ít nhất 2 giờ trước buổi học.' });
+    }
+
+    // Ngày mới phải >= hôm nay
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (newDate < today) {
+      return res.status(400).json({ message: 'Ngày mới phải từ hôm nay trở đi.' });
+    }
+
+    // Không tạo 2 PENDING request cho cùng booking
+    const pendingCheck = await pool.query(
+      `SELECT id FROM reschedule_requests WHERE booking_id = $1 AND status = 'PENDING'`,
+      [booking.id]
+    );
+    if (pendingCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Bạn đã có một yêu cầu đổi lịch đang chờ gia sư phản hồi.' });
+    }
+
+    // Kiểm tra slot mới không bị tutor đã book (trừ booking hiện tại)
+    const slotCheck = await pool.query(
+      `SELECT id FROM bookings
+       WHERE tutor_id = $1
+         AND lesson_date = $2::date
+         AND time_slot = $3
+         AND LOWER(status) NOT IN ('cancelled', 'declined', 'rejected')
+         AND id != $4`,
+      [booking.tutor_id, new_lesson_date, new_time_slot, booking.id]
+    );
+    if (slotCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Khung giờ mới đã được gia sư đặt bởi học sinh khác. Vui lòng chọn giờ khác.' });
+    }
+
+    // Tạo reschedule request
+    const insertRes = await pool.query(
+      `INSERT INTO reschedule_requests
+         (booking_id, student_id, tutor_id, old_lesson_date, old_time_slot, new_lesson_date, new_time_slot, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        booking.id, booking.student_id, booking.tutor_id,
+        booking.lesson_date, booking.time_slot,
+        new_lesson_date, new_time_slot,
+        String(reason || '').trim() || null,
+      ]
+    );
+    const rr = insertRes.rows[0];
+
+    // Thông báo cho tutor
+    if (booking.tutor_id) {
+      await safeNotifyUser(pool, {
+        userId: booking.tutor_id,
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'reschedule_requested',
+        eventType: 'reschedule_requested',
+        refId: booking.id, refType: 'booking',
+        sourceType: 'reschedule_request', sourceId: rr.id,
+        data: {
+          studentName: booking.student_full_name || booking.student_name || 'Học sinh',
+          subject: booking.subject || '',
+          oldDate: lessonDateStr(booking.lesson_date),
+          oldSlot: booking.time_slot,
+          newDate: lessonDateStr(new_lesson_date),
+          newSlot: new_time_slot,
+          reason: String(reason || '').trim() || null,
+        },
+        idempotencyKey: `reschedule:${rr.id}:requested:${booking.tutor_id}`,
+      });
+    }
+
+    return res.status(201).json({
+      message: 'Đã gửi yêu cầu đổi lịch. Gia sư sẽ phản hồi sớm.',
+      reschedule_request: rr,
+    });
+  } catch (error) {
+    console.error('[reschedule] POST error:', error);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/student/reschedule-requests — Học sinh xem lịch sử yêu cầu đổi lịch
+app.get('/api/student/reschedule-requests', verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT rr.*,
+              b.subject, b.lesson_fee,
+              u_tutor.full_name AS tutor_name_full, u_tutor.picture AS tutor_picture
+       FROM reschedule_requests rr
+       JOIN bookings b      ON b.id   = rr.booking_id
+       JOIN users   u_tutor ON u_tutor.id = rr.tutor_id
+       WHERE rr.student_id = $1
+       ORDER BY rr.created_at DESC`,
+      [req.user.userId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error('[reschedule] GET student error:', error);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/tutor/reschedule-requests — Gia sư xem các yêu cầu đổi lịch
+app.get('/api/tutor/reschedule-requests', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const statusFilter = (req.query.status || 'PENDING').toUpperCase();
+    const result = await pool.query(
+      `SELECT rr.*,
+              b.subject, b.lesson_fee,
+              u_student.full_name AS student_name_full, u_student.picture AS student_picture
+       FROM reschedule_requests rr
+       JOIN bookings b         ON b.id   = rr.booking_id
+       JOIN users   u_student  ON u_student.id = rr.student_id
+       WHERE rr.tutor_id = $1
+         AND ($2 = 'ALL' OR rr.status = $2)
+       ORDER BY rr.created_at DESC`,
+      [req.user.userId, statusFilter]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error('[reschedule] GET tutor error:', error);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// PATCH /api/reschedule-requests/:requestId/accept — Gia sư chấp nhận đổi lịch
+app.patch('/api/reschedule-requests/:requestId/accept', verifyToken, requireTutor, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Lấy request và lock booking row để tránh race condition
+    const rrRes = await client.query(
+      `SELECT rr.*, b.status AS booking_status, b.subject,
+              b.escrow_tx_id, b.lesson_fee,
+              u_student.full_name AS student_full_name
+       FROM reschedule_requests rr
+       JOIN bookings b ON b.id = rr.booking_id
+       JOIN users u_student ON u_student.id = rr.student_id
+       WHERE rr.id = $1 AND rr.tutor_id = $2
+       FOR UPDATE OF b`,
+      [req.params.requestId, req.user.userId]
+    );
+    if (!rrRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Không tìm thấy yêu cầu đổi lịch.' });
+    }
+    const rr = rrRes.rows[0];
+
+    if (rr.status !== 'PENDING') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Yêu cầu này đã được xử lý rồi.' });
+    }
+
+    // Double-check slot mới chưa bị book (race condition guard)
+    const slotCheck = await client.query(
+      `SELECT id FROM bookings
+       WHERE tutor_id = $1
+         AND lesson_date = $2::date
+         AND time_slot = $3
+         AND LOWER(status) NOT IN ('cancelled', 'declined', 'rejected')
+         AND id != $4`,
+      [rr.tutor_id, rr.new_lesson_date, rr.new_time_slot, rr.booking_id]
+    );
+    if (slotCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Khung giờ mới vừa bị đặt bởi học sinh khác. Vui lòng từ chối để học sinh chọn giờ khác.' });
+    }
+
+    // Cập nhật booking sang lịch mới (KHÔNG đụng tiền/escrow)
+    await client.query(
+      `UPDATE bookings SET lesson_date = $1::date, time_slot = $2, updated_at = NOW() WHERE id = $3`,
+      [rr.new_lesson_date, rr.new_time_slot, rr.booking_id]
+    );
+
+    // Cập nhật reschedule request → ACCEPTED
+    const updatedRR = await client.query(
+      `UPDATE reschedule_requests SET status = 'ACCEPTED', updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [rr.id]
+    );
+
+    await client.query('COMMIT');
+
+    // Thông báo cho học sinh
+    if (rr.student_id) {
+      await safeNotifyUser(pool, {
+        userId: rr.student_id,
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'reschedule_accepted',
+        eventType: 'reschedule_accepted',
+        refId: rr.booking_id, refType: 'booking',
+        sourceType: 'reschedule_request', sourceId: rr.id,
+        data: {
+          subject: rr.subject || '',
+          oldDate: lessonDateStr(rr.old_lesson_date),
+          oldSlot: rr.old_time_slot,
+          newDate: lessonDateStr(rr.new_lesson_date),
+          newSlot: rr.new_time_slot,
+        },
+        idempotencyKey: `reschedule:${rr.id}:accepted:${rr.student_id}`,
+      });
+    }
+
+    return res.json({
+      message: 'Đã chấp nhận đổi lịch. Lịch học đã được cập nhật.',
+      reschedule_request: updatedRR.rows[0],
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('[reschedule] PATCH accept error:', error);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/reschedule-requests/:requestId/reject — Gia sư từ chối đổi lịch
+app.patch('/api/reschedule-requests/:requestId/reject', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { reject_reason } = req.body || {};
+
+    const rrRes = await pool.query(
+      `SELECT rr.*, b.subject,
+              u_student.full_name AS student_full_name
+       FROM reschedule_requests rr
+       JOIN bookings b ON b.id = rr.booking_id
+       JOIN users u_student ON u_student.id = rr.student_id
+       WHERE rr.id = $1 AND rr.tutor_id = $2`,
+      [req.params.requestId, req.user.userId]
+    );
+    if (!rrRes.rows.length) {
+      return res.status(404).json({ message: 'Không tìm thấy yêu cầu đổi lịch.' });
+    }
+    const rr = rrRes.rows[0];
+
+    if (rr.status !== 'PENDING') {
+      return res.status(400).json({ message: 'Yêu cầu này đã được xử lý rồi.' });
+    }
+
+    // Cập nhật request → REJECTED (booking KHÔNG thay đổi)
+    const updatedRR = await pool.query(
+      `UPDATE reschedule_requests
+       SET status = 'REJECTED', reject_reason = $1, updated_at = NOW()
+       WHERE id = $2 RETURNING *`,
+      [String(reject_reason || '').trim() || null, rr.id]
+    );
+
+    // Thông báo cho học sinh
+    if (rr.student_id) {
+      await safeNotifyUser(pool, {
+        userId: rr.student_id,
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'reschedule_rejected',
+        eventType: 'reschedule_rejected',
+        refId: rr.booking_id, refType: 'booking',
+        sourceType: 'reschedule_request', sourceId: rr.id,
+        data: {
+          subject: rr.subject || '',
+          oldDate: lessonDateStr(rr.old_lesson_date),
+          oldSlot: rr.old_time_slot,
+          newDate: lessonDateStr(rr.new_lesson_date),
+          newSlot: rr.new_time_slot,
+          rejectReason: String(reject_reason || '').trim() || null,
+        },
+        idempotencyKey: `reschedule:${rr.id}:rejected:${rr.student_id}`,
+      });
+    }
+
+    return res.json({
+      message: 'Đã từ chối yêu cầu đổi lịch. Lịch cũ vẫn giữ nguyên.',
+      reschedule_request: updatedRR.rows[0],
+    });
+  } catch (error) {
+    console.error('[reschedule] PATCH reject error:', error);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 });
 
@@ -15800,8 +16959,8 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
         return res.status(403).json({ message: 'Chỉ gia sư mới có thể duyệt lịch học.' });
       }
 
-      // Hold tiền nếu có ví và có lesson_fee
-      if (lessonFee > 0 && booking.payer_wallet_id_val) {
+      // Hold tiền nếu có ví, có lesson_fee và CHƯA bị hold trước đó
+      if (lessonFee > 0 && booking.payer_wallet_id_val && !booking.escrow_tx_id) {
         try {
           await setLedgerContext(client, { reason_code: 'ESCROW_HOLD', source: 'api', reference_type: 'booking', reference_id: booking.id, actor_id: req.user.userId });
           const holdRes = await client.query(
@@ -15979,6 +17138,7 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error("[bookings PATCH] error:", e);
+    require('fs').appendFileSync('patch_error.log', new Date().toISOString() + '\\n' + e.stack + '\\n\\n');
     return res.status(500).json({ message: "Lỗi máy chủ." });
   } finally {
     client.release();
@@ -17515,6 +18675,15 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    // Điều tra sơ bộ ngay khi báo cáo được tạo — chạy nền, không chặn response,
+    // không bao giờ tự hoàn tiền/khoá tài khoản (xem investigateViolation.js).
+    investigateViolation(pool, dispute.rows[0].id)
+      .then(result => {
+        if (result?.investigationStatus === 'AUTO_DISMISSED') return notifyDismissal(result.dispute, result.summary);
+      })
+      .catch(err => console.error(`Auto-investigate dispute ${dispute.rows[0].id} failed:`, err.message));
+
     return res.status(201).json({ message: 'Đã gửi báo cáo. Admin sẽ xem xét trong 24-48h.', disputeId: dispute.rows[0].id });
   } catch (e) {
     await client.query('ROLLBACK');
@@ -18812,11 +19981,13 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
     else if (penaltyType === 'SUSPEND_3_DAYS') repDeduct = 20;
     else if (penaltyType === 'BAN') repDeduct = 50;
 
+    let autoBanned = false;
     if (repDeduct > 0) {
       const tp = await client.query(`UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`, [repDeduct, tutorId]);
       // Auto-ban check
       if (tp.rows.length && tp.rows[0].reputation_score < 30) {
         await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+        autoBanned = true;
         // Batch 20.1: safeNotifyUser, same client, priority critical
         await safeNotifyUser(client, {
           userId: tutorId, type: 'system', channels: ['IN_APP'],
@@ -18831,6 +20002,7 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
 
     if (penaltyType === 'BAN') {
       await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+      autoBanned = true;
     }
 
     if (decision === 'REFUND_TO_STUDENT') {
@@ -18905,7 +20077,7 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
         await client.query(`UPDATE course_enrollments SET status='refunded' WHERE course_id=$1 AND student_id=$2`, [courseId, studentId]);
       }
 
-      await client.query("UPDATE disputes SET status='RESOLVED_REFUND', penalty_type=$1, admin_note=$2, resolved_at=NOW() WHERE id=$3", [penaltyType, adminNote, disputeId]);
+      await client.query("UPDATE disputes SET status='RESOLVED_REFUND', penalty_type=$1, admin_note=$2, resolved_at=NOW(), reputation_points_deducted=$4 WHERE id=$3", [penaltyType, adminNote, disputeId, repDeduct]);
 
       await safeNotifyUser(client, {
         userId: studentId, channels: ['IN_APP', 'EMAIL'],
@@ -18917,7 +20089,7 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
       await safeNotifyUser(client, {
         userId: tutorId, channels: ['IN_APP', 'EMAIL'],
         templateKey: 'dispute_resolved_refund', eventType: 'dispute_resolved_refund',
-        data: { forTutor: true, repDeduct },
+        data: { forTutor: true, repDeduct, reason: dispute.reason, adminNote: adminNote || null, autoBanned, penaltyType },
         refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
         idempotencyKey: `dispute:${disputeId}:resolved:refund:${tutorId}`,
       });
@@ -18947,13 +20119,20 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
         // Already paid immediately, do nothing to wallets
       }
 
-      await client.query("UPDATE disputes SET status='RESOLVED_RELEASE', penalty_type=$1, admin_note=$2, resolved_at=NOW() WHERE id=$3", [penaltyType, adminNote, disputeId]);
+      await client.query("UPDATE disputes SET status='RESOLVED_RELEASE', penalty_type=$1, admin_note=$2, resolved_at=NOW(), reputation_points_deducted=$4 WHERE id=$3", [penaltyType, adminNote, disputeId, repDeduct]);
 
       await safeNotifyUser(client, {
         userId: studentId, channels: ['IN_APP'],
         templateKey: 'dispute_resolved_release', eventType: 'dispute_resolved_release',
         refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
         idempotencyKey: `dispute:${disputeId}:resolved:release:${studentId}`,
+      });
+      await safeNotifyUser(client, {
+        userId: tutorId, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_resolved_release', eventType: 'dispute_resolved_release',
+        data: { forTutor: true, repDeduct, reason: dispute.reason, adminNote: adminNote || null, autoBanned, penaltyType },
+        refId: disputeId, refType: 'dispute', sourceType: 'dispute', sourceId: disputeId,
+        idempotencyKey: `dispute:${disputeId}:resolved:release:${tutorId}`,
       });
     }
 
@@ -19140,6 +20319,31 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: escrow & reputation columns ready');
   } catch (err) {
     console.error('⚠️  DB migration (escrow cols) warning:', err.message);
+  }
+
+  // ── Auto-migrate: violation_investigations (điều tra sơ bộ tự động cho báo cáo vi phạm) ──
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS violation_investigations (
+        dispute_id           UUID PRIMARY KEY REFERENCES disputes(id) ON DELETE CASCADE,
+        case_type            TEXT,
+        investigation_status TEXT NOT NULL DEFAULT 'PENDING'
+                             CHECK (investigation_status IN ('PENDING','AUTO_DISMISSED','NEEDS_ADMIN')),
+        verdict              TEXT,
+        confidence           INT,
+        evidence             JSONB NOT NULL DEFAULT '{}'::jsonb,
+        summary              TEXT,
+        recommendation       TEXT,
+        investigated_at      TIMESTAMPTZ,
+        reviewed_by          UUID REFERENCES users(id),
+        reviewed_at          TIMESTAMPTZ,
+        created_at           TIMESTAMPTZ DEFAULT NOW(),
+        updated_at           TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ DB migration: violation_investigations table ready');
+  } catch (err) {
+    console.error('⚠️  DB migration (violation_investigations) warning:', err.message);
   }
 
   // ── Auto-migrate: parent feature tables ────────────────────────────────────
@@ -20530,7 +21734,199 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
   });
 
 
-  app.listen(port, () => {
+  // --- TUTOR DISPUTES & APPEALS ---
+app.get('/api/tutor/disputes', verifyToken, requireTutor, async (req, res) => {
+  const tutorId = req.user.userId;
+  const client = await pool.connect();
+  try {
+    const query = `
+      SELECT d.*, 
+             u.full_name as student_name, 
+             c.title as course_title
+      FROM disputes d
+      LEFT JOIN users u ON d.raised_by = u.id
+      LEFT JOIN courses c ON d.course_id = c.id
+      WHERE d.tutor_id = $1
+      ORDER BY d.created_at DESC
+    `;
+    const result = await client.query(query, [tutorId]);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching tutor disputes:', error);
+    res.status(500).json({ error: 'Lỗi máy chủ' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/tutor/disputes/:id/appeal', verifyToken, requireTutor, async (req, res) => {
+  const tutorId = req.user.userId;
+  const { reason } = req.body;
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ message: 'Vui lòng nhập lý do kháng cáo.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const disputeRes = await client.query('SELECT * FROM disputes WHERE id = $1 AND tutor_id = $2 FOR UPDATE', [req.params.id, tutorId]);
+    if (!disputeRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    }
+    const dispute = disputeRes.rows[0];
+
+    // Must be resolved
+    if (!dispute.status.startsWith('RESOLVED_')) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Khiếu nại chưa được xử lý, không thể kháng cáo.' });
+    }
+
+    // Must not be appealed yet
+    if (dispute.tutor_appeal_status) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Bạn đã gửi kháng cáo cho khiếu nại này.' });
+    }
+
+    // Must be within 7 days
+    const resolvedAt = new Date(dispute.resolved_at);
+    const now = new Date();
+    const diffDays = (now - resolvedAt) / (1000 * 60 * 60 * 24);
+    if (diffDays > 7) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Đã quá thời hạn 7 ngày để kháng cáo.' });
+    }
+
+    const updated = await client.query(
+      `UPDATE disputes 
+       SET tutor_appeal_status = 'PENDING', 
+           tutor_appeal_reason = $1, 
+           tutor_appealed_at = NOW() 
+       WHERE id = $2 RETURNING *`,
+      [reason.trim(), req.params.id]
+    );
+
+    // Notify Admin (get admin users)
+    const adminRes = await client.query(`SELECT id FROM users WHERE role = 'admin'`);
+    for (let admin of adminRes.rows) {
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+         VALUES ($1, 'system', 'Kháng cáo mới', 'Gia sư vừa gửi kháng cáo cho một khiếu nại.', 'report', $2, 'dispute')`,
+        [admin.id, req.params.id]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ success: true, dispute: updated.rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error submitting appeal:', error);
+    res.status(500).json({ error: 'Lỗi máy chủ' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/admin/dispute-appeals', verifyToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const query = `
+      SELECT d.*, 
+             u.full_name as student_name, 
+             t.full_name as tutor_name,
+             c.title as course_title
+      FROM disputes d
+      LEFT JOIN users u ON d.raised_by = u.id
+      LEFT JOIN users t ON d.tutor_id = t.id
+      LEFT JOIN courses c ON d.course_id = c.id
+      WHERE d.tutor_appeal_status IS NOT NULL
+      ORDER BY d.tutor_appealed_at DESC
+    `;
+    const result = await client.query(query);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching admin appeals:', error);
+    res.status(500).json({ error: 'Lỗi máy chủ' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/admin/dispute-appeals/:id/resolve', verifyToken, requireAdmin, async (req, res) => {
+  const { status, response } = req.body;
+  if (!['APPROVED', 'REJECTED'].includes(status)) {
+    return res.status(400).json({ message: 'Trạng thái không hợp lệ.' });
+  }
+  if (!response || !response.trim()) {
+    return res.status(400).json({ message: 'Vui lòng nhập phản hồi.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const disputeRes = await client.query('SELECT * FROM disputes WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!disputeRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Không tìm thấy khiếu nại.' });
+    }
+    const dispute = disputeRes.rows[0];
+
+    if (dispute.tutor_appeal_status !== 'PENDING') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Kháng cáo này đã được xử lý.' });
+    }
+
+    let updatedReputation = null;
+
+    if (status === 'APPROVED') {
+      const repToRestore = dispute.reputation_points_deducted || 0;
+      if (repToRestore > 0) {
+        const tp = await client.query(
+          `UPDATE tutor_profiles 
+           SET reputation_score = reputation_score + $1 
+           WHERE user_id = $2 RETURNING reputation_score`, 
+          [repToRestore, dispute.tutor_id]
+        );
+        updatedReputation = tp.rows[0].reputation_score;
+      }
+    }
+
+    const updated = await client.query(
+      `UPDATE disputes 
+       SET tutor_appeal_status = $1, 
+           tutor_appeal_response = $2, 
+           tutor_appeal_reviewed_at = NOW(),
+           tutor_appeal_reviewed_by = $3
+       WHERE id = $4 RETURNING *`,
+      [status, response.trim(), req.user.userId, req.params.id]
+    );
+
+    // Notify Tutor
+    const title = status === 'APPROVED' ? 'Kháng cáo được chấp nhận' : 'Kháng cáo bị từ chối';
+    const body = status === 'APPROVED' 
+      ? `Điểm uy tín đã được hoàn lại. Phản hồi: ${response.trim()}`
+      : `Phản hồi: ${response.trim()}`;
+    
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1, 'system', $2, $3, $4, $5, 'dispute')`,
+      [dispute.tutor_id, title, body, status === 'APPROVED' ? 'check_circle' : 'cancel', req.params.id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, dispute: updated.rows[0], updatedReputation });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error resolving appeal:', error);
+    res.status(500).json({ error: 'Lỗi máy chủ' });
+  } finally {
+    client.release();
+  }
+});
+// --- END TUTOR DISPUTES & APPEALS ---
+
+
+app.listen(port, () => {
     console.log(`🚀 Server is running on http://localhost:${port}`);
   });
 }
@@ -20760,7 +22156,46 @@ app.post('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req
       ]
     );
 
-    return res.status(201).json({ evaluation: result.rows[0], message: 'Đánh giá đã được lưu thành công.' });
+    // Lấy thông tin gia sư và môn học để bắn thông báo
+    const tInfo = await pool.query('SELECT full_name FROM users WHERE id = $1', [tutorId]);
+    const tutorName = tInfo.rows[0]?.full_name || 'Gia sư';
+    const bSubject = booking.subject || 'Buổi học';
+
+    // Bắn thông báo Realtime & In-App cho Học sinh
+    await safeNotifyUser(pool, {
+      userId: booking.student_id,
+      type: 'generic',
+      channels: ['IN_APP'],
+      templateKey: 'generic',
+      eventType: 'tutor_evaluation_submitted',
+      refId: booking_id,
+      refType: 'booking',
+      data: { message: `Gia sư ${tutorName} đã gửi nhận xét đánh giá buổi học môn ${bSubject}!` }
+    });
+
+    // Tìm và bắn thông báo cho Phụ huynh (nếu có)
+    const parents = await pool.query('SELECT parent_id FROM parent_children WHERE student_id = $1', [booking.student_id]);
+    for (const p of parents.rows) {
+      await safeNotifyUser(pool, {
+        userId: p.parent_id,
+        type: 'generic',
+        channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'generic',
+        eventType: 'tutor_evaluation_submitted',
+        refId: booking_id,
+        refType: 'booking',
+        data: { message: `Gia sư ${tutorName} đã gửi báo cáo đánh giá buổi học môn ${bSubject} của con bạn! Hãy mở để xem lời khuyên.` }
+      });
+      if (req.app && req.app.get('io')) {
+        req.app.get('io').to(`user-${p.parent_id}`).emit('tutorEvaluationSubmitted', {
+          booking_id,
+          tutor_name: tutorName,
+          subject: bSubject
+        });
+      }
+    }
+
+    return res.status(201).json({ evaluation: result.rows[0], message: 'Đánh giá đã được lưu và gửi báo cáo tới Phụ huynh thành công.' });
   } catch (e) {
     console.error('POST /api/tutor/session-evaluations error:', e);
     return res.status(500).json({ message: 'Server error' });
@@ -20820,6 +22255,57 @@ app.put('/api/tutor/session-evaluations/:evaluationId', verifyToken, requireTuto
   } catch (e) {
     console.error('PUT /api/tutor/session-evaluations/:id error:', e);
     return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── GET /api/bookings/:id/tutor-evaluation — Phụ huynh & Học sinh xem báo cáo đánh giá của Gia sư
+app.get('/api/bookings/:id/tutor-evaluation', verifyToken, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bRes = await pool.query(
+      `SELECT b.id, b.student_id, b.tutor_id, b.subject, b.lesson_date, b.time_slot,
+              u_tutor.full_name AS tutor_name, u_tutor.picture AS tutor_picture,
+              u_student.full_name AS student_name
+       FROM bookings b
+       LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
+       LEFT JOIN users u_student ON u_student.id = b.student_id
+       WHERE b.id = $1`,
+      [bookingId]
+    );
+
+    if (!bRes.rows.length) {
+      return res.status(404).json({ message: 'Không tìm thấy buổi học.' });
+    }
+    const booking = bRes.rows[0];
+
+    // Auth check
+    let isAuthorized = String(booking.student_id) === String(req.user.userId) || String(booking.tutor_id) === String(req.user.userId);
+    if (!isAuthorized && req.user.role === 'parent') {
+      const linkCheck = await pool.query('SELECT 1 FROM parent_children WHERE parent_id = $1 AND student_id = $2', [req.user.userId, booking.student_id]);
+      if (linkCheck.rows.length > 0) isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: 'Bạn không có quyền xem báo cáo đánh giá của buổi học này.' });
+    }
+
+    const evalRes = await pool.query(
+      `SELECT * FROM session_evaluations WHERE booking_id = $1`,
+      [bookingId]
+    );
+
+    if (!evalRes.rows.length) {
+      return res.status(404).json({ message: 'Gia sư chưa tạo báo cáo đánh giá cho buổi học này.' });
+    }
+
+    return res.json({
+      success: true,
+      booking,
+      evaluation: evalRes.rows[0]
+    });
+  } catch (e) {
+    console.error('GET /api/bookings/:id/tutor-evaluation error:', e);
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 });
 

@@ -235,16 +235,8 @@ export async function updateBookingStatus(bookingId, status) {
       body: JSON.stringify({ status })
     });
   } catch (error) {
-    console.warn(`[API] updateBookingStatus failed: ${error.message}. Updating in LocalStorage.`);
-    const stored = localStorage.getItem('edux_bookings');
-    const bookings = stored ? JSON.parse(stored) : [];
-    const index = bookings.findIndex(b => b.id === bookingId);
-    if (index !== -1) {
-      bookings[index].status = status;
-      localStorage.setItem('edux_bookings', JSON.stringify(bookings));
-      return bookings[index];
-    }
-    throw new Error(`Booking with ID ${bookingId} not found.`, { cause: error });
+    console.warn(`[API] updateBookingStatus failed:`, error);
+    throw error;
   }
 }
 
@@ -434,17 +426,17 @@ export async function deleteTutorCredential(id) {
  * Cáºp nháºt lá»‹ch dáº¡y (replace toĂ n bá»™).
  * Fallback: lÆ°u vĂ o localStorage.
  */
-export async function updateTutorAvailability(availability, monthly_availability, slot_duration_mins = 60) {
+export async function updateTutorAvailability(availability, monthly_availability, slot_duration_mins = 60, availability_ranges = null, monthly_availability_ranges = null) {
   try {
     return await request('/api/tutor/availability', {
       method: 'PUT',
-      body: JSON.stringify({ availability, monthly_availability, slot_duration_mins }),
+      body: JSON.stringify({ availability, monthly_availability, slot_duration_mins, availability_ranges, monthly_availability_ranges }),
     });
   } catch (error) {
     console.warn(`[API] updateTutorAvailability failed: ${error.message}. Saving locally.`);
     localStorage.setItem('tutor_availability_local', JSON.stringify(availability));
     localStorage.setItem('tutor_slot_duration_local', String(slot_duration_mins));
-    return { message: 'Saved locally.', slots: Object.values(availability).flat().length };
+    return { message: 'Saved locally.' };
   }
 }
 
@@ -678,4 +670,53 @@ export const getWalletTransactions = async () => request('/api/wallet/transactio
 export const depositRequest = async (data) => request('/api/wallet/deposit-request', { method: 'POST', body: JSON.stringify(data) });
 export const withdrawRequest = async (data) => request('/api/wallet/withdraw-request', { method: 'POST', body: JSON.stringify(data) });
 export const getWithdrawRequests = async () => request('/api/wallet/withdraw-requests');
+export const getCashflowStats = async () => request('/api/wallet/cashflow-stats');
 export const confirmWithdrawRequest = async (id) => request(`/api/wallet/withdraw-requests/${id}/confirm`, { method: 'PATCH' });
+export const getAdminDepositRequests = async () => request('/api/admin/wallet/deposit-requests');
+export const getAdminWithdrawRequests = async () => request('/api/admin/wallet/withdraw-requests');
+export const approveDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const rejectDepositRequest = async (id, note) => request(`/api/admin/wallet/deposit-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const approveWithdrawRequest = async (id, note) => request(`/api/admin/wallet/withdraw-requests/${id}/approve`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const rejectWithdrawRequest = async (id, note) => request(`/api/admin/wallet/withdraw-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ note }) });
+
+// ── Reschedule APIs ───────────────────────────────────────────────────────────
+
+/** Học sinh gửi yêu cầu đổi lịch cho một booking đã Approved */
+export async function requestReschedule(bookingId, { new_lesson_date, new_time_slot, reason }) {
+  return request(`/api/bookings/${bookingId}/reschedule-request`, {
+    method: 'POST',
+    body: JSON.stringify({ new_lesson_date, new_time_slot, reason }),
+  });
+}
+
+/** Học sinh xem toàn bộ lịch sử yêu cầu đổi lịch của mình */
+export async function getStudentRescheduleRequests() {
+  return request('/api/student/reschedule-requests').catch(() => []);
+}
+
+/** Gia sư xem danh sách yêu cầu đổi lịch (mặc định PENDING) */
+export async function getTutorRescheduleRequests(status = 'PENDING') {
+  return request(`/api/tutor/reschedule-requests?status=${status}`).catch(() => []);
+}
+
+/** Gia sư chấp nhận yêu cầu đổi lịch */
+export async function acceptRescheduleRequest(requestId) {
+  return request(`/api/reschedule-requests/${requestId}/accept`, { method: 'PATCH' });
+}
+
+/** Gia sư từ chối yêu cầu đổi lịch */
+export async function rejectRescheduleRequest(requestId, reject_reason = '') {
+  return request(`/api/reschedule-requests/${requestId}/reject`, {
+    method: 'PATCH',
+    body: JSON.stringify({ reject_reason }),
+  });
+}
+
+
+// Tutor Disputes
+export const getTutorDisputes = async () => request('/api/tutor/disputes');
+export const submitTutorDisputeAppeal = async (id, data) => request(`/api/tutor/disputes/${id}/appeal`, { method: 'POST', body: JSON.stringify(data) });
+
+// Admin Dispute Appeals
+export const getAdminDisputeAppeals = async () => request('/api/admin/dispute-appeals');
+export const resolveDisputeAppeal = async (id, data) => request(`/api/admin/dispute-appeals/${id}/resolve`, { method: 'POST', body: JSON.stringify(data) });

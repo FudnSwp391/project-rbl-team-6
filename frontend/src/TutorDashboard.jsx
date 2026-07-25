@@ -12,14 +12,17 @@ import { getBookings, updateBookingStatus,
          getTutorProfile, updateTutorBio, updateTutorAvatar, updateTutorCv,
          addTutorCredential, deleteTutorCredential,
          updateTutorAvailability, getUnreadCount, getTutorStudents, markBookingAttendance, getTutorEarnings,
-         saveSessionInfo, resolveMethodChange } from './services/api'
+         saveSessionInfo, resolveMethodChange,
+         getTutorRescheduleRequests, acceptRescheduleRequest, rejectRescheduleRequest } from './services/api'
 import ProofUploader from './components/ProofUploader'
 import TutorCoursesTab from './components/TutorCourses'
 import { uploadAvatarFile, uploadDemoVideo } from './services/upload'
 import MessagesSection from './components/MessagesSection'
 import TutorAssessmentManager from './components/TutorAssessmentManager'
+import TutorScheduleEditor from './components/TutorScheduleEditor'
 import TutorGradingDashboard from './components/TutorGradingDashboard'
 import WalletWidget from './components/WalletWidget'
+import TutorDisputesTab from './components/TutorDisputesTab'
 import NotificationDropdown from './components/NotificationDropdown'
 import MessageIcon from './components/MessageIcon'
 import WalletDashboard from './components/Wallet/WalletDashboard'
@@ -40,6 +43,7 @@ const NAV_ITEMS = [
   { icon: 'payments', label: 'Thu Nhập' },
   { icon: 'account_balance_wallet', label: 'Ví Tiền' },
   { icon: 'chat', label: 'Tin Nhắn' },
+  { icon: 'gavel', label: 'Khiếu Nại' },
   { icon: 'account_circle', label: 'Hồ Sơ' },
 ]
 
@@ -71,6 +75,7 @@ export default function TutorDashboard() {
 
   const [requests, setRequests] = useState([])
   const [activeRequestTab, setActiveRequestTab] = useState('single')
+  const [rescheduleRequests, setRescheduleRequests] = useState([])
   const [scheduleToday, setScheduleToday] = useState([])
   
   // Instant Learning Modal State
@@ -261,9 +266,10 @@ export default function TutorDashboard() {
           return
         }
 
-        const [bookingsList, earningsData] = await Promise.all([
+        const [bookingsList, earningsData, rescheduleReqs] = await Promise.all([
           getBookings(),
           getTutorEarnings().catch(() => null),
+          getTutorRescheduleRequests('PENDING').catch(() => []),
         ])
 
         const toInitials = (name = 'Student') =>
@@ -371,6 +377,7 @@ export default function TutorDashboard() {
           }))
 
         setRequests(groupedPendingBookings)
+        setRescheduleRequests(rescheduleReqs || [])
         setScheduleToday(approvedBookings)
         const activeStudentKeys = new Set(
           bookingsList
@@ -447,6 +454,28 @@ export default function TutorDashboard() {
       alert(err.message || 'Failed to decline booking.');
     }
   }
+
+  const handleAcceptReschedule = async (id) => {
+    try {
+      await acceptRescheduleRequest(id);
+      setRescheduleRequests((prev) => prev.filter((r) => r.id !== id));
+      alert("Đã chấp nhận yêu cầu đổi lịch!");
+    } catch (error) {
+      alert("Lỗi khi duyệt yêu cầu: " + error.message);
+    }
+  };
+
+  const handleRejectReschedule = async (id) => {
+    try {
+      const reason = prompt("Nhập lý do từ chối đổi lịch (Tùy chọn):");
+      if (reason === null) return;
+      await rejectRescheduleRequest(id, reason);
+      setRescheduleRequests((prev) => prev.filter((r) => r.id !== id));
+      alert("Đã từ chối yêu cầu đổi lịch.");
+    } catch (error) {
+      alert("Lỗi khi từ chối yêu cầu: " + error.message);
+    }
+  };
 
 
   return (
@@ -721,10 +750,34 @@ export default function TutorDashboard() {
                 >
                   Gói tháng ({requests.filter(r => r.isPackage).length})
                 </button>
+                <button
+                  onClick={() => setActiveRequestTab('reschedule')}
+                  className={`px-6 py-2 rounded-lg font-bold text-[14px] transition-all ${activeRequestTab === 'reschedule' ? 'bg-white shadow-sm text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+                >
+                  Đổi lịch ({rescheduleRequests.length})
+                </button>
               </div>
 
               <div className="bg-white/70 backdrop-blur-md border border-white/30 shadow-[0_10px_15px_-3px_rgba(0,0,0,0.08)] rounded-[1rem] overflow-hidden">
-                {requests.filter(r => activeRequestTab === 'monthly' ? r.isPackage : !r.isPackage).length === 0 ? (
+                {activeRequestTab === 'reschedule' ? (
+                  rescheduleRequests.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 gap-3 text-on-surface-variant">
+                      <span className="material-symbols-outlined text-[48px]">task_alt</span>
+                      <p className="font-label-md text-label-md">Không có yêu cầu nào!</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-surface-variant/50">
+                      {rescheduleRequests.map((req) => (
+                        <RescheduleRequestRow
+                          key={req.id}
+                          request={req}
+                          onAccept={() => handleAcceptReschedule(req.id)}
+                          onDecline={() => handleRejectReschedule(req.id)}
+                        />
+                      ))}
+                    </div>
+                  )
+                ) : requests.filter(r => activeRequestTab === 'monthly' ? r.isPackage : !r.isPackage).length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 gap-3 text-on-surface-variant">
                     <span className="material-symbols-outlined text-[48px]">task_alt</span>
                     <p className="font-label-md text-label-md">Không có yêu cầu nào!</p>
@@ -790,6 +843,10 @@ export default function TutorDashboard() {
 
           {profileStatus === 'approved' && activeTab === 'Khóa Học' && (
             <TutorCoursesTab user={user} editCourseId={editCourseId} />
+          )}
+
+          {profileStatus === 'approved' && activeTab === 'Khiếu Nại' && (
+            <TutorDisputesTab />
           )}
 
           {profileStatus === 'approved' && activeTab === 'Bài Kiểm Tra' && (
@@ -1403,7 +1460,7 @@ function TutorStudentsTab() {
   const markedLessons = students.reduce((sum, student) => sum + (student.markedLessons || 0), 0)
   const presentLessons = students.reduce((sum, student) => sum + (student.presentCount || 0), 0)
   const excusedLessons = students.reduce((sum, student) => sum + (student.excusedCount || 0), 0)
-  const rateBase = markedLessons - excusedLessons
+  const rateBase = presentLessons + totalAbsent
   const attendanceRate = rateBase > 0 ? Math.round((presentLessons / rateBase) * 100) : 0
 
   const handleAttendance = async (lesson, status) => {
@@ -1543,7 +1600,7 @@ function StudentStatCard({ icon, label, value }) {
 
 function StudentDetailCard({ student }) {
   if (!student) return null
-  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Đang chọn</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'Chưa có email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Buổi</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Vắng</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Tỉ lệ</p></div></div></div>{student.nextLesson && <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Buổi tiếp theo: <strong>{student.nextLesson.date}</strong> lúc <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div>}</div>
+  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><div className="flex flex-col md:flex-row md:items-center justify-between gap-4"><div><p className="text-[12px] uppercase font-bold text-outline">Đang chọn</p><h3 className="font-headline-md text-headline-md text-on-surface">{student.childName || student.studentName}</h3><p className="text-[13px] text-on-surface-variant">{student.studentEmail || 'Chưa có email'}</p></div><div className="grid grid-cols-3 gap-3 text-center"><div className="rounded-xl bg-surface-container-low p-3"><p className="font-bold text-on-surface">{student.totalLessons}</p><p className="text-[11px] text-outline">Buổi</p></div><div className="rounded-xl bg-red-50 p-3"><p className="font-bold text-red-600">{student.absentCount}</p><p className="text-[11px] text-red-500">Vắng</p></div><div className="rounded-xl bg-primary/5 p-3"><p className="font-bold text-primary">{student.attendanceRate ?? '--'}{student.attendanceRate != null ? '%' : ''}</p><p className="text-[11px] text-primary">Tỉ lệ</p></div></div></div>{student.nextLesson ? <div className="mt-4 rounded-xl border border-primary/15 bg-primary/5 p-3 text-[13px] text-on-surface-variant">Buổi tiếp theo: <strong>{student.nextLesson.date}</strong> lúc <strong>{student.nextLesson.timeSlot}</strong> - {student.nextLesson.subject}</div> : <div className="mt-4 rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 text-[13px] text-on-surface-variant italic">Chưa có buổi học sắp tới.</div>}</div>
 }
 
 function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback }) {
@@ -1593,6 +1650,18 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
   };
 
   const canCheckIn = approved && isWithinCheckInWindow() && !checkInTime;
+  
+  const isPastLesson = () => {
+    if (!lesson.date || !lesson.timeSlot) return false;
+    let [timeStr, modifier] = lesson.timeSlot.split(' ');
+    let [hours, minutes] = timeStr.split(':');
+    if (hours === '12') hours = '00';
+    if (modifier === 'PM') hours = parseInt(hours, 10) + 12;
+    const lessonTime = new Date(`${lesson.date}T${String(hours).padStart(2, '0')}:${minutes}:00`);
+    return lessonTime < new Date();
+  };
+
+  const canEvaluate = approved && isPastLesson() && !lesson.isEvaluated;
 
   // ATTENDANCE_SETTLEMENT_V1: đánh vắng/có phép ảnh hưởng trực tiếp tới tiền —
   // bắt xác nhận và nêu rõ hệ quả trước khi gửi.
@@ -1650,17 +1719,23 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
         <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Có mặt</button>
         <button disabled={!approved || saving} onClick={() => confirmMark('absent')} title={checkInTime ? 'Học sinh vắng không phép — bạn nhận 90% bồi hoàn' : 'Chưa check-in: đánh vắng sẽ hoàn tiền cho học sinh'} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Vắng</button>
         <button disabled={!approved || saving} onClick={() => confirmMark('excused')} title="Nghỉ có phép — hoàn 100% học phí cho học sinh" className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Có phép</button>
-        <button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1">
-          <span className="material-symbols-outlined text-[14px]">edit_note</span>Đánh giá
-        </button>
+        {canEvaluate ? (
+          <button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1">
+            <span className="material-symbols-outlined text-[14px]">edit_note</span>Đánh giá
+          </button>
+        ) : lesson.isEvaluated ? (
+          <button disabled className="h-9 px-3 rounded-lg border border-gray-300 text-gray-400 text-[12px] font-bold flex items-center gap-1 bg-gray-50">
+            <span className="material-symbols-outlined text-[14px]">check</span>Đã đánh giá
+          </button>
+        ) : null}
       </div>
     </div>
   );
 }
 
 function AbsenceTimeline({ lessons }) {
-  const absences = lessons.filter((lesson) => lesson.attendanceStatus === 'absent')
-  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><h3 className="font-headline-md text-headline-md text-on-surface mb-3">Absence History</h3>{absences.length === 0 ? <p className="text-[13px] text-on-surface-variant italic">No absences recorded.</p> : <div className="space-y-2">{absences.map((lesson) => <div key={lesson.bookingId} className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-[13px] font-bold text-red-700">{lesson.date} - {lesson.timeSlot}</p><p className="text-[12px] text-red-600">{lesson.subject || 'General'}{lesson.attendanceNote ? ` - ${lesson.attendanceNote}` : ''}</p></div>)}</div>}</div>
+  const absences = lessons.filter((lesson) => lesson.attendanceStatus === 'absent' || lesson.attendanceStatus === 'excused')
+  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><h3 className="font-headline-md text-headline-md text-on-surface mb-3">Lịch sử vắng mặt</h3>{absences.length === 0 ? <p className="text-[13px] text-on-surface-variant italic">Chưa có lịch sử vắng mặt.</p> : <div className="space-y-2">{absences.map((lesson) => <div key={lesson.bookingId} className={`rounded-xl border p-3 ${lesson.attendanceStatus === 'absent' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}><p className={`text-[13px] font-bold ${lesson.attendanceStatus === 'absent' ? 'text-red-700' : 'text-amber-700'}`}>{lesson.date} - {lesson.timeSlot}</p><p className={`text-[12px] ${lesson.attendanceStatus === 'absent' ? 'text-red-600' : 'text-amber-600'}`}>{lesson.subject || 'Chung'}{lesson.attendanceNote ? ` - ${lesson.attendanceNote}` : ''}</p></div>)}</div>}</div>
 }
 function pad2(value) {
   return String(value).padStart(2, '0')
@@ -2600,10 +2675,13 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const [credForm, setCredForm]         = useState({ title: '', description: '', proof_url: '' })
   const [credSaving, setCredSaving]     = useState(false)
   const [credError, setCredError]       = useState('')
+  const [credToast, setCredToast]       = useState('') // toast thông báo sau khi thêm
 
   // Availability edit
   const [availEdit, setAvailEdit]       = useState(false)
   const [availData, setAvailData]       = useState({})
+  const [availRanges, setAvailRanges]   = useState({})
+  const [monthlyAvailRanges, setMonthlyAvailRanges] = useState({})
   const [monthlyAvailData, setMonthlyAvailData] = useState({})
   const [availSaving, setAvailSaving]   = useState(false)
   const [slotDuration, setSlotDuration] = useState(60) // 60 | 120 | 180 phút
@@ -2667,7 +2745,9 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         setProfile(data)
         setBioValue(data.bio_pending || data.bio || '')
         setAvailData(data.availability || {})
+        setAvailRanges(data.availability_ranges || {})
         setMonthlyAvailData(data.monthly_availability || {})
+        setMonthlyAvailRanges(data.monthly_availability_ranges || {})
         setSlotDuration(Number(data.slot_duration_mins) || 60)
         setAvatarUrl(data.picture || user?.picture || '')
         setCvForm({
@@ -2769,9 +2849,9 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
 
   const handleAddCredential = async () => {
     setCredError('')
-    if (!credForm.title.trim()) { setCredError('Title is required.'); return }
+    if (!credForm.title.trim()) { setCredError('Tiêu đề là bắt buộc.'); return }
     if (credModal !== 'experience' && !credForm.proof_url.trim()) {
-      setCredError('Proof image/document URL is required.'); return
+      setCredError('Ảnh / File minh chứng là bắt buộc.'); return
     }
     setCredSaving(true)
     try {
@@ -2784,6 +2864,13 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
       setProfile(p => ({ ...p, credentials: [...(p.credentials || []), newCred] }))
       setCredModal(null)
       setCredForm({ title: '', description: '', proof_url: '' })
+      // Hiện toast thông báo chờ duyệt
+      const isPending = !newCred.status || newCred.status === 'pending'
+      setCredToast(isPending
+        ? '✅ Đã gửi! Admin sẽ xét duyệt trong thời gian sớm nhất.'
+        : '✅ Đã thêm thành công!'
+      )
+      setTimeout(() => setCredToast(''), 5000)
     } catch (e) { setCredError(e.message || 'Failed to add.') }
     finally { setCredSaving(false) }
   }
@@ -2820,8 +2907,18 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
   const handleAvailSave = async () => {
     setAvailSaving(true)
     try {
-      await updateTutorAvailability(availData, monthlyAvailData, slotDuration)
-      setProfile(p => ({ ...p, availability: availData, monthly_availability: monthlyAvailData, slot_duration_mins: slotDuration }))
+      const result = await updateTutorAvailability(availData, monthlyAvailData, slotDuration, availRanges, monthlyAvailRanges)
+      const updatedProfile = { 
+        ...profile, 
+        availability: result.availability || availData, 
+        monthly_availability: result.monthly_availability || monthlyAvailData, 
+        availability_ranges: availRanges,
+        monthly_availability_ranges: monthlyAvailRanges,
+        slot_duration_mins: slotDuration 
+      };
+      setProfile(updatedProfile)
+      setAvailData(updatedProfile.availability)
+      setMonthlyAvailData(updatedProfile.monthly_availability)
       setAvailEdit(false)
     } catch { /* ignore */ }
     finally { setAvailSaving(false) }
@@ -3244,173 +3341,95 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                 <span className="material-symbols-outlined text-primary">calendar_month</span>
                 Lịch Giảng Dạy (Hàng Tuần)
               </h4>
-              {!availEdit ? (
-                <button onClick={() => { setAvailEdit(true); setAvailData(profile?.availability || {}); setMonthlyAvailData(profile?.monthly_availability || {}); }}
-                  className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1 bg-white">
-                  <span className="material-symbols-outlined text-[15px]">edit</span>Chỉnh sửa
-                </button>
-              ) : (
-                <div className="flex gap-1">
-                  <button onClick={() => setAvailEdit(false)}
-                    className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors font-bold">
-                    Hủy
-                  </button>
-                  <button onClick={handleAvailSave} disabled={availSaving}
-                    className="h-8 px-4 bg-primary text-on-primary font-label-sm text-[12px] rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 font-bold">
-                    {availSaving ? 'Đang lưu...' : 'Lưu lại'}
-                  </button>
-                </div>
-              )}
+              <button onClick={() => { 
+                  setAvailEdit(true); 
+                  setAvailRanges(profile?.availability_ranges || {});
+                  setMonthlyAvailRanges(profile?.monthly_availability_ranges || {});
+                  setSlotDuration(profile?.slot_duration_mins || 60);
+                }}
+                className="h-8 px-3 border border-outline-variant text-on-surface-variant font-label-sm text-[12px] rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1 bg-white">
+                <span className="material-symbols-outlined text-[15px]">edit</span>Chỉnh sửa
+              </button>
             </div>
 
-            {availEdit ? (
-              <div className="space-y-4">
-                <p className="text-[12px] text-on-surface-variant">Bấm vào các khung giờ để mở lịch rảnh. Thay đổi sẽ có hiệu lực ngay lập tức.</p>
-
-                {/* ── Chọn thời lượng slot ── */}
-                <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
-                  <p className="font-label-md text-[12px] font-bold text-on-surface mb-2 flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[16px] text-primary">schedule</span>
-                    Thời lượng mỗi buổi dạy
-                  </p>
-                  <div className="flex gap-2">
-                    {[{ value: 60, label: '1 tiếng', sub: '60 phút' }, { value: 120, label: '2 tiếng', sub: '120 phút' }, { value: 180, label: '3 tiếng', sub: '180 phút' }].map(opt => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => setSlotDuration(opt.value)}
-                        className={`flex-1 py-2 px-3 rounded-xl border-2 transition-all text-center ${
-                          slotDuration === opt.value
-                            ? 'border-primary bg-primary text-on-primary'
-                            : 'border-outline-variant/50 text-on-surface-variant hover:border-primary/40 hover:bg-primary/5'
-                        }`}
-                      >
-                        <p className="font-bold text-[13px]">{opt.label}</p>
-                        <p className={`text-[10px] mt-0.5 ${slotDuration === opt.value ? 'text-on-primary/80' : 'text-outline'}`}>{opt.sub}</p>
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-on-surface-variant mt-2">
-                    ⚠️ Học phí sẽ tính theo thời lượng: <span className="font-semibold text-primary">{slotDuration === 60 ? '1×' : slotDuration === 120 ? '2×' : '3×'} giá mỗi giờ</span>
-                  </p>
+            <div className="space-y-2">
+              {/* Badge thời lượng hiện tại */}
+              {profile?.slot_duration_mins && (
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="material-symbols-outlined text-[16px] text-primary">schedule</span>
+                  <span className="text-[12px] text-on-surface-variant">
+                    Mỗi buổi dạy:
+                  </span>
+                  <span className="text-[12px] font-bold text-primary bg-primary/8 px-2 py-0.5 rounded-full border border-primary/20">
+                    {profile.slot_duration_mins === 60 ? '1 tiếng' : profile.slot_duration_mins === 120 ? '2 tiếng' : profile.slot_duration_mins === 180 ? '3 tiếng' : `${profile.slot_duration_mins} phút`}
+                  </span>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* View: Lẻ */}
+                <div>
+                  <p className="font-label-md text-[13px] font-bold mb-3 border-b pb-2">Lịch dạy lẻ từng buổi</p>
+                  {DAY_ORDER.map(day => {
+                    const ranges = (profile?.availability_ranges || {})[day] || []
+                    return (
+                      <div key={day} className={`mb-2 rounded-xl p-3 border ${ranges.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
+                        <div className="flex items-center justify-between">
+                          <p className={`font-label-md text-[13px] font-bold ${ranges.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{DAY_NAMES_VI[day]}</p>
+                          {ranges.length === 0 && <span className="text-[11px] text-outline italic">Trống</span>}
+                        </div>
+                        {ranges.length > 0 && (
+                          <div className="flex flex-col gap-1 mt-1.5">
+                            {ranges.map((r, idx) => (
+                              <span key={idx} className="text-[12px] font-medium text-primary bg-primary/5 px-2 py-1 rounded-md inline-block w-fit">
+                                {r.start} - {r.end}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
 
-                {/* Lịch dạy từng buổi */}
-                <div className="mt-6 border-t pt-4">
-                  <p className="font-label-md text-[13px] font-bold text-on-surface mb-2">1. Lịch Rảnh Dạy Lẻ Từng Buổi</p>
-                  <p className="text-[11px] text-on-surface-variant mb-3">Học sinh chọn từng ngày trên lịch để đặt buổi học.</p>
-                  {DAY_ORDER.map(day => (
-                    <div key={day} className="mb-2">
-                      <p className="font-label-sm text-[13px] font-bold text-on-surface mb-1.5">{DAY_NAMES_VI[day]}</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {TIME_SLOTS.map(slot => {
-                          const active  = (availData[day] || []).includes(slot)
-                          const blocked = !active && isSlotBlocked(slot, availData[day] || [], slotDuration)
-                          return (
-                            <button key={slot} type="button"
-                              onClick={() => toggleSlot(day, slot)}
-                              disabled={blocked}
-                              title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
-                              className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
-                                active   ? 'bg-primary text-on-primary border-primary' :
-                                blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
-                                           'bg-white text-on-surface-variant border-outline-variant/40 hover:border-primary/40'
-                              }`}>
-                              {slot}
-                            </button>
-                          )
-                        })}
+                {/* View: Tháng */}
+                <div>
+                  <p className="font-label-md text-[13px] font-bold mb-3 border-b pb-2">Lịch cố định theo gói tháng</p>
+                  {DAY_ORDER.map(day => {
+                    const ranges = (profile?.monthly_availability_ranges || {})[day] || []
+                    return (
+                      <div key={day} className={`mb-2 rounded-xl p-3 border ${ranges.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
+                        <div className="flex items-center justify-between">
+                          <p className={`font-label-md text-[13px] font-bold ${ranges.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{DAY_NAMES_VI[day]}</p>
+                          {ranges.length === 0 && <span className="text-[11px] text-outline italic">Trống</span>}
+                        </div>
+                        {ranges.length > 0 && (
+                          <div className="flex flex-col gap-1 mt-1.5">
+                            {ranges.map((r, idx) => (
+                              <span key={idx} className="text-[12px] font-medium text-green-700 bg-green-700/5 px-2 py-1 rounded-md inline-block w-fit">
+                                {r.start} - {r.end}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Lịch dạy theo tháng */}
-                <div className="mt-6 border-t pt-4">
-                  <p className="font-label-md text-[13px] font-bold text-on-surface mb-2">2. Lịch Dạy Cố Định Theo Tháng</p>
-                  <p className="text-[11px] text-on-surface-variant mb-3">Học sinh đăng ký theo gói tháng sẽ học cố định vào các khung giờ này hàng tuần.</p>
-                  {DAY_ORDER.map(day => (
-                    <div key={day} className="mb-2">
-                      <p className="font-label-sm text-[13px] font-bold text-on-surface mb-1.5">{DAY_NAMES_VI[day]}</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {TIME_SLOTS.map(slot => {
-                          const active  = (monthlyAvailData[day] || []).includes(slot)
-                          const blocked = !active && isSlotBlocked(slot, monthlyAvailData[day] || [], slotDuration)
-                          return (
-                            <button key={slot} type="button"
-                              onClick={() => toggleMonthlySlot(day, slot)}
-                              disabled={blocked}
-                              title={blocked ? `Bị chiếm bởi slot ${slotDuration / 60}h trước đó` : ''}
-                              className={`text-[11px] font-semibold px-2 py-1 rounded-md border transition-all ${
-                                active   ? 'bg-green-600 text-white border-green-600' :
-                                blocked  ? 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed opacity-50' :
-                                           'bg-white text-on-surface-variant border-outline-variant/40 hover:border-green-600/40'
-                              }`}>
-                              {slot}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
-            ) : (
-              <div className="space-y-2">
-                {/* Badge thời lượng hiện tại */}
-                {profile?.slot_duration_mins && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="material-symbols-outlined text-[16px] text-primary">schedule</span>
-                    <span className="text-[12px] text-on-surface-variant">
-                      Mỗi buổi dạy:
-                    </span>
-                    <span className="text-[12px] font-bold text-primary bg-primary/8 px-2 py-0.5 rounded-full border border-primary/20">
-                      {profile.slot_duration_mins === 60 ? '1 tiếng' : profile.slot_duration_mins === 120 ? '2 tiếng' : profile.slot_duration_mins === 180 ? '3 tiếng' : `${profile.slot_duration_mins} phút`}
-                    </span>
-                  </div>
-                )}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* View: Lẻ */}
-                  <div>
-                    <p className="font-label-md text-[13px] font-bold mb-3 border-b pb-2">Lịch dạy lẻ từng buổi</p>
-                    {DAY_ORDER.map(day => {
-                      const slots = (profile?.availability || {})[day] || []
-                      return (
-                        <div key={day} className={`mb-2 rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
-                          <p className={`font-label-md text-[13px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{DAY_NAMES_VI[day]}</p>
-                          {slots.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {slots.map(s => (
-                                <span key={s} className="text-[10px] font-semibold px-2 py-0.5 rounded border text-primary border-primary/20" style={{ background: 'rgba(0,40,142,0.06)' }}>{s}</span>
-                              ))}
-                            </div>
-                          ) : <span className="text-[11px] text-outline italic">Trống</span>}
-                        </div>
-                      )
-                    })}
-                  </div>
+            </div>
 
-                  {/* View: Tháng */}
-                  <div>
-                    <p className="font-label-md text-[13px] font-bold mb-3 border-b pb-2">Lịch cố định theo gói tháng</p>
-                    {DAY_ORDER.map(day => {
-                      const slots = (profile?.monthly_availability || {})[day] || []
-                      return (
-                        <div key={day} className={`mb-2 rounded-xl p-3 border ${slots.length > 0 ? 'bg-white border-outline-variant/20' : 'bg-surface-container-low/40 border-dashed border-outline-variant/30 opacity-60'}`}>
-                          <p className={`font-label-md text-[13px] font-bold mb-1.5 ${slots.length > 0 ? 'text-on-surface' : 'text-outline'}`}>{DAY_NAMES_VI[day]}</p>
-                          {slots.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {slots.map(s => (
-                                <span key={s} className="text-[10px] font-semibold px-2 py-0.5 rounded border text-green-700 border-green-700/20" style={{ background: 'rgba(21,128,61,0.06)' }}>{s}</span>
-                              ))}
-                            </div>
-                          ) : <span className="text-[11px] text-outline italic">Trống</span>}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              </div>
+            {availEdit && (
+              <TutorScheduleEditor 
+                availRanges={availRanges}
+                setAvailRanges={setAvailRanges}
+                monthlyAvailRanges={monthlyAvailRanges}
+                setMonthlyAvailRanges={setMonthlyAvailRanges}
+                slotDuration={slotDuration}
+                setSlotDuration={setSlotDuration}
+                onCancel={() => setAvailEdit(false)}
+                onSave={handleAvailSave}
+                availSaving={availSaving}
+              />
             )}
           </div>
 
@@ -3431,7 +3450,7 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
         </div>
       </div>
 
-      {/* Ă¢â€â‚¬Ă¢â€â‚¬ Add Credential Modal Ă¢â€â‚¬Ă¢â€â‚¬ */}
+      {/* ─── Add Credential Modal ─── */}
 
       {credModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -3622,4 +3641,115 @@ function CredentialSection({ title, icon, items, type, onAdd, onDelete, noProof 
   )
 }
 
+// ─── Reschedule Request Row Component ───────────────────────────────────────
+function RescheduleRequestRow({ request, onAccept, onDecline }) {
+  const [expanded, setExpanded] = useState(false);
 
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    try {
+      return new Date(dateStr).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch { return dateStr; }
+  };
+
+  const timeAgo = (dateStr) => {
+    if (!dateStr) return '';
+    const diff = Math.floor((Date.now() - new Date(dateStr)) / 60000);
+    if (diff < 1) return 'Vừa xong';
+    if (diff < 60) return `${diff} phút trước`;
+    if (diff < 1440) return `${Math.floor(diff / 60)} giờ trước`;
+    return `${Math.floor(diff / 1440)} ngày trước`;
+  };
+
+  const studentName = request.student_name_full || request.studentName || 'Học sinh';
+
+  return (
+    <div className={`border-b border-gray-100 last:border-0 transition-colors ${expanded ? 'bg-amber-50/40' : 'hover:bg-gray-50/60'}`}>
+      {/* ── Collapsed summary row ── */}
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="w-full flex items-center gap-3 px-5 py-3.5 text-left"
+      >
+        {/* Avatar */}
+        <div className="relative shrink-0">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-sm shadow">
+            {studentName.charAt(0).toUpperCase()}
+          </div>
+          <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white flex items-center justify-center shadow">
+            <span className="material-symbols-outlined text-amber-500 text-[10px]">edit_calendar</span>
+          </span>
+        </div>
+
+        {/* Summary text */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-[14px] text-gray-900">{studentName}</span>
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
+              Xin đổi lịch
+            </span>
+          </div>
+          <div className="flex items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-gray-500 flex-wrap">
+            <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">menu_book</span>{request.subject || 'Khác'}</span>
+            <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">schedule</span>{timeAgo(request.created_at || request.createdAt)}</span>
+          </div>
+        </div>
+
+        <span className={`material-symbols-outlined text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}>
+          expand_more
+        </span>
+      </button>
+
+      {/* ── Expanded details ── */}
+      {expanded && (
+        <div className="px-5 pb-4 pt-1 flex gap-4 border-t border-gray-100/50">
+          <div className="w-10 shrink-0" />
+          <div className="flex-1 space-y-4">
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px]">event_busy</span> Lịch cũ
+                </p>
+                <p className="text-[13px] text-gray-900 font-semibold">{formatDate(request.old_lesson_date || request.oldDate)}</p>
+                <p className="text-[13px] text-gray-700">{request.old_time_slot || request.oldTimeSlot}</p>
+              </div>
+
+              <div className="bg-amber-50 rounded-xl p-3 border border-amber-100">
+                <p className="text-[11px] font-bold text-amber-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px]">event_available</span> Lịch mới đề xuất
+                </p>
+                <p className="text-[13px] text-gray-900 font-bold">{formatDate(request.new_lesson_date || request.newDate)}</p>
+                <p className="text-[13px] text-gray-700 font-semibold">{request.new_time_slot || request.newTimeSlot}</p>
+              </div>
+            </div>
+
+            {request.reason && (
+              <div className="bg-white rounded-xl p-3 border border-gray-200 shadow-sm">
+                <p className="text-[11px] font-bold text-gray-500 mb-1 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px]">chat_bubble</span> Lý do đổi lịch:
+                </p>
+                <p className="text-[13px] text-gray-700 italic">"{request.reason}"</p>
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end pt-2">
+              <button
+                onClick={onDecline}
+                className="px-4 py-2 rounded-lg border border-red-200 text-red-600 font-bold text-[13px] hover:bg-red-50 transition-colors"
+              >
+                Từ chối
+              </button>
+              <button
+                onClick={onAccept}
+                className="px-6 py-2 rounded-lg bg-primary text-white font-bold text-[13px] shadow hover:bg-[#1e40af] hover:shadow-md transition-all flex items-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-[16px]">check</span>
+                Chấp nhận đổi lịch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

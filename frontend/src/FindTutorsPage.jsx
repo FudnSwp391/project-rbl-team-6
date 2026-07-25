@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { methodSupport } from './utils/teachingMethod';
 import CartButton from './components/CartButton';
 import { API_BASE_URL } from './config';
@@ -13,15 +13,6 @@ const SORT_OPTIONS = [
   { value: 'price_desc', label: 'Giá: Cao đến Thấp' },
   { value: 'experience', label: 'Kinh Nghiệm Nhiều Nhất' },
   { value: 'newest',     label: 'Mới Nhất' },
-];
-
-const MOCK_TUTORS = [
-  { id: '1', full_name: 'Dr. Sarah Jenkins', bio: 'PhD in Applied Mathematics', avg_r: 4.9, subjects: 'Giải Tích, Đại Số Tuyến Tính', hourly_rate: 65, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCp3x_VIeJloqdZlAnstQ2GLxMA8-0glYNJ5zVnQtCcqUeJ3Hr0IenHpDRQo6JOKIw9PxQWmbwOorbIlUnalTc9FPezJ6IteM_wutLhomHTTUI6y4R9WqFGg0QAEkbQiwhYXHlXEVo4cygGYqCx93DF-_MWEUrqkta7ULRML04On0HfHH9726fK1_RiSxz_FxmsiuPvVAqiUlM5pgP5lDV14GHsYHLSYqegxs0_Bf_-megtR0xOkv_grLDs2YfkE9why2KHe5Ppwyw', featured: true },
-  { id: '2', full_name: 'Mark Thompson',     bio: 'Master of Physics, MIT',          avg_r: 4.8, subjects: 'Vật Lý Lượng Tử, Toán SAT',    hourly_rate: 55, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDlmuVB8nJzFkbr1ZMsSy2gAXdaz55PyMoNSbgEAImuRLsq_wj71B0YKaHHopezS7no3S9X9blul0hS31uWXvQB5FEap2F4of7hmsRCJ51kdRji_yW7R-7epoSuvVMFRyQ0IKN0mHfqXSSgBlBNo8emjeQKtfrNgcW4pKQ-wN7YLD16duYGrmpRhjUMJfUb59WDI51cCv05b8huLdXShrLoorXEBULcXQoTTa6ZETTOFR4ooOlDoZdEFk0laUiFgbHY1XqwTZeromE' },
-  { id: '3', full_name: 'Elena Rodriguez',   bio: 'Statistics & Data Analysis Expert', avg_r: 5.0, subjects: 'Thống Kê, R / Python',          hourly_rate: 70, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDipdd276WduXsIdzZiWZfbwSjRHk1wTofzKVHb1ZaLuhpzlI9EiLdg9Ds4HyV5KLtI2kvUMuq6BPxzyk2KWKUmitqmJKtcCb6je7vNvuAPj8gesUrdiGkxOLkTqXaGfzzt8smXBcxLzrK-1b-ag3BN1IB8MJTf_QYwMJOBg-19Y3CUiWMvFyXw73WCv7Yej6AKsq-XWrYTsQMBApJTjqg4KA_O09dg7Mrt1a_XCBYvh3o-CT5bMBVvUx0eO7cWUMGmvb3LMUPCpu4' },
-  { id: '4', full_name: 'James Wilson',      bio: 'Geometry & Trigonometry Specialist', avg_r: 4.7, subjects: 'Hình Học, Luyện Thi ACT',     hourly_rate: 45, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCpbDFeHbsgtNeW0T8xNSWqhFr7vURnd8NN2e_RC9mCaVAvFqo30P4T02p_HGi82zSzDCbFfFYFIHA0oXUymo8KvGq38ft21pTvybG1L-0rU-twW0EOsBH1zd7LPFm_NIOoWwkYJ_fwDJyQ8dph_KqOAaxRo_xmG8Q2BdRGxw2O1O9WS3JwB5i3HLQbITu3KJ_Q56qFe2t-t0WuUaJ416VX6drpCnQfxpNmPPxa1J0puBymfQvF1gU3udhNfajRBS9HfJ1bqTYVg2Y' },
-  { id: '5', full_name: 'Prof. Linda Chen',  bio: 'Differential Equations Expert',     avg_r: 4.9, subjects: 'Toán Kỹ Thuật, Giải Tích III', hourly_rate: 85, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuC0lXMe0deCxovSOqvaoVVqg9Fgz-ih3S4R1bJdTs_T7D1V0SfDoDF8s1g9Cf2AsC2jHI4cw21GkNvDxulQCuwlr9583sKZDxqnVvKGah3tZjEhvvBREJCVmcESAiOJvGR982gN_ICZW3cQ4XShXYe4RZh1X7r_SVNWlS-FBT1hQDp32_gr2jbyNQ5rGh8ifmpQYqYAF-BvcvRBrqW-15YPKUZ2-0P_0gH9GUnJphznJMnkEjxfZ3QVxBF2Ss1fTUDkPwE8-DKp-nk' },
-  { id: '6', full_name: 'David Miller',      bio: 'Discrete Mathematics Specialist',   avg_r: 4.6, subjects: 'Toán Rời Rạc, Thuật Toán',    hourly_rate: 50, picture: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAt4KMMNAeK6f5SW12Wkwp8L4aFj9BFU6Qmb00RzMD4wFS9Awozy1-7jg4RomgonmoqerDsB0cv3v8QVLrLU1-yXRYS9gEFwIXJRYXzPdrLXN-LJGPdyjSh-G_7--t4Z8wV8-vhq_8Rk2d7UWJA1EJ6dAdv_KCEX4s-g4q1vdMiWS2LqWMv2RBnzbiUx7AcQYFKjAOtOntMm38MhpEB7og0njCRwjKBm8XiitgZwmpuoxiBWeJhEeRIdUA03FeJ1t-op9bWiJ4mDrk' },
 ];
 
 function StarRating({ value }) {
@@ -166,7 +157,8 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   const [totalPages, setTotalPages]   = useState(1);
   const [page, setPage]               = useState(1);
   const [loading, setLoading]         = useState(true);
-  const [isMock, setIsMock]           = useState(false);
+  const [error, setError]             = useState(false);   // lỗi kết nối máy chủ
+  const autoRetriedRef = useRef(false);                    // tự thử lại 1 lần khi backend vừa bật
 
   const hashParts = window.location.hash.split('?');
   const initialParams = new URLSearchParams(hashParts.length > 1 ? hashParts[1] : '');
@@ -212,25 +204,28 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         console.error('API /api/tutors error:', data);
         throw new Error(data.detail || data.message || 'Server error');
       }
-      if (Array.isArray(data.tutors) && data.tutors.length > 0) {
-        setTutors(data.tutors);
-        setTotal(data.total);
-        setTotalPages(data.totalPages || 1);
-        setIsMock(false);
-      } else {
-        // DB không có gia sư approved → dùng mock
-        setTutors(MOCK_TUTORS);
-        setTotal(MOCK_TUTORS.length);
-        setTotalPages(1);
-        setIsMock(true);
-      }
+      // Thành công: hiển thị đúng dữ liệu thật (kể cả khi rỗng do bộ lọc —
+      // rỗng KHÔNG phải lỗi, sẽ hiện trạng thái "không tìm thấy gia sư").
+      setTutors(Array.isArray(data.tutors) ? data.tutors : []);
+      setTotal(data.total || 0);
+      setTotalPages(data.totalPages || 1);
+      setError(false);
+      autoRetriedRef.current = false;
+      setLoading(false);
     } catch (err) {
       console.error('fetchTutors failed:', err.message);
-      setTutors(MOCK_TUTORS);
-      setTotal(MOCK_TUTORS.length);
+      // KHÔNG dùng dữ liệu giả nữa — báo lỗi thật để không gây hiểu nhầm khi demo.
+      // Tự thử lại 1 lần sau 1.5s (xử lý trường hợp backend vừa khởi động):
+      // giữ loading để không chớp trạng thái "không tìm thấy".
+      if (!autoRetriedRef.current) {
+        autoRetriedRef.current = true;
+        setTimeout(() => fetchTutors(pg), 1500);
+        return;
+      }
+      setTutors([]);
+      setTotal(0);
       setTotalPages(1);
-      setIsMock(true);
-    } finally {
+      setError(true);
       setLoading(false);
     }
   }, [search, selectedSubjects, sort, method, level]);
@@ -252,7 +247,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
     setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setPage(1);
   };
 
-  const displayTutors = (isMock ? MOCK_TUTORS : tutors).filter(t => {
+  const displayTutors = tutors.filter(t => {
     // 0. Exclude current user if they are a tutor
     if (user && (t.user_id === user.id || t.id === user.id)) return false;
 
@@ -334,13 +329,17 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       </header>
 
       <main className="pt-24 pb-16 max-w-[1280px] mx-auto px-6">
-        {isMock && (
-          <div className="mb-6 flex items-start gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-900 shadow-[0_10px_26px_-12px_rgba(180,120,0,0.3)]">
-            <span className="material-symbols-outlined text-amber-500 mt-0.5">warning</span>
-            <div className="text-sm leading-relaxed">
-              <b>Đang hiển thị gia sư mẫu</b> — không kết nối được máy chủ (backend chưa chạy hoặc DB lỗi).
-              Đây <u>không phải</u> gia sư thật. Hãy khởi động lại backend rồi tải lại trang (F5).
+        {error && (
+          <div className="mb-6 flex items-start gap-3 rounded-2xl border-2 border-red-200 bg-red-50 px-5 py-4 text-red-900 shadow-[0_10px_26px_-12px_rgba(200,40,40,0.25)]">
+            <span className="material-symbols-outlined text-red-500 mt-0.5">cloud_off</span>
+            <div className="text-sm leading-relaxed flex-1">
+              <b>Không kết nối được máy chủ.</b> Không tải được danh sách gia sư — có thể backend chưa chạy hoặc mạng gián đoạn. Vui lòng thử lại.
             </div>
+            <button
+              onClick={() => { autoRetriedRef.current = false; setError(false); fetchTutors(page); }}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 transition-colors">
+              <span className="material-symbols-outlined text-[18px]">refresh</span>Thử lại
+            </button>
           </div>
         )}
         {/* Search — banner tối + họa tiết ánh sáng động */}
@@ -491,7 +490,6 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             <div className="flex justify-between items-center mb-6">
               <p className="text-base text-[#444653]">
                 Hiển thị <span className="font-bold text-[#191c1e]">{total}</span> gia sư
-                {isMock && <span className="ml-2 text-xs text-[#757684]">(dữ liệu mẫu)</span>}
               </p>
             </div>
 
@@ -520,7 +518,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {displayTutors.map(tutor => (
-                  <TutorCard key={tutor.id} tutor={tutor} isMock={isMock} onFav={addFav} />
+                  <TutorCard key={tutor.id} tutor={tutor} isMock={false} onFav={addFav} />
                 ))}
               </div>
             )}
@@ -531,7 +529,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             )}
 
             {/* Pagination */}
-            {!isMock && totalPages > 1 && (
+            {totalPages > 1 && (
               <div className="mt-12 flex justify-center items-center gap-2">
                 <button
                   onClick={() => setPage(p => Math.max(1, p - 1))}

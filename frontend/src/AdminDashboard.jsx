@@ -1,3 +1,4 @@
+import TutorDisputeAppealsAdmin from './admin/transactions/TutorDisputeAppealsAdmin'
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import { useAuth } from './AuthContext'
 import AdminNotificationBell from './components/AdminNotificationBell'
@@ -105,6 +106,7 @@ const NAV_ITEMS = [
   { id: 'dashboard',       label: 'Tổng quan',             icon: 'dashboard',            section: 'Tổng quan' },
   { id: 'data-entry',      label: 'Nhập liệu',             icon: 'add_circle',           section: 'Tổng quan' },
   { id: 'tutor-approval',  label: 'Duyệt gia sư',          icon: 'how_to_reg',           section: 'Quản lý' },
+  { id: 'tutor-credentials', label: 'Duyệt bằng cấp',      icon: 'workspace_premium',    section: 'Quản lý' },
   { id: 'user-management', label: 'Quản lý người dùng',    icon: 'group',                section: 'Quản lý' },
   { id: 'subjects',        label: 'Môn học',               icon: 'subject',              section: 'Học tập' },
   { id: 'lessons',         label: 'Khóa học',              icon: 'school',               section: 'Học tập' },
@@ -132,6 +134,7 @@ export default function AdminDashboard() {
   // ── Tutor data ──
   const [stats,   setStats]   = useState({ pending: 0, approved: 0, rejected: 0, total: 0 })
   const [tutors,  setTutors]  = useState([])
+  const [pendingCredentials, setPendingCredentials] = useState([])
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState(null)
   const [toast,   setToast]   = useState(null)
@@ -167,8 +170,7 @@ export default function AdminDashboard() {
   const [previewError,   setPreviewError]   = useState(null)
 
   // ── Fetch data ────────────────────────────────────────────────────────────
-  const [pendingCredentials, setPendingCredentials] = useState([])
-  const [credActionId,       setCredActionId]       = useState(null)
+  const [credActionId, setCredActionId] = useState(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null)
@@ -540,10 +542,14 @@ export default function AdminDashboard() {
               onViewDoc={handleViewDoc}
               onRefresh={fetchData}
               setReviewNotes={setReviewNotes}
-              pendingCredentials={pendingCredentials}
-              credActionId={credActionId}
-              onApproveCredential={handleApproveCredential}
-              onRejectCredential={handleRejectCredential}
+            />
+          )}
+          {activeView === 'tutor-credentials' && (
+            <TutorCredentialsView
+              credentials={pendingCredentials}
+              onApprove={handleApproveCredential}
+              onReject={handleRejectCredential}
+              onViewDoc={handleViewDoc}
             />
           )}
           {activeView === 'data-entry'      && <DataEntryView />}
@@ -1067,8 +1073,7 @@ function KpiCard({ variant = 'blue', icon, label, value, loading = false, delta,
 }
 
 // ─── Tutor Approval View ──────────────────────────────────────────────────────
-function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoading, reviewNotes, onSelectTutor, onApprove, onReject, onViewDoc, onRefresh, setReviewNotes, pendingCredentials = [], credActionId, onApproveCredential, onRejectCredential }) {
-  const CRED_TYPE_LABEL = { education: 'Bằng cấp', certificate: 'Chứng chỉ', experience: 'Kinh nghiệm' }
+function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoading, reviewNotes, onSelectTutor, onApprove, onReject, onViewDoc, onRefresh, setReviewNotes }) {
   const completeness = (() => {
     if (!selectedTutor) return 0
     const hasCert = (selectedTutor.certificates && selectedTutor.certificates.length > 0) || !!selectedTutor.certificate_url
@@ -1118,49 +1123,6 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
                 </button>
               </div>
             </div>
-
-            {/* Chứng chỉ/bằng cấp gia sư cũ thêm sau khi đã duyệt hồ sơ ban đầu —
-                hàng chờ riêng, không đụng tới trạng thái duyệt hồ sơ chính */}
-            {pendingCredentials.length > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-md">
-                <h3 className="text-label-md font-label-md text-amber-900 mb-sm flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[18px]">workspace_premium</span>
-                  Chứng chỉ/bằng cấp mới chờ duyệt ({pendingCredentials.length})
-                </h3>
-                <div className="space-y-2">
-                  {pendingCredentials.map(c => (
-                    <div key={c.id} className="bg-white rounded-lg border border-amber-200/60 p-3 flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-on-surface truncate">
-                          {c.title} <span className="font-normal text-on-surface-variant">— {CRED_TYPE_LABEL[c.type] || c.type}</span>
-                        </p>
-                        <p className="text-xs text-on-surface-variant truncate">{c.tutor_name} · {c.tutor_email}</p>
-                        {c.description && <p className="text-xs text-on-surface-variant mt-0.5 truncate">{c.description}</p>}
-                      </div>
-                      {c.proof_url && (
-                        <button onClick={() => onViewDoc(c.proof_url)} className="shrink-0 p-1.5 text-primary hover:bg-primary/10 rounded-full transition-colors" title="Xem minh chứng">
-                          <span className="material-symbols-outlined text-[18px]">visibility</span>
-                        </button>
-                      )}
-                      <button
-                        onClick={() => onRejectCredential(c.id)}
-                        disabled={credActionId === c.id}
-                        className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
-                      >
-                        Từ chối
-                      </button>
-                      <button
-                        onClick={() => onApproveCredential(c.id)}
-                        disabled={credActionId === c.id}
-                        className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-white hover:bg-primary/90 transition-colors disabled:opacity-50"
-                      >
-                        {credActionId === c.id ? '...' : 'Duyệt'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* Table */}
             <div className="bg-surface-container-lowest rounded-xl shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05)] border border-surface-variant overflow-hidden">
@@ -1962,6 +1924,84 @@ function LinkedPersonRow({ person, fmtDate }) {
       <p className="text-[10px] text-on-surface-variant flex-shrink-0 text-right">
         Liên kết<br />{fmtDate(person.linked_at)}
       </p>
+    </div>
+  )
+}
+
+// ─── Tutor Credentials View ──────────────────────────────────────────────────
+function TutorCredentialsView({ credentials, onApprove, onReject, onViewDoc }) {
+  if (credentials.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mb-4">
+          <span className="material-symbols-outlined text-green-500 text-3xl">task_alt</span>
+        </div>
+        <h3 className="text-xl font-bold text-gray-900 mb-2">Không có bằng cấp/chứng chỉ nào cần duyệt</h3>
+        <p className="text-gray-500">Tất cả các bằng cấp và chứng chỉ mới đã được xử lý.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-bold text-gray-900 mb-6">Duyệt Bằng Cấp / Chứng Chỉ Mới</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {credentials.map(cred => (
+          <div key={cred.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 hover:shadow-md transition-shadow flex flex-col">
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 flex-shrink-0 rounded-xl flex items-center justify-center text-white
+                  ${cred.type === 'education' ? 'bg-blue-500' : cred.type === 'certificate' ? 'bg-green-500' : 'bg-purple-500'}`}>
+                  <span className="material-symbols-outlined">
+                    {cred.type === 'education' ? 'school' : cred.type === 'certificate' ? 'workspace_premium' : 'work'}
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-bold text-gray-900 text-[15px]">{cred.title}</h4>
+                  <p className="text-[12px] text-gray-500 mt-0.5">Gia sư: <span className="font-semibold text-gray-700">{cred.tutor_name}</span></p>
+                </div>
+              </div>
+            </div>
+            
+            {cred.description && (
+              <p className="text-[13px] text-gray-600 bg-gray-50 rounded-lg p-3 mb-4 flex-1">{cred.description}</p>
+            )}
+            
+            {cred.proof_url && (
+              <div className="mb-5 mt-auto">
+                <p className="text-[11px] font-semibold text-gray-500 mb-2 uppercase tracking-wider">Minh chứng</p>
+                <div 
+                  onClick={() => onViewDoc(cred.proof_url)}
+                  className="relative group cursor-pointer rounded-xl overflow-hidden border border-gray-200 h-32 bg-gray-50"
+                >
+                  {cred.proof_url.endsWith('.pdf') ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
+                      <span className="material-symbols-outlined text-4xl mb-1">picture_as_pdf</span>
+                      <span className="text-[11px] font-medium">Tài liệu PDF</span>
+                    </div>
+                  ) : (
+                    <img src={cred.proof_url} alt="Proof" className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" />
+                  )}
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 flex items-center justify-center transition-colors">
+                    <span className="material-symbols-outlined text-white text-3xl opacity-0 group-hover:opacity-100 drop-shadow-md">zoom_in</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            <div className="flex gap-2 mt-auto">
+              <button onClick={() => onReject(cred.id)}
+                className="flex-1 py-2 rounded-xl text-red-600 bg-red-50 hover:bg-red-100 font-semibold text-sm transition-colors border border-red-100">
+                Từ chối
+              </button>
+              <button onClick={() => onApprove(cred.id)}
+                className="flex-1 py-2 rounded-xl text-white bg-green-600 hover:bg-green-700 font-semibold text-sm transition-colors">
+                Phê duyệt
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -3712,6 +3752,7 @@ function DisputesCenterView({ token }) {
         {[
           { key: 'disputes', label: 'Tranh Chấp Giao Dịch', icon: 'gavel' },
           { key: 'ai',       label: 'AI Gợi Ý Xử Lý',       icon: 'smart_toy' },
+          { key: 'appeals',  label: 'Kháng Cáo Từ Gia Sư',  icon: 'gavel' },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`flex items-center gap-1.5 px-4 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors ${tab === t.key ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}>
@@ -3719,7 +3760,7 @@ function DisputesCenterView({ token }) {
           </button>
         ))}
       </div>
-      {tab === 'disputes' ? <ComplaintsView token={token} /> : <AICaseResolutions token={token} />}
+      {tab === 'disputes' ? <ComplaintsView token={token} /> : tab === 'ai' ? <AICaseResolutions token={token} /> : <TutorDisputeAppealsAdmin token={token} />}
     </div>
   )
 }

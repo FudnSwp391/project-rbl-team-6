@@ -43,10 +43,10 @@ test('TC13 GET /api/admin/users — 200 + list with admin token', async () => {
 // ─── TC14 ─────────────────────────────────────────────────────────────────────
 test('TC14 GET /api/admin/users/:id — 200 + user details', async () => {
   // /api/admin/users/:id makes multiple queries (user + booking count + reviews etc.)
-  pool.query.mockResolvedValue({
+  pool.query.mockImplementation(() => Promise.resolve({
     rows: [{ id: 'u1', full_name: 'Alice', email: 'alice@ex.com', role: 'student', is_banned: false, count: '0' }],
     rowCount: 1,
-  });
+  }));
   const res = await request(app)
     .get('/api/admin/users/u1')
     .set('Authorization', `Bearer ${adminToken}`);

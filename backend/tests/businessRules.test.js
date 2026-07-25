@@ -267,8 +267,8 @@ describe('lesson time helpers', () => {
 
   test('parseBookingStartDateTime ghép lesson_date + time_slot HH:MM', () => {
     const d = parseBookingStartDateTime({ lesson_date: '2026-07-16', time_slot: '09:30' });
-    assert.equal(d.getHours(), 9);
-    assert.equal(d.getMinutes(), 30);
+    // So sánh chuỗi ISO UTC để tránh lỗi lệch múi giờ (timezone) trên CI / GitHub Actions
+    assert.equal(d.toISOString(), '2026-07-16T02:30:00.000Z');
   });
 
   test('input thiếu → null, không crash', () => {
