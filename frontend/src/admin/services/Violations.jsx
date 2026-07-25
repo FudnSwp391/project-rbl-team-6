@@ -221,10 +221,9 @@ function ViolationDetailModal({ id, token, onClose, onChanged, notify, notifyErr
     if (!window.confirm(`Áp dụng trừ ${Math.abs(delta)} điểm uy tín cho gia sư "${detail.accused_name}"?`)) return
     setBusy(true)
     try {
-      const r = await fetch(`${API}/api/admin/tutors/${detail.tutor_id}/reputation`, {
+      const r = await fetch(`${API}/api/admin/violations/${id}/apply-reputation`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ delta, reason: `Báo cáo vi phạm #${id.slice(0, 8)}: ${detail.investigation.summary}` }),
+        headers: { Authorization: `Bearer ${token}` },
       })
       const j = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(j.message || `HTTP ${r.status}`)
@@ -239,7 +238,8 @@ function ViolationDetailModal({ id, token, onClose, onChanged, notify, notifyErr
   }
 
   const inv = detail?.investigation
-  const canApply = inv?.verdict === 'SUBSTANTIATED' && inv?.evidence?.suggested_reputation_delta && detail?.tutor_id
+  const alreadyApplied = !!inv?.reputation_applied_at
+  const canApply = inv?.verdict === 'SUBSTANTIATED' && inv?.evidence?.suggested_reputation_delta && detail?.tutor_id && !alreadyApplied
 
   return (
     <ModalOverlay onClose={onClose}>
@@ -299,6 +299,12 @@ function ViolationDetailModal({ id, token, onClose, onChanged, notify, notifyErr
                         {busy && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                         Áp dụng khuyến nghị (trừ {Math.abs(inv.evidence.suggested_reputation_delta)} điểm uy tín)
                       </button>
+                    )}
+                    {alreadyApplied && (
+                      <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 bg-gray-50 rounded-lg p-2.5">
+                        <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                        Đã áp dụng trừ điểm uy tín cho báo cáo này lúc {fmtDate(inv.reputation_applied_at)}.
+                      </div>
                     )}
                     <button onClick={investigateNow} disabled={busy} className="text-xs font-semibold text-gray-400 hover:text-gray-600">
                       Điều tra lại

@@ -4793,7 +4793,8 @@ app.post("/api/admin/tutors/:id/release-hold", verifyToken, requireAdmin, async 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    
+    await setLedgerContext(client, { reason_code: 'ADMIN_RELEASE_HOLD', source: 'admin', reference_type: 'tutor_profile', reference_id: id, actor_id: req.user.userId });
+
     // id này có thể là profile id hoặc user_id, ta check cả hai
     const profileRes = await client.query('SELECT user_id FROM tutor_profiles WHERE id=$1 OR user_id=$1 LIMIT 1', [id]);
     if (!profileRes.rows.length) {
@@ -5120,7 +5121,8 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
         `SELECT bio, subjects, experience_years, hourly_rate,
                 certificate_url, cccd_url, status,
                 reject_reason, profile_photo_url, phone, city, country,
-                reputation_score, avg_rating, review_count
+                reputation_score, avg_rating, review_count,
+                headline, education, qualifications, gender, teaching_methods, suitable_students
          FROM tutor_profiles WHERE user_id = $1 LIMIT 1`,
         [id]
       );
@@ -5251,7 +5253,8 @@ app.patch("/api/admin/users/:id/ban", verifyToken, requireAdmin, async (req, res
     }
 
     const result = await pool.query(
-      `UPDATE users SET is_banned = $1 WHERE id = $2
+      `UPDATE users SET is_banned = $1, banned_reason = CASE WHEN $1 THEN 'manual_admin_ban' ELSE NULL END
+       WHERE id = $2
        RETURNING id, full_name, email, role, is_banned, created_at`,
       [banned, id]
     );
@@ -5432,7 +5435,8 @@ app.get("/api/admin/manage/tutors", verifyToken, requireAdmin, async (req, res) 
     const r = await pool.query(
       `SELECT u.id, u.full_name, u.email, u.city, COALESCE(tp.profile_photo_url, u.picture) AS photo,
               tp.status, tp.subjects, tp.hourly_rate, tp.experience_years, tp.teaching_methods,
-              tp.headline, tp.bio, tp.education, tp.qualifications, tp.gender, tp.avg_rating, tp.review_count
+              tp.headline, tp.bio, tp.education, tp.qualifications, tp.gender, tp.avg_rating, tp.review_count,
+              tp.suitable_students
        FROM tutor_profiles tp JOIN users u ON u.id = tp.user_id
        ${where} ORDER BY tp.created_at DESC LIMIT 200`, params);
     return res.json({ tutors: r.rows });
@@ -5502,7 +5506,7 @@ app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (r
 
   const client = await pool.connect();
   try {
-    const chk = await client.query("SELECT role FROM users WHERE id = $1", [id]);
+    const chk = await client.query("SELECT role, is_banned, banned_reason FROM users WHERE id = $1", [id]);
     if (!chk.rows.length) return res.status(404).json({ message: "Không tìm thấy gia sư." });
     if (chk.rows[0].role !== "tutor") return res.status(400).json({ message: "User này không phải gia sư." });
 
@@ -5519,8 +5523,9 @@ app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (r
     const newScore = upd.rows[0].reputation_score;
 
     let autoBanned = false;
+    let autoUnbanned = false;
     if (newScore < 30) {
-      await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [id]);
+      await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [id]);
       autoBanned = true;
       await safeNotifyUser(client, {
         userId: id, type: 'system', channels: ['IN_APP'],
@@ -5529,6 +5534,17 @@ app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (r
         body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
         icon: 'block', sourceType: 'user', sourceId: id, priority: 'critical',
         idempotencyKey: `reputation_auto_ban:${id}:manual:${Date.now()}`,
+      });
+    } else if (chk.rows[0].is_banned && chk.rows[0].banned_reason === 'reputation_auto_ban') {
+      await client.query(`UPDATE users SET is_banned=false, banned_reason=NULL WHERE id=$1`, [id]);
+      autoUnbanned = true;
+      await safeNotifyUser(client, {
+        userId: id, type: 'system', channels: ['IN_APP'],
+        templateKey: 'reputation_auto_unban', eventType: 'reputation_auto_unban',
+        title: 'Tài khoản đã được mở khóa lại',
+        body: 'Điểm uy tín của bạn đã hồi phục trên ngưỡng tối thiểu — tài khoản đã được mở khóa lại.',
+        icon: 'lock_open', sourceType: 'user', sourceId: id, priority: 'critical',
+        idempotencyKey: `reputation_auto_unban:${id}:manual:${Date.now()}`,
       });
     }
 
@@ -5544,7 +5560,7 @@ app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (r
       idempotencyKey: `reputation_manual_adjustment:${id}:${Date.now()}`,
     });
 
-    return res.json({ message: "Đã cập nhật điểm uy tín.", reputation_score: newScore, auto_banned: autoBanned });
+    return res.json({ message: "Đã cập nhật điểm uy tín.", reputation_score: newScore, auto_banned: autoBanned, auto_unbanned: autoUnbanned });
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("POST /api/admin/tutors/:id/reputation error:", err);
@@ -8874,6 +8890,90 @@ app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res)
   }
 });
 
+// ── POST /api/admin/violations/:id/apply-reputation ─────────────────────────
+// Áp dụng khuyến nghị trừ điểm uy tín của 1 báo cáo vi phạm đã điều tra
+// (suggested_reputation_delta). Khoá bằng reputation_applied_at trong cùng 1
+// transaction (SELECT ... FOR UPDATE) để chống áp dụng 2 lần cho cùng 1 báo
+// cáo — vd double-click, hoặc admin mở lại modal sau đó bấm "Áp dụng" lần nữa.
+app.post("/api/admin/violations/:id/apply-reputation", verifyToken, requireAdmin, async (req, res) => {
+  const disputeId = req.params.id;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const viRes = await client.query(
+      `SELECT vi.*, d.tutor_id, accused.full_name AS accused_name
+       FROM violation_investigations vi
+       JOIN disputes d ON d.id = vi.dispute_id
+       LEFT JOIN users accused ON accused.id = d.tutor_id
+       WHERE vi.dispute_id = $1 FOR UPDATE OF vi`,
+      [disputeId]
+    );
+    if (!viRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Báo cáo này chưa được điều tra sơ bộ." });
+    }
+    const vi = viRes.rows[0];
+    if (vi.reputation_applied_at) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ message: "Khuyến nghị của báo cáo này đã được áp dụng trước đó, không thể áp dụng lại." });
+    }
+    const delta = vi.evidence?.suggested_reputation_delta;
+    if (vi.verdict !== 'SUBSTANTIATED' || !delta || !vi.tutor_id) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Báo cáo này chưa có khuyến nghị trừ điểm uy tín để áp dụng." });
+    }
+
+    const upd = await client.query(
+      `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
+       WHERE user_id = $2 RETURNING reputation_score`,
+      [delta, vi.tutor_id]
+    );
+    if (!upd.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Gia sư chưa có hồ sơ." });
+    }
+    const newScore = upd.rows[0].reputation_score;
+
+    let autoBanned = false;
+    if (newScore < 30) {
+      await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [vi.tutor_id]);
+      autoBanned = true;
+      await safeNotifyUser(client, {
+        userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
+        templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
+        title: 'Tài khoản bị khóa',
+        body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+        icon: 'block', sourceType: 'user', sourceId: vi.tutor_id, priority: 'critical',
+        idempotencyKey: `reputation_auto_ban:${vi.tutor_id}:violation:${disputeId}`,
+      });
+    }
+
+    await client.query(
+      `UPDATE violation_investigations SET reputation_applied_at = NOW(), updated_at = NOW() WHERE dispute_id = $1`,
+      [disputeId]
+    );
+
+    await client.query("COMMIT");
+
+    await safeNotifyUser(pool, {
+      userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
+      templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
+      title: 'Điểm uy tín bị trừ',
+      body: `Admin đã trừ ${Math.abs(delta)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}. Điểm hiện tại: ${newScore}/100.`,
+      icon: 'trending_down', sourceType: 'user', sourceId: vi.tutor_id, priority: 'normal',
+      idempotencyKey: `reputation_manual_adjustment:${vi.tutor_id}:violation:${disputeId}`,
+    });
+
+    return res.json({ message: "Đã áp dụng khuyến nghị.", reputation_score: newScore, auto_banned: autoBanned });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("POST /api/admin/violations/:id/apply-reputation error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ── GET /api/admin/ai-moderation ─────────────────────────────────────────────
 // CAP-6.2: Rule-based content moderation signals — no external AI.
 // Sources: tutor_profiles (pending), courses (missing description), reviews (stats).
@@ -9338,7 +9438,7 @@ app.post("/api/admin/fraud-alerts/:id/actions", verifyToken, requireAdmin, async
       await pool.query(`UPDATE fraud_investigations SET assigned_to = $1, updated_at = NOW() WHERE alert_id = $2`, [req.user.userId, alertId]);
       if (previousStatus === 'OPEN') { newStatus = 'INVESTIGATING'; await pool.query(`UPDATE fraud_investigations SET status = $1 WHERE alert_id = $2`, [newStatus, alertId]); }
     } else if (action === 'SUSPEND_USER') {
-      await pool.query(`UPDATE users SET is_banned = true WHERE id = $1`, [uid]);
+      await pool.query(`UPDATE users SET is_banned = true, banned_reason = 'fraud_suspend' WHERE id = $1`, [uid]);
     } else if (action === 'MARK_FALSE_POSITIVE') {
       newStatus = 'FALSE_POSITIVE';
       await pool.query(`UPDATE fraud_investigations SET status = $1, updated_at = NOW() WHERE alert_id = $2`, [newStatus, alertId]);
@@ -12459,6 +12559,7 @@ app.post("/api/courses/:id/enroll", verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN"); // Bắt đầu transaction
+    await setLedgerContext(client, { reason_code: 'COURSE_PURCHASE', source: 'api', reference_type: 'course', reference_id: courseId, actor_id: payerId });
 
     // --- PARENT DELEGATION SUPPORT ---
     const targetStudentId = req.body?.targetStudentId;
@@ -14450,6 +14551,7 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await setLedgerContext(client, { reason_code: 'COURSE_COMPLAINT_REFUND', source: 'admin', reference_type: 'course_complaint', reference_id: req.params.id, actor_id: req.user.userId });
     const existing = await client.query(`SELECT * FROM course_complaints WHERE id=$1 FOR UPDATE`, [req.params.id]);
     if (!existing.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ message: 'Không tìm thấy.' }); }
     const comp = existing.rows[0];
@@ -14487,12 +14589,12 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
           );
           newReputationScore = tp.rows[0]?.reputation_score ?? null;
           if (newReputationScore !== null && newReputationScore < 30) {
-            await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+            await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [tutorId]);
             autoBanned = true;
           }
         }
         if (penalty_type === 'BAN') {
-          await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+          await client.query(`UPDATE users SET is_banned=true, banned_reason='admin_penalty_ban' WHERE id=$1`, [tutorId]);
           autoBanned = true;
         }
 
@@ -14607,7 +14709,14 @@ async function startServer() {
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email_opt_out BOOLEAN NOT NULL DEFAULT FALSE
     `);
-    console.log("✅ DB migration: users.is_banned + email_opt_out ready");
+    // banned_reason: chỉ đánh dấu khi khóa là HỆ QUẢ TỰ ĐỘNG của điểm uy tín <30
+    // (không đặt khi admin chủ động khóa/nghi ngờ gian lận) — dùng để biết khi
+    // nào được PHÉP tự mở khóa lại lúc điểm hồi phục, tránh vô tình mở khóa một
+    // tài khoản bị khóa vì lý do khác (gian lận, penalty BAN chủ động...).
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_reason TEXT
+    `);
+    console.log("✅ DB migration: users.is_banned + email_opt_out + banned_reason ready");
   } catch (err) {
     console.error("❌  DB migration warning:", err.message);
   }
@@ -16054,6 +16163,7 @@ app.post('/api/bookings/instant', verifyToken, async (req, res) => {
       const fbClient = await pool.connect();
       try {
         await fbClient.query('BEGIN');
+        await setLedgerContext(fbClient, { reason_code: 'INSTANT_BOOKING_FREEZE', source: 'api', reference_type: 'booking', actor_id: req.user.userId });
 
         // Kiểm tra ví phụ huynh/người thanh toán (lock để tránh race condition)
         const walletRes = await fbClient.query(
@@ -17159,6 +17269,7 @@ app.post('/api/tutor/bookings/:id/instant-reject', verifyToken, requireTutor, as
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await setLedgerContext(client, { reason_code: 'INSTANT_BOOKING_REJECTED_REFUND', source: 'api', reference_type: 'booking', reference_id: req.params.id, actor_id: req.user.userId });
 
     const bRes = await client.query(
       'SELECT student_id, lesson_fee, status, payer_wallet_id FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE',
@@ -18291,15 +18402,17 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
         if (tutorWalletId && adminWalletId) {
           const tutorAmount = Math.floor(lessonFee * 0.9);
           const adminAmount = lessonFee - tutorAmount;
-          
+
+          await setLedgerContext(client, { reason_code: 'INSTANT_BOOKING_PRESENT_RELEASE', source: 'api', reference_type: 'booking', reference_id: booking.id, actor_id: req.user.userId });
           await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
           await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId]);
           await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId]);
-          
+
           await client.query("UPDATE bookings SET status='Completed', escrow_released_at=NOW() WHERE id=$1", [booking.id]);
         }
       } else if (status === 'excused') {
         // Gia sư châm chước → hoàn toàn bộ từ frozen_balance
+        await setLedgerContext(client, { reason_code: 'INSTANT_BOOKING_EXCUSED_REFUND', source: 'api', reference_type: 'booking', reference_id: booking.id, actor_id: req.user.userId });
         await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1, balance=balance+$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
         await client.query("UPDATE bookings SET status='Completed', updated_at=NOW() WHERE id=$1", [booking.id]);
       } else if (status === 'absent') {
@@ -18313,6 +18426,7 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
         if (tutorWalletId2 && adminWalletId2) {
           const tutorAmount = Math.floor(lessonFee * 0.9);
           const adminAmount = lessonFee - tutorAmount;
+          await setLedgerContext(client, { reason_code: 'INSTANT_BOOKING_NO_SHOW_CHARGE', source: 'api', reference_type: 'booking', reference_id: booking.id, actor_id: req.user.userId });
           await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
           await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [tutorAmount, tutorWalletId2]);
           await client.query('UPDATE wallets SET balance=balance+$1 WHERE id=$2', [adminAmount, adminWalletId2]);
@@ -18329,11 +18443,12 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
           });
         } else {
           // Thiếu ví: hoàn học sinh (an toàn hơn là treo tiền trong frozen_balance)
+          await setLedgerContext(client, { reason_code: 'INSTANT_BOOKING_NO_SHOW_REFUND_NO_WALLET', source: 'api', reference_type: 'booking', reference_id: booking.id, actor_id: req.user.userId });
           await client.query('UPDATE wallets SET frozen_balance=frozen_balance-$1, balance=balance+$1 WHERE id=$2', [lessonFee, booking.payer_wallet_id]);
           await client.query("UPDATE bookings SET status='Completed', updated_at=NOW() WHERE id=$1", [booking.id]);
         }
       }
-      
+
       // Tutor becomes Online again if they were Busy
       await client.query("UPDATE tutor_profiles SET availability_status = 'Online' WHERE user_id = $1 AND availability_status = 'Busy'", [booking.tutor_id]);
     }
@@ -20350,7 +20465,7 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
       const tp = await client.query(`UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`, [repDeduct, tutorId]);
       // Auto-ban check
       if (tp.rows.length && tp.rows[0].reputation_score < 30) {
-        await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+        await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [tutorId]);
         autoBanned = true;
         // Batch 20.1: safeNotifyUser, same client, priority critical
         await safeNotifyUser(client, {
@@ -20365,7 +20480,7 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
     }
 
     if (penaltyType === 'BAN') {
-      await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [tutorId]);
+      await client.query(`UPDATE users SET is_banned=true, banned_reason='admin_penalty_ban' WHERE id=$1`, [tutorId]);
       autoBanned = true;
     }
 
@@ -20701,9 +20816,15 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
         investigated_at      TIMESTAMPTZ,
         reviewed_by          UUID REFERENCES users(id),
         reviewed_at          TIMESTAMPTZ,
+        reputation_applied_at TIMESTAMPTZ,
         created_at           TIMESTAMPTZ DEFAULT NOW(),
         updated_at           TIMESTAMPTZ DEFAULT NOW()
       )
+    `);
+    // Bảng có thể đã tồn tại từ trước (CREATE TABLE IF NOT EXISTS ở trên là no-op
+    // trên DB thật) — thêm cột riêng để không bỏ sót trên môi trường đang chạy.
+    await pool.query(`
+      ALTER TABLE violation_investigations ADD COLUMN IF NOT EXISTS reputation_applied_at TIMESTAMPTZ
     `);
     console.log('✅ DB migration: violation_investigations table ready');
   } catch (err) {
@@ -22275,17 +22396,31 @@ app.post('/api/admin/dispute-appeals/:id/resolve', verifyToken, requireAdmin, as
     }
 
     let updatedReputation = null;
+    let autoUnbanned = false;
 
     if (status === 'APPROVED') {
       const repToRestore = dispute.reputation_points_deducted || 0;
       if (repToRestore > 0) {
         const tp = await client.query(
-          `UPDATE tutor_profiles 
-           SET reputation_score = reputation_score + $1 
-           WHERE user_id = $2 RETURNING reputation_score`, 
+          `UPDATE tutor_profiles
+           SET reputation_score = LEAST(100, reputation_score + $1)
+           WHERE user_id = $2 RETURNING reputation_score`,
           [repToRestore, dispute.tutor_id]
         );
         updatedReputation = tp.rows[0].reputation_score;
+
+        // Chỉ tự mở khóa nếu tài khoản đang bị khóa CHÍNH VÌ điểm uy tín tự động
+        // tụt dưới ngưỡng (banned_reason='reputation_auto_ban') và điểm đã hồi
+        // phục đủ — không đụng vào tài khoản bị khóa vì lý do khác (gian lận...).
+        if (updatedReputation >= 30) {
+          const unb = await client.query(
+            `UPDATE users SET is_banned=false, banned_reason=NULL
+             WHERE id=$1 AND is_banned=true AND banned_reason='reputation_auto_ban'
+             RETURNING id`,
+            [dispute.tutor_id]
+          );
+          autoUnbanned = unb.rows.length > 0;
+        }
       }
     }
 
@@ -22301,10 +22436,10 @@ app.post('/api/admin/dispute-appeals/:id/resolve', verifyToken, requireAdmin, as
 
     // Notify Tutor
     const title = status === 'APPROVED' ? 'Kháng cáo được chấp nhận' : 'Kháng cáo bị từ chối';
-    const body = status === 'APPROVED' 
-      ? `Điểm uy tín đã được hoàn lại. Phản hồi: ${response.trim()}`
+    const body = status === 'APPROVED'
+      ? `Điểm uy tín đã được hoàn lại.${autoUnbanned ? ' Tài khoản của bạn cũng đã được mở khóa lại.' : ''} Phản hồi: ${response.trim()}`
       : `Phản hồi: ${response.trim()}`;
-    
+
     await client.query(
       `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
        VALUES ($1, 'system', $2, $3, $4, $5, 'dispute')`,
@@ -22312,7 +22447,7 @@ app.post('/api/admin/dispute-appeals/:id/resolve', verifyToken, requireAdmin, as
     );
 
     await client.query('COMMIT');
-    res.json({ success: true, dispute: updated.rows[0], updatedReputation });
+    res.json({ success: true, dispute: updated.rows[0], updatedReputation, autoUnbanned });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error resolving appeal:', error);
@@ -22789,6 +22924,7 @@ setInterval(async () => {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        await setLedgerContext(client, { reason_code: 'INSTANT_BOOKING_TIMEOUT_REFUND', source: 'cron', reference_type: 'booking', reference_id: b.id });
 
         // Re-check status with lock
         const bRes = await client.query(

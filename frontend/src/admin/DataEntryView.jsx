@@ -305,7 +305,7 @@ function TutorForm({ api, notify, editing, onDone, onCancel }) {
         hourly_rate: editing.hourly_rate ?? '',
         experience_years: editing.experience_years ?? '',
         teaching_methods: Array.isArray(editing.teaching_methods) && editing.teaching_methods.length ? editing.teaching_methods : ['Online'],
-        suitable_students: [],
+        suitable_students: Array.isArray(editing.suitable_students) ? editing.suitable_students : [],
         password: '',
       });
       setRepScore(editing.reputation_score ?? 100);

@@ -159,6 +159,43 @@ function ruleManualAdjustment(_resolved, bundle) {
   };
 }
 
+// Chỉ khớp với evidence của check 'wallet-vs-transactions' (evidenceService.js
+// gom bundle.aggregates.ledgerReasonSummary = SUM(amount) theo reason_code,
+// 30 ngày gần nhất). Không có rule nào khác trong file này đọc field đó, nên
+// trước đây check này LUÔN rơi vào nhánh "Unknown/0%" của analyzeRootCause dù
+// dữ liệu breakdown thật đã được thu thập sẵn — không phải vì không có gì để
+// nói, mà vì không rule nào từng đọc nó. Đây không phải rule "tìm 1 nguyên
+// nhân duy nhất" (check này về bản chất do NHIỀU nhóm lý do hợp lệ cộng lại,
+// xem computeReconciliation.js) — mục tiêu là thay "Unknown" bằng breakdown
+// thật để admin tự đối chiếu, và gọi tên riêng UNKNOWN_WALLET_UPDATE nếu nhóm
+// đó chiếm phần đáng kể (nghĩa là có code path cập nhật ví không gắn lý do).
+function ruleWalletLedgerReasonBreakdown(_resolved, bundle) {
+  const rows = bundle.aggregates?.ledgerReasonSummary;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  const breakdown = rows.map(r => `${r.reason_code}: ${r.count} lần, tổng đ${Number(r.total).toLocaleString('vi-VN')}`);
+  const unknown = rows.find(r => r.reason_code === 'UNKNOWN_WALLET_UPDATE');
+
+  if (unknown && Number(unknown.count) > 0) {
+    return {
+      cause: 'Có thay đổi số dư không gắn lý do (UNKNOWN_WALLET_UPDATE)',
+      confidence: 40,
+      evidence: [
+        `${unknown.count} thay đổi số dư (tổng đ${Number(unknown.total).toLocaleString('vi-VN')}) được ghi nhận với reason_code mặc định UNKNOWN_WALLET_UPDATE — nghĩa là có (các) đoạn code cập nhật wallets mà không khai báo lý do qua setLedgerContext() trước khi chạy.`,
+        ...breakdown,
+      ],
+      recommendation: ['Review Transaction'],
+    };
+  }
+
+  return {
+    cause: 'Tổng hợp nhiều loại thay đổi số dư hợp lệ (xem breakdown)',
+    confidence: 30,
+    evidence: breakdown,
+    recommendation: ['Review Transaction'],
+  };
+}
+
 const RULES = [
   ruleEscrowReleaseFailed,
   ruleWalletEscrowMismatch,
@@ -170,6 +207,7 @@ const RULES = [
   ruleBookingCompletedNoSettlement,
   rulePaymentCallbackMissing,
   ruleManualAdjustment,
+  ruleWalletLedgerReasonBreakdown,
 ];
 
 function analyzeRootCause(resolved, bundle) {

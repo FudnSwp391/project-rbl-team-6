@@ -30,6 +30,8 @@ const IMPACT_BY_CAUSE = {
   'Booking Completed Without Settlement': 'Buổi học đã hoàn thành nhưng chưa từng được đưa vào quy trình thanh toán escrow.',
   'Payment Callback Missing': 'Giao dịch nạp tiền có thể đã thành công ở cổng thanh toán nhưng chưa được ghi nhận vào ví.',
   'Manual Adjustment': 'Thay đổi số dư đến từ thao tác thủ công của admin, ngoài luồng giao dịch thông thường.',
+  'Có thay đổi số dư không gắn lý do (UNKNOWN_WALLET_UPDATE)': 'Không mất tiền — nhưng có (các) đoạn code cập nhật số dư ví mà không ghi lý do, nên không thể tự đối chiếu từng khoản; nên rà lại code để gắn lý do đầy đủ.',
+  'Tổng hợp nhiều loại thay đổi số dư hợp lệ (xem breakdown)': 'Chênh lệch đến từ nhiều nhóm thay đổi số dư hợp lệ cộng lại (xem breakdown), không phải 1 lỗi đơn lẻ — theo thiết kế sẽ không bao giờ về 0.',
   Unknown: 'Chưa thể xác định tác động tự động — cần kiểm tra thủ công.',
 };
 

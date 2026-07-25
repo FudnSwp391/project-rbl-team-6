@@ -28,7 +28,7 @@ export default function UserEditModal({ user, detail, onClose, onSubmit }) {
     qualifications:    tp.qualifications || '',
     gender:            tp.gender || 'male',
     teaching_methods:  Array.isArray(tp.teaching_methods) && tp.teaching_methods.length ? tp.teaching_methods : ['Online'],
-    suitable_students: [],
+    suitable_students: Array.isArray(tp.suitable_students) ? tp.suitable_students : [],
     status:            tp.status || 'approved',
   })
   const [saving, setSaving] = useState(false)
