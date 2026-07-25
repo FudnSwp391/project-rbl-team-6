@@ -15,18 +15,6 @@ const SORT_OPTIONS = [
   { value: 'newest',     label: 'Mới Nhất' },
 ];
 
-// Danh mục môn học nổi bật — mỗi ô 1 màu, icon, để học sinh "click cái là lọc luôn"
-const SUBJECT_CATEGORIES = [
-  { key: 'Toán Học',   icon: 'calculate',      grad: 'from-[#3b82f6] to-[#1e40af]',   emoji: '📐' },
-  { key: 'Tiếng Anh',  icon: 'language',       grad: 'from-[#ec4899] to-[#be185d]',   emoji: '🌍' },
-  { key: 'Vật Lý',     icon: 'science',        grad: 'from-[#8b5cf6] to-[#5b21b6]',   emoji: '⚛️' },
-  { key: 'Hóa Học',    icon: 'biotech',        grad: 'from-[#10b981] to-[#047857]',   emoji: '🧪' },
-  { key: 'Lập Trình',  icon: 'code',           grad: 'from-[#f59e0b] to-[#b45309]',   emoji: '💻' },
-  { key: 'Văn Học',    icon: 'menu_book',      grad: 'from-[#ef4444] to-[#991b1b]',   emoji: '📖' },
-  { key: 'Lịch Sử',    icon: 'history_edu',    grad: 'from-[#f97316] to-[#c2410c]',   emoji: '🏛️' },
-  { key: 'Địa Lý',     icon: 'public',         grad: 'from-[#06b6d4] to-[#0e7490]',   emoji: '🗺️' },
-];
-
 // Số liệu build trust — sẽ được ghi đè bằng số thật từ API nếu có, fallback hợp lý cho demo
 const TRUST_STATS = [
   { icon: 'verified',       label: 'Gia sư đã xác thực',  value: '2,000+', color: '#3b82f6' },
@@ -370,16 +358,6 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       .slice(0, 4);
   }, [displayTutors, search, selectedSubjects, method, level]);
 
-  // Đếm số gia sư/môn — hiển thị trên các category card để "trực quan"
-  const subjectCounts = useMemo(() => {
-    const m = {};
-    tutors.forEach(t => {
-      const subs = (t.subjects || '').split(',').map(s => s.trim());
-      subs.forEach(s => { if (s) m[s] = (m[s] || 0) + 1; });
-    });
-    return m;
-  }, [tutors]);
-
   const activeFilterCount = (selectedSubjects.length ? 1 : 0) + (method ? 1 : 0) + (level ? 1 : 0) + (maxPrice !== 200 ? 1 : 0);
 
   return (
@@ -397,8 +375,6 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         .live-dot { animation:pulseDot 1.8s ease-in-out infinite; }
         @keyframes floatUp { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
         .stat-card-float { animation:floatUp 4s ease-in-out infinite; }
-        .cat-card:hover .cat-icon { transform: scale(1.15) rotate(-8deg); }
-        .cat-card:hover .cat-arrow { transform: translateX(6px); opacity:1; }
         @media (prefers-reduced-motion: reduce){ .ftb-1,.ftb-2,.stat-card-float,.live-dot,.shimmer-text{ animation:none } }
         /* Hide scrollbar for horizontal scroll */
         .no-scrollbar::-webkit-scrollbar{display:none}
@@ -550,55 +526,6 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                 <div className="text-[11px] md:text-xs text-white/70 mt-0.5">{s.label}</div>
               </div>
             ))}
-          </div>
-        </section>
-
-        {/* CATEGORY SHOWCASE — colorful subject cards */}
-        <section className="mb-12">
-          <div className="flex items-end justify-between mb-5">
-            <div>
-              <h2 className="text-2xl md:text-3xl font-extrabold text-[#191c1e]">Danh mục môn học phổ biến</h2>
-              <p className="text-sm text-[#5d5f5f] mt-1">Chọn môn bạn cần học — chúng tôi gợi ý gia sư giỏi nhất</p>
-            </div>
-            <button
-              onClick={() => window.location.hash = '/subjects'}
-              className="hidden md:flex items-center gap-1 text-sm font-semibold text-[#00288e] hover:underline"
-            >
-              Xem tất cả <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {SUBJECT_CATEGORIES.map(cat => {
-              const active = selectedSubjects.includes(cat.key);
-              const count = subjectCounts[cat.key] || 0;
-              return (
-                <button
-                  key={cat.key}
-                  onClick={() => { toggleSubject(cat.key); window.scrollTo({ top: window.innerHeight * 1.3, behavior: 'smooth' }); }}
-                  className={`cat-card relative overflow-hidden rounded-2xl p-5 text-left text-white transition-all hover:-translate-y-1 hover:shadow-2xl group bg-gradient-to-br ${cat.grad} ${active ? 'ring-4 ring-offset-2 ring-[#00288e]/50' : ''}`}
-                >
-                  <div className="absolute -top-4 -right-4 text-[80px] opacity-20 group-hover:opacity-30 transition-opacity leading-none">
-                    {cat.emoji}
-                  </div>
-                  <div className="relative">
-                    <div className="cat-icon w-11 h-11 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center mb-3 transition-transform duration-300">
-                      <span className="material-symbols-outlined text-[24px]" style={{fontVariationSettings:"'FILL' 1"}}>{cat.icon}</span>
-                    </div>
-                    <div className="font-bold text-lg leading-tight mb-1">{cat.key}</div>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-xs text-white/85">{count > 0 ? `${count}+ gia sư` : 'Sẵn sàng nhận lớp'}</span>
-                      <span className="cat-arrow material-symbols-outlined text-[18px] opacity-0 transition-all">arrow_forward</span>
-                    </div>
-                  </div>
-                  {active && (
-                    <div className="absolute top-3 right-3 w-6 h-6 rounded-full bg-white text-[#00288e] flex items-center justify-center shadow-lg">
-                      <span className="material-symbols-outlined text-[16px]" style={{fontVariationSettings:"'FILL' 1"}}>check</span>
-                    </div>
-                  )}
-                </button>
-              );
-            })}
           </div>
         </section>
 
