@@ -28,6 +28,7 @@ const AICaseResolutions      = lazy(() => import('./admin/transactions/AICaseRes
 const DataEntryView          = lazy(() => import('./admin/DataEntryView'))
 
 const CourseComplaintsAdminView = lazy(() => import('./admin/services/CourseComplaints'))
+const SupportRequestsAdminView = lazy(() => import('./admin/services/SupportRequests'))
 const Violations = lazy(() => import('./admin/services/Violations'))
 const Moderation = lazy(() => import('./admin/services/Moderation'))
 const SemanticModeration = lazy(() => import('./admin/semantic/SemanticModeration'))
@@ -94,6 +95,7 @@ const TX_VIEW_IDS = new Set(TX_SUB_ITEMS.map(i => i.id))
 
 const SM_SUB_ITEMS = [
   { id: 'sm-complaints',   label: 'Khiếu nại Dịch vụ',     icon: 'report_problem' },
+  { id: 'sm-support',      label: 'Hỗ trợ Học sinh',       icon: 'support_agent' },
   { id: 'sm-reviews',      label: 'Đánh giá',              icon: 'reviews' },
   { id: 'sm-violations',   label: 'Báo cáo vi phạm',       icon: 'gavel' },
   { id: 'sm-moderation',   label: 'Giám sát nội dung',     icon: 'policy' },
@@ -581,6 +583,7 @@ export default function AdminDashboard() {
 
           {/* ── Service Management Module ── */}
           {activeView === 'sm-complaints'    && <CourseComplaintsAdminView token={token} />}
+          {activeView === 'sm-support'       && <SupportRequestsAdminView token={token} />}
           {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
           {activeView === 'sm-violations'    && <Violations token={token} />}
           {activeView === 'sm-moderation'    && <Moderation token={token} />}
@@ -998,6 +1001,7 @@ function DashboardView({
         {[
           { id: 'tutor-approval', icon: 'how_to_reg',     label: 'Duyệt gia sư', desc: 'Xem xét hồ sơ chờ duyệt',          tile: 'bg-blue-50 text-blue-600',       count: kpiLoading ? null : (K.pending_tutors || null) },
           { id: 'sm-complaints',  icon: 'report_problem', label: 'Khiếu nại Dịch vụ', desc: 'Xem và xử lý khiếu nại chất lượng dịch vụ', tile: 'bg-amber-50 text-amber-600',     count: null },
+          { id: 'sm-support',     icon: 'support_agent',  label: 'Hỗ trợ Học sinh',   desc: 'Đổi gia sư, khiếu nại, hoàn tiền, kỹ thuật', tile: 'bg-violet-50 text-violet-600',   count: null },
           { id: 'transactions',   icon: 'payments',       label: 'Giao dịch',    desc: 'Theo dõi hoạt động thanh toán',     tile: 'bg-emerald-50 text-emerald-600', count: null },
         ].map(item => (
           <button

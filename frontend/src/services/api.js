@@ -170,6 +170,10 @@ export async function createBooking(bookingData) {
     childName,
     teachingMethod,
     teaching_method,
+    location,
+    locationNote,
+    location_note,
+    targetStudentId,
   } = bookingData || {};
 
   // Resolve tutorId — accept both camelCase and snake_case
@@ -197,6 +201,9 @@ export async function createBooking(bookingData) {
     notes: resolvedNote,
     childName: childName || null,
     teaching_method: teachingMethod || teaching_method || null,
+    location: location || null,
+    location_note: locationNote || location_note || null,
+    targetStudentId: targetStudentId || undefined,
   };
   console.log('[createBooking] Sending payload to /api/bookings:', payload);
   const result = await request('/api/bookings', {
