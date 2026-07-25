@@ -9529,11 +9529,33 @@ app.get("/api/admin/transactions/refunds", verifyToken, requireAdmin, async (req
               d.evidence_urls,
               COALESCE(u.full_name, '')               AS user_name,
               COALESCE(u.email,     '')               AS user_email,
+              COALESCE(u.is_banned, false)             AS user_is_banned,
               COALESCE(c.title,     '')               AS course_title,
-              COALESCE(c.price,     0)::numeric       AS amount
+              COALESCE(c.price, b.lesson_fee, 0)::numeric AS amount,
+              COALESCE(req_hist.total, 0)             AS requester_dispute_total,
+              COALESCE(req_hist.won, 0)               AS requester_dispute_won,
+              COALESCE(req_hist.lost, 0)               AS requester_dispute_lost,
+              COALESCE(req_hist.open_count, 0)        AS requester_dispute_open,
+              COALESCE(req_fraud.n, 0)                AS requester_fraud_flags
        FROM   disputes d
        LEFT   JOIN users   u ON u.id = d.raised_by
        LEFT   JOIN courses c ON c.id = d.course_id
+       LEFT   JOIN bookings b ON b.id = d.booking_id
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE dd.status = 'RESOLVED_REFUND')::int  AS won,
+           COUNT(*) FILTER (WHERE dd.status = 'RESOLVED_RELEASE')::int AS lost,
+           COUNT(*) FILTER (WHERE dd.status = 'OPEN')::int             AS open_count
+         FROM disputes dd WHERE dd.raised_by = d.raised_by
+       ) req_hist ON true
+       LEFT JOIN LATERAL (
+         SELECT
+           (SELECT COUNT(*)::int FROM fraud_investigations fi WHERE fi.subject_user_id = d.raised_by) +
+           (SELECT COUNT(*)::int FROM fraud_intel_reports fr
+             WHERE fr.primary_user_id = d.raised_by OR fr.secondary_user_id = d.raised_by
+                OR fr.student_id = d.raised_by) AS n
+       ) req_fraud ON true
        WHERE  d.status = 'RESOLVED_REFUND'
        ORDER  BY d.created_at DESC
        LIMIT  200`
@@ -14351,11 +14373,18 @@ app.get('/api/admin/support-requests', verifyToken, requireAdmin, async (req, re
       `SELECT sr.*, 'SUP-' || LPAD(sr.request_number::text, 5, '0') AS ticket_number,
               u.full_name AS student_name, u.email AS student_email, u.picture AS student_picture,
               u_tutor.picture AS tutor_picture,
-              u_admin.full_name AS admin_name
+              u_admin.full_name AS admin_name,
+              related_d.id AS related_dispute_id, related_d.status AS related_dispute_status
        FROM support_requests sr
        JOIN users u ON u.id = sr.student_id
        LEFT JOIN users u_tutor ON u_tutor.id = sr.tutor_id
        LEFT JOIN users u_admin ON u_admin.id = sr.admin_id
+       LEFT JOIN LATERAL (
+         SELECT d2.id, d2.status
+         FROM disputes d2
+         WHERE d2.booking_id = sr.booking_id
+         ORDER BY d2.created_at DESC LIMIT 1
+       ) related_d ON sr.request_type IN ('refund','tutor_complaint') AND sr.booking_id IS NOT NULL
        ${where}
        ORDER BY CASE WHEN sr.status = 'pending' THEN 0 WHEN sr.status = 'processing' THEN 1 ELSE 2 END, sr.created_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
