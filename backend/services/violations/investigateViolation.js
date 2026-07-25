@@ -26,6 +26,44 @@ function classifyCase(reason) {
   return null;
 }
 
+// Đếm số vi phạm ĐÃ XÁC NHẬN (bất kỳ loại nào) trước đó của cùng 1 gia sư —
+// dùng để chỉ thật sự đề xuất trừ điểm khi có LẶP LẠI, còn vi phạm đầu tiên
+// chỉ nhắc nhở. Tránh 1 báo cáo đơn lẻ gây hệ quả nặng ngay lập tức.
+async function countPriorSubstantiated(pool, tutorId, excludeDisputeId) {
+  if (!tutorId) return 0;
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS n
+     FROM violation_investigations vi
+     JOIN disputes d ON d.id = vi.dispute_id
+     WHERE d.tutor_id = $1 AND vi.verdict = 'SUBSTANTIATED' AND vi.dispute_id != $2`,
+    [tutorId, excludeDisputeId]
+  );
+  return rows[0]?.n || 0;
+}
+
+// Áp quy tắc "lặp lại mới phạt nặng": lần đầu chỉ cảnh báo (không đề xuất trừ
+// điểm), từ lần 2 mới đề xuất trừ điểm như bình thường, từ lần 3 trở đi tăng
+// nặng hơn. Trả về recommendation + suggested_reputation_delta (có thể null).
+function applyProgressiveDiscipline(baseDelta, priorCount, occurrenceLabel) {
+  if (priorCount === 0) {
+    return {
+      recommendation: `Đây là vi phạm đầu tiên được xác nhận của gia sư này (${occurrenceLabel}) — đề xuất chỉ gửi nhắc nhở, chưa trừ điểm uy tín. Nếu lặp lại, lần sau sẽ đề xuất trừ điểm.`,
+      suggestedDelta: null,
+    };
+  }
+  if (priorCount === 1) {
+    return {
+      recommendation: `Đây là vi phạm thứ 2 được xác nhận (${occurrenceLabel}) — đề xuất trừ ${Math.abs(baseDelta)} điểm uy tín và cảnh báo gia sư.`,
+      suggestedDelta: baseDelta,
+    };
+  }
+  const escalated = Math.round(baseDelta * 1.5);
+  return {
+    recommendation: `Gia sư đã có ${priorCount + 1} vi phạm được xác nhận (${occurrenceLabel}) — đây là mẫu hình lặp lại, đề xuất trừ ${Math.abs(escalated)} điểm uy tín (mức tăng nặng) và cảnh báo nghiêm khắc.`,
+    suggestedDelta: escalated,
+  };
+}
+
 function inconclusive(summary) {
   return { verdict: 'INCONCLUSIVE', confidence: 0, summary, recommendation: null, evidence: {}, autoDismiss: false };
 }
@@ -74,13 +112,19 @@ async function investigateTutorLate(pool, dispute) {
     };
   }
 
-  const suggestedDelta = lateMinutes > 30 ? -15 : lateMinutes > 15 ? -10 : -5;
+  const baseDelta = lateMinutes > 30 ? -15 : lateMinutes > 15 ? -10 : -5;
+  const priorCount = await countPriorSubstantiated(pool, dispute.tutor_id, dispute.id);
+  const disc = applyProgressiveDiscipline(baseDelta, priorCount, `trễ ${lateMinutes} phút`);
   return {
     verdict: 'SUBSTANTIATED',
     confidence: Math.min(95, 60 + lateMinutes),
     summary: `Gia sư check-in lúc ${fmtTime(checkIn)}, giờ học bắt đầu ${fmtTime(start)} — trễ ${lateMinutes} phút.`,
-    recommendation: `Đề xuất trừ ${Math.abs(suggestedDelta)} điểm uy tín và cảnh báo gia sư.`,
-    evidence: { scheduled_start: start.toISOString(), tutor_check_in_at: checkIn.toISOString(), late_minutes: lateMinutes, suggested_reputation_delta: suggestedDelta },
+    recommendation: disc.recommendation,
+    evidence: {
+      scheduled_start: start.toISOString(), tutor_check_in_at: checkIn.toISOString(), late_minutes: lateMinutes,
+      prior_substantiated_count: priorCount,
+      ...(disc.suggestedDelta ? { suggested_reputation_delta: disc.suggestedDelta } : {}),
+    },
     autoDismiss: false,
   };
 }
@@ -114,12 +158,18 @@ async function investigateTutorNoShow(pool, dispute) {
     return inconclusive('Buổi học chưa kết thúc, chưa đủ dữ liệu để kết luận vắng mặt hay không.');
   }
 
+  const priorCount = await countPriorSubstantiated(pool, dispute.tutor_id, dispute.id);
+  const disc = applyProgressiveDiscipline(-25, priorCount, 'vắng mặt hoàn toàn');
   return {
     verdict: 'SUBSTANTIATED',
     confidence: 85,
     summary: `Gia sư không check-in cho buổi học đã kết thúc lúc ${fmtTime(end)}.`,
-    recommendation: 'Đề xuất trừ 25 điểm uy tín (mức vắng mặt) và cảnh báo nghiêm khắc gia sư.',
-    evidence: { scheduled_end: end.toISOString(), tutor_check_in_at: null, suggested_reputation_delta: -25 },
+    recommendation: disc.recommendation,
+    evidence: {
+      scheduled_end: end.toISOString(), tutor_check_in_at: null,
+      prior_substantiated_count: priorCount,
+      ...(disc.suggestedDelta ? { suggested_reputation_delta: disc.suggestedDelta } : {}),
+    },
     autoDismiss: false,
   };
 }
