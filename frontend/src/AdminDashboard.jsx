@@ -36,6 +36,7 @@ const SafeAnalytics = lazy(() => import('./admin/analytics/SafeAnalytics'))
 const PinnedWidgets = lazy(() => import('./admin/analytics/PinnedWidgets'))
 const SubjectsView = lazy(() => import('./admin/subjects/SubjectsView'))
 import { subjectMeta as sharedSubjectMeta } from './admin/subjects/subjectMeta'
+import UserEditModal from './admin/users/UserEditModal'
 import { uploadCourseThumbnail } from './services/upload'
 
 import { API_BASE_URL as API } from './config'
@@ -1660,7 +1661,7 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
 }
 
 // ─── User Detail Panel ────────────────────────────────────────────────────────
-function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold, onViewDoc }) {
+function UserDetailPanel({ user, detail, loading, onBan, onEdit, actionId, onReleaseHold, onViewDoc }) {
   const roleColor  = r => ({ admin:'bg-purple-100 text-purple-700', tutor:'bg-indigo-100 text-indigo-700', student:'bg-blue-100 text-blue-700', parent:'bg-green-100 text-green-700' }[r] ?? 'bg-gray-100 text-gray-600')
   const statusColor = b => b ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'
   const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—'
@@ -1679,7 +1680,16 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
-      <div className="bg-gradient-to-br from-primary/10 to-primary/5 px-5 pt-6 pb-5 flex flex-col items-center gap-2 text-center border-b border-outline-variant">
+      <div className="bg-gradient-to-br from-primary/10 to-primary/5 px-5 pt-6 pb-5 flex flex-col items-center gap-2 text-center border-b border-outline-variant relative">
+        {user.role !== 'admin' && (
+          <button
+            onClick={() => onEdit?.(user)}
+            title="Chỉnh sửa thông tin"
+            className="absolute top-3 right-3 w-8 h-8 rounded-lg bg-white/70 hover:bg-white text-on-surface-variant hover:text-primary flex items-center justify-center transition-colors shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[18px]">edit</span>
+          </button>
+        )}
         {detail?.picture ? (
           <img src={detail.picture} alt={detail.full_name} className="w-16 h-16 rounded-full object-cover ring-4 ring-white shadow-sm" />
         ) : (
@@ -1763,6 +1773,8 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold
               <InfoRow icon="menu_book" label="Môn học" value={detail.tutor_profile.subjects || '—'} />
               <InfoRow icon="work" label="Kinh nghiệm" value={detail.tutor_profile.experience_years != null ? `${detail.tutor_profile.experience_years} năm` : '—'} />
               <InfoRow icon="payments" label="Học phí" value={fmtCurrency(detail.tutor_profile.hourly_rate)} />
+              <InfoRow icon="military_tech" label="Điểm uy tín" value={detail.tutor_profile.reputation_score != null ? `${detail.tutor_profile.reputation_score}/100` : '—'} />
+              <InfoRow icon="star" label="Đánh giá" value={detail.tutor_profile.review_count > 0 ? `${Number(detail.tutor_profile.avg_rating).toFixed(1)}★ (${detail.tutor_profile.review_count} đánh giá)` : 'Chưa có đánh giá'} />
               <InfoRow icon="verified_user" label="Trạng thái duyệt" value={detail.tutor_profile.status || '—'} />
               {detail.tutor_profile.reject_reason && (
                 <InfoRow icon="cancel" label="Lý do từ chối" value={detail.tutor_profile.reject_reason} />
@@ -2022,6 +2034,7 @@ function UserManagementView({ initialSearch = '', onSearchConsumed, onViewDoc })
   const [selectedUser,  setSelectedUser]  = useState(null)   // row clicked
   const [detail,        setDetail]        = useState(null)   // full profile from API
   const [detailLoading, setDetailLoading] = useState(false)
+  const [editingUser,   setEditingUser]   = useState(null)   // user being edited in UserEditModal
 
   const LIMIT = 20
   const totalPages = Math.max(1, Math.ceil(total / LIMIT))
@@ -2115,6 +2128,28 @@ function UserManagementView({ initialSearch = '', onSearchConsumed, onViewDoc })
     } catch (err) {
       setUMToast({ msg: `Thay đổi vai trò thất bại: ${err.message}`, type: 'error' })
     } finally { setActionId(null) }
+  }
+
+  // Gia sư dùng chung route PATCH /api/admin/tutors/:id (sửa cả users + tutor_profiles
+  // trong 1 giao dịch); vai trò khác dùng route PATCH /api/admin/users/:id (chỉ users).
+  async function handleSaveUser(form) {
+    if (!editingUser) return
+    if (editingUser.role === 'tutor') {
+      await authFetch(`${API}/api/admin/tutors/${editingUser.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ ...form, photo: form.picture }),
+      })
+      await fetchDetail(editingUser.id)
+      setUsers(prev => prev.map(x => x.id === editingUser.id ? { ...x, full_name: form.full_name, picture: form.picture || x.picture } : x))
+    } else {
+      const updated = await authFetch(`${API}/api/admin/users/${editingUser.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ full_name: form.full_name, picture: form.picture, city: form.city, phone: form.phone }),
+      })
+      setUsers(prev => prev.map(x => x.id === editingUser.id ? { ...x, full_name: updated.full_name, picture: updated.picture } : x))
+      setDetail(prev => prev ? { ...prev, full_name: updated.full_name, picture: updated.picture, city: updated.city, phone: updated.phone } : prev)
+    }
+    setUMToast({ msg: `Đã cập nhật thông tin của ${form.full_name}.`, type: 'success' })
   }
 
   const statusColor = isBanned => isBanned ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
@@ -2333,12 +2368,22 @@ function UserManagementView({ initialSearch = '', onSearchConsumed, onViewDoc })
             detail={detail}
             loading={detailLoading}
             onBan={handleBan}
+            onEdit={setEditingUser}
             onRoleChange={handleRoleChange}
             actionId={actionId}
             onViewDoc={onViewDoc}
           />
         </div>
       </div>
+
+      {editingUser && (
+        <UserEditModal
+          user={editingUser}
+          detail={editingUser.id === selectedUser?.id ? detail : null}
+          onClose={() => setEditingUser(null)}
+          onSubmit={handleSaveUser}
+        />
+      )}
     </div>
   )
 }

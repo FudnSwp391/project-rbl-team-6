@@ -291,6 +291,10 @@ function TutorForm({ api, notify, editing, onDone, onCancel }) {
   const empty = { full_name: '', email: '', password: '', photo: '', subjects: '', hourly_rate: '', experience_years: '', city: '', headline: '', bio: '', education: '', qualifications: '', gender: 'male', teaching_methods: ['Online'], suitable_students: [], status: 'approved' };
   const [f, setF] = useState(empty);
   const [loading, setLoading] = useState(false);
+  const [repScore, setRepScore] = useState(null);
+  const [repDelta, setRepDelta] = useState('');
+  const [repReason, setRepReason] = useState('');
+  const [repBusy, setRepBusy] = useState(false);
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
   const toggle = (k, v) => setF(p => ({ ...p, [k]: p[k].includes(v) ? p[k].filter(x => x !== v) : [...p[k], v] }));
 
@@ -304,10 +308,30 @@ function TutorForm({ api, notify, editing, onDone, onCancel }) {
         suitable_students: [],
         password: '',
       });
+      setRepScore(editing.reputation_score ?? 100);
+      setRepDelta(''); setRepReason('');
       window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else setF(empty);
+    } else { setF(empty); setRepScore(null); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
+
+  // Tăng/giảm điểm uy tín: hành động riêng biệt, áp dụng ngay lập tức (không
+  // gộp vào submit chính của form) — giống style 1-click action như release-hold.
+  async function applyReputation() {
+    const delta = Number(repDelta);
+    if (!Number.isInteger(delta) || delta === 0) return notify('Nhập số điểm thay đổi (số nguyên, khác 0).', 'error');
+    if (!repReason.trim()) return notify('Nhập lý do điều chỉnh.', 'error');
+    setRepBusy(true);
+    try {
+      const res = await api.post(`/api/admin/tutors/${editing.id}/reputation`, { delta, reason: repReason.trim() });
+      setRepScore(res.reputation_score);
+      setRepDelta(''); setRepReason('');
+      notify(res.auto_banned
+        ? `Điểm mới: ${res.reputation_score}/100 — tài khoản đã bị tự động khóa do điểm quá thấp.`
+        : `Điểm mới: ${res.reputation_score}/100.`);
+    } catch (err) { notify(err.message, 'error'); }
+    finally { setRepBusy(false); }
+  }
 
   async function submit(e) {
     e.preventDefault();
@@ -356,6 +380,32 @@ function TutorForm({ api, notify, editing, onDone, onCancel }) {
             <option value="rejected">Từ chối (ẩn)</option>
           </select>
         </Field>
+      )}
+      {editing && (
+        <div className="col-span-2 flex flex-col gap-3 bg-surface-container-low rounded-xl p-4 border border-outline-variant">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px]">military_tech</span>Điểm uy tín
+            </p>
+            <span className="text-lg font-bold text-on-surface">{repScore ?? 100}<span className="text-xs font-normal text-on-surface-variant">/100</span></span>
+          </div>
+          <div className="grid grid-cols-[100px_1fr_auto] gap-2 items-end">
+            <div>
+              <label className={labelCls}>+/- điểm</label>
+              <input type="number" className={inputCls} value={repDelta} onChange={e => setRepDelta(e.target.value)} placeholder="vd. -10" />
+            </div>
+            <div>
+              <label className={labelCls}>Lý do</label>
+              <input className={inputCls} value={repReason} onChange={e => setRepReason(e.target.value)} placeholder="Vì sao điều chỉnh điểm này?" />
+            </div>
+            <button type="button" onClick={applyReputation} disabled={repBusy}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-white hover:brightness-110 disabled:opacity-50 transition-all">
+              {repBusy && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              Áp dụng
+            </button>
+          </div>
+          <p className="text-[11px] text-on-surface-variant">Điểm giảm dưới 30 sẽ tự động khóa tài khoản gia sư và gửi thông báo.</p>
+        </div>
       )}
       <Field label="Hình thức dạy">
         <div className="flex gap-2">
