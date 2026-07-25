@@ -5106,7 +5106,7 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
   try {
     const userResult = await pool.query(
-      `SELECT id, full_name, email, role, picture,
+      `SELECT id, full_name, email, role, picture, city, phone,
               COALESCE(is_banned, false) AS is_banned, created_at
        FROM users WHERE id = $1`,
       [id]
@@ -5118,8 +5118,9 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
     if (user.role === "tutor") {
       const tpResult = await pool.query(
         `SELECT bio, subjects, experience_years, hourly_rate,
-                certificate_url, cccd_url, status AS approval_status,
-                reject_reason, profile_photo_url, phone, city, country
+                certificate_url, cccd_url, status,
+                reject_reason, profile_photo_url, phone, city, country,
+                reputation_score, avg_rating, review_count
          FROM tutor_profiles WHERE user_id = $1 LIMIT 1`,
         [id]
       );
@@ -5194,6 +5195,38 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
     return res.json(user);
   } catch (err) {
     console.error("GET /api/admin/users/:id error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ── PATCH /api/admin/users/:id ───────────────────────────────────────────────
+// Sửa thông tin cơ bản của user (học sinh/phụ huynh). Gia sư nên dùng
+// PATCH /api/admin/tutors/:id để sửa luôn cả hồ sơ gia sư trong 1 giao dịch.
+// Body: { full_name?, picture?, city?, phone? }
+app.patch("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { full_name, picture, city, phone } = req.body || {};
+
+  try {
+    const chk = await pool.query("SELECT role FROM users WHERE id = $1", [id]);
+    if (!chk.rows.length) return res.status(404).json({ message: "Không tìm thấy người dùng." });
+    if (chk.rows[0].role === "admin") {
+      return res.status(403).json({ message: "Không thể sửa tài khoản admin." });
+    }
+
+    const result = await pool.query(
+      `UPDATE users SET
+         full_name = COALESCE($1, full_name),
+         picture   = COALESCE($2, picture),
+         city      = COALESCE($3, city),
+         phone     = COALESCE($4, phone)
+       WHERE id = $5
+       RETURNING id, full_name, email, role, picture, city, phone, is_banned, created_at`,
+      [full_name || null, picture || null, city || null, phone || null, id]
+    );
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error("PATCH /api/admin/users/:id error:", err);
     return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
@@ -5435,13 +5468,13 @@ app.patch("/api/admin/tutors/:id", verifyToken, requireAdmin, async (req, res) =
          education = COALESCE($8, education), qualifications = COALESCE($9, qualifications),
          gender = COALESCE($10, gender), profile_photo_url = COALESCE($11, profile_photo_url),
          suitable_students = COALESCE($12::jsonb, suitable_students),
-         status = COALESCE($13, status), updated_at = NOW()
-       WHERE user_id = $14`,
+         status = COALESCE($13, status), phone = COALESCE($14, phone), updated_at = NOW()
+       WHERE user_id = $15`,
       [b.bio || null, b.headline || null, b.subjects || null,
        b.hourly_rate != null ? Number(b.hourly_rate) : null,
        b.experience_years != null ? Number(b.experience_years) : null,
        methods, b.city || null, b.education || null, b.qualifications || null,
-       b.gender || null, b.photo || null, suitable, b.status || null, id]);
+       b.gender || null, b.photo || null, suitable, b.status || null, b.phone || null, id]);
     await client.query("COMMIT");
     return res.json({ message: "Đã cập nhật gia sư." });
   } catch (err) {
@@ -5449,6 +5482,76 @@ app.patch("/api/admin/tutors/:id", verifyToken, requireAdmin, async (req, res) =
     console.error("PATCH tutors error:", err);
     return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
   } finally { client.release(); }
+});
+
+// ── POST /api/admin/tutors/:id/reputation ── tăng/giảm điểm uy tín thủ công ──
+// Body: { delta: number (int, ≠0, |delta|≤100), reason: string (bắt buộc) }
+// Cùng ngưỡng auto-ban <30 điểm như luồng xử lý tranh chấp (xem penalty ở
+// resolve-dispute-v2 phía dưới) — giữ hành vi nhất quán dù điểm bị trừ từ đâu.
+app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { delta, reason } = req.body || {};
+  const deltaNum = Number(delta);
+
+  if (!Number.isInteger(deltaNum) || deltaNum === 0 || Math.abs(deltaNum) > 100) {
+    return res.status(400).json({ message: "delta phải là số nguyên khác 0, trong khoảng -100..100." });
+  }
+  if (!String(reason || "").trim()) {
+    return res.status(400).json({ message: "Vui lòng nhập lý do điều chỉnh." });
+  }
+
+  const client = await pool.connect();
+  try {
+    const chk = await client.query("SELECT role FROM users WHERE id = $1", [id]);
+    if (!chk.rows.length) return res.status(404).json({ message: "Không tìm thấy gia sư." });
+    if (chk.rows[0].role !== "tutor") return res.status(400).json({ message: "User này không phải gia sư." });
+
+    await client.query("BEGIN");
+    const upd = await client.query(
+      `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
+       WHERE user_id = $2 RETURNING reputation_score`,
+      [deltaNum, id]
+    );
+    if (!upd.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Gia sư chưa có hồ sơ." });
+    }
+    const newScore = upd.rows[0].reputation_score;
+
+    let autoBanned = false;
+    if (newScore < 30) {
+      await client.query(`UPDATE users SET is_banned=true WHERE id=$1`, [id]);
+      autoBanned = true;
+      await safeNotifyUser(client, {
+        userId: id, type: 'system', channels: ['IN_APP'],
+        templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
+        title: 'Tài khoản bị khóa',
+        body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+        icon: 'block', sourceType: 'user', sourceId: id, priority: 'critical',
+        idempotencyKey: `reputation_auto_ban:${id}:manual:${Date.now()}`,
+      });
+    }
+
+    await client.query("COMMIT");
+
+    await safeNotifyUser(pool, {
+      userId: id, type: 'system', channels: ['IN_APP'],
+      templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
+      title: deltaNum > 0 ? 'Điểm uy tín được cộng thêm' : 'Điểm uy tín bị trừ',
+      body: `Admin đã ${deltaNum > 0 ? 'cộng' : 'trừ'} ${Math.abs(deltaNum)} điểm uy tín. Lý do: ${reason.trim()}. Điểm hiện tại: ${newScore}/100.`,
+      icon: deltaNum > 0 ? 'trending_up' : 'trending_down',
+      sourceType: 'user', sourceId: id, priority: 'normal',
+      idempotencyKey: `reputation_manual_adjustment:${id}:${Date.now()}`,
+    });
+
+    return res.json({ message: "Đã cập nhật điểm uy tín.", reputation_score: newScore, auto_banned: autoBanned });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("POST /api/admin/tutors/:id/reputation error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
+  } finally {
+    client.release();
+  }
 });
 
 // Xóa 1 câu trong savepoint — bảng không tồn tại / lỗi lẻ KHÔNG làm hỏng cả
