@@ -18,6 +18,7 @@ export default function BookingModal({ tutor, onClose }) {
   const [date, setDate]       = useState('');
   const [slot, setSlot]       = useState(TIME_SLOTS[0]);
   const [method, setMethod]   = useState(singleMethod || '');
+  const [meetingAddress, setMeetingAddress] = useState('');
   const [note, setNote]       = useState('');
   const [busy, setBusy]       = useState(false);
   const [error, setError]     = useState('');
@@ -58,6 +59,7 @@ export default function BookingModal({ tutor, onClose }) {
           tutor_id: tutor.id, tutor_name: tutor.full_name,
           subject, lesson_date: date, time_slot: slot, note,
           teaching_method: method || null,
+          meeting_address: (method || singleMethod) === 'offline' ? meetingAddress : null,
           targetStudentId: user?.role === 'parent' ? selectedChildId : undefined
         }),
       });
@@ -90,6 +92,7 @@ export default function BookingModal({ tutor, onClose }) {
         slot,
         subject,
         method,
+        meeting_address: (method || singleMethod) === 'offline' ? meetingAddress : null,
         note
       }));
       const returnUrl = `${window.location.origin}/#/payment/result`;
@@ -258,6 +261,15 @@ export default function BookingModal({ tutor, onClose }) {
                   <p className="mt-1 text-xs text-[#8a8ca0]">
                     {METHOD_OPTIONS.find(o => o.value === (method || singleMethod))?.hint}
                   </p>
+                )}
+                {(method || singleMethod) === 'offline' && (
+                  <div className="mt-3">
+                    <label className="block text-sm font-semibold text-[#444653] mb-1">Địa điểm học (Bắt buộc) *</label>
+                    <input type="text" value={meetingAddress} onChange={e => setMeetingAddress(e.target.value)}
+                      placeholder="VD: Quán Cafe XYZ, đường ABC..." required
+                      className="w-full px-3 py-2 rounded-lg border border-[#d6d9e0] text-sm focus:outline-none focus:border-[#00288e]" />
+                    <p className="mt-1 text-[11px] text-[#8a8ca0]">Hệ thống sẽ tự động kiểm tra khoảng cách đến gia sư.</p>
+                  </div>
                 )}
               </div>
               <div>
