@@ -10222,14 +10222,25 @@ app.get("/api/parent/overview", verifyToken, async (req, res) => {
       ORDER BY epa.submitted_at DESC LIMIT 10
     `, [parentId]);
 
-    // Upcoming classes (tutor_sessions where status=scheduled/ongoing)
+    // Upcoming classes (bookings + tutor_sessions)
     const upcomingClassesRes = await pool.query(`
-      SELECT ts.id, ts.scheduled_at, ts.duration_mins, ts.subject, ts.status, u.full_name AS tutor_name, stu.full_name AS student_name
+      SELECT b.id, (b.lesson_date::text || ' ' || COALESCE(b.time_slot, '00:00:00')) AS scheduled_at, 60 AS duration_mins, b.subject, b.status, u.full_name AS tutor_name, stu.full_name AS student_name
+      FROM bookings b
+      JOIN users u ON b.tutor_id = u.id
+      JOIN users stu ON b.student_id = stu.id
+      WHERE b.status IN ('Approved', 'InProgress', 'Pending') 
+        AND b.lesson_date >= CURRENT_DATE
+        AND b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
+
+      UNION ALL
+
+      SELECT ts.id, ts.scheduled_at::text, ts.duration_mins, ts.subject, ts.status, u.full_name AS tutor_name, stu.full_name AS student_name
       FROM tutor_sessions ts
       JOIN users u ON ts.tutor_id = u.id
       JOIN users stu ON ts.student_id = stu.id
       WHERE ts.status IN ('scheduled', 'ongoing') AND ts.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
-      ORDER BY ts.scheduled_at ASC LIMIT 5
+
+      ORDER BY scheduled_at ASC LIMIT 5
     `, [parentId]);
 
     return res.json({
@@ -10281,7 +10292,7 @@ app.get("/api/parent/students", verifyToken, async (req, res) => {
 app.get("/api/parent/tutors", verifyToken, async (req, res) => {
   try {
     const parentId = req.user.userId;
-    const res2 = await pool.query(`
+    let res2 = await pool.query(`
       SELECT DISTINCT
         u.id, u.full_name, u.email, u.picture,
         tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, tp.teaching_style, tp.status, tp.created_at
@@ -10291,6 +10302,19 @@ app.get("/api/parent/tutors", verifyToken, async (req, res) => {
       WHERE tp.status = 'approved' AND b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
       ORDER BY tp.created_at DESC
     `, [parentId]);
+
+    if (res2.rows.length === 0) {
+      res2 = await pool.query(`
+        SELECT u.id, u.full_name, u.email, u.picture,
+               tp.subjects, tp.hourly_rate, tp.headline, tp.bio, tp.experience_years, tp.location, tp.teaching_style, tp.status, tp.created_at
+        FROM tutor_profiles tp
+        JOIN users u ON tp.user_id = u.id
+        WHERE tp.status = 'approved'
+        ORDER BY tp.created_at DESC
+        LIMIT 20
+      `);
+    }
+
     return res.json({ tutors: res2.rows });
   } catch (error) {
     console.error("Parent tutors error:", error);
@@ -10474,21 +10498,33 @@ app.get('/api/parent/children/:studentId/schedule', verifyToken, async (req, res
     if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
 
     const sessions = await pool.query(`
-      SELECT ts.id, ts.subject, ts.scheduled_at, ts.duration_mins, ts.status, ts.leave_reason, ts.notes,
+      SELECT 
+        b.id, b.subject, 
+        (b.lesson_date::text || ' ' || COALESCE(b.time_slot, '00:00:00')) AS scheduled_at, 
+        COALESCE(b.duration_mins, 60) AS duration_mins, b.status, b.leave_reason, b.note AS notes,
+        u.id AS tutor_id, u.full_name AS tutor_name, u.picture AS tutor_picture
+      FROM bookings b
+      JOIN users u ON b.tutor_id = u.id
+      WHERE b.student_id = $1 AND b.status IN ('Approved', 'InProgress', 'Pending', 'Completed', 'Cancelled', 'cancelled')
+
+      UNION ALL
+
+      SELECT ts.id, ts.subject, ts.scheduled_at::text, ts.duration_mins, ts.status, ts.leave_reason, ts.notes,
              u.id AS tutor_id, u.full_name AS tutor_name, u.picture AS tutor_picture
       FROM tutor_sessions ts
       JOIN users u ON ts.tutor_id = u.id
-      WHERE ts.student_id = $1 AND ts.scheduled_at >= NOW() - INTERVAL '7 days'
-      ORDER BY ts.scheduled_at ASC LIMIT 20
+      WHERE ts.student_id = $1
+
+      ORDER BY scheduled_at DESC LIMIT 30
     `, [studentId]);
 
     const absences = await pool.query(`
-      SELECT COUNT(*) AS count FROM tutor_sessions
-      WHERE student_id=$1 AND status IN ('absent','late') AND scheduled_at >= date_trunc('month', NOW())
+      SELECT COUNT(*) AS count FROM bookings
+      WHERE student_id=$1 AND status IN ('Cancelled','Disputed') AND lesson_date >= date_trunc('month', CURRENT_DATE)
     `, [studentId]);
 
     return res.json({ sessions: sessions.rows, absences_this_month: parseInt(absences.rows[0].count) });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+  } catch (e) { console.error('GET /api/parent/children/:studentId/schedule error:', e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // POST /api/parent/children/:studentId/schedule/:sessionId/leave
@@ -10496,31 +10532,82 @@ app.post('/api/parent/children/:studentId/schedule/:sessionId/leave', verifyToke
   try {
     const { studentId, sessionId } = req.params;
     const { reason } = req.body;
+
+    if (!reason || typeof reason !== 'string' || !reason.trim()) {
+      return res.status(400).json({ message: 'Vui lòng cung cấp lý do xin nghỉ phép.' });
+    }
+
+    const cleanReason = reason.trim();
     const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
     if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
 
-    const updated = await pool.query(`
-      UPDATE tutor_sessions SET status='cancelled', leave_reason=$1, updated_at=NOW()
-      WHERE id=$2 AND student_id=$3 AND status='scheduled' RETURNING *
-    `, [reason || null, sessionId, studentId]);
+    let sessionInfo = null;
 
-    if (!updated.rows.length) return res.status(404).json({ message: 'Không tìm thấy buổi học hoặc đã không thể hủy.' });
+    // 1) Update bookings table if applicable (record leave_reason without auto-cancelling immediately)
+    const bookingUpdate = await pool.query(`
+      UPDATE bookings 
+      SET leave_reason = $1, leave_requested_at = NOW(), updated_at = NOW()
+      WHERE id = $2 AND student_id = $3
+      RETURNING id, tutor_id, student_id, subject, lesson_date, time_slot
+    `, [cleanReason, sessionId, studentId]);
 
-    const session = updated.rows[0];
+    if (bookingUpdate.rows.length) {
+      const b = bookingUpdate.rows[0];
+      const dateStr = b.lesson_date ? new Date(b.lesson_date).toLocaleDateString('vi-VN') : '';
+      sessionInfo = {
+        tutor_id: b.tutor_id,
+        student_id: b.student_id,
+        subject: b.subject || 'Buổi học',
+        dateLabel: dateStr + (b.time_slot ? ` (${b.time_slot})` : ''),
+      };
+
+      // Record note in attendance table for tutor reference
+      await pool.query(`
+        INSERT INTO attendance (booking_id, tutor_id, student_id, note, marked_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (booking_id)
+        DO UPDATE SET note = EXCLUDED.note, updated_at = NOW()
+      `, [b.id, b.tutor_id, b.student_id, cleanReason]);
+    } else {
+      // 2) Update tutor_sessions table if applicable
+      const sessionUpdate = await pool.query(`
+        UPDATE tutor_sessions 
+        SET leave_reason = $1, updated_at = NOW()
+        WHERE id = $2 AND student_id = $3
+        RETURNING id, tutor_id, student_id, subject, scheduled_at
+      `, [cleanReason, sessionId, studentId]);
+
+      if (sessionUpdate.rows.length) {
+        const ts = sessionUpdate.rows[0];
+        sessionInfo = {
+          tutor_id: ts.tutor_id,
+          student_id: ts.student_id,
+          subject: ts.subject || 'Buổi học',
+          dateLabel: ts.scheduled_at ? new Date(ts.scheduled_at).toLocaleDateString('vi-VN') : '',
+        };
+      }
+    }
+
+    if (!sessionInfo) {
+      return res.status(404).json({ message: 'Không tìm thấy buổi học hoặc buổi học đã được xử lý.' });
+    }
+
     const studentRes = await pool.query('SELECT full_name FROM users WHERE id=$1', [studentId]);
-    // Batch 20.1: routed through safeNotifyUser (no transaction here originally, uses pool)
+    const studentName = studentRes.rows[0]?.full_name || 'Học sinh';
+
     await safeNotifyUser(pool, {
-      userId: session.tutor_id, type: 'student_absent', channels: ['IN_APP'],
+      userId: sessionInfo.tutor_id, type: 'student_absent', channels: ['IN_APP', 'EMAIL'],
       templateKey: 'parent_leave_request', eventType: 'parent_leave_request',
-      title: 'Học sinh xin nghỉ',
-      body: `${studentRes.rows[0]?.full_name || 'Học sinh'} xin nghỉ buổi ${session.subject} ngày ${new Date(session.scheduled_at).toLocaleDateString('vi-VN')}. Lý do: ${reason || 'Không có lý do.'}`,
+      title: 'Học sinh xin nghỉ phép',
+      body: `${studentName} xin nghỉ buổi ${sessionInfo.subject} ngày ${sessionInfo.dateLabel}. Lý do: ${cleanReason}`,
+      data: { studentName, subject: sessionInfo.subject, dateLabel: sessionInfo.dateLabel, reason: cleanReason },
       icon: 'event_busy', refId: sessionId, refType: 'session',
       sourceType: 'leave_request', sourceId: sessionId, priority: 'normal',
-      idempotencyKey: `leave_request:${sessionId}:${session.tutor_id}`,
+      idempotencyKey: `leave_request:${sessionId}:${sessionInfo.tutor_id}:${Date.now()}`,
     });
 
-    return res.json({ message: 'Đã gửi yêu cầu nghỉ phép.' });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+    return res.json({ message: 'Đã gửi yêu cầu nghỉ phép thành công.' });
+  } catch (e) { console.error('POST leave request error:', e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // GET /api/parent/children/:studentId/reviews
@@ -10531,15 +10618,72 @@ app.get('/api/parent/children/:studentId/reviews', verifyToken, async (req, res)
     if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
 
     const reviews = await pool.query(`
-      SELECT tr.id, tr.subject, tr.period_label, tr.content, tr.rating, tr.created_at,
-             u.full_name AS tutor_name, u.picture AS tutor_picture
+      SELECT 
+        se.id, 
+        COALESCE(b.subject, 'Buổi học') AS subject, 
+        TO_CHAR(se.created_at, 'DD/MM/YYYY') AS period_label,
+        CASE 
+          WHEN se.comments IS NOT NULL AND se.parent_recommendation IS NOT NULL THEN
+            se.comments || E'\n\n💡 Dặn dò Phụ huynh: ' || se.parent_recommendation
+          WHEN se.comments IS NOT NULL THEN se.comments
+          WHEN se.parent_recommendation IS NOT NULL THEN '💡 Dặn dò Phụ huynh: ' || se.parent_recommendation
+          ELSE 'Gia sư đã hoàn thành đánh giá 5 tiêu chí buổi học.'
+        END AS content,
+        ROUND(
+          (COALESCE(se.score_attendance, 5) + 
+           COALESCE(se.score_attitude, 5) + 
+           COALESCE(se.score_comprehension, 5) + 
+           COALESCE(se.score_focus, 5) + 
+           COALESCE(se.score_homework, 5)) / 5.0
+        ) AS rating,
+        se.created_at,
+        u.full_name AS tutor_name,
+        u.picture AS tutor_picture,
+        se.booking_id,
+        se.score_attendance,
+        se.score_attitude,
+        se.score_comprehension,
+        se.score_focus,
+        se.score_homework,
+        se.comments,
+        se.parent_recommendation
+      FROM session_evaluations se
+      JOIN users u ON se.tutor_id = u.id
+      LEFT JOIN bookings b ON se.booking_id = b.id
+      WHERE se.student_id = $1
+
+      UNION ALL
+
+      SELECT 
+        tr.id,
+        tr.subject,
+        tr.period_label,
+        tr.content,
+        tr.rating,
+        tr.created_at,
+        u.full_name AS tutor_name,
+        u.picture AS tutor_picture,
+        NULL AS booking_id,
+        NULL AS score_attendance,
+        NULL AS score_attitude,
+        NULL AS score_comprehension,
+        NULL AS score_focus,
+        NULL AS score_homework,
+        tr.content AS comments,
+        NULL AS parent_recommendation
       FROM tutor_reviews tr
       JOIN users u ON tr.tutor_id = u.id
-      WHERE tr.student_id=$1 ORDER BY tr.created_at DESC LIMIT 20
+      WHERE tr.student_id = $1
+
+      ORDER BY created_at DESC
+      LIMIT 30
     `, [studentId]);
 
     return res.json({ reviews: reviews.rows });
-  } catch (e) { console.error(e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+  } catch (e) { 
+    console.error('GET /api/parent/children/:studentId/reviews error:', e); 
+    res.status(500).json({ message: 'Lỗi máy chủ.' }); 
+  }
 });
 
 // POST /api/tutor/reviews — gia sư tạo nhận xét định kỳ
@@ -14727,6 +14871,14 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
   }
 });
 
+// Module-level: lấy ví admin (để chia hoa hồng). Đặt ở top-level để MỌI route — kể cả
+// các route đăng ký ngoài startServer() — đều truy cập được.
+async function getAdminWalletId(client) {
+  if (process.env.ADMIN_WALLET_ID) return process.env.ADMIN_WALLET_ID;
+  const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
+  return aw.rows.length ? aw.rows[0].id : null;
+}
+
 async function startServer() {
   // Auto-migrate: add is_banned column if it doesn't exist yet
   try {
@@ -15440,6 +15592,8 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
          b.note AS notes,
          b.booking_type AS "bookingType",
          b.status AS "bookingStatus",
+         b.leave_reason AS "leaveReason",
+         b.leave_requested_at AS "leaveRequestedAt",
          a.status AS "attendanceStatus",
          a.note AS "attendanceNote",
          a.marked_at AS "markedAt",
@@ -15450,7 +15604,7 @@ app.get("/api/tutor/students", verifyToken, requireTutor, async (req, res) => {
        LEFT JOIN attendance a ON a.booking_id = b.id
        LEFT JOIN lesson_feedbacks f ON f.lesson_id = b.id
        WHERE b.tutor_id = $1
-         AND b.status IN ('Approved', 'Pending')
+         AND b.status IN ('Approved', 'Pending', 'Cancelled', 'Completed')
        ORDER BY b.lesson_date DESC, b.time_slot DESC`,
       [tutorId]
     );
@@ -17250,7 +17404,11 @@ app.patch('/api/reschedule-requests/:requestId/reject', verifyToken, requireTuto
   }
 });
 
-// POST /api/tutor/bookings/:id/instant-accept
+// POST /api/tutor/bookings/:id/instant-accept — BƯỚC 1: gia sư bấm "Chấp Nhận" (chưa có
+// link phòng học). Chuyển Pending → Accepted để: (a) loại khỏi cron auto-timeout 60s vốn
+// chỉ nhắm status='Pending', (b) báo cho học sinh dừng đếm ngược, chuyển sang "đang chờ
+// gia sư chuẩn bị phòng". BƯỚC 2 (nhập link + bắt đầu) do POST /api/instant-booking/accept
+// đảm nhiệm, chuyển Accepted → InProgress.
 app.post('/api/tutor/bookings/:id/instant-accept', verifyToken, requireTutor, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -17260,27 +17418,33 @@ app.post('/api/tutor/bookings/:id/instant-accept', verifyToken, requireTutor, as
       'SELECT status, booking_type, student_id, subject, lesson_fee FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE',
       [req.params.id, req.user.userId]
     );
-    if (!bRes.rows.length) throw new Error('Booking not found');
-    if (bRes.rows[0].status !== 'Pending') throw new Error('Yêu cầu không còn ở trạng thái chờ.');
-    if (bRes.rows[0].booking_type !== 'Instant') throw new Error('Not an instant booking');
+    if (!bRes.rows.length) throw new Error('Không tìm thấy yêu cầu hoặc không thuộc về bạn.');
+    if (bRes.rows[0].booking_type !== 'Instant') throw new Error('Không phải yêu cầu Học Ngay.');
+    if (bRes.rows[0].status !== 'Pending') throw new Error('Yêu cầu không còn ở trạng thái chờ (có thể đã hết hạn).');
 
     const { student_id, subject } = bRes.rows[0];
 
-    await client.query("UPDATE bookings SET status = 'InProgress', updated_at = NOW() WHERE id = $1", [req.params.id]);
+    await client.query("UPDATE bookings SET status = 'Accepted', updated_at = NOW() WHERE id = $1", [req.params.id]);
+    // Gia sư đã cam kết nhận lớp này — chuyển Busy ngay để không nhận thêm yêu cầu khác
+    // trong lúc đang chuẩn bị link phòng học.
     await client.query("UPDATE tutor_profiles SET availability_status = 'Busy', updated_at = NOW() WHERE user_id = $1", [req.user.userId]);
 
-    // Thông báo cho học sinh biết gia sư đã chấp nhận
+    // Thông báo cho học sinh biết gia sư đã xác nhận
     await safeNotifyUser(client, {
       userId: student_id, type: 'instant_accepted', channels: ['IN_APP'],
       templateKey: 'instant_accepted', eventType: 'instant_accepted',
-      title: 'Gia sư đã chấp nhận!',
-      body: `Gia sư đã chấp nhận yêu cầu Học Ngay môn ${subject || ''}. Hãy vào phòng học ngay!`,
+      title: 'Gia sư đã xác nhận!',
+      body: `Gia sư đã xác nhận yêu cầu Học Ngay môn ${subject || ''} và đang chuẩn bị phòng học...`,
       icon: 'bolt', refId: req.params.id, refType: 'booking',
       sourceType: 'booking', sourceId: req.params.id, priority: 'high',
       idempotencyKey: `instant_accept:${req.params.id}:${student_id}`,
     });
 
     await client.query('COMMIT');
+
+    if (req.app.get('io')) {
+      req.app.get('io').to(`user-${student_id}`).emit('instantBookingAcknowledged', { booking_id: req.params.id });
+    }
     res.json({ success: true });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -17291,7 +17455,8 @@ app.post('/api/tutor/bookings/:id/instant-accept', verifyToken, requireTutor, as
   }
 });
 
-// POST /api/tutor/bookings/:id/instant-reject
+// POST /api/tutor/bookings/:id/instant-reject — có thể từ chối khi còn Pending (chưa bấm
+// Chấp Nhận) hoặc Accepted (đã bấm Chấp Nhận nhưng bấm Quay Lại rồi đổi ý ở bước nhập link).
 app.post('/api/tutor/bookings/:id/instant-reject', verifyToken, requireTutor, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -17303,7 +17468,7 @@ app.post('/api/tutor/bookings/:id/instant-reject', verifyToken, requireTutor, as
       [req.params.id, req.user.userId]
     );
     if (!bRes.rows.length) throw new Error('Booking not found');
-    if (bRes.rows[0].status !== 'Pending') throw new Error('Booking is not Pending');
+    if (!['Pending', 'Accepted'].includes(bRes.rows[0].status)) throw new Error('Booking is not Pending');
 
     const { student_id, lesson_fee } = bRes.rows[0];
     let { payer_wallet_id } = bRes.rows[0];
@@ -17322,12 +17487,61 @@ app.post('/api/tutor/bookings/:id/instant-reject', verifyToken, requireTutor, as
       'UPDATE wallets SET balance = balance + $1, frozen_balance = GREATEST(frozen_balance - $1, 0) WHERE id = $2',
       [lesson_fee, payer_wallet_id]
     );
+    // Nếu đã chuyển Busy lúc Accepted thì trả lại Online
+    await client.query("UPDATE tutor_profiles SET availability_status = 'Online' WHERE user_id = $1 AND availability_status = 'Busy'", [req.user.userId]);
 
     await client.query('COMMIT');
     res.json({ success: true });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Reject instant error:', err);
+    res.status(400).json({ message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/bookings/:id/instant-cancel — học sinh (hoặc phụ huynh đặt hộ) tự hủy yêu cầu
+// Học Ngay trong lúc vẫn đang chờ gia sư (Pending) hoặc gia sư đã xác nhận nhưng chưa vào
+// phòng (Accepted). Hoàn tiền ngay từ frozen_balance, không phải chờ cron 60s (cron chỉ xử
+// lý trường hợp KHÔNG ai thao tác gì).
+app.post('/api/bookings/:id/instant-cancel', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const bRes = await client.query(
+      'SELECT status, tutor_id, student_id, lesson_fee, payer_wallet_id, booking_type FROM bookings WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!bRes.rows.length) throw new Error('Không tìm thấy yêu cầu.');
+    const b = bRes.rows[0];
+    if (b.booking_type !== 'Instant') throw new Error('Không phải yêu cầu Học Ngay.');
+    if (!(await canAccessInstantBooking(client, req, b))) throw new Error('Bạn không có quyền hủy yêu cầu này.');
+    if (!['Pending', 'Accepted'].includes(b.status)) throw new Error('Yêu cầu không còn ở trạng thái có thể hủy.');
+
+    await setLedgerContext(client, { reason_code: 'INSTANT_BOOKING_STUDENT_CANCEL', source: 'api', reference_type: 'booking', reference_id: req.params.id, actor_id: req.user.userId });
+
+    let payerWalletId = b.payer_wallet_id;
+    if (!payerWalletId) {
+      const wRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [b.student_id]);
+      payerWalletId = wRes.rows[0]?.id || null;
+    }
+
+    await client.query("UPDATE bookings SET status = 'Cancelled', updated_at = NOW() WHERE id = $1", [req.params.id]);
+    if (payerWalletId && Number(b.lesson_fee) > 0) {
+      await client.query('UPDATE wallets SET balance = balance + $1, frozen_balance = GREATEST(frozen_balance - $1, 0) WHERE id = $2', [b.lesson_fee, payerWalletId]);
+    }
+    // Nếu gia sư đã chuyển Busy do đã Accepted, trả lại Online vì buổi học không diễn ra nữa
+    await client.query("UPDATE tutor_profiles SET availability_status = 'Online' WHERE user_id = $1 AND availability_status = 'Busy'", [b.tutor_id]);
+
+    await client.query('COMMIT');
+
+    if (req.app.get('io') && b.tutor_id) {
+      req.app.get('io').to(`user-${b.tutor_id}`).emit('instantBookingCancelled', { booking_id: req.params.id });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
     res.status(400).json({ message: err.message });
   } finally {
     client.release();
@@ -17358,12 +17572,9 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
 // REFUND POLICY V2.1 — helpers (Batch 16). Pure decision helpers + audit utils.
 // ═══════════════════════════════════════════════════════════════════════════
 // Refund decision helpers + parseBookingStartDateTime → utils/businessRules.js
-
-async function getAdminWalletId(client) {
-  if (process.env.ADMIN_WALLET_ID) return process.env.ADMIN_WALLET_ID;
-  const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
-  return aw.rows.length ? aw.rows[0].id : null;
-}
+// LƯU Ý: getAdminWalletId đã được chuyển ra module top-level (ngay trước startServer)
+// để các route đăng ký NGOÀI startServer (VD nhóm Instant Learning V2 ở cuối file) cũng
+// gọi được — trước đây nó là hàm cục bộ trong startServer nên gọi từ ngoài sẽ "not defined".
 
 // Idempotent refund-log insert — the UNIQUE(target_type,target_id,student_id)
 // index makes this the atomic double-refund lock. Returns the new log id, or
@@ -18076,11 +18287,50 @@ TIN NHẮN CỦA HỌC SINH: "${message}"`;
     try {
       const { studentId } = req.params;
       
-      // Sử dụng pg pool thay vì supabase client
       const query = `
-        SELECT * FROM lesson_feedbacks
-        WHERE student_id = $1
+        SELECT 
+          se.id,
+          se.student_id,
+          COALESCE(b.subject, 'Buổi học') AS subject_name,
+          CASE 
+            WHEN se.score_comprehension >= 4 THEN 'Tốt'
+            WHEN se.score_comprehension >= 3 THEN 'Khá'
+            ELSE 'Cần cố gắng'
+          END AS understanding_level,
+          COALESCE(se.score_focus, 5) AS focus_rating,
+          CASE 
+            WHEN se.score_homework >= 4 THEN 'Hoàn thành tốt'
+            WHEN se.score_homework >= 3 THEN 'Hoàn thành'
+            ELSE 'Chưa hoàn thành'
+          END AS homework_status,
+          CASE 
+            WHEN se.comments IS NOT NULL AND se.parent_recommendation IS NOT NULL THEN
+              se.comments || E'\n\n💡 Dặn dò Phụ huynh: ' || se.parent_recommendation
+            WHEN se.comments IS NOT NULL THEN se.comments
+            WHEN se.parent_recommendation IS NOT NULL THEN se.parent_recommendation
+            ELSE 'Gia sư đã đánh giá 5 tiêu chí buổi học.'
+          END AS tutor_note,
+          se.created_at
+        FROM session_evaluations se
+        LEFT JOIN bookings b ON se.booking_id = b.id
+        WHERE se.student_id = $1
+
+        UNION ALL
+
+        SELECT 
+          lf.id,
+          lf.student_id,
+          lf.subject_name,
+          lf.understanding_level,
+          lf.focus_rating,
+          lf.homework_status,
+          lf.tutor_note,
+          lf.created_at
+        FROM lesson_feedbacks lf
+        WHERE lf.student_id = $1
+
         ORDER BY created_at DESC
+        LIMIT 30
       `;
       const result = await pool.query(query, [studentId]);
       const data = result.rows;
@@ -18264,7 +18514,7 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
         if (logId) {
           await setLedgerContext(client, { reason_code: settlement.reasonCode, source: 'api', reference_type: 'booking', reference_id: booking.id, transaction_id: booking.escrow_tx_id, actor_id: req.user.userId, policy_version: ATTENDANCE_POLICY_VERSION });
           await client.query('SELECT refund_escrow($1,$2,$3)', [booking.escrow_tx_id, booking.payer_wallet_id, lessonFee]);
-          await client.query(`UPDATE bookings SET escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1`, [booking.id]);
+          await client.query("UPDATE bookings SET status=CASE WHEN $2 = 'excused' THEN 'Cancelled' ELSE status END, escrow_released_at=NOW(), auto_release_at=NULL WHERE id=$1", [booking.id, status]);
 
           const notifTitle = status === 'excused' ? 'Hoàn tiền — nghỉ có phép' : 'Hoàn tiền — buổi học vắng mặt';
           const notifBody = status === 'excused'
@@ -20790,6 +21040,11 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
   }
 });
   try {
+    // bookings: thêm leave_reason & leave_requested_at
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS leave_reason TEXT`);
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS leave_requested_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE attendance ADD COLUMN IF NOT EXISTS leave_reason TEXT`);
+
     // bookings: thêm escrow_tx_id (link tới transaction đang hold)
     await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS escrow_tx_id UUID REFERENCES transactions(id)`);
     // bookings: thêm payer_wallet_id (ai đã hold tiền)
@@ -22536,7 +22791,7 @@ app.get('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req,
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const offset   = (pageNum - 1) * limitNum;
 
-    const conditions = [`b.tutor_id = $1`, `b.status = 'Approved'`, `b.lesson_date <= CURRENT_DATE`];
+    const conditions = [`b.tutor_id = $1`, `b.status IN ('Approved', 'Completed')`, `b.lesson_date <= CURRENT_DATE`];
     const params = [tutorId];
     let idx = 2;
 
@@ -22625,8 +22880,8 @@ app.get('/api/tutor/session-evaluations/:bookingId', verifyToken, requireTutor, 
 
     const booking = bookingRes.rows[0];
 
-    if (booking.status !== 'Approved') {
-      return res.status(400).json({ message: 'Chỉ có thể đánh giá buổi học đã hoàn thành (Approved).' });
+    if (!['Approved', 'Completed'].includes(booking.status)) {
+      return res.status(400).json({ message: 'Chỉ có thể đánh giá buổi học đã hoàn thành.' });
     }
 
     const evalRes = await pool.query(
@@ -22670,7 +22925,7 @@ app.post('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req
       }
     }
 
-    // Kiểm tra booking thuộc tutor và đã Approved
+    // Kiểm tra booking thuộc tutor và đã Approved/Completed
     const bookingRes = await pool.query(
       `SELECT id, student_id, status, lesson_date FROM bookings WHERE id = $1 AND tutor_id = $2`,
       [booking_id, tutorId]
@@ -22679,10 +22934,10 @@ app.post('/api/tutor/session-evaluations', verifyToken, requireTutor, async (req
       return res.status(404).json({ message: 'Booking không tìm thấy hoặc không thuộc quyền của bạn.' });
     }
     const booking = bookingRes.rows[0];
-    if (booking.status !== 'Approved') {
-      return res.status(400).json({ message: 'Chỉ đánh giá được buổi học đã hoàn thành (Approved).' });
+    if (!['Approved', 'Completed'].includes(booking.status)) {
+      return res.status(400).json({ message: 'Chỉ đánh giá được buổi học đã hoàn thành.' });
     }
-    if (new Date(booking.lesson_date) > new Date()) {
+    if (booking.status !== 'Completed' && new Date(booking.lesson_date) > new Date()) {
       return res.status(400).json({ message: 'Không thể đánh giá buổi học chưa diễn ra.' });
     }
 
@@ -22881,7 +23136,7 @@ app.get('/api/tutor/session-eval-stats', verifyToken, requireTutor, async (req, 
          COUNT(*) AS total_count
        FROM bookings b
        LEFT JOIN session_evaluations se ON se.booking_id = b.id
-       WHERE b.tutor_id = $1 AND b.status = 'Approved' AND b.lesson_date <= CURRENT_DATE`,
+       WHERE b.tutor_id = $1 AND b.status IN ('Approved', 'Completed') AND b.lesson_date <= CURRENT_DATE`,
       [tutorId]
     );
     return res.json(result.rows[0]);
@@ -22999,6 +23254,272 @@ setInterval(async () => {
   }
 }, 5 * 1000); // Check every 5 seconds
 
+
+// ============================================================
+// INSTANT LEARNING V2 ROUTES
+// ============================================================
+
+// Xác thực người dùng có quyền thao tác trên 1 booking Học Ngay: gia sư của
+// booking, học sinh của booking, hoặc phụ huynh đã liên kết với học sinh đó
+// (Học Ngay hỗ trợ phụ huynh đặt hộ con — xem targetStudentId ở POST /api/bookings/instant,
+// lúc đó req.user.userId là phụ huynh còn booking.student_id là con).
+async function canAccessInstantBooking(db, req, booking) {
+  if (req.user.userId === booking.tutor_id || req.user.userId === booking.student_id) return true;
+  if (req.user.role === 'parent') {
+    const link = await db.query(
+      'SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2',
+      [req.user.userId, booking.student_id]
+    );
+    if (link.rows.length > 0) return true;
+  }
+  return false;
+}
+
+// POST /api/instant-booking/accept
+app.post('/api/instant-booking/accept', verifyToken, requireTutor, async (req, res) => {
+  const { booking_id, meeting_link } = req.body;
+  if (!booking_id || !meeting_link) return res.status(400).json({ message: 'Thiếu booking_id hoặc meeting_link.' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const bRes = await client.query('SELECT status, student_id FROM bookings WHERE id = $1 AND tutor_id = $2 FOR UPDATE', [booking_id, req.user.userId]);
+    if (bRes.rows.length === 0) throw new Error('Không tìm thấy yêu cầu hoặc không thuộc về bạn.');
+    // 'Pending' = chưa qua bước xác nhận (fallback nếu bước acknowledge bị bỏ qua);
+    // 'Accepted' = luồng bình thường sau khi đã bấm "Chấp Nhận" ở bước 1.
+    if (!['Pending', 'Accepted'].includes(bRes.rows[0].status)) throw new Error('Yêu cầu không còn hợp lệ để bắt đầu buổi học.');
+
+    await client.query(
+      `UPDATE bookings SET status = 'InProgress', meeting_link = $1, updated_at = NOW() WHERE id = $2`,
+      [meeting_link, booking_id]
+    );
+    // Gia sư đang dạy → chuyển Busy để tránh nhận thêm yêu cầu Học Ngay khác cùng lúc;
+    // đồng thời lưu lại làm default_meet_link để lần sau tự điền sẵn (GET /api/tutor/profile).
+    await client.query(
+      `UPDATE tutor_profiles SET availability_status = 'Busy', default_meet_link = $1, updated_at = NOW() WHERE user_id = $2`,
+      [meeting_link, req.user.userId]
+    );
+    await client.query('COMMIT');
+
+    // Notify student
+    if (req.app.get('io')) {
+      req.app.get('io').to(`user-${bRes.rows[0].student_id}`).emit('instantBookingAccepted', {
+        booking_id,
+        meeting_link
+      });
+    }
+    res.json({ success: true, message: 'Đã chấp nhận yêu cầu.' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/instant-booking/:id/join — trả JSON (không redirect) vì verifyToken chỉ đọc
+// header Authorization; mở thẳng link trên tab mới (window.open) không thể gắn header,
+// nên frontend phải fetch có header rồi tự window.open(meeting_link) nhận được.
+app.get('/api/instant-booking/:id/join', verifyToken, async (req, res) => {
+  const bookingId = req.params.id;
+  try {
+    const bRes = await pool.query('SELECT student_id, tutor_id, meeting_link FROM bookings WHERE id = $1', [bookingId]);
+    if (bRes.rows.length === 0) return res.status(404).json({ message: 'Không tìm thấy buổi học.' });
+    const b = bRes.rows[0];
+
+    if (!(await canAccessInstantBooking(pool, req, b))) {
+      return res.status(403).json({ message: 'Bạn không có quyền tham gia buổi học này.' });
+    }
+    if (!b.meeting_link) return res.status(400).json({ message: 'Phòng học chưa sẵn sàng.' });
+
+    const field = req.user.role === 'tutor' ? 'tutor_joined_at' : 'student_joined_at';
+    await pool.query(`UPDATE bookings SET ${field} = NOW() WHERE id = $1 AND ${field} IS NULL`, [bookingId]);
+
+    res.json({ meeting_link: b.meeting_link });
+  } catch (err) {
+    res.status(500).json({ message: 'Lỗi khi tham gia phòng học.' });
+  }
+});
+
+// POST /api/instant-booking/end
+app.post('/api/instant-booking/end', verifyToken, async (req, res) => {
+  const { booking_id, status } = req.body; // status: 'Completed' | 'Disputed'
+  if (!['Completed', 'Disputed'].includes(status)) {
+    return res.status(400).json({ message: "status phải là 'Completed' hoặc 'Disputed'." });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const bRes = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [booking_id]);
+    if (bRes.rows.length === 0) throw new Error('Không tìm thấy buổi học.');
+    const b = bRes.rows[0];
+
+    if (!(await canAccessInstantBooking(client, req, b))) {
+      throw new Error('Bạn không có quyền kết thúc buổi học này.');
+    }
+    if (b.status !== 'InProgress') throw new Error('Buổi học không ở trạng thái đang diễn ra.');
+
+    // Tính số phút trễ (so sánh thời điểm 2 bên vào phòng học)
+    let late_minutes_student = 0;
+    let late_minutes_tutor = 0;
+    if (b.student_joined_at && b.tutor_joined_at) {
+       const studentTime = new Date(b.student_joined_at).getTime();
+       const tutorTime = new Date(b.tutor_joined_at).getTime();
+       if (studentTime > tutorTime) {
+         late_minutes_student = Math.floor((studentTime - tutorTime) / 60000);
+       } else {
+         late_minutes_tutor = Math.floor((tutorTime - studentTime) / 60000);
+       }
+    }
+
+    if (status === 'Completed') {
+      const lessonFee = Number(b.lesson_fee) || 0;
+      let refund_amount = 0;
+      let final_fee = lessonFee;
+
+      // Gia sư trễ → hoàn tỉ lệ tương ứng cho học sinh
+      if (late_minutes_tutor > 0) {
+        const duration = b.duration_mins || 30;
+        const ratio = Math.min(late_minutes_tutor / duration, 1);
+        refund_amount = Math.round(final_fee * ratio);
+        final_fee = final_fee - refund_amount;
+      }
+
+      await client.query(`UPDATE bookings SET status = 'Completed', completed_at = NOW(), late_minutes_student = $1, late_minutes_tutor = $2, refund_amount = $3 WHERE id = $4`,
+        [late_minutes_student, late_minutes_tutor, refund_amount, booking_id]);
+
+      // Giải ngân — tiền Học Ngay được tạm giữ ở wallets.frozen_balance (KHÔNG phải
+      // held_balance; held_balance + release_escrow() là cơ chế escrow của lịch học
+      // thường, dùng nhầm ở đây sẽ khiến tiền học sinh bị kẹt vĩnh viễn ở frozen_balance).
+      if (b.payer_wallet_id && lessonFee > 0) {
+        const tutorWalletRes = await client.query('SELECT id FROM wallets WHERE user_id = $1', [b.tutor_id]);
+        const adminWalletId = await getAdminWalletId(client);
+        const tutorWalletId = tutorWalletRes.rows[0]?.id || null;
+
+        if (tutorWalletId && adminWalletId) {
+          const tutorAmount = Math.floor(final_fee * 0.9);
+          const adminAmount = final_fee - tutorAmount;
+
+          await setLedgerContext(client, { reason_code: 'INSTANT_BOOKING_COMPLETED_RELEASE', source: 'api', reference_type: 'booking', reference_id: booking_id, actor_id: req.user.userId });
+          await client.query('UPDATE wallets SET frozen_balance = GREATEST(frozen_balance - $1, 0) WHERE id = $2', [lessonFee, b.payer_wallet_id]);
+          if (refund_amount > 0) {
+            await client.query('UPDATE wallets SET balance = balance + $1 WHERE id = $2', [refund_amount, b.payer_wallet_id]);
+          }
+          await client.query('UPDATE wallets SET balance = balance + $1 WHERE id = $2', [tutorAmount, tutorWalletId]);
+          await client.query('UPDATE wallets SET balance = balance + $1 WHERE id = $2', [adminAmount, adminWalletId]);
+        }
+      }
+    } else {
+      await client.query(`UPDATE bookings SET status = 'Disputed', completed_at = NOW() WHERE id = $1`, [booking_id]);
+    }
+
+    // Gia sư hết bận sau khi buổi học kết thúc (dù Completed hay Disputed)
+    await client.query("UPDATE tutor_profiles SET availability_status = 'Online' WHERE user_id = $1 AND availability_status = 'Busy'", [b.tutor_id]);
+
+    await client.query('COMMIT');
+
+    // Bắn thông báo Socket.IO cho cả 2 bên (Học sinh & Gia sư) để giao diện tự mở modal đánh giá ngay lập tức
+    if (req.app && req.app.get('io')) {
+      try {
+        const io = req.app.get('io');
+        const payload = { booking_id, status, ended_by: req.user.userId };
+        if (b.student_id) io.to(`user-${b.student_id}`).emit('instantBookingEnded', payload);
+        if (b.tutor_id) io.to(`user-${b.tutor_id}`).emit('instantBookingEnded', payload);
+      } catch (ioErr) {
+        console.error('Socket emit error on instantBookingEnded:', ioErr.message);
+      }
+    }
+
+    // Ghi điểm danh "có mặt" (best-effort, không chặn response) để buổi Học Ngay đủ
+    // điều kiện đánh giá — POST /api/entity-reviews yêu cầu có attendance present.
+    if (status === 'Completed') {
+      try {
+        await client.query(
+          `INSERT INTO attendance (booking_id, tutor_id, student_id, status, note, marked_at)
+           VALUES ($1, $2, $3, 'present', NULL, NOW())
+           ON CONFLICT (booking_id) DO NOTHING`,
+          [booking_id, b.tutor_id, b.student_id]
+        );
+      } catch (attErr) {
+        console.error(`Non-fatal: could not record attendance for instant booking ${booking_id}:`, attErr.message);
+      }
+    }
+
+    res.json({ success: true, late_minutes_student, late_minutes_tutor });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('POST /api/instant-booking/end error:', err);
+    res.status(400).json({ message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/instant-booking/review-dispute — khiếu nại buổi Học Ngay. Dùng chung bảng
+// `disputes` (đã có sẵn màn hình Admin > Tranh Chấp để xem/xử lý) thay vì bảng
+// booking_disputes riêng lẻ trước đây — bảng đó không có bất kỳ route admin nào đọc,
+// nên mọi khiếu nại gửi vào sẽ không ai xử lý.
+app.post('/api/instant-booking/review-dispute', verifyToken, async (req, res) => {
+  const { booking_id, reason, evidence_url } = req.body;
+  if (!reason || !String(reason).trim()) return res.status(400).json({ message: 'Vui lòng nhập lý do khiếu nại.' });
+  const client = await pool.connect();
+  try {
+    const bRes = await client.query('SELECT student_id, tutor_id FROM bookings WHERE id = $1', [booking_id]);
+    if (!bRes.rows.length) return res.status(404).json({ message: 'Không tìm thấy buổi học.' });
+    const b = bRes.rows[0];
+
+    if (!(await canAccessInstantBooking(client, req, b))) {
+      return res.status(403).json({ message: 'Bạn không có quyền khiếu nại buổi học này.' });
+    }
+
+    const existing = await client.query(
+      "SELECT id FROM disputes WHERE booking_id=$1 AND status='OPEN' AND withdrawn_at IS NULL", [booking_id]
+    );
+    if (existing.rows.length) return res.status(409).json({ message: 'Buổi học này đã có khiếu nại đang chờ xử lý.' });
+
+    await client.query('BEGIN');
+    const isParent = req.user.role === 'parent';
+    const dispute = await client.query(`
+      INSERT INTO disputes (raised_by, reason, status, booking_id, target_type, tutor_id, severity, raised_by_parent, evidence_urls)
+      VALUES ($1, $2, 'OPEN', $3, 'booking', $4, 'medium', $5, $6) RETURNING id
+    `, [req.user.userId, reason.trim(), booking_id, b.tutor_id, isParent, evidence_url ? [evidence_url] : null]);
+
+    const reporterName = req.user.role === 'tutor' ? 'Gia sư' : (isParent ? 'Phụ huynh' : 'Học sinh');
+    const admins = await client.query("SELECT id FROM users WHERE role='admin'");
+    for (const admin of admins.rows) {
+      await safeNotifyUser(client, {
+        userId: admin.id, channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: true, reporterName, reason: `khiếu nại buổi Học Ngay ID: ${booking_id}. Lý do: ${reason}` },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${admin.id}`,
+      });
+    }
+    const counterpartId = req.user.userId === b.tutor_id ? b.student_id : b.tutor_id;
+    if (counterpartId) {
+      await safeNotifyUser(client, {
+        userId: counterpartId, channels: ['IN_APP'],
+        templateKey: 'dispute_opened', eventType: 'dispute_opened',
+        data: { forAdmin: false, reporterName },
+        refId: dispute.rows[0].id, refType: 'dispute',
+        sourceType: 'dispute', sourceId: dispute.rows[0].id,
+        idempotencyKey: `dispute:${dispute.rows[0].id}:opened:${counterpartId}`,
+      });
+    }
+
+    await client.query('COMMIT');
+    res.json({ success: true, disputeId: dispute.rows[0].id });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('POST /api/instant-booking/review-dispute error:', err);
+    res.status(500).json({ message: 'Lỗi máy chủ.' });
+  } finally {
+    client.release();
+  }
+});
+
 startServer();
+
 
 module.exports = app;

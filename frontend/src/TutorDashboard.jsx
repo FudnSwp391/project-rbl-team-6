@@ -23,6 +23,9 @@ import TutorScheduleEditor from './components/TutorScheduleEditor'
 import TutorGradingDashboard from './components/TutorGradingDashboard'
 import WalletWidget from './components/WalletWidget'
 import TutorDisputesTab from './components/TutorDisputesTab'
+import InstantAcceptModal from './components/InstantAcceptModal'
+import PersistentSessionModal from './components/PersistentSessionModal'
+import PostSessionReviewModal from './components/PostSessionReviewModal'
 import NotificationDropdown from './components/NotificationDropdown'
 import MessageIcon from './components/MessageIcon'
 import WalletDashboard from './components/Wallet/WalletDashboard'
@@ -80,7 +83,6 @@ export default function TutorDashboard() {
   
   // Instant Learning Modal State
   const [instantRequest, setInstantRequest] = useState(null);
-  const [instantCountdown, setInstantCountdown] = useState(60);
   
   const conflictingIds = useMemo(() => {
     const conflicts = new Set();
@@ -125,6 +127,8 @@ export default function TutorDashboard() {
   const [loading, setLoading] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
   const [profileStatus, setProfileStatus] = useState('loading')
+  const [tutorActiveBooking, setTutorActiveBooking] = useState(null)
+  const [tutorCompletedBooking, setTutorCompletedBooking] = useState(null)
 
   const displayName = user?.name || user?.email?.split('@')[0] || 'Tutor'
   const initials = displayName
@@ -146,6 +150,12 @@ export default function TutorDashboard() {
   // Dùng polling mỗi 3 giây làm primary (đảm bảo luôn hoạt động kể cả khi
   // Supabase Realtime chưa được cấu hình ở frontend).
   // Supabase Realtime (khi có) dùng làm fast-path để popup nhanh hơn.
+  // Booking mà GIA SƯ NÀY vừa tự bấm "Chấp Nhận" (Pending → Accepted). Sau mốc này
+  // /api/tutor/instant-pending không còn trả về nó nữa (API chỉ liệt kê status='Pending'),
+  // nên không được coi "biến mất khỏi danh sách pending" là "bị hủy" — phải theo dõi riêng
+  // booking đó bằng /api/bookings/:id/status để biết khi nào nó THỰC SỰ bị hủy/từ chối/hết hạn.
+  const acknowledgedIdRef = useRef(null);
+
   useEffect(() => {
     if (!user?.id || !token) return;
 
@@ -154,6 +164,24 @@ export default function TutorDashboard() {
     // ── Hàm poll backend mỗi 3 giây ──
     const pollPending = async () => {
       try {
+        // Đang ở bước đã Accepted (chờ gia sư nhập link) → bám theo đúng booking đó thay vì
+        // danh sách pending (đã acknowledge nên không còn nằm trong danh sách Pending nữa).
+        if (acknowledgedIdRef.current) {
+          const res = await fetch(`${API_BASE}/api/bookings/${acknowledgedIdRef.current}/status`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (['Cancelled', 'Declined', 'Timeout', 'Expired'].includes(data.status)) {
+              // Học sinh hủy hoặc hệ thống hết hạn trong lúc gia sư đang chuẩn bị phòng
+              setInstantRequest(prev => (prev?.id === acknowledgedIdRef.current ? null : prev));
+              if (lastSeenId === acknowledgedIdRef.current) lastSeenId = null;
+              acknowledgedIdRef.current = null;
+            }
+          }
+          return;
+        }
+
         const res = await fetch(`${API_BASE}/api/tutor/instant-pending`, {
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -165,7 +193,6 @@ export default function TutorDashboard() {
           // Có yêu cầu mới chưa thấy → hiển thị popup
           lastSeenId = booking.id;
           setInstantRequest(booking);
-          setInstantCountdown(booking.seconds_left ?? 60);
           try { new Audio('/notification.mp3').play().catch(() => {}) } catch (e) {}
         } else if (!booking && lastSeenId) {
           // Yêu cầu đã hết hạn hoặc bị xử lý → ẩn popup
@@ -201,9 +228,15 @@ export default function TutorDashboard() {
         .on('postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'bookings', filter: `tutor_id=eq.${user.id}` },
           (payload) => {
-            if (payload.new.booking_type === 'Instant' && payload.new.status !== 'Pending') {
-              setInstantRequest(prev => prev?.id === payload.new.id ? null : prev);
+            if (payload.new.booking_type !== 'Instant') return;
+            const s = payload.new.status;
+            // 'Accepted' = chính gia sư này vừa xác nhận — KHÔNG phải bị hủy, giữ nguyên modal
+            // (đang ở bước nhập link). Mọi trạng thái khác rời khỏi 'Pending' mới coi là kết thúc.
+            if (s === 'Accepted') return;
+            if (s !== 'Pending') {
+              setInstantRequest(prev => (prev?.id === payload.new.id ? null : prev));
               if (lastSeenId === payload.new.id) lastSeenId = null;
+              acknowledgedIdRef.current = null;
             }
           }
         )
@@ -216,19 +249,9 @@ export default function TutorDashboard() {
     };
   }, [user?.id, token]);
 
-  // Đếm ngược 60 giây khi có yêu cầu Học Ngay
-  useEffect(() => {
-    if (!instantRequest) { setInstantCountdown(60); return; }
-    // Không reset về 60 — giá trị đã được polling set từ server (seconds_left chính xác)
-    const interval = setInterval(() => {
-      setInstantCountdown(prev => {
-        if (prev <= 1) { clearInterval(interval); return 0; }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [instantRequest?.id]);
 
+  // Chỉ còn dùng cho 'reject' — 'accept' giờ do InstantAcceptModal tự xử lý trực tiếp
+  // qua POST /api/instant-booking/accept (cần nhập link Meet/Zoom trước khi nhận lớp).
   const handleInstantAction = async (bookingId, action) => {
     try {
       const res = await fetch(`${API_BASE}/api/tutor/bookings/${bookingId}/instant-${action}`, {
@@ -238,13 +261,11 @@ export default function TutorDashboard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Lỗi hệ thống');
 
+      acknowledgedIdRef.current = null;
       setInstantRequest(null);
-
-      if (action === 'accept') {
-        window.location.hash = `/session/${bookingId}`;
-      }
     } catch (e) {
       alert(e.message);
+      acknowledgedIdRef.current = null;
       setInstantRequest(null);
     }
   };
@@ -882,42 +903,50 @@ export default function TutorDashboard() {
 
           {/* Instant Request Modal */}
           {instantRequest && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
-                <div className="flex flex-col items-center text-center">
-                  <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-4">
-                    <span className="material-symbols-outlined text-[32px] text-amber-600">bolt</span>
-                  </div>
-                  <h3 className="font-headline-sm text-headline-sm text-on-surface mb-2">Yêu cầu Học Ngay!</h3>
-                  <p className="text-[14px] text-on-surface-variant mb-1">
-                    Học viên <span className="font-bold text-primary">{instantRequest.student_name || 'Học viên'}</span> muốn học ngay môn <span className="font-bold">{instantRequest.subject}</span>.
-                  </p>
-                  {instantRequest.lesson_fee > 0 && (
-                    <p className="text-[13px] text-green-600 font-semibold mb-3">
-                      Học phí: {Number(instantRequest.lesson_fee).toLocaleString('vi-VN')}đ
-                    </p>
-                  )}
-                  <div className={`px-4 py-3 rounded-xl w-full mb-6 text-[13px] border ${instantCountdown <= 10 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                    <p className="font-semibold flex items-center justify-center gap-1">
-                      <span className="material-symbols-outlined text-[16px]">timer</span>
-                      Tự hủy sau <span className="font-bold text-[16px] ml-1">{instantCountdown}s</span>
-                    </p>
-                  </div>
-                  <div className="flex gap-3 w-full">
-                    <button
-                      onClick={() => handleInstantAction(instantRequest.id, 'reject')}
-                      className="flex-1 h-11 border-2 border-red-200 text-red-600 font-label-lg rounded-xl hover:bg-red-50 transition-colors">
-                      Từ chối
-                    </button>
-                    <button
-                      onClick={() => handleInstantAction(instantRequest.id, 'accept')}
-                      className="flex-1 h-11 bg-primary text-on-primary font-label-lg rounded-xl shadow-md hover:bg-primary/90 hover:shadow-lg transition-all flex items-center justify-center gap-1">
-                      <span className="material-symbols-outlined text-[18px]">check</span> Chấp nhận
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <InstantAcceptModal
+              request={{
+                booking_id: instantRequest.id,
+                student_name: instantRequest.student_name,
+                subject: instantRequest.subject,
+                price: instantRequest.lesson_fee,
+                note: instantRequest.note,
+                seconds_left: instantRequest.seconds_left
+              }}
+              onDecline={() => handleInstantAction(instantRequest.id, 'reject')}
+              onAcknowledge={() => { acknowledgedIdRef.current = instantRequest.id; }}
+              onAccept={(meetLink) => {
+                const currentReq = instantRequest;
+                acknowledgedIdRef.current = null;
+                setInstantRequest(null);
+                setTutorActiveBooking({
+                  id: currentReq.id,
+                  student_name: currentReq.student_name,
+                  subject: currentReq.subject,
+                  meeting_link: meetLink
+                });
+              }}
+            />
+          )}
+
+          {/* Modal Cố Định Buổi Học (Persistent Session) */}
+          {tutorActiveBooking && (
+            <PersistentSessionModal
+              booking={tutorActiveBooking}
+              role="tutor"
+              onEndSession={(bookingData, status, result) => {
+                setTutorActiveBooking(null);
+                setTutorCompletedBooking(bookingData);
+              }}
+            />
+          )}
+
+          {/* Modal Đánh Giá Sau Buổi Học */}
+          {tutorCompletedBooking && (
+            <PostSessionReviewModal
+              booking={tutorCompletedBooking}
+              role="tutor"
+              onClose={() => setTutorCompletedBooking(null)}
+            />
           )}
 
         </main>
@@ -1551,6 +1580,7 @@ function TutorStudentsTab() {
               {students.map((student) => {
                 const key = `${student.studentId}:${student.childName || ''}`
                 const active = key === selectedKey
+                const leaveReqCount = (student.lessons || []).filter(l => l.leaveReason || l.attendanceStatus === 'excused').length;
                 return (
                   <button key={key} onClick={() => setSelectedKey(key)} className={`w-full text-left p-4 flex gap-3 hover:bg-surface-container-low transition-colors ${active ? 'bg-primary/5' : ''}`}>
                     {student.studentAvatar ? <img src={student.studentAvatar} alt={student.studentName} className="w-12 h-12 rounded-full object-cover" /> : <div className="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">{(student.childName || student.studentName || 'S').charAt(0)}</div>}
@@ -1558,7 +1588,11 @@ function TutorStudentsTab() {
                       <p className="font-label-md text-label-md text-on-surface truncate">{student.childName || student.studentName}</p>
                       {student.childName && <p className="text-[12px] text-on-surface-variant truncate">Phụ huynh: {student.studentName}</p>}
                       <p className="text-[12px] text-primary truncate">{student.subjects.join(', ') || 'Chung'}</p>
-                      <div className="flex gap-2 mt-2 text-[11px]"><span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">{student.totalLessons} buổi</span><span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600">{student.absentCount} vắng</span></div>
+                      <div className="flex flex-wrap gap-2 mt-2 text-[11px]">
+                        <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">{student.totalLessons} buổi</span>
+                        <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600">{student.absentCount} vắng</span>
+                        {leaveReqCount > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-medium">{leaveReqCount} xin phép</span>}
+                      </div>
                     </div>
                   </button>
                 )
@@ -1604,7 +1638,7 @@ function StudentDetailCard({ student }) {
 }
 
 function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback }) {
-  const approved = lesson.bookingStatus === 'Approved';
+  const approved = lesson.bookingStatus === 'Approved' || lesson.bookingStatus === 'Cancelled' || !!lesson.leaveReason;
   const statusConfig = { present: 'bg-[#dcfce7] text-[#16a34a] border-[#bbf7d0]', absent: 'bg-red-50 text-red-600 border-red-200', excused: 'bg-amber-50 text-amber-700 border-amber-200' };
 
   const [checkingIn, setCheckingIn] = useState(false);
@@ -1678,64 +1712,89 @@ function AttendanceRow({ lesson, saving, note, onNoteChange, onMark, onFeedback 
   };
 
   return (
-    <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center">
-      <div>
-        <p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'Chung'}</p>
-        <p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p>
-        <div className="flex gap-2 items-center mt-2">
-          <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>
-            {lesson.attendanceStatus === 'present' ? 'Có mặt' 
-            : lesson.attendanceStatus === 'absent' ? 'Vắng mặt'
-            : lesson.attendanceStatus === 'excused' ? 'Có phép'
-            : lesson.bookingStatus === 'Approved' ? 'Chưa điểm danh'
-            : lesson.bookingStatus}
-          </span>
-          {checkInTime && (
-            <span className="inline-flex px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200 text-[11px] font-bold items-center gap-1">
-              <span className="material-symbols-outlined text-[12px]">check_circle</span>
-              Đã bắt đầu lúc {new Date(checkInTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+    <div className="p-4 flex flex-col gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3 items-center">
+        <div>
+          <p className="font-label-md text-label-md text-on-surface">{lesson.subject || 'Chung'}</p>
+          <p className="text-[13px] text-on-surface-variant">{lesson.date} - {lesson.timeSlot}</p>
+          <div className="flex flex-wrap gap-2 items-center mt-2">
+            <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-bold ${lesson.attendanceStatus ? statusConfig[lesson.attendanceStatus] : 'bg-surface-container text-on-surface-variant border-outline-variant/30'}`}>
+              {lesson.attendanceStatus === 'present' ? 'Có mặt' 
+              : lesson.attendanceStatus === 'absent' ? 'Vắng mặt'
+              : lesson.attendanceStatus === 'excused' ? 'Có phép'
+              : lesson.bookingStatus === 'Approved' ? 'Chưa điểm danh'
+              : lesson.bookingStatus === 'Cancelled' ? 'Đã hủy'
+              : lesson.bookingStatus}
             </span>
+            {checkInTime && (
+              <span className="inline-flex px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200 text-[11px] font-bold items-center gap-1">
+                <span className="material-symbols-outlined text-[12px]">check_circle</span>
+                Đã bắt đầu lúc {new Date(checkInTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+              </span>
+            )}
+          </div>
+        </div>
+        <input 
+          value={note} 
+          onChange={(e) => onNoteChange(e.target.value)} 
+          placeholder="Ghi chú buổi học..." 
+          disabled={!approved || saving} 
+          className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" 
+        />
+        <div className="flex flex-wrap gap-2 justify-start lg:justify-end">
+          {canCheckIn && (
+            <button 
+              disabled={checkingIn} 
+              onClick={handleCheckIn} 
+              className="h-9 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-bold disabled:opacity-40 flex items-center gap-1"
+            >
+              <span className="material-symbols-outlined text-[14px]">play_arrow</span>
+              Bắt đầu dạy
+            </button>
           )}
+          <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Có mặt</button>
+          <button disabled={!approved || saving} onClick={() => confirmMark('absent')} title={checkInTime ? 'Học sinh vắng không phép — bạn nhận 90% bồi hoàn' : 'Chưa check-in: đánh vắng sẽ hoàn tiền cho học sinh'} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Vắng</button>
+          <button disabled={!approved || saving} onClick={() => confirmMark('excused')} title="Nghỉ có phép — hoàn 100% học phí cho học sinh" className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Có phép</button>
+          {canEvaluate ? (
+            <button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px]">edit_note</span>Đánh giá
+            </button>
+          ) : lesson.isEvaluated ? (
+            <button disabled className="h-9 px-3 rounded-lg border border-gray-300 text-gray-400 text-[12px] font-bold flex items-center gap-1 bg-gray-50">
+              <span className="material-symbols-outlined text-[14px]">check</span>Đã đánh giá
+            </button>
+          ) : null}
         </div>
       </div>
-      <input 
-        value={note} 
-        onChange={(e) => onNoteChange(e.target.value)} 
-        placeholder="Ghi chú buổi học..." 
-        disabled={!approved || saving} 
-        className="h-10 px-3 rounded-xl border border-outline-variant text-[13px] outline-none focus:border-primary disabled:opacity-50" 
-      />
-      <div className="flex flex-wrap gap-2 justify-start lg:justify-end">
-        {canCheckIn && (
-          <button 
-            disabled={checkingIn} 
-            onClick={handleCheckIn} 
-            className="h-9 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-bold disabled:opacity-40 flex items-center gap-1"
-          >
-            <span className="material-symbols-outlined text-[14px]">play_arrow</span>
-            Bắt đầu dạy
-          </button>
-        )}
-        <button disabled={!approved || saving} onClick={() => onMark('present')} className="h-9 px-3 rounded-lg bg-[#16a34a] text-white text-[12px] font-bold disabled:opacity-40">Có mặt</button>
-        <button disabled={!approved || saving} onClick={() => confirmMark('absent')} title={checkInTime ? 'Học sinh vắng không phép — bạn nhận 90% bồi hoàn' : 'Chưa check-in: đánh vắng sẽ hoàn tiền cho học sinh'} className="h-9 px-3 rounded-lg bg-red-600 text-white text-[12px] font-bold disabled:opacity-40">Vắng</button>
-        <button disabled={!approved || saving} onClick={() => confirmMark('excused')} title="Nghỉ có phép — hoàn 100% học phí cho học sinh" className="h-9 px-3 rounded-lg bg-amber-500 text-white text-[12px] font-bold disabled:opacity-40">Có phép</button>
-        {canEvaluate ? (
-          <button onClick={onFeedback} className="h-9 px-3 rounded-lg border border-blue-500 text-blue-600 text-[12px] font-bold hover:bg-blue-50 flex items-center gap-1">
-            <span className="material-symbols-outlined text-[14px]">edit_note</span>Đánh giá
-          </button>
-        ) : lesson.isEvaluated ? (
-          <button disabled className="h-9 px-3 rounded-lg border border-gray-300 text-gray-400 text-[12px] font-bold flex items-center gap-1 bg-gray-50">
-            <span className="material-symbols-outlined text-[14px]">check</span>Đã đánh giá
-          </button>
-        ) : null}
-      </div>
+
+      {lesson.leaveReason && (
+        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-start gap-2 text-amber-900">
+            <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0 mt-0.5">event_busy</span>
+            <div>
+              <span className="font-bold text-amber-900">Phụ huynh / Học sinh xin nghỉ phép:</span>
+              <p className="text-amber-800 text-[13px] font-medium mt-0.5">"{lesson.leaveReason}"</p>
+            </div>
+          </div>
+          {lesson.attendanceStatus !== 'excused' && (
+            <button
+              disabled={saving}
+              onClick={() => confirmMark('excused')}
+              className="shrink-0 h-8 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[12px] flex items-center gap-1 shadow-sm transition-colors"
+            >
+              <span className="material-symbols-outlined text-[14px]">check_circle</span>
+              Duyệt nghỉ (Có phép)
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 function AbsenceTimeline({ lessons }) {
-  const absences = lessons.filter((lesson) => lesson.attendanceStatus === 'absent' || lesson.attendanceStatus === 'excused')
-  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><h3 className="font-headline-md text-headline-md text-on-surface mb-3">Lịch sử vắng mặt</h3>{absences.length === 0 ? <p className="text-[13px] text-on-surface-variant italic">Chưa có lịch sử vắng mặt.</p> : <div className="space-y-2">{absences.map((lesson) => <div key={lesson.bookingId} className={`rounded-xl border p-3 ${lesson.attendanceStatus === 'absent' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}><p className={`text-[13px] font-bold ${lesson.attendanceStatus === 'absent' ? 'text-red-700' : 'text-amber-700'}`}>{lesson.date} - {lesson.timeSlot}</p><p className={`text-[12px] ${lesson.attendanceStatus === 'absent' ? 'text-red-600' : 'text-amber-600'}`}>{lesson.subject || 'Chung'}{lesson.attendanceNote ? ` - ${lesson.attendanceNote}` : ''}</p></div>)}</div>}</div>
+  const absences = lessons.filter((lesson) => lesson.attendanceStatus === 'absent' || lesson.attendanceStatus === 'excused' || lesson.leaveReason || lesson.bookingStatus === 'Cancelled')
+  return <div className="bg-white/80 border border-outline-variant/20 rounded-2xl p-5 shadow-sm"><h3 className="font-headline-md text-headline-md text-on-surface mb-3">Lịch sử vắng mặt & Xin phép</h3>{absences.length === 0 ? <p className="text-[13px] text-on-surface-variant italic">Chưa có lịch sử vắng mặt.</p> : <div className="space-y-2">{absences.map((lesson) => <div key={lesson.bookingId} className={`rounded-xl border p-3 ${lesson.attendanceStatus === 'absent' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}><p className={`text-[13px] font-bold ${lesson.attendanceStatus === 'absent' ? 'text-red-700' : 'text-amber-700'}`}>{lesson.date} - {lesson.timeSlot}</p><p className={`text-[12px] ${lesson.attendanceStatus === 'absent' ? 'text-red-600' : 'text-amber-600'}`}>{lesson.subject || 'Chung'}{lesson.attendanceNote ? ` - Ghi chú: ${lesson.attendanceNote}` : ''}</p>{lesson.leaveReason && <p className="text-[12px] font-semibold text-amber-900 mt-1 bg-amber-100/70 border border-amber-200 rounded-lg p-1.5 inline-block">Lý do xin nghỉ: {lesson.leaveReason}</p>}</div>)}</div>}</div>
 }
 function pad2(value) {
   return String(value).padStart(2, '0')
