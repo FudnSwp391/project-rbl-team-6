@@ -13386,7 +13386,7 @@ app.get("/api/tutors", async (req, res) => {
          u.id, u.full_name, u.picture,
          tp.bio, tp.subjects, tp.experience_years,
          tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
-         tp.teaching_methods,
+         tp.teaching_methods, tp.suitable_students,
          COALESCE(tp.avg_rating, 0)  AS avg_r,
          COALESCE(tp.review_count, 0) AS review_count
        FROM tutor_profiles tp

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { methodSupport } from './utils/teachingMethod';
 import CartButton from './components/CartButton';
 import { API_BASE_URL } from './config';
@@ -22,6 +22,43 @@ const TRUST_STATS = [
   { icon: 'groups',         label: 'Học sinh đang học',    value: '15,000+', color: '#8b5cf6' },
   { icon: 'star',           label: 'Đánh giá trung bình',  value: '4.9/5',   color: '#f59e0b' },
   { icon: 'shield_person',  label: 'Bảo đảm hoàn tiền',    value: '100%',    color: '#10b981' },
+];
+
+// 3 review "gương mặt học sinh" — dựng cho hero social-proof; tuỳ backend sau có bảng entity_reviews
+// sẽ bind dữ liệu thật vào section này (giữ layout để dễ ráp).
+const TESTIMONIALS = [
+  {
+    name: 'Nguyễn Minh An',
+    role: 'Học sinh lớp 12',
+    subject: 'Toán · Luyện thi ĐH',
+    rating: 5,
+    text: 'Sau 3 tháng học với thầy, mình tăng từ 6.5 lên 9 điểm Toán. Thầy giảng rất dễ hiểu, luôn nhắc nhở làm bài về nhà.',
+    avatar: 'https://i.pravatar.cc/80?img=15',
+  },
+  {
+    name: 'Trần Thảo My',
+    role: 'Sinh viên năm 2',
+    subject: 'IELTS Speaking',
+    rating: 5,
+    text: 'Cô rất kiên nhẫn và có phương pháp giúp mình sửa phát âm. Sau 2 tháng đạt 7.5 Speaking — vượt xa mục tiêu ban đầu.',
+    avatar: 'https://i.pravatar.cc/80?img=47',
+  },
+  {
+    name: 'Lê Hoàng Phúc',
+    role: 'Phụ huynh',
+    subject: 'Toán lớp 5 cho con',
+    rating: 5,
+    text: 'Con tôi vốn ghét Toán, giờ hào hứng chờ buổi học mỗi tuần. Nền tảng cải thiện rõ, tôi rất hài lòng.',
+    avatar: 'https://i.pravatar.cc/80?img=68',
+  },
+];
+
+// Ưu điểm — 4 lý do để "chốt đơn" ở cuối trang
+const WHY_CHOOSE = [
+  { icon: 'verified_user',  title: 'Gia sư đã xác thực', desc: 'Mỗi hồ sơ được duyệt kỹ về bằng cấp, chuyên môn và kinh nghiệm giảng dạy.' },
+  { icon: 'payments',        title: 'An tâm thanh toán',   desc: 'Không phù hợp trong 3 buổi đầu? Hoàn tiền 100% — không hỏi lý do.' },
+  { icon: 'support_agent',   title: 'Hỗ trợ 24/7',         desc: 'Đội ngũ chăm sóc sẵn sàng giúp bạn từ chọn gia sư đến buổi học đầu tiên.' },
+  { icon: 'chat',            title: 'Nhắn tin trực tiếp',  desc: 'Trao đổi với gia sư trước khi đặt lịch — hiểu rõ trước khi cam kết.' },
 ];
 
 function fmtPrice(val) {
@@ -478,8 +515,8 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         {/* MAIN GRID — filter + tutors */}
         <div className="flex flex-col lg:flex-row gap-8">
           {/* Sidebar Filters (desktop) */}
-          <aside className="hidden lg:block w-72 flex-shrink-0">
-            <div className="bg-white rounded-2xl shadow-sm p-6 sticky top-28 filter-sidebar max-h-[calc(100vh-120px)] overflow-y-auto border border-[#f1f2f4]">
+          <aside className="hidden lg:block w-72 flex-shrink-0" style={{ position: 'sticky', top: '112px', height: 'calc(100vh - 120px)' }}>
+            <div className="bg-white rounded-2xl shadow-sm p-6 filter-sidebar h-full overflow-y-auto border border-[#f1f2f4]">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-lg font-bold text-[#191c1e] flex items-center gap-2">
                   <span className="material-symbols-outlined text-[20px] text-[#00288e]">tune</span>
@@ -820,6 +857,81 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             )}
           </div>
         </div>
+
+        {/* TESTIMONIALS */}
+        <section className="mt-20 mb-16">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center gap-1 bg-[#fef3c7] text-[#78350f] px-3 py-1 rounded-full text-xs font-bold mb-3">
+              <span className="material-symbols-outlined text-[14px]" style={{fontVariationSettings:"'FILL' 1"}}>reviews</span>
+              HỌC SINH NÓI GÌ
+            </div>
+            <h2 className="text-3xl font-extrabold text-[#191c1e] mb-2">Hàng nghìn học sinh đã tin tưởng EduX</h2>
+            <p className="text-[#5d5f5f]">Những câu chuyện thành công thật từ cộng đồng của chúng tôi</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {TESTIMONIALS.map((t, i) => (
+              <div key={i} className="relative bg-white rounded-2xl p-6 shadow-sm hover:shadow-xl transition-shadow border border-[#f1f2f4] group">
+                {/* Big quote mark */}
+                <div className="absolute top-4 right-5 text-[80px] leading-none text-[#00288e]/8 font-serif select-none">"</div>
+
+                <div className="flex items-center gap-1 text-[#f59e0b] mb-3">
+                  {[1,2,3,4,5].map(n => (
+                    <span key={n} className="material-symbols-outlined text-[18px]" style={{fontVariationSettings: n <= t.rating ? "'FILL' 1" : "'FILL' 0"}}>star</span>
+                  ))}
+                </div>
+
+                <p className="text-[#444653] text-sm leading-relaxed mb-5 relative z-10">"{t.text}"</p>
+
+                <div className="flex items-center gap-3 pt-4 border-t border-[#f1f2f4]">
+                  <img
+                    src={t.avatar}
+                    alt={t.name}
+                    className="w-12 h-12 rounded-full object-cover ring-2 ring-[#00288e]/10"
+                  />
+                  <div className="flex-grow">
+                    <div className="font-bold text-sm text-[#191c1e]">{t.name}</div>
+                    <div className="text-xs text-[#757684]">{t.role} · {t.subject}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* WHY CHOOSE EDUX */}
+        <section className="mt-20 mb-8">
+          <div className="rounded-3xl bg-gradient-to-br from-[#f8f9fb] via-white to-[#eef2ff] p-8 md:p-12 border border-[#e5e7eb]">
+            <div className="text-center mb-10">
+              <h2 className="text-3xl font-extrabold text-[#191c1e] mb-2">Vì sao chọn EduX?</h2>
+              <p className="text-[#5d5f5f]">Chúng tôi cam kết mang đến trải nghiệm học tập tốt nhất cho bạn</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+              {WHY_CHOOSE.map((w, i) => (
+                <div key={w.title} className="bg-white rounded-2xl p-6 text-center hover:shadow-lg hover:-translate-y-1 transition-all border border-[#f1f2f4] group">
+                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#dbeafe] to-[#eef2ff] flex items-center justify-center group-hover:from-[#00288e] group-hover:to-[#3a6fe0] transition-all">
+                    <span className="material-symbols-outlined text-[28px] text-[#00288e] group-hover:text-white transition-colors" style={{fontVariationSettings:"'FILL' 1"}}>{w.icon}</span>
+                  </div>
+                  <h3 className="font-bold text-base text-[#191c1e] mb-2">{w.title}</h3>
+                  <p className="text-xs text-[#5d5f5f] leading-relaxed">{w.desc}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Final CTA */}
+            <div className="mt-10 text-center">
+              <p className="text-sm text-[#5d5f5f] mb-4">Sẵn sàng bắt đầu hành trình học tập của bạn?</p>
+              <button
+                onClick={() => window.location.hash = '/tutor-request'}
+                className="btn-shine inline-flex items-center gap-2 bg-gradient-to-r from-[#00288e] via-[#2747c4] to-[#3a6fe0] text-white px-8 py-3.5 rounded-xl font-bold text-base hover:-translate-y-0.5 hover:shadow-[0_14px_30px_-8px_rgba(55,85,195,0.55)] transition-all shadow-md"
+              >
+                <span className="material-symbols-outlined text-[22px]">auto_awesome</span>
+                Nhận Gợi Ý AI Miễn Phí
+              </button>
+            </div>
+          </div>
+        </section>
       </main>
 
       <footer className="bg-[#edeef0] w-full mt-16">
