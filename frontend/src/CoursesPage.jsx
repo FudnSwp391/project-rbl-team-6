@@ -220,7 +220,7 @@ export default function CoursesPage({ user }) {
               placeholder="Tìm kiếm khóa học..."
               className="w-full pl-12 pr-4 py-3 rounded-full bg-white border border-[#d6d9e0] text-[#191c1e] placeholder:text-[#9aa3b8] focus:outline-none focus:border-[#00288e] focus:ring-2 focus:ring-[#00288e]/15" />
           </div>
-          <nav className="hidden md:flex items-center gap-7 ml-auto text-sm font-semibold">
+          <nav className="hidden md:flex items-center gap-10 ml-auto text-base font-medium">
             <a href="#/" className="text-[#5d5f5f] hover:text-[#00288e] transition-colors">Trang chủ</a>
             <a href="#/courses" className="text-[#00288e]">Khóa học</a>
             <a href="#/find-tutors" className="text-[#5d5f5f] hover:text-[#00288e] transition-colors">Tìm gia sư</a>

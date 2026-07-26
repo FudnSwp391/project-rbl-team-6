@@ -91,6 +91,7 @@ export default function CourseMarketplace() {
       price: Number(course.price || 0),
       thumbnail_url: course.thumbnail_url || null,
       tutor_name: course.tutor_name || course.tutorName || 'Gia sư EduX',
+      tutor_picture: course.tutor_picture || course.tutorAvatar || null,
       subject: course.subject || '',
       quantity: 1,
       addedAt: Date.now(),
@@ -323,17 +324,17 @@ export default function CourseMarketplace() {
 
       {/* Navbar (Only rendered if on /courses route directly) */}
       {isStandalone && (
-        <header className="w-full fixed top-0 z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
-          <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">
+        <header className="w-full fixed top-0 z-50 bg-[#f8f9fb]/80 backdrop-blur-md border-b border-[#c4c5d5]/40 shadow-sm">
+          <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-[80px] relative">
             <a className="flex items-center gap-2 text-2xl font-bold text-[#00288e] hover:opacity-80 transition-opacity z-10" href="#/">
               <span className="material-symbols-outlined text-[28px]" style={{fontVariationSettings: "'FILL' 1"}}>school</span>
               EduX
             </a>
-            <nav className="hidden md:flex items-center gap-8">
-              <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
-              <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
-              <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
-              <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/courses">Khóa Học</a>
+            <nav className="hidden md:flex items-center gap-10">
+              <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
+              <a className="text-base font-medium text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/courses">Khóa Học</a>
+              <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
+              <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
             </nav>
             <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (

@@ -16,6 +16,13 @@ import { API_BASE_URL } from './config';
 
 const API_BASE = API_BASE_URL
 
+// Badge điểm danh thực tế — khác với `status` (trạng thái booking theo giờ).
+const ATTENDANCE_BADGE = {
+  present: { label: 'Có mặt', icon: 'check_circle', className: 'bg-green-100 text-green-700' },
+  absent: { label: 'Vắng mặt', icon: 'cancel', className: 'bg-red-100 text-red-700' },
+  excused: { label: 'Vắng có phép', icon: 'info', className: 'bg-amber-100 text-amber-700' },
+}
+
 const NAV = [
   { key: 'overview',  icon: 'dashboard',       label: 'Tổng quan' },
   { key: 'students',  icon: 'group',            label: 'Học sinh' },
@@ -766,6 +773,7 @@ function StudentDetailView({ token, student, onBack }) {
             <div className="divide-y divide-outline-variant/10">
               {schedule.map(item => {
                 const isCancelled = item.status === 'cancelled'
+                const attendance = ATTENDANCE_BADGE[item.attendance_status]
                 return (
                   <div key={item.id} className={`flex items-center gap-md p-4 transition-colors ${isCancelled ? 'opacity-50 bg-surface-container-low' : 'hover:bg-surface-container-low/50'}`}>
                     <div className={`shrink-0 px-3 py-1.5 rounded-xl border text-sm font-semibold ${subjectColor(item.subject)}`}>
@@ -788,6 +796,11 @@ function StudentDetailView({ token, student, onBack }) {
                             <span className="material-symbols-outlined text-[13px] text-amber-600">hourglass_top</span>
                             Đã gửi xin nghỉ phép (Chờ gia sư duyệt)
                           </span>
+                        ) : attendance ? (
+                          <span title={item.attendance_note || attendance.label} className={`ml-2 inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full font-semibold ${attendance.className}`}>
+                            <span className="material-symbols-outlined text-[13px]">{attendance.icon}</span>
+                            {attendance.label}
+                          </span>
                         ) : null}
                       </p>
                       {item.leave_reason && (
@@ -798,13 +811,15 @@ function StudentDetailView({ token, student, onBack }) {
                     </div>
                     {!isCancelled && !item.leave_reason && (
                       <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => setLeaveModal(item)}
-                          className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors flex items-center gap-1"
-                        >
-                          <span className="material-symbols-outlined text-[14px]">event_busy</span>
-                          Xin nghỉ
-                        </button>
+                        {item.status !== 'completed' && (
+                          <button
+                            onClick={() => setLeaveModal(item)}
+                            className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors flex items-center gap-1"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">event_busy</span>
+                            Xin nghỉ
+                          </button>
+                        )}
                         <button
                           onClick={() => setMessageModal({ tutorId: item.tutor_id, tutorName: item.tutor_name })}
                           className="h-8 px-3 rounded-lg border border-primary/30 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 transition-colors flex items-center gap-1"

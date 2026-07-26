@@ -11,7 +11,7 @@ function money(value) {
 }
 
 export default function CoursePlayer({ courseId, onGoHome }) {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [course, setCourse] = useState(null)
   const [selectedId, setSelectedId] = useState('')
   const [loading, setLoading] = useState(true)

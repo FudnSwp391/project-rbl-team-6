@@ -11,6 +11,13 @@ import { API_BASE_URL } from '../config';
 
 const API_BASE = API_BASE_URL;
 
+// Badge điểm danh thực tế (khác với session.status là trạng thái booking theo giờ).
+const ATTENDANCE_BADGE = {
+  present: { label: 'Có mặt', icon: 'check_circle', className: 'bg-green-600 text-white' },
+  absent: { label: 'Vắng mặt', icon: 'cancel', className: 'bg-red-600 text-white' },
+  excused: { label: 'Vắng có phép', icon: 'info', className: 'bg-amber-500 text-white' },
+};
+
 const SchedulePage = () => {
   const { user, token } = useAuth();
   const [data, setData] = useState(null);
@@ -572,6 +579,15 @@ const SchedulePage = () => {
                                   </span>
                                   {session.xp_earned > 0 && <span className="text-[10px] font-bold text-primary">+{session.xp_earned} XP</span>}
                                 </div>
+                                {ATTENDANCE_BADGE[session.attendance_status] && (
+                                  <span
+                                    title={session.attendance_note || ATTENDANCE_BADGE[session.attendance_status].label}
+                                    className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded mb-1 ${ATTENDANCE_BADGE[session.attendance_status].className}`}
+                                  >
+                                    <span className="material-symbols-outlined text-[10px]">{ATTENDANCE_BADGE[session.attendance_status].icon}</span>
+                                    {ATTENDANCE_BADGE[session.attendance_status].label}
+                                  </span>
+                                )}
                                 <h4 className="text-label-md font-bold text-on-surface leading-tight mb-1 line-clamp-2" title={session.title}>{session.title}</h4>
                                 <p className="text-[10px] text-on-surface-variant flex items-center gap-1 mb-2">
                                   <span className="material-symbols-outlined text-[12px]">schedule</span>
@@ -820,6 +836,15 @@ const SchedulePage = () => {
                           {session.xp_earned > 0 && (
                             <span className="text-[11px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">+{session.xp_earned} XP</span>
                           )}
+                          {ATTENDANCE_BADGE[session.attendance_status] && (
+                            <span
+                              title={session.attendance_note || ATTENDANCE_BADGE[session.attendance_status].label}
+                              className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md ${ATTENDANCE_BADGE[session.attendance_status].className}`}
+                            >
+                              <span className="material-symbols-outlined text-[12px]">{ATTENDANCE_BADGE[session.attendance_status].icon}</span>
+                              {ATTENDANCE_BADGE[session.attendance_status].label}
+                            </span>
+                          )}
                         </div>
                         {session.meeting_platform && (
                           <span className="flex items-center gap-1 text-label-sm text-on-surface-variant bg-surface px-2 py-1 rounded-lg shadow-sm border border-surface-variant">
@@ -1066,6 +1091,15 @@ function SessionDetailModal({ session, info, onClose, onRequested, reportStatus,
                   </span>
                   {mode === 'offline' ? 'Offline' : 'Online'}
                 </span>
+                {ATTENDANCE_BADGE[session.attendance_status] && (
+                  <span
+                    title={session.attendance_note || ATTENDANCE_BADGE[session.attendance_status].label}
+                    className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full ${ATTENDANCE_BADGE[session.attendance_status].className}`}
+                  >
+                    <span className="material-symbols-outlined text-[12px]">{ATTENDANCE_BADGE[session.attendance_status].icon}</span>
+                    {ATTENDANCE_BADGE[session.attendance_status].label}
+                  </span>
+                )}
               </div>
               <h2 className="text-white text-[18px] font-bold leading-snug">{session.title}</h2>
               <div className="flex items-center gap-2 mt-2 flex-wrap">

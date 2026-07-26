@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { methodSupport } from './utils/teachingMethod';
 import CartButton from './components/CartButton';
 import { API_BASE_URL } from './config';
+import { VIETNAM_PROVINCES } from './constants/vietnamProvinces';
 
 const API_BASE = API_BASE_URL;
 
@@ -15,49 +16,12 @@ const SORT_OPTIONS = [
   { value: 'newest',     label: 'Mới Nhất' },
 ];
 
-// Số liệu build trust — sẽ được ghi đè bằng số thật từ API nếu có, fallback hợp lý cho demo
+// Số liệu build trust — hiển thị dạng thẻ nổi ở đáy banner hero
 const TRUST_STATS = [
   { icon: 'verified',       label: 'Gia sư đã xác thực',  value: '2,000+', color: '#3b82f6' },
   { icon: 'groups',         label: 'Học sinh đang học',    value: '15,000+', color: '#8b5cf6' },
   { icon: 'star',           label: 'Đánh giá trung bình',  value: '4.9/5',   color: '#f59e0b' },
   { icon: 'shield_person',  label: 'Bảo đảm hoàn tiền',    value: '100%',    color: '#10b981' },
-];
-
-// 3 review "gương mặt học sinh" — dựng cho hero social-proof; tuỳ backend sau có bảng entity_reviews
-// sẽ bind dữ liệu thật vào section này (giữ layout để dễ ráp).
-const TESTIMONIALS = [
-  {
-    name: 'Nguyễn Minh An',
-    role: 'Học sinh lớp 12',
-    subject: 'Toán · Luyện thi ĐH',
-    rating: 5,
-    text: 'Sau 3 tháng học với thầy, mình tăng từ 6.5 lên 9 điểm Toán. Thầy giảng rất dễ hiểu, luôn nhắc nhở làm bài về nhà.',
-    avatar: 'https://i.pravatar.cc/80?img=15',
-  },
-  {
-    name: 'Trần Thảo My',
-    role: 'Sinh viên năm 2',
-    subject: 'IELTS Speaking',
-    rating: 5,
-    text: 'Cô rất kiên nhẫn và có phương pháp giúp mình sửa phát âm. Sau 2 tháng đạt 7.5 Speaking — vượt xa mục tiêu ban đầu.',
-    avatar: 'https://i.pravatar.cc/80?img=47',
-  },
-  {
-    name: 'Lê Hoàng Phúc',
-    role: 'Phụ huynh',
-    subject: 'Toán lớp 5 cho con',
-    rating: 5,
-    text: 'Con tôi vốn ghét Toán, giờ hào hứng chờ buổi học mỗi tuần. Nền tảng cải thiện rõ, tôi rất hài lòng.',
-    avatar: 'https://i.pravatar.cc/80?img=68',
-  },
-];
-
-// Ưu điểm — 4 lý do để "chốt đơn" ở cuối trang
-const WHY_CHOOSE = [
-  { icon: 'verified_user',  title: 'Gia sư đã xác thực', desc: 'Mỗi hồ sơ được duyệt kỹ về bằng cấp, chuyên môn và kinh nghiệm giảng dạy.' },
-  { icon: 'payments',        title: 'An tâm thanh toán',   desc: 'Không phù hợp trong 3 buổi đầu? Hoàn tiền 100% — không hỏi lý do.' },
-  { icon: 'support_agent',   title: 'Hỗ trợ 24/7',         desc: 'Đội ngũ chăm sóc sẵn sàng giúp bạn từ chọn gia sư đến buổi học đầu tiên.' },
-  { icon: 'chat',            title: 'Nhắn tin trực tiếp',  desc: 'Trao đổi với gia sư trước khi đặt lịch — hiểu rõ trước khi cam kết.' },
 ];
 
 function fmtPrice(val) {
@@ -253,6 +217,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   const [sort, setSort]               = useState('rating');
   const [method, setMethod]           = useState(initialParams.get('method') || '');
   const [level, setLevel]             = useState(initialParams.get('level') || '');
+  const [city, setCity]               = useState(initialParams.get('city') || '');
   const [favMsg, setFavMsg]           = useState('');
   const [showFilters, setShowFilters] = useState(false); // mobile filter toggle
 
@@ -278,6 +243,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         ...(selectedSubjects.length && { subjects: selectedSubjects.join(',') }),
         ...(method && { method }),
         ...(level && { level }),
+        ...(city && { city }),
       });
       const res = await fetch(`${API_BASE}/api/tutors?${params}`);
       const data = await res.json();
@@ -304,7 +270,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       setError(true);
       setLoading(false);
     }
-  }, [search, selectedSubjects, sort, method, level]);
+  }, [search, selectedSubjects, sort, method, level, city]);
 
   useEffect(() => { fetchTutors(page); }, [fetchTutors, page]);
 
@@ -320,7 +286,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
 
   const handleReset = () => {
     setSearchInput(''); setSearch(''); setSelectedSubjects([]);
-    setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setPage(1);
+    setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setCity(''); setPage(1);
   };
 
   const displayTutors = tutors.filter(t => {
@@ -337,20 +303,12 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       (t.suitable_students && Array.isArray(t.suitable_students) && t.suitable_students.some(l => l.toLowerCase() === level.toLowerCase())) ||
       (t.level && typeof t.level === 'string' && t.level.toLowerCase().includes(level.toLowerCase())) ||
       (!t.suitable_students && !t.level);
-    return matchPrice && matchSearch && matchSubjects && matchMethod && matchLevel;
+    const matchCity = !city ||
+      (t.city && t.city.toLowerCase().includes(city.toLowerCase()));
+    return matchPrice && matchSearch && matchSubjects && matchMethod && matchLevel && matchCity;
   });
 
-  // Featured tutors — top 4 theo rating để làm carousel highlight ở đầu grid
-  // Chỉ hiện khi KHÔNG lọc gì đặc biệt (search rỗng, không chọn subject) để tránh gây rối kết quả tìm kiếm.
-  const featuredTutors = useMemo(() => {
-    if (search || selectedSubjects.length || method || level) return [];
-    return [...displayTutors]
-      .sort((a, b) => Number(b.avg_r || 0) - Number(a.avg_r || 0))
-      .slice(0, 4);
-  }, [displayTutors, search, selectedSubjects, method, level]);
-
-  const activeFilterCount = (selectedSubjects.length ? 1 : 0) + (method ? 1 : 0) + (level ? 1 : 0) + (maxPrice !== 200 ? 1 : 0);
-
+  const activeFilterCount = (selectedSubjects.length ? 1 : 0) + (method ? 1 : 0) + (level ? 1 : 0) + (maxPrice !== 200 ? 1 : 0) + (search.trim() ? 1 : 0) + (city ? 1 : 0);
   return (
     <div className="aqua-bg min-h-screen text-[#191c1e] font-sans">
       <style>{`
@@ -367,23 +325,20 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         @keyframes floatUp { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
         .stat-card-float { animation:floatUp 4s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce){ .ftb-1,.ftb-2,.stat-card-float,.live-dot,.shimmer-text{ animation:none } }
-        /* Hide scrollbar for horizontal scroll */
-        .no-scrollbar::-webkit-scrollbar{display:none}
-        .no-scrollbar{-ms-overflow-style:none;scrollbar-width:none}
       `}</style>
 
       {/* Header */}
-      <header className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
-        <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">
+      <header className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md border-b border-[#c4c5d5]/40 shadow-sm">
+        <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-[80px] relative">
           <a className="flex items-center gap-2 text-2xl font-bold text-[#00288e] hover:opacity-80 transition-opacity z-10" href="#/">
             <span className="material-symbols-outlined text-[28px]" style={{fontVariationSettings:"'FILL' 1"}}>school</span>
             EduX
           </a>
-          <nav className="hidden md:flex items-center gap-8">
-            <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
+          <nav className="hidden md:flex items-center gap-10">
+            <a className="text-base font-medium text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
           </nav>
           <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
@@ -412,7 +367,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         </div>
       </header>
 
-      <main className="pt-20 pb-16 max-w-[1280px] mx-auto px-6">
+      <main className="pt-24 pb-16 max-w-[1280px] mx-auto px-6">
         {error && (
           <div className="mt-4 mb-6 flex items-start gap-3 rounded-2xl border-2 border-red-200 bg-red-50 px-5 py-4 text-red-900 shadow-[0_10px_26px_-12px_rgba(200,40,40,0.25)]">
             <span className="material-symbols-outlined text-red-500 mt-0.5">cloud_off</span>
@@ -427,7 +382,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
           </div>
         )}
 
-        {/* HERO — Bigger, richer, with trust stats floating */}
+        {/* HERO — banner xanh lớn (khôi phục theo yêu cầu) */}
         <section className="relative mt-4 mb-10 overflow-hidden rounded-3xl border border-[#1e2a4a]"
           style={{ background: 'radial-gradient(60% 90% at 15% 8%, rgba(76,110,245,.35), transparent 60%), radial-gradient(50% 80% at 85% 18%, rgba(124,92,255,.30), transparent 60%), linear-gradient(135deg,#0a1436,#131f5c 55%,#0a1436)' }}>
           <span className="ftb-blob ftb-1" aria-hidden="true" />
@@ -520,32 +475,11 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
           </div>
         </section>
 
-        {/* FEATURED TUTORS — top rated (only shows when no active filter) */}
-        {featuredTutors.length >= 2 && !loading && (
-          <section className="mb-12">
-            <div className="flex items-end justify-between mb-5">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="material-symbols-outlined text-[24px] text-[#f59e0b]" style={{fontVariationSettings:"'FILL' 1"}}>workspace_premium</span>
-                  <h2 className="text-2xl md:text-3xl font-extrabold text-[#191c1e]">Gia Sư Nổi Bật Tuần Này</h2>
-                </div>
-                <p className="text-sm text-[#5d5f5f]">Top {featuredTutors.length} gia sư có đánh giá cao nhất, được học sinh yêu thích</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
-              {featuredTutors.map(t => (
-                <TutorCard key={`featured-${t.id}`} tutor={t} isMock={false} onFav={addFav} featured />
-              ))}
-            </div>
-          </section>
-        )}
-
         {/* MAIN GRID — filter + tutors */}
         <div className="flex flex-col lg:flex-row gap-8">
           {/* Sidebar Filters (desktop) */}
           <aside className="hidden lg:block w-72 flex-shrink-0">
-            <div className="bg-white rounded-2xl shadow-sm p-6 sticky top-24 filter-sidebar max-h-[calc(100vh-120px)] overflow-y-auto border border-[#f1f2f4]">
+            <div className="bg-white rounded-2xl shadow-sm p-6 sticky top-28 filter-sidebar max-h-[calc(100vh-120px)] overflow-y-auto border border-[#f1f2f4]">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-lg font-bold text-[#191c1e] flex items-center gap-2">
                   <span className="material-symbols-outlined text-[20px] text-[#00288e]">tune</span>
@@ -600,7 +534,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                         type="radio"
                         name="method"
                         checked={method === opt.v}
-                        onChange={() => { setMethod(opt.v); setPage(1); }}
+                        onChange={() => { setMethod(opt.v); if (opt.v !== 'offline') setCity(''); setPage(1); }}
                         className="text-[#00288e] focus:ring-[#00288e]"
                       />
                       <span className="text-sm text-[#444653] group-hover:text-[#00288e] transition-colors flex items-center gap-1.5">
@@ -610,21 +544,45 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                     </label>
                   ))}
                 </div>
+                {method === 'offline' && (
+                  <div className="mt-3">
+                    <label className="text-xs font-semibold text-[#757684] block mb-1.5">
+                      <span className="material-symbols-outlined text-[13px] align-middle mr-1">location_on</span>
+                      Tỉnh / Thành phố
+                    </label>
+                    <select
+                      value={city}
+                      onChange={e => { setCity(e.target.value); setPage(1); }}
+                      className="w-full px-3 py-2 rounded-lg border border-[#c4c5d5] text-sm text-[#444653] bg-white focus:outline-none focus:ring-2 focus:ring-[#00288e]/20 focus:border-[#00288e] transition-all"
+                    >
+                      <option value="">Chọn tỉnh/thành</option>
+                      {VIETNAM_PROVINCES.map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="mb-7">
                 <label className="text-sm font-bold text-[#191c1e] block mb-3">Cấp Độ</label>
-                <select
-                  value={level}
-                  onChange={e => { setLevel(e.target.value); setPage(1); }}
-                  className="w-full px-3 py-2.5 rounded-lg border border-[#c4c5d5] text-sm text-[#444653] bg-white focus:outline-none focus:ring-2 focus:ring-[#00288e]/20 focus:border-[#00288e] transition-all"
-                >
-                  <option value="">Tất Cả Cấp Độ</option>
-                  <option value="Cấp 1">Cấp 1 (Tiểu học)</option>
-                  <option value="Cấp 2">Cấp 2 (THCS)</option>
-                  <option value="Cấp 3">Cấp 3 (THPT)</option>
-                  <option value="Đại học">Đại học</option>
-                </select>
+                <div className="space-y-2">
+                  {[{ v: '', l: 'Tất Cả Cấp Độ', icon: 'school' }, { v: 'Cấp 1', l: 'Cấp 1 (Tiểu học)', icon: 'child_care' }, { v: 'Cấp 2', l: 'Cấp 2 (THCS)', icon: 'menu_book' }, { v: 'Cấp 3', l: 'Cấp 3 (THPT)', icon: 'import_contacts' }, { v: 'Đại học', l: 'Đại học', icon: 'account_balance' }].map(opt => (
+                    <label key={opt.v} className="flex items-center gap-3 cursor-pointer group">
+                      <input
+                        type="radio"
+                        name="level"
+                        checked={level === opt.v}
+                        onChange={() => { setLevel(opt.v); setPage(1); }}
+                        className="text-[#00288e] focus:ring-[#00288e]"
+                      />
+                      <span className="text-sm text-[#444653] group-hover:text-[#00288e] transition-colors flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[15px]">{opt.icon}</span>
+                        {opt.l}
+                      </span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <div className="mb-6">
@@ -694,7 +652,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs font-bold text-[#191c1e] block mb-2">Hình thức</label>
-                    <select value={method} onChange={e => { setMethod(e.target.value); setPage(1); }}
+                    <select value={method} onChange={e => { setMethod(e.target.value); if (e.target.value !== 'offline') setCity(''); setPage(1); }}
                       className="w-full px-2 py-2 text-sm border rounded-lg">
                       <option value="">Tất cả</option>
                       <option value="online">Online</option>
@@ -712,6 +670,21 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                       <option value="Đại học">Đại học</option>
                     </select>
                   </div>
+                  {method === 'offline' && (
+                    <div className="col-span-2">
+                      <label className="text-xs font-bold text-[#191c1e] block mb-2">
+                        <span className="material-symbols-outlined text-[13px] align-middle mr-1">location_on</span>
+                        Tỉnh / Thành phố
+                      </label>
+                      <select value={city} onChange={e => { setCity(e.target.value); setPage(1); }}
+                        className="w-full px-2 py-2 text-sm border rounded-lg">
+                        <option value="">Chọn tỉnh/thành</option>
+                        {VIETNAM_PROVINCES.map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="col-span-2">
                     <label className="text-xs font-bold text-[#191c1e] block mb-2">Giá tối đa: ${maxPrice}/giờ</label>
                     <input type="range" min="20" max="200" step="10" value={maxPrice}
@@ -726,9 +699,18 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             )}
 
             {/* Active filter chips */}
-            {(selectedSubjects.length > 0 || method || level) && (
+            {(search.trim() || selectedSubjects.length > 0 || method || level || city) && (
               <div className="flex flex-wrap gap-2 mb-5">
                 <span className="text-xs text-[#757684] self-center">Đang lọc:</span>
+                {search.trim() && (
+                  <span className="inline-flex items-center gap-1 bg-[#3b82f6] text-white text-xs font-medium px-3 py-1 rounded-full">
+                    <span className="material-symbols-outlined text-[13px]">search</span>
+                    {search.trim()}
+                    <button onClick={() => { setSearch(''); setSearchInput(''); setPage(1); }} className="hover:bg-white/20 rounded-full p-0.5">
+                      <span className="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                  </span>
+                )}
                 {selectedSubjects.map(s => (
                   <span key={s} className="inline-flex items-center gap-1 bg-[#00288e] text-white text-xs font-medium px-3 py-1 rounded-full">
                     {s}
@@ -739,8 +721,17 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                 ))}
                 {method && (
                   <span className="inline-flex items-center gap-1 bg-[#00288e] text-white text-xs font-medium px-3 py-1 rounded-full capitalize">
-                    {method}
-                    <button onClick={() => { setMethod(''); setPage(1); }} className="hover:bg-white/20 rounded-full p-0.5">
+                    {method === 'online' ? 'Online' : method === 'offline' ? 'Offline' : method}
+                    <button onClick={() => { setMethod(''); setCity(''); setPage(1); }} className="hover:bg-white/20 rounded-full p-0.5">
+                      <span className="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                  </span>
+                )}
+                {city && (
+                  <span className="inline-flex items-center gap-1 bg-[#10b981] text-white text-xs font-medium px-3 py-1 rounded-full">
+                    <span className="material-symbols-outlined text-[13px]">location_on</span>
+                    {city}
+                    <button onClick={() => { setCity(''); setPage(1); }} className="hover:bg-white/20 rounded-full p-0.5">
                       <span className="material-symbols-outlined text-[13px]">close</span>
                     </button>
                   </span>
@@ -829,81 +820,6 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             )}
           </div>
         </div>
-
-        {/* TESTIMONIALS */}
-        <section className="mt-20 mb-16">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center gap-1 bg-[#fef3c7] text-[#78350f] px-3 py-1 rounded-full text-xs font-bold mb-3">
-              <span className="material-symbols-outlined text-[14px]" style={{fontVariationSettings:"'FILL' 1"}}>reviews</span>
-              HỌC SINH NÓI GÌ
-            </div>
-            <h2 className="text-3xl font-extrabold text-[#191c1e] mb-2">Hàng nghìn học sinh đã tin tưởng EduX</h2>
-            <p className="text-[#5d5f5f]">Những câu chuyện thành công thật từ cộng đồng của chúng tôi</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {TESTIMONIALS.map((t, i) => (
-              <div key={i} className="relative bg-white rounded-2xl p-6 shadow-sm hover:shadow-xl transition-shadow border border-[#f1f2f4] group">
-                {/* Big quote mark */}
-                <div className="absolute top-4 right-5 text-[80px] leading-none text-[#00288e]/8 font-serif select-none">"</div>
-
-                <div className="flex items-center gap-1 text-[#f59e0b] mb-3">
-                  {[1,2,3,4,5].map(n => (
-                    <span key={n} className="material-symbols-outlined text-[18px]" style={{fontVariationSettings: n <= t.rating ? "'FILL' 1" : "'FILL' 0"}}>star</span>
-                  ))}
-                </div>
-
-                <p className="text-[#444653] text-sm leading-relaxed mb-5 relative z-10">"{t.text}"</p>
-
-                <div className="flex items-center gap-3 pt-4 border-t border-[#f1f2f4]">
-                  <img
-                    src={t.avatar}
-                    alt={t.name}
-                    className="w-12 h-12 rounded-full object-cover ring-2 ring-[#00288e]/10"
-                  />
-                  <div className="flex-grow">
-                    <div className="font-bold text-sm text-[#191c1e]">{t.name}</div>
-                    <div className="text-xs text-[#757684]">{t.role} · {t.subject}</div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* WHY CHOOSE EDUX */}
-        <section className="mt-20 mb-8">
-          <div className="rounded-3xl bg-gradient-to-br from-[#f8f9fb] via-white to-[#eef2ff] p-8 md:p-12 border border-[#e5e7eb]">
-            <div className="text-center mb-10">
-              <h2 className="text-3xl font-extrabold text-[#191c1e] mb-2">Vì sao chọn EduX?</h2>
-              <p className="text-[#5d5f5f]">Chúng tôi cam kết mang đến trải nghiệm học tập tốt nhất cho bạn</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-              {WHY_CHOOSE.map((w, i) => (
-                <div key={w.title} className="bg-white rounded-2xl p-6 text-center hover:shadow-lg hover:-translate-y-1 transition-all border border-[#f1f2f4] group">
-                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#dbeafe] to-[#eef2ff] flex items-center justify-center group-hover:from-[#00288e] group-hover:to-[#3a6fe0] transition-all">
-                    <span className="material-symbols-outlined text-[28px] text-[#00288e] group-hover:text-white transition-colors" style={{fontVariationSettings:"'FILL' 1"}}>{w.icon}</span>
-                  </div>
-                  <h3 className="font-bold text-base text-[#191c1e] mb-2">{w.title}</h3>
-                  <p className="text-xs text-[#5d5f5f] leading-relaxed">{w.desc}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Final CTA */}
-            <div className="mt-10 text-center">
-              <p className="text-sm text-[#5d5f5f] mb-4">Sẵn sàng bắt đầu hành trình học tập của bạn?</p>
-              <button
-                onClick={() => window.location.hash = '/tutor-request'}
-                className="btn-shine inline-flex items-center gap-2 bg-gradient-to-r from-[#00288e] via-[#2747c4] to-[#3a6fe0] text-white px-8 py-3.5 rounded-xl font-bold text-base hover:-translate-y-0.5 hover:shadow-[0_14px_30px_-8px_rgba(55,85,195,0.55)] transition-all shadow-md"
-              >
-                <span className="material-symbols-outlined text-[22px]">auto_awesome</span>
-                Nhận Gợi Ý AI Miễn Phí
-              </button>
-            </div>
-          </div>
-        </section>
       </main>
 
       <footer className="bg-[#edeef0] w-full mt-16">

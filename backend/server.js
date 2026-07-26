@@ -1377,7 +1377,7 @@ async function maybeCopilotLLMRewrite(report, context) {
 // positive signals, and privacy risk. NEVER bans/suspends/refunds/emails or
 // mutates account/money. Optional LLM rewrite (off by default).
 // ═══════════════════════════════════════════════════════════════════════════
-const SEMANTIC_MODERATION_LLM_ENABLED   = String(process.env.SEMANTIC_MODERATION_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const SEMANTIC_MODERATION_LLM_ENABLED   = String(process.env.SEMANTIC_MODERATION_LLM_ENABLED ?? 'true').toLowerCase() === 'true';
 const SEMANTIC_MODERATION_PROVIDER      = String(process.env.SEMANTIC_MODERATION_PROVIDER || 'gemini').toLowerCase();
 const SEMANTIC_MODERATION_MAX_TEXT_CHARS = Number(process.env.SEMANTIC_MODERATION_MAX_TEXT_CHARS || 8000);
 const SEMANTIC_MODERATION_WORKER_ENABLED = String(process.env.SEMANTIC_MODERATION_WORKER_ENABLED ?? 'false').toLowerCase() === 'true';
@@ -1394,7 +1394,11 @@ const SEMANTIC_KEYWORDS = {
   paymentProviders: ['momo', 'zalopay', 'viettel money', 'vietcombank', 'techcombank', 'vietinbank', 'bidv', 'vcb', 'stk', 'số tài khoản', 'so tai khoan', 'bank transfer', 'internet banking', 'ngân hàng', 'ngan hang'],
   transferVerbs:    ['chuyển khoản', 'chuyen khoan', 'chuyển tiền', 'chuyen tien', 'pay me directly', 'direct payment', 'pay directly', 'thanh toán riêng', 'trả riêng', 'tra rieng'],
   avoidPlatform:    ['khỏi đặt trên web', 'khoi dat tren web', 'học ngoài app', 'hoc ngoai app', 'ngoài app', 'ngoai app', 'né phí', 'ne phi', 'đỡ mất phí', 'do mat phi', 'outside platform', 'không qua app', 'khong qua app', 'nhắn zalo riêng', 'nhan zalo rieng', 'liên hệ riêng', 'lien he rieng', 'khỏi đặt', 'khoi dat'],
-  toxic:            ['đồ ngu', 'thằng ngu', 'con ngu', 'óc chó', 'oc cho', 'im mồm', 'câm mồm', 'cam mom', 'đồ rác', 'do rac', 'vô dụng', 'vo dung', 'khốn nạn', 'khon nan', 'mất dạy', 'mat day', 'con điên', 'stupid', 'idiot', 'shut up', 'moron', 'asshole', 'loser', 'trash tutor'],
+  toxic:            ['đồ ngu', 'thằng ngu', 'con ngu', 'óc chó', 'oc cho', 'im mồm', 'câm mồm', 'cam mom', 'đồ rác', 'do rac', 'vô dụng', 'vo dung', 'khốn nạn', 'khon nan', 'mất dạy', 'mat day', 'con điên', 'ngu dốt', 'ngu dot', 'ngu si', 'đồ khốn', 'do khon', 'thằng khốn', 'thang khon', 'súc sinh', 'suc sinh', 'chó chết', 'stupid', 'idiot', 'shut up', 'moron', 'asshole', 'loser', 'trash tutor'],
+  // Explicit vulgarity/slurs — kept diacritic-exact only (no ASCII-folded forms):
+  // stripping tones on these collapses them onto common innocent words (lồn→lon "can", cặc→cac≈các, đéo→deo "wear", đĩ→di≈đi "go"),
+  // so an unaccented variant would false-positive on everyday text. Weighted heavier than `toxic` below.
+  severeToxic:      ['lồn', 'cặc', 'đụ mẹ', 'đụ má', 'địt mẹ', 'địt', 'đĩ mẹ', 'đéo', 'đm', 'vcl', 'vkl', 'fuck', 'fucking', 'bitch', 'bullshit', 'dumbass', 'bastard'],
   threat:           ['tao giết', 'giết mày', 'giet may', 'đánh cho', 'danh cho', 'cho mày biết tay', 'đe dọa', 'de doa', 'kill you', 'beat you up'],
   lowQuality:       ['không giải thích', 'khong giai thich', 'khó hiểu', 'kho hieu', 'dạy qua loa', 'day qua loa', 'không chuẩn bị', 'khong chuan bi', 'không nhiệt tình', 'khong nhiet tinh', 'thiếu kiên nhẫn', 'thieu kien nhan', 'vào trễ', 'vao tre', 'đi muộn', 'di muon', 'hủy liên tục', 'huy lien tuc', 'no-show', 'no show', 'unprepared', 'bỏ buổi', 'bo buoi'],
   positive:         ['kiên nhẫn', 'kien nhan', 'thân thiện', 'than thien', 'dễ hiểu', 'de hieu', 'chuẩn bị tốt', 'chuan bi tot', 'nhiệt tình', 'nhiet tinh', 'đúng giờ', 'dung gio', 'tận tâm', 'tan tam', 'punctual', 'helpful', 'clear explanation', 'patient', 'friendly'],
@@ -1403,6 +1407,41 @@ const SEMANTIC_KEYWORDS = {
 
 const SEM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function asUuidOrNull(v) { return (v && SEM_UUID_RE.test(String(v))) ? String(v) : null; }
+
+// Shared vocab/helpers between the rule-based classifier and the AI-assisted merge below.
+const MODERATION_CATEGORY_VI = {
+  EXTERNAL_PAYMENT_ATTEMPT: 'giao dịch ngoài nền tảng', TOXIC_LANGUAGE: 'ngôn từ tiêu cực',
+  SPAM_OR_SCAM: 'spam/lừa đảo', LOW_TEACHING_QUALITY: 'chất lượng giảng dạy thấp',
+  POSITIVE_TEACHING_SIGNAL: 'tín hiệu tích cực', PRIVACY_RISK: 'lộ thông tin cá nhân',
+};
+const MODERATION_SEVERITY_VI = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' };
+const MODERATION_CATEGORIES = Object.keys(MODERATION_CATEGORY_VI);
+const MODERATION_SEVERITY_RANK = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
+
+function buildModerationSummary(severity, catList) {
+  if (catList.length === 0) return 'Không phát hiện dấu hiệu bất thường. Nội dung trung tính.';
+  if (catList.length === 1 && catList[0] === 'POSITIVE_TEACHING_SIGNAL') return 'Nội dung tích cực về gia sư, không có rủi ro. Mức rủi ro thấp.';
+  return `Phát hiện: ${catList.map(c => MODERATION_CATEGORY_VI[c] || c).join(', ')}. Mức rủi ro ${MODERATION_SEVERITY_VI[severity]}.`;
+}
+
+// Suggested actions (allowed set only) — shared by the pure rule-based path and the AI-merged path.
+function buildSuggestedActions(severity, categories) {
+  const actions = [];
+  const add = (type, label, reason) => { if (SEMANTIC_ALLOWED_ACTIONS.has(type)) actions.push({ type, label, reason }); };
+  if (severity === 'CRITICAL' || severity === 'HIGH') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Tín hiệu rủi ro cao');
+    if (categories.has('EXTERNAL_PAYMENT_ATTEMPT')) add('REVIEW_TUTOR_QUALITY', 'Rà soát gia sư', 'Nghi ngờ giao dịch ngoài nền tảng');
+    add('COPY_WARNING_DRAFT', 'Soạn nháp cảnh báo', 'Chuẩn bị nhắc nhở');
+    add('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm');
+  } else if (severity === 'MEDIUM') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Cần xác minh thêm');
+    add('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Tín hiệu chưa rõ ràng');
+  } else {
+    add('NO_ACTION', 'Không cần hành động', categories.has('POSITIVE_TEACHING_SIGNAL') ? 'Nội dung tích cực' : 'Tín hiệu yếu/trung tính');
+  }
+  add('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai');
+  return actions;
+}
 
 // Trim, strip control chars, collapse whitespace, cap length.
 function sanitizeModerationText(text, maxChars = SEMANTIC_MODERATION_MAX_TEXT_CHARS) {
@@ -1464,13 +1503,15 @@ function classifyTextModeration(rawText, context = {}) {
 
   // 2. Toxic language
   const toxicHits = find(SEMANTIC_KEYWORDS.toxic);
+  const severeToxicHits = find(SEMANTIC_KEYWORDS.severeToxic);
   const threatHits = find(SEMANTIC_KEYWORDS.threat);
   let toxicityRisk = 0;
-  if (toxicHits.length || threatHits.length) {
+  if (toxicHits.length || severeToxicHits.length || threatHits.length) {
     categories.add('TOXIC_LANGUAGE');
-    toxicityRisk = clamp(toxicHits.length * 25 + threatHits.length * 45);
-    [...new Set([...toxicHits, ...threatHits])].forEach(kw => highlighted.push({ text: kw, reason: 'toxic' }));
-    evidence.push({ label: 'Ngôn từ tiêu cực/đe dọa', value: [...new Set([...toxicHits, ...threatHits])].join(', ') });
+    // Severe slurs/profanity outweigh mild insults so a single hit already clears the HIGH threshold below.
+    toxicityRisk = clamp(toxicHits.length * 25 + severeToxicHits.length * 50 + threatHits.length * 45);
+    [...new Set([...toxicHits, ...severeToxicHits, ...threatHits])].forEach(kw => highlighted.push({ text: kw, reason: 'toxic' }));
+    evidence.push({ label: 'Ngôn từ tiêu cực/đe dọa', value: [...new Set([...toxicHits, ...severeToxicHits, ...threatHits])].join(', ') });
   }
 
   // 3. Spam / scam
@@ -1522,34 +1563,9 @@ function classifyTextModeration(rawText, context = {}) {
   else if (externalPaymentRisk >= 60 || toxicityRisk >= 50 || repeatedContact || (phoneMatches.length + emailMatches.length) >= 2) severity = 'HIGH';
   else if (externalPaymentRisk >= 30 || toxicityRisk >= 25 || negN >= 2 || categories.has('EXTERNAL_PAYMENT_ATTEMPT') || categories.has('TOXIC_LANGUAGE') || categories.has('PRIVACY_RISK')) severity = 'MEDIUM';
 
-  // Suggested actions (allowed set only)
-  const actions = [];
-  const add = (type, label, reason) => { if (SEMANTIC_ALLOWED_ACTIONS.has(type)) actions.push({ type, label, reason }); };
-  if (severity === 'CRITICAL' || severity === 'HIGH') {
-    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Tín hiệu rủi ro cao');
-    if (categories.has('EXTERNAL_PAYMENT_ATTEMPT')) add('REVIEW_TUTOR_QUALITY', 'Rà soát gia sư', 'Nghi ngờ giao dịch ngoài nền tảng');
-    add('COPY_WARNING_DRAFT', 'Soạn nháp cảnh báo', 'Chuẩn bị nhắc nhở');
-    add('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm');
-  } else if (severity === 'MEDIUM') {
-    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Cần xác minh thêm');
-    add('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Tín hiệu chưa rõ ràng');
-  } else {
-    add('NO_ACTION', 'Không cần hành động', categories.has('POSITIVE_TEACHING_SIGNAL') ? 'Nội dung tích cực' : 'Tín hiệu yếu/trung tính');
-  }
-  add('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai');
-
-  // Vietnamese summary
-  const catVi = {
-    EXTERNAL_PAYMENT_ATTEMPT: 'giao dịch ngoài nền tảng', TOXIC_LANGUAGE: 'ngôn từ tiêu cực',
-    SPAM_OR_SCAM: 'spam/lừa đảo', LOW_TEACHING_QUALITY: 'chất lượng giảng dạy thấp',
-    POSITIVE_TEACHING_SIGNAL: 'tín hiệu tích cực', PRIVACY_RISK: 'lộ thông tin cá nhân',
-  };
+  const actions = buildSuggestedActions(severity, categories);
   const catList = [...categories];
-  const sevVi = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' }[severity];
-  let summary;
-  if (catList.length === 0) summary = 'Không phát hiện dấu hiệu bất thường. Nội dung trung tính.';
-  else if (catList.length === 1 && catList[0] === 'POSITIVE_TEACHING_SIGNAL') summary = 'Nội dung tích cực về gia sư, không có rủi ro. Mức rủi ro thấp.';
-  else summary = `Phát hiện: ${catList.map(c => catVi[c] || c).join(', ')}. Mức rủi ro ${sevVi}.`;
+  const summary = buildModerationSummary(severity, catList);
 
   limitations.push('Phân tích dựa trên quy tắc từ khóa, chỉ mang tính tham khảo. Admin quyết định cuối cùng.');
 
@@ -1569,31 +1585,91 @@ function analyzeChatMessageSemantic(message) {
   return { ...classifyTextModeration(text, { sourceType: 'CHAT_MESSAGE' }), source_type: 'CHAT_MESSAGE', source_id: message.id || null, text };
 }
 
-// Optional LLM rewrite of summary only (off by default). Never invents evidence.
-async function maybeSemanticLLMRewrite(report, sanitizedText) {
-  if (!SEMANTIC_MODERATION_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+// Real semantic classification via Gemini — reads the text for actual meaning/context
+// (sarcasm, disguised insults, teencode, indirect phrasing) that the keyword lists in
+// classifyTextModeration can never fully enumerate. Returns null on disable/no-key/parse
+// failure across every model in GEMINI_MODELS, so the caller can fall back to rule-based
+// with zero special-casing. NEVER asked to suggest banning/refunding — advisory only,
+// same constraint as every other AI feature in this app.
+async function classifyModerationWithGemini(rawText) {
+  if (!SEMANTIC_MODERATION_LLM_ENABLED) return null;
+  if (SEMANTIC_MODERATION_PROVIDER !== 'gemini') return null;
+  if (typeof GEMINI_API_KEY !== 'string' || !GEMINI_API_KEY) return null;
   try {
-    const payload = JSON.stringify({ categories: report.categories, severity: report.severity, scores: report.scores, text: sanitizeModerationText(sanitizedText, 2000) }).slice(0, SEMANTIC_MODERATION_MAX_TEXT_CHARS);
-    const prompt = `Bạn là trợ lý kiểm duyệt nội dung cho nền tảng gia sư EduX. Viết lại TÓM TẮT bằng tiếng Việt ngắn gọn, khách quan, CHỈ dựa trên dữ liệu JSON dưới đây, KHÔNG bịa thêm bằng chứng, KHÔNG đề xuất khóa/cấm tài khoản. Trả về JSON {"summary_vi":"..."}. Dữ liệu: ${payload}`;
-    if (SEMANTIC_MODERATION_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
-      for (const model of GEMINI_MODELS) {
-        const r = await callGeminiModel(model, prompt);
-        if (r.ok) {
-          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          try {
-            const parsed = JSON.parse(t);
-            if (parsed && typeof parsed.summary_vi === 'string' && parsed.summary_vi.trim().length > 10) {
-              return { summary: parsed.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' };
-            }
-          } catch { /* invalid -> fall through */ }
-        }
-      }
+    const text = sanitizeModerationText(rawText, 3000);
+    const prompt = `Bạn là hệ thống kiểm duyệt nội dung ngữ nghĩa cho nền tảng gia sư trực tuyến EduX. Đọc đoạn văn bản (đánh giá hoặc tin nhắn) dưới đây và PHÂN TÍCH THẬT SỰ dựa trên ý nghĩa và ngữ cảnh — không chỉ khớp từ khóa. Hãy phát hiện cả những cách diễn đạt gián tiếp, mỉa mai, viết tắt, chửi tục biến thể (teencode) mà một bộ lọc từ khóa cứng có thể bỏ lỡ.
+
+Các danh mục được phép gán (chỉ chọn trong danh sách này, có thể chọn nhiều hoặc không chọn cái nào):
+${MODERATION_CATEGORIES.join(', ')}
+
+Mức độ rủi ro hợp lệ: ${Object.keys(MODERATION_SEVERITY_RANK).join(', ')}
+
+Văn bản cần phân tích: "${text}"
+
+Trả về DUY NHẤT JSON theo đúng schema, không kèm giải thích, không markdown code fence:
+{"categories": [<0 hoặc nhiều danh mục ở trên>], "severity": "<một mức ở trên>", "scores": {"patience": <0-100>, "friendliness": <0-100>, "teaching_quality": <0-100>, "professionalism": <0-100>, "external_payment_risk": <0-100>, "toxicity_risk": <0-100>, "spam_risk": <0-100>}, "summary_vi": "<tóm tắt khách quan 1-2 câu bằng tiếng Việt, KHÔNG bịa thêm bằng chứng không có trong văn bản, KHÔNG đề xuất khóa/cấm tài khoản>", "reason": "<lý do ngắn gọn, dưới 20 từ>"}
+
+TUYỆT ĐỐI KHÔNG thêm trường nào ngoài schema trên.`;
+
+    for (const model of GEMINI_MODELS) {
+      const r = await callGeminiModel(model, prompt);
+      if (!r.ok) continue;
+      const raw = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      let parsed;
+      try { parsed = JSON.parse(raw.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { continue; }
+      if (!parsed || typeof parsed !== 'object') continue;
+
+      const clamp = v => Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : 0;
+      const s = parsed.scores && typeof parsed.scores === 'object' ? parsed.scores : {};
+      return {
+        categories: Array.isArray(parsed.categories) ? parsed.categories.filter(c => MODERATION_CATEGORIES.includes(c)) : [],
+        severity: typeof parsed.severity === 'string' && MODERATION_SEVERITY_RANK.hasOwnProperty(parsed.severity) ? parsed.severity : 'LOW',
+        scores: {
+          patience: clamp(s.patience), friendliness: clamp(s.friendliness), teaching_quality: clamp(s.teaching_quality),
+          professionalism: clamp(s.professionalism), external_payment_risk: clamp(s.external_payment_risk),
+          toxicity_risk: clamp(s.toxicity_risk), spam_risk: clamp(s.spam_risk),
+        },
+        summary: typeof parsed.summary_vi === 'string' && parsed.summary_vi.trim() ? parsed.summary_vi.trim().slice(0, 500) : null,
+        reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim().slice(0, 200) : null,
+      };
     }
-    return { summary: report.summary, model_used: 'RULE_BASED' };
+    return null; // every model attempt failed/malformed — caller falls back to rule-based
   } catch (err) {
-    console.warn('[semantic] LLM rewrite failed, falling back:', err.message);
-    return { summary: report.summary, model_used: 'RULE_BASED' };
+    console.warn('[semantic] Gemini classify failed, falling back:', err.message);
+    return null;
   }
+}
+
+// Merge AI classification into the rule-based result. AI can only ADD risk, never
+// remove/downgrade what the deterministic keyword pass already found — a Gemini call
+// that under-calls something (or fails outright) can never make a report look safer
+// than the rule-based floor.
+function mergeModerationWithAI(ruleResult, ai) {
+  const categories = new Set([...ruleResult.categories, ...ai.categories]);
+  const severity = MODERATION_SEVERITY_RANK[ai.severity] > MODERATION_SEVERITY_RANK[ruleResult.severity] ? ai.severity : ruleResult.severity;
+  const scores = {
+    // Quality dimensions are subjective/contextual — prefer the AI's contextual read.
+    patience: ai.scores.patience, friendliness: ai.scores.friendliness,
+    teaching_quality: ai.scores.teaching_quality, professionalism: ai.scores.professionalism,
+    // Risk dimensions keep the higher of the two — the safety floor.
+    external_payment_risk: Math.max(ruleResult.scores.external_payment_risk, ai.scores.external_payment_risk),
+    toxicity_risk: Math.max(ruleResult.scores.toxicity_risk, ai.scores.toxicity_risk),
+    spam_risk: Math.max(ruleResult.scores.spam_risk, ai.scores.spam_risk),
+  };
+  const catList = [...categories];
+  let summary = buildModerationSummary(severity, catList);
+  if (ai.summary) summary += ` Nhận định AI: ${ai.summary}`;
+
+  const evidence = [...ruleResult.evidence];
+  if (ai.reason) evidence.push({ label: 'Phân tích ngữ nghĩa AI (Gemini)', value: ai.reason });
+
+  return {
+    severity, categories: catList, scores, summary,
+    evidence, highlighted_text: ruleResult.highlighted_text,
+    suggested_actions: buildSuggestedActions(severity, categories),
+    limitations: [...ruleResult.limitations, 'Có sử dụng AI (Gemini) để phân tích ngữ nghĩa sâu hơn — vẫn chỉ mang tính tham khảo, admin quyết định cuối cùng.'],
+    model_used: 'HYBRID_GEMINI_RULES',
+  };
 }
 
 async function saveSemanticModerationReport(r) {
@@ -5144,6 +5220,12 @@ app.get("/api/admin/users/:id", verifyToken, requireAdmin, async (req, res) => {
         [id]
       );
       user.linked_parents = parentsResult.rows;
+
+      const adminLockedRes = await pool.query(
+        `SELECT COUNT(*) FROM bookings WHERE student_id=$1 AND hidden_from_tutor=true AND hidden_reason='ADMIN_MANUAL'`,
+        [id]
+      );
+      user.admin_locked_schedule_count = parseInt(adminLockedRes.rows[0].count);
     }
 
     if (user.role === "parent") {
@@ -5261,6 +5343,82 @@ app.patch("/api/admin/users/:id/ban", verifyToken, requireAdmin, async (req, res
     return res.json(result.rows[0]);
   } catch (err) {
     console.error("PATCH /api/admin/users/:id/ban error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ── PATCH /api/admin/students/:id/lock-schedule ──────────────────────────────
+// Admin chủ động ẩn toàn bộ lịch học tương lai của 1 học sinh khỏi lịch dạy của
+// (các) gia sư — ví dụ nghi ngờ gian lận, đang điều tra... KHÔNG liên quan tới
+// cơ chế tự động "2 buổi vắng liên tiếp" (absence_lockdown_*), dùng hidden_reason
+// riêng ('ADMIN_MANUAL') để 2 cơ chế không đụng vào dữ liệu của nhau.
+app.patch("/api/admin/students/:id/lock-schedule", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const check = await pool.query("SELECT role FROM users WHERE id=$1", [id]);
+    if (!check.rows.length) return res.status(404).json({ message: "Không tìm thấy học sinh." });
+    if (check.rows[0].role !== "student") return res.status(400).json({ message: "Chỉ áp dụng cho tài khoản học sinh." });
+
+    const result = await pool.query(
+      `UPDATE bookings SET hidden_from_tutor=true, hidden_reason='ADMIN_MANUAL'
+       WHERE student_id=$1 AND status='Approved' AND escrow_released_at IS NULL
+         AND lesson_date >= CURRENT_DATE AND hidden_from_tutor = false
+       RETURNING id, tutor_id`,
+      [id]
+    );
+
+    const tutorCounts = {};
+    for (const r of result.rows) tutorCounts[r.tutor_id] = (tutorCounts[r.tutor_id] || 0) + 1;
+    for (const [tId, cnt] of Object.entries(tutorCounts)) {
+      await safeNotifyUser(pool, {
+        userId: tId, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'generic', eventType: 'student_schedule_admin_locked',
+        title: 'Lịch học đã được admin tạm ẩn',
+        body: `Admin đã tạm khoá lịch học với 1 học sinh để xác minh. ${cnt} buổi học của bạn với học sinh này đã tạm ẩn khỏi lịch dạy.`,
+        icon: 'lock', refId: id, refType: 'user',
+        sourceType: 'admin_action', sourceId: id, priority: 'high',
+        idempotencyKey: `student:${id}:admin_locked:${tId}:${Date.now()}`,
+      });
+    }
+
+    return res.json({ message: `Đã ẩn ${result.rows.length} buổi học tương lai.`, hiddenCount: result.rows.length });
+  } catch (err) {
+    console.error("PATCH /api/admin/students/:id/lock-schedule error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ." });
+  }
+});
+
+// ── PATCH /api/admin/students/:id/unlock-schedule ────────────────────────────
+// Mở lại các buổi bị admin khoá TAY (hidden_reason='ADMIN_MANUAL') — không đụng
+// tới buổi đang bị ẩn do cơ chế tự động (ABSENCE_ESCALATION), vốn phải mở qua
+// đúng luồng xử lý khiếu nại (POST /api/escrow/resolve-dispute-v2).
+app.patch("/api/admin/students/:id/unlock-schedule", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `UPDATE bookings SET hidden_from_tutor=false, hidden_reason=NULL
+       WHERE student_id=$1 AND hidden_from_tutor=true AND hidden_reason='ADMIN_MANUAL'
+       RETURNING id, tutor_id`,
+      [id]
+    );
+
+    const tutorCounts = {};
+    for (const r of result.rows) tutorCounts[r.tutor_id] = (tutorCounts[r.tutor_id] || 0) + 1;
+    for (const [tId, cnt] of Object.entries(tutorCounts)) {
+      await safeNotifyUser(pool, {
+        userId: tId, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+        templateKey: 'generic', eventType: 'student_schedule_admin_unlocked',
+        title: 'Lịch học đã được mở lại',
+        body: `Admin đã mở lại lịch học. ${cnt} buổi học của bạn với học sinh này đã hiện lại trong lịch dạy.`,
+        icon: 'lock_open', refId: id, refType: 'user',
+        sourceType: 'admin_action', sourceId: id, priority: 'normal',
+        idempotencyKey: `student:${id}:admin_unlocked:${tId}:${Date.now()}`,
+      });
+    }
+
+    return res.json({ message: `Đã mở lại ${result.rows.length} buổi học.`, unhiddenCount: result.rows.length });
+  } catch (err) {
+    console.error("PATCH /api/admin/students/:id/unlock-schedule error:", err);
     return res.status(500).json({ message: "Lỗi máy chủ." });
   }
 });
@@ -10222,26 +10380,32 @@ app.get("/api/parent/overview", verifyToken, async (req, res) => {
       ORDER BY epa.submitted_at DESC LIMIT 10
     `, [parentId]);
 
-    // Upcoming classes (bookings + tutor_sessions)
-    const upcomingClassesRes = await pool.query(`
-      SELECT b.id, (b.lesson_date::text || ' ' || COALESCE(b.time_slot, '00:00:00')) AS scheduled_at, 60 AS duration_mins, b.subject, b.status, u.full_name AS tutor_name, stu.full_name AS student_name
+    // Upcoming classes — nguồn `bookings` (tutor_sessions không bao giờ được ghi bởi
+    // luồng đặt lịch thật nên luôn trả rỗng; đổi sang cùng nguồn với lịch học sinh/gia sư).
+    const upcomingClassesRaw = await pool.query(`
+      SELECT b.id, b.lesson_date, b.time_slot, b.duration_mins, b.subject, b.status,
+             u.full_name AS tutor_name, stu.full_name AS student_name
       FROM bookings b
-      JOIN users u ON b.tutor_id = u.id
-      JOIN users stu ON b.student_id = stu.id
-      WHERE b.status IN ('Approved', 'InProgress', 'Pending') 
-        AND b.lesson_date >= CURRENT_DATE
-        AND b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
-
-      UNION ALL
-
-      SELECT ts.id, ts.scheduled_at::text, ts.duration_mins, ts.subject, ts.status, u.full_name AS tutor_name, stu.full_name AS student_name
-      FROM tutor_sessions ts
-      JOIN users u ON ts.tutor_id = u.id
-      JOIN users stu ON ts.student_id = stu.id
-      WHERE ts.status IN ('scheduled', 'ongoing') AND ts.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
-
-      ORDER BY scheduled_at ASC LIMIT 5
+      JOIN users u ON u.id = b.tutor_id
+      JOIN users stu ON stu.id = b.student_id
+      WHERE LOWER(b.status) IN ('approved', 'accepted') AND b.student_id IN (SELECT student_id FROM parent_children WHERE parent_id=$1)
     `, [parentId]);
+    const upcomingClassesRes = {
+      rows: upcomingClassesRaw.rows
+        .map(row => ({
+          id: row.id,
+          scheduled_at: lessonStartFrom(row.lesson_date, row.time_slot),
+          duration_mins: row.duration_mins || 60,
+          subject: row.subject,
+          status: 'scheduled',
+          tutor_name: row.tutor_name,
+          student_name: row.student_name,
+        }))
+        .filter(row => row.scheduled_at && row.scheduled_at > new Date())
+        .sort((a, b) => a.scheduled_at - b.scheduled_at)
+        .slice(0, 5)
+        .map(row => ({ ...row, scheduled_at: row.scheduled_at.toISOString() })),
+    };
 
     return res.json({
       stats: {
@@ -10491,40 +10655,59 @@ app.get('/api/parent/children/:studentId/progress', verifyToken, async (req, res
 // ══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/parent/children/:studentId/schedule
+// Batch: nguồn dữ liệu đổi từ `tutor_sessions` (bảng không bao giờ được ghi bởi
+// luồng đặt lịch thật -> luôn rỗng) sang `bookings` + `attendance`, cùng nguồn
+// với lịch học sinh/gia sư đang dùng, để tránh 3 nơi hiển thị 3 dữ liệu khác nhau.
 app.get('/api/parent/children/:studentId/schedule', verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
     const link = await pool.query('SELECT id FROM parent_children WHERE parent_id=$1 AND student_id=$2', [req.user.userId, studentId]);
     if (!link.rows.length) return res.status(403).json({ message: 'Không có quyền truy cập.' });
 
-    const sessions = await pool.query(`
-      SELECT 
-        b.id, b.subject, 
-        (b.lesson_date::text || ' ' || COALESCE(b.time_slot, '00:00:00')) AS scheduled_at, 
-        COALESCE(b.duration_mins, 60) AS duration_mins, b.status, b.leave_reason, b.note AS notes,
-        u.id AS tutor_id, u.full_name AS tutor_name, u.picture AS tutor_picture
+    const result = await pool.query(`
+      SELECT b.id, b.tutor_id, b.subject, b.lesson_date, b.time_slot, b.duration_mins,
+             b.status, b.leave_reason, u.full_name AS tutor_name, u.picture AS tutor_picture,
+             a.status AS attendance_status, a.note AS attendance_note
       FROM bookings b
-      JOIN users u ON b.tutor_id = u.id
-      WHERE b.student_id = $1 AND b.status IN ('Approved', 'InProgress', 'Pending', 'Completed', 'Cancelled', 'cancelled')
-
-      UNION ALL
-
-      SELECT ts.id, ts.subject, ts.scheduled_at::text, ts.duration_mins, ts.status, ts.leave_reason, ts.notes,
-             u.id AS tutor_id, u.full_name AS tutor_name, u.picture AS tutor_picture
-      FROM tutor_sessions ts
-      JOIN users u ON ts.tutor_id = u.id
-      WHERE ts.student_id = $1
-
-      ORDER BY scheduled_at DESC LIMIT 30
+      JOIN users u ON u.id = b.tutor_id
+      LEFT JOIN attendance a ON a.booking_id = b.id
+      WHERE b.student_id = $1
+      ORDER BY b.lesson_date DESC, b.time_slot DESC
     `, [studentId]);
 
-    const absences = await pool.query(`
-      SELECT COUNT(*) AS count FROM bookings
-      WHERE student_id=$1 AND status IN ('Cancelled','Disputed') AND lesson_date >= date_trunc('month', CURRENT_DATE)
-    `, [studentId]);
+    const now = new Date();
+    const sessions = result.rows.map(row => {
+      const start = lessonStartFrom(row.lesson_date, row.time_slot);
+      const end = lessonEndFrom(row.lesson_date, row.time_slot);
+      let status = row.status ? row.status.toLowerCase() : 'pending';
+      if (status === 'accepted' || status === 'approved') {
+        status = end && now > end ? 'completed' : 'scheduled';
+      }
+      return {
+        id: row.id,
+        subject: row.subject || 'Khác',
+        scheduled_at: start ? start.toISOString() : null,
+        duration_mins: row.duration_mins || 60,
+        status,
+        leave_reason: row.leave_reason || null,
+        tutor_id: row.tutor_id,
+        tutor_name: row.tutor_name || 'Gia sư',
+        tutor_picture: row.tutor_picture || null,
+        attendance_status: row.attendance_status || null,
+        attendance_note: row.attendance_note || null,
+      };
+    });
 
-    return res.json({ sessions: sessions.rows, absences_this_month: parseInt(absences.rows[0].count) });
-  } catch (e) { console.error('GET /api/parent/children/:studentId/schedule error:', e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const absences_this_month = sessions.filter(s => {
+      if (s.attendance_status !== 'absent' || !s.scheduled_at) return false;
+      const d = new Date(s.scheduled_at);
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+    }).length;
+
+    return res.json({ sessions, absences_this_month });
+  } catch (e) { console.error('GET parent schedule error:', e); res.status(500).json({ message: 'Lỗi máy chủ.' }); }
 });
 
 // POST /api/parent/children/:studentId/schedule/:sessionId/leave
@@ -14562,17 +14745,29 @@ app.put('/api/admin/support-requests/:id', verifyToken, requireAdmin, async (req
     }
     let cancelledCount = 0;
     if (status === 'approved' && sr.request_type === 'change_tutor' && sr.tutor_id) {
-      const cancelled = await client.query(
-        `UPDATE bookings
-         SET status = 'Cancelled',
-             note = COALESCE(note,'') || ' [Hệ thống hủy: admin duyệt yêu cầu đổi gia sư]'
+      const bookingsRes = await client.query(
+        `SELECT id, escrow_tx_id, payer_wallet_id, lesson_fee 
+         FROM bookings
          WHERE student_id = $1 AND tutor_id = $2
            AND lesson_date >= CURRENT_DATE
            AND status IN ('Pending', 'Approved')
-         RETURNING id`,
+         FOR UPDATE`,
         [sr.student_id, sr.tutor_id]
       );
-      cancelledCount = cancelled.rows.length;
+      
+      for (const b of bookingsRes.rows) {
+        if (b.escrow_tx_id && b.payer_wallet_id && b.lesson_fee) {
+          await client.query(`SELECT refund_escrow($1, $2, $3)`, [b.escrow_tx_id, b.payer_wallet_id, b.lesson_fee]);
+        }
+        await client.query(
+          `UPDATE bookings
+           SET status = 'Cancelled',
+               note = COALESCE(note,'') || ' [Hệ thống hủy & Hoàn tiền: admin duyệt yêu cầu đổi gia sư]'
+           WHERE id = $1`,
+          [b.id]
+        );
+      }
+      cancelledCount = bookingsRes.rows.length;
       await client.query(
         `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
          VALUES ($1,'support_request','Lịch dạy thay đổi',$2,'event_busy',$3,'support_request')`,
@@ -14877,6 +15072,45 @@ async function getAdminWalletId(client) {
   if (process.env.ADMIN_WALLET_ID) return process.env.ADMIN_WALLET_ID;
   const aw = await client.query("SELECT w.id FROM wallets w JOIN users u ON w.user_id=u.id WHERE u.role='admin' LIMIT 1");
   return aw.rows.length ? aw.rows[0].id : null;
+}
+
+// Shared Gemini client. MUST stay top-level, not inside startServer(): classifyModerationWithGemini,
+// classifyAnalyticsWithGemini/classifyAnalyticsWithLLM, and the Copilot/fraud-intel Gemini checks are all
+// top-level functions that close over these bindings at definition time.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+
+const GEMINI_MODELS = [
+  process.env.GEMINI_MODEL || "gemini-2.5-flash",
+  "gemini-flash-latest",
+  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-2.5-flash-lite",
+].filter((m, i, arr) => arr.indexOf(m) === i);
+
+async function callGeminiModel(model, prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.7,
+          topP: 0.9,
+          maxOutputTokens: 2048,
+          responseMimeType: "application/json",
+        },
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false, status: res.status, errText: await res.text() };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
+  }
 }
 
 async function startServer() {
@@ -15989,7 +16223,7 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
               b.method_change_requested, b.method_change_reason, b.method_change_status,
               u_tutor.picture AS tutor_picture,
               u_student.picture AS student_picture, u_student.full_name AS "studentName",
-              a.status AS attendance_status,
+              a.status AS attendance_status, a.note AS attendance_note,
               EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute
        FROM bookings b
        LEFT JOIN users u_tutor ON u_tutor.id = b.tutor_id
@@ -15997,6 +16231,7 @@ app.get("/api/bookings", verifyToken, async (req, res) => {
        LEFT JOIN attendance a ON a.booking_id = b.id
        WHERE (b.student_id = $1 OR b.tutor_id = $1)
          AND b.status IN ('Pending', 'Approved', 'Declined', 'Rejected', 'Cancelled', 'pending', 'confirmed', 'declined')
+         AND NOT (b.hidden_from_tutor = true AND b.tutor_id = $1)
        ORDER BY b.lesson_date ASC, b.time_slot ASC`,
       [req.user.userId]
     );
@@ -16024,11 +16259,14 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
               b.session_topic, b.session_duration, b.duration_mins,
               b.method_change_requested, b.method_change_status,
               tp.teaching_methods AS tutor_teaching_methods,
+              a.status AS attendance_status, a.note AS attendance_note, a.marked_at AS attendance_marked_at,
               EXISTS(SELECT 1 FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL) AS has_open_dispute,
               (SELECT d.id FROM disputes d WHERE d.booking_id=b.id AND d.status='OPEN' AND d.withdrawn_at IS NULL LIMIT 1) AS open_dispute_id
        FROM bookings b
        LEFT JOIN tutor_profiles tp ON tp.user_id = b.tutor_id
-       WHERE b.student_id = $1`,
+       LEFT JOIN attendance a ON a.booking_id = b.id
+       WHERE b.student_id = $1
+         AND LOWER(b.status) NOT IN ('declined', 'rejected', 'cancelled')`,
        [studentId]
     );
 
@@ -16125,7 +16363,10 @@ app.get("/api/student/schedule", verifyToken, async (req, res) => {
         tutor_supports_offline: methodSupport.offline,
         subject: row.subject || 'Khác',
         has_open_dispute: row.has_open_dispute,
-        open_dispute_id: row.open_dispute_id || null
+        open_dispute_id: row.open_dispute_id || null,
+        attendance_status: row.attendance_status || null,
+        attendance_note: row.attendance_note || null,
+        attendance_marked_at: row.attendance_marked_at || null
       });
     });
 
@@ -16222,11 +16463,12 @@ app.get("/api/admin/disputes", verifyToken, requireAdmin, async (req, res) => {
              d.booking_id, d.target_type, d.course_id, d.tutor_id AS d_tutor_id, d.severity, d.penalty_type, d.raised_by_parent, d.evidence_urls,
              d.tutor_response, d.tutor_response_at, d.student_requested_resolution, d.withdrawn_at,
              b.subject, to_char(b.lesson_date,'YYYY-MM-DD') AS lesson_date,
-             b.lesson_fee, b.tutor_name,
+             b.lesson_fee, b.tutor_name, b.is_trigger_absence, b.no_show_stage,
              c.title AS course_title,
              u_reporter.full_name AS reporter_name, u_reporter.email AS reporter_email,
              u_tutor.full_name AS tutor_full_name, u_tutor.email AS tutor_email,
              u_student.full_name AS student_name,
+             u_student.absence_lockdown_at, u_student.absence_lockdown_resolved_at,
              related_cc.id AS related_complaint_id, related_cc.status AS related_complaint_status
       FROM disputes d
       LEFT JOIN bookings b ON b.id = d.booking_id
@@ -17490,6 +17732,14 @@ app.post('/api/tutor/bookings/:id/instant-reject', verifyToken, requireTutor, as
     // Nếu đã chuyển Busy lúc Accepted thì trả lại Online
     await client.query("UPDATE tutor_profiles SET availability_status = 'Online' WHERE user_id = $1 AND availability_status = 'Busy'", [req.user.userId]);
 
+    await safeNotifyUser(client, {
+      userId: student_id, channels: ['IN_APP', 'EMAIL'],
+      templateKey: 'booking_declined', eventType: 'booking_declined',
+      data: { amount: lesson_fee }, refId: req.params.id, refType: 'booking',
+      sourceType: 'booking', sourceId: req.params.id,
+      idempotencyKey: `booking:${req.params.id}:declined:${student_id}`,
+    });
+
     await client.query('COMMIT');
     res.json({ success: true });
   } catch (err) {
@@ -17557,7 +17807,7 @@ app.get("/api/tutor/bookings", verifyToken, async (req, res) => {
               u.full_name AS student_name, u.email AS student_email, u.picture AS student_picture
        FROM bookings b
        JOIN users u ON u.id = b.student_id
-       WHERE b.tutor_id = $1 AND b.status IN ('pending', 'confirmed')
+       WHERE b.tutor_id = $1 AND b.status IN ('pending', 'confirmed') AND b.hidden_from_tutor = false
        ORDER BY (b.status = 'pending') DESC, b.lesson_date ASC, b.time_slot ASC`,
       [req.user.userId]
     );
@@ -17836,6 +18086,19 @@ app.patch("/api/bookings/:id", verifyToken, async (req, res) => {
       } else {
         // Không có escrow: hủy bình thường
         await client.query(`UPDATE bookings SET status='Cancelled' WHERE id=$1`, [booking.id]);
+
+        const isTutor = req.user.userId === booking.tutor_id;
+        const notifyUserId = isTutor ? booking.student_id : booking.tutor_id;
+        if (notifyUserId) {
+          await safeNotifyUser(client, {
+            userId: notifyUserId, channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'booking_cancelled', eventType: 'booking_cancelled',
+            data: { message: isTutor ? 'Gia sư đã hủy buổi học.' : 'Học sinh đã hủy buổi học.' },
+            refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id,
+            idempotencyKey: `booking:${booking.id}:cancelled:${notifyUserId}`,
+          });
+        }
       }
     }
 
@@ -17877,52 +18140,8 @@ app.delete("/api/bookings/:id", verifyToken, async (req, res) => {
   }
 });
 
-// ─── Google Gemini AI: gợi ý gia sư ──────────────────────────────────────────
-// Frontend POST { userMessage } → backend TỰ query DB (chỉ gia sư status='approved')
-// → gọi Gemini → trả { reply, tutorIds }. API key giữ kín ở backend.
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-
-// Danh sách model thử lần lượt: nếu model đầu hết quota (429) hoặc quá tải (503),
-// tự động fallback sang model tiếp theo. Mỗi model free tier có quota riêng,
-// nên thử nhiều model giúp tăng tổng số request dùng được mỗi ngày.
-// "gemini-2.5-flash-lite" bị Google ngừng cấp cho API key mới (404 "no longer
-// available to new users", xác nhận qua test thật 2026-07-23) — xếp cuối danh
-// sách thay vì đầu để không tốn 1 lượt gọi thất bại + độ trễ mạng mỗi lần hỏi.
-const GEMINI_MODELS = [
-  process.env.GEMINI_MODEL || "gemini-2.5-flash",
-  "gemini-flash-latest",
-  "gemini-2.0-flash-lite",
-  "gemini-2.0-flash",
-  "gemini-2.5-flash-lite",
-].filter((m, i, arr) => arr.indexOf(m) === i); // loại trùng
-
-// Gọi 1 model Gemini. Trả { ok, data?, status?, errText? }
-async function callGeminiModel(model, prompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.7,
-          topP: 0.9,
-          // Để budget rộng: model 2.5 có "thinking" ngốn token, cần dư chỗ cho JSON output
-          maxOutputTokens: 2048,
-          responseMimeType: "application/json",
-        },
-      }),
-    });
-    if (!res.ok) {
-      return { ok: false, status: res.status, errText: await res.text() };
-    }
-    const data = await res.json();
-    return { ok: true, data };
-  } catch (error) {
-    return { ok: false, status: 0, errText: error.message };
-  }
-}
+// Google Gemini client (GEMINI_API_KEY/GEMINI_MODELS/callGeminiModel) now lives at
+// true top-level, above — moved out of startServer() so top-level callers can see it.
 
 const rawGroqKeys = process.env.GROQ_API_KEYS || "";
 const GROQ_API_KEYS = rawGroqKeys.split(',').map(k => k.trim()).filter(Boolean);
@@ -18401,6 +18620,13 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
       [booking.id, booking.tutor_id, booking.student_id, status, note?.trim() || null]
     );
 
+    // Học sinh có mặt/được châm chước → xoá streak vắng không phép (được "tha").
+    // Không reset cho 'absent' dù có check-in hay không — chỉ hành động tích cực
+    // (present/excused) mới xoá lịch sử vắng liên tiếp.
+    if (status === 'present' || status === 'excused') {
+      await client.query('UPDATE users SET unexcused_absence_streak = 0 WHERE id=$1', [booking.student_id]);
+    }
+
     // ── PRESENT: Giải ngân ngay lập tức vào ví gia sư (Chỉ nếu chưa giải ngân) ──
     if (status === 'present' && booking.escrow_tx_id && lessonFee > 0 && !booking.escrow_released_at) {
       // Lấy ví gia sư và admin
@@ -18545,10 +18771,100 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
         }
       }
 
+      else if (settlement.action === 'COMPENSATE_TUTOR' && booking.no_show_stage) {
+        // Booking này đã ở trạng thái giữ tiền (HELD_48H/PARTIAL_RELEASED) từ lần
+        // gọi trước — bỏ qua để tránh tăng streak/khoá tài khoản 2 lần cho 1 buổi.
+      }
+
+      else if (settlement.action === 'COMPENSATE_TUTOR' && (await client.query(
+        'SELECT unexcused_absence_streak FROM users WHERE id=$1', [booking.student_id]
+      )).rows[0]?.unexcused_absence_streak > 0) {
+        // ── Buổi vắng không phép thứ 2 trở đi: GIỮ TIỀN thay vì giải ngân ngay ──
+        // Chờ 48h/7 ngày xem học sinh có khiếu nại/giải trình không (xử lý bởi cron).
+        const streakRes = await client.query(
+          'UPDATE users SET unexcused_absence_streak = unexcused_absence_streak + 1 WHERE id=$1 RETURNING unexcused_absence_streak',
+          [booking.student_id]
+        );
+        const newStreak = streakRes.rows[0].unexcused_absence_streak;
+        const isTrigger = newStreak === 2; // buổi vắng thứ 2 — buổi kích hoạt khoá tài khoản
+
+        await client.query(
+          `UPDATE bookings SET no_show_stage='HELD_48H', no_show_email_sent_at=NOW(), is_trigger_absence=$1 WHERE id=$2`,
+          [isTrigger, booking.id]
+        );
+
+        const holdTitle = 'Buổi học vắng mặt — đang xác minh';
+        const holdBody = `Bạn được ghi nhận vắng mặt không báo trước ở buổi học ${booking.subject || ''}. Học phí ${lessonFee.toLocaleString('vi-VN')}đ đang được tạm giữ để xác minh lý do. Vui lòng phản hồi trong ${isTrigger ? '7 ngày' : '48 giờ'} qua mục "Khiếu nại buổi học" — nếu không, hệ thống sẽ tự động xử lý theo chính sách.`;
+        await safeNotifyUser(client, {
+          userId: booking.student_id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'generic', eventType: 'student_no_show_hold',
+          title: holdTitle, body: holdBody,
+          data: { title: holdTitle, body: holdBody },
+          icon: 'hourglass_top', refId: booking.id, refType: 'booking',
+          sourceType: 'booking', sourceId: booking.id, priority: 'high',
+          idempotencyKey: `booking:${booking.id}:no_show_hold:${booking.student_id}`,
+        });
+
+        if (isTrigger) {
+          // Reset resolved_at/paused_at cũ (nếu có từ 1 chu kỳ khoá trước đã xử lý xong) —
+          // nếu không, cron tất toán 7 ngày sẽ tưởng lần khoá MỚI này "đã xử lý xong" và bỏ qua.
+          await client.query(
+            `UPDATE users SET absence_lockdown_at=NOW(), absence_lockdown_resolved_at=NULL, absence_lockdown_paused_at=NULL WHERE id=$1`,
+            [booking.student_id]
+          );
+
+          // Ẩn các buổi Approved trong tương lai (mọi gia sư) khỏi lịch dạy, tới khi xử lý xong.
+          const futureRes = await client.query(
+            `UPDATE bookings SET hidden_from_tutor=true, hidden_reason='ABSENCE_ESCALATION'
+             WHERE student_id=$1 AND status='Approved' AND id != $2 AND escrow_released_at IS NULL
+               AND lesson_date >= CURRENT_DATE AND hidden_from_tutor = false
+             RETURNING id, tutor_id`,
+            [booking.student_id, booking.id]
+          );
+          const tutorHiddenCounts = {};
+          for (const r of futureRes.rows) tutorHiddenCounts[r.tutor_id] = (tutorHiddenCounts[r.tutor_id] || 0) + 1;
+          for (const [tId, hiddenCount] of Object.entries(tutorHiddenCounts)) {
+            await safeNotifyUser(client, {
+              userId: tId, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+              templateKey: 'generic', eventType: 'student_schedule_hidden',
+              title: 'Một số buổi học tạm ẩn khỏi lịch của bạn',
+              body: `Học sinh có 2 buổi vắng liên tiếp không lý do nên tài khoản đang tạm khoá chờ xác minh. ${hiddenCount} buổi học sắp tới với học sinh này đã tạm ẩn khỏi lịch dạy của bạn cho tới khi xử lý xong — bạn không cần dạy các buổi đó lúc này.`,
+              icon: 'visibility_off', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'high',
+              idempotencyKey: `student:${booking.student_id}:schedule_hidden:${tId}:${booking.id}`,
+            });
+          }
+
+          await safeNotifyUser(client, {
+            userId: booking.student_id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'generic', eventType: 'account_absence_lockdown',
+            title: 'Cảnh báo: 2 buổi học liên tiếp vắng không lý do',
+            body: `Tài khoản của bạn đã vắng 2 buổi học liên tiếp không lý do/không báo trước. Các buổi học sắp tới đã tạm ẩn khỏi lịch dạy của gia sư. Vui lòng phản hồi trong vòng 7 ngày qua mục "Khiếu nại buổi học" — nếu không, hệ thống sẽ tự động tất toán toàn bộ học phí (kể cả các buổi sắp tới) cho gia sư và không thể hoàn lại.`,
+            icon: 'warning', refId: booking.id, refType: 'booking',
+            sourceType: 'booking', sourceId: booking.id, priority: 'high',
+            idempotencyKey: `student:${booking.student_id}:absence_lockdown:${booking.id}`,
+          });
+
+          const parentsRes2 = await client.query('SELECT parent_id FROM parent_children WHERE student_id=$1', [booking.student_id]);
+          for (const p of parentsRes2.rows) {
+            await safeNotifyUser(client, {
+              userId: p.parent_id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+              templateKey: 'generic', eventType: 'child_absence_lockdown',
+              title: 'Cảnh báo: con bạn vắng 2 buổi học liên tiếp không lý do',
+              body: `Con bạn đã vắng 2 buổi học liên tiếp không lý do. Lịch học sắp tới đã tạm ẩn khỏi gia sư. Vui lòng phản hồi trong 7 ngày qua mục "Khiếu nại buổi học" nếu có lý do chính đáng, nếu không hệ thống sẽ tự động xử lý theo chính sách.`,
+              icon: 'family_restroom', refId: booking.id, refType: 'booking',
+              sourceType: 'booking', sourceId: booking.id, priority: 'high',
+              idempotencyKey: `student:${booking.student_id}:absence_lockdown:parent:${p.parent_id}`,
+            });
+          }
+        }
+      }
+
       else if (settlement.action === 'COMPENSATE_TUTOR') {
-        // Học sinh no-show (có bằng chứng check-in) → gia sư nhận 90%, nền tảng 10%.
-        // refund_logs với refund_amount=0 vừa là audit vừa là khóa chống xử lý trùng
-        // (cùng pattern với phí hủy <1h ở luồng Cancelled).
+        // Buổi vắng không phép ĐẦU TIÊN (streak=0) — giữ nguyên hành vi cũ: gia sư
+        // nhận 90% ngay, nền tảng 10%. Từ buổi thứ 2 trở đi mới chuyển sang giữ tiền
+        // (xem nhánh phía trên) — refund_logs với refund_amount=0 vừa là audit vừa
+        // là khóa chống xử lý trùng (cùng pattern với phí hủy <1h ở luồng Cancelled).
         const logId = await createRefundLog(client, {
           target_type: 'booking', target_id: booking.id, student_id: booking.student_id,
           tutor_id: booking.tutor_id, original_amount: lessonFee, refund_rate: 0,
@@ -18661,6 +18977,9 @@ app.patch("/api/bookings/:id/attendance", verifyToken, requireTutor, async (req,
               [booking.id]
             );
           }
+          // Buổi vắng không phép đầu tiên đã xử lý xong — ghi nhận streak=1 để
+          // buổi vắng KẾ TIẾP (nếu có) rơi vào nhánh giữ tiền phía trên.
+          await client.query('UPDATE users SET unexcused_absence_streak = 1 WHERE id=$1', [booking.student_id]);
         }
       }
     }
@@ -19386,8 +19705,12 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
     if (sessionStart && now < sessionStart) {
       return res.status(400).json({ message: 'Buổi học chưa diễn ra.' });
     }
-    if (sessionEnd && (now - sessionEnd) > 48 * 3600000) {
-      return res.status(400).json({ message: 'Đã quá thời hạn báo cáo buổi học này (48 giờ sau khi kết thúc).' });
+    // Buổi vắng thứ 2 (is_trigger_absence — buổi gây khoá tài khoản) được giữ
+    // cửa sổ khiếu nại 7 ngày thay vì 48h, khớp với mốc đếm ngược tất toán.
+    const reportWindowMs = booking.is_trigger_absence ? 7 * 24 * 3600000 : 48 * 3600000;
+    if (sessionEnd && (now - sessionEnd) > reportWindowMs) {
+      const windowLabel = booking.is_trigger_absence ? '7 ngày' : '48 giờ';
+      return res.status(400).json({ message: `Đã quá thời hạn báo cáo buổi học này (${windowLabel} sau khi kết thúc).` });
     }
 
     if (!booking.escrow_tx_id) return res.status(400).json({ message: 'Lịch học này không có giao dịch escrow để khiếu nại.' });
@@ -19406,6 +19729,15 @@ app.post('/api/bookings/:id/report', verifyToken, async (req, res) => {
 
     // Pause auto-release
     await client.query(`UPDATE bookings SET auto_release_at=NULL WHERE id=$1`, [booking.id]);
+
+    // Nếu tài khoản đang trong diện khoá do 2 buổi vắng liên tiếp (chưa admin xử lý
+    // xong) → tạm dừng đếm ngược 7 ngày, chuyển hẳn sang chờ admin duyệt tổng thể.
+    await client.query(
+      `UPDATE users SET absence_lockdown_paused_at = NOW()
+       WHERE id = $1 AND absence_lockdown_at IS NOT NULL
+         AND absence_lockdown_resolved_at IS NULL AND absence_lockdown_paused_at IS NULL`,
+      [booking.student_id]
+    );
 
     const admins = await client.query("SELECT id FROM users WHERE role='admin'");
     const reporterName = isParent ? 'Phụ huynh' : 'Học sinh';
@@ -20093,11 +20425,11 @@ app.post('/api/admin/semantic-moderation/analyze', verifyToken, requireAdmin, as
     if (!analyzeText || !analyzeText.trim()) return res.status(400).json({ message: 'Không có nội dung để phân tích.' });
 
     const base = classifyTextModeration(analyzeText, { sourceType: type });
-    const llm = await maybeSemanticLLMRewrite(base, analyzeText);
-    base.summary = llm.summary; base.model_used = llm.model_used;
+    const ai = await classifyModerationWithGemini(analyzeText);
+    const result = ai ? mergeModerationWithAI(base, ai) : base;
 
     const report = {
-      ...base, source_type: type, source_id: sourceId || null,
+      ...result, source_type: type, source_id: sourceId || null,
       tutor_id: resolvedTutorId, student_id: resolvedStudentId, target_user_id: targetUserId,
       input_hash: hashModerationInput(analyzeText, type, sourceId),
     };
@@ -20696,6 +21028,7 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
     if (!Number.isFinite(refundRate) || refundRate < 0 || refundRate > 1) refundRate = 1;
 
     let studentId, tutorId, amount = 0, payerWalletId, escrowTxId, bookingId, courseId;
+    let bookingNoShowStage = null;
 
     if (dispute.target_type === 'booking') {
       const bRes = await client.query('SELECT * FROM bookings WHERE id=$1', [dispute.booking_id]);
@@ -20703,6 +21036,13 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
         const b = bRes.rows[0];
         studentId = b.student_id; tutorId = b.tutor_id; amount = Number(b.lesson_fee || 0);
         payerWalletId = b.payer_wallet_id; escrowTxId = b.escrow_tx_id; bookingId = b.id;
+        bookingNoShowStage = b.no_show_stage;
+        // Nếu buổi này đã bị giải ngân tạm 50% (cron 48h) trước khi khiếu nại được
+        // xử lý, trong escrow chỉ còn lại 50% — refund/release phải tính trên phần
+        // CÒN LẠI, không phải tổng học phí (tránh chuyển tiền vượt quá số dư thật).
+        if (bookingNoShowStage === 'PARTIAL_RELEASED') {
+          amount = amount - Math.round(amount * 0.5);
+        }
       }
     } else if (dispute.target_type === 'course') {
       const ceRes = await client.query(`
@@ -20892,6 +21232,52 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
       });
     }
 
+    // ── Mở lại tài khoản đang bị khoá (2 buổi vắng liên tiếp) ──────────────────
+    // Chỉ xảy ra khi admin CHỦ ĐỘNG chọn (reactivateAccount=true trong request) —
+    // không tự động, tránh học sinh nộp khiếu nại giả để né khoá tài khoản.
+    if (req.body?.reactivateAccount === true && studentId) {
+      const lockRes = await client.query(
+        `SELECT id FROM users WHERE id=$1 AND absence_lockdown_at IS NOT NULL AND absence_lockdown_resolved_at IS NULL`,
+        [studentId]
+      );
+      if (lockRes.rows.length) {
+        await client.query(
+          `UPDATE users SET absence_lockdown_resolved_at=NOW(), unexcused_absence_streak=0 WHERE id=$1`,
+          [studentId]
+        );
+        // Chỉ mở lại các buổi bị ẩn DO ESCALATION — không đụng buổi admin khoá tay
+        // riêng (hidden_reason='ADMIN_MANUAL') vì đó là quyết định độc lập của admin.
+        const unhidden = await client.query(
+          `UPDATE bookings SET hidden_from_tutor=false, hidden_reason=NULL
+           WHERE student_id=$1 AND hidden_from_tutor=true AND hidden_reason='ABSENCE_ESCALATION'
+           RETURNING id, tutor_id`,
+          [studentId]
+        );
+        const tutorUnhiddenCounts = {};
+        for (const r of unhidden.rows) tutorUnhiddenCounts[r.tutor_id] = (tutorUnhiddenCounts[r.tutor_id] || 0) + 1;
+        for (const [tId, cnt] of Object.entries(tutorUnhiddenCounts)) {
+          await safeNotifyUser(client, {
+            userId: tId, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'generic', eventType: 'student_schedule_unhidden',
+            title: 'Lịch học đã được mở lại',
+            body: `Admin đã xác minh lý do vắng mặt của học sinh và mở lại tài khoản. ${cnt} buổi học của bạn với học sinh này đã hiện lại trong lịch dạy.`,
+            icon: 'visibility', refId: disputeId, refType: 'dispute',
+            sourceType: 'dispute', sourceId: disputeId, priority: 'normal',
+            idempotencyKey: `student:${studentId}:schedule_unhidden:${tId}:${disputeId}`,
+          });
+        }
+        await safeNotifyUser(client, {
+          userId: studentId, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+          templateKey: 'generic', eventType: 'account_absence_reactivated',
+          title: 'Tài khoản đã được mở lại',
+          body: 'Admin đã xem xét khiếu nại của bạn và mở lại tài khoản. Các buổi học sắp tới đã hiện lại bình thường.',
+          icon: 'check_circle', refId: disputeId, refType: 'dispute',
+          sourceType: 'dispute', sourceId: disputeId, priority: 'normal',
+          idempotencyKey: `student:${studentId}:absence_reactivated:${disputeId}`,
+        });
+      }
+    }
+
     await client.query('COMMIT');
     return res.json({ success: true, message: 'Đã xử lý khiếu nại.' });
   } catch (err) {
@@ -21057,6 +21443,28 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS auto_release_at TIMESTAMPTZ`);
     // bookings: thêm duration_mins (thời lượng slot học — 60/120/180)
     await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS duration_mins INT NOT NULL DEFAULT 60`);
+    // ── Absence-escalation (vắng không phép leo thang từ buổi thứ 2) ──────────
+    // no_show_stage: NULL (buổi 1, giải ngân ngay như cũ) | 'HELD_48H' (đang giữ,
+    // chờ 48h) | 'PARTIAL_RELEASED' (đã giải ngân 50%) | 'FINALIZED' (đã tất toán 100%)
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_show_stage TEXT`);
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_show_email_sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_show_partial_released_at TIMESTAMPTZ`);
+    // is_trigger_absence: đây là buổi vắng thứ 2 gây ra khoá tài khoản — được giữ
+    // nút khiếu nại 7 ngày thay vì 48h như các buổi vắng thường khác.
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS is_trigger_absence BOOLEAN NOT NULL DEFAULT false`);
+    // hidden_from_tutor: buổi học tương lai bị ẩn khỏi lịch dạy của gia sư trong
+    // lúc tài khoản học sinh đang bị khoá chờ xử lý.
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS hidden_from_tutor BOOLEAN NOT NULL DEFAULT false`);
+    // hidden_reason: phân biệt lý do ẩn — 'ABSENCE_ESCALATION' (tự động, do 2 buổi
+    // vắng liên tiếp) vs 'ADMIN_MANUAL' (admin tự khoá tay). Bắt buộc phải tách 2 lý
+    // do này vì luồng mở khoá của mỗi bên chỉ được đụng vào đúng loại của mình —
+    // tránh admin mở khoá tay lỡ tay mở luôn escalation đang chờ xử lý, hoặc ngược lại.
+    await pool.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS hidden_reason TEXT`);
+    // users: đếm số buổi vắng không phép liên tiếp + mốc thời gian khoá tài khoản
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS unexcused_absence_streak INT NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS absence_lockdown_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS absence_lockdown_paused_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS absence_lockdown_resolved_at TIMESTAMPTZ`);
     // tutor_profiles: thêm slot_duration_mins (thời lượng mỗi slot gia sư đăng ký — 60/120/180)
     await pool.query(`ALTER TABLE tutor_profiles ADD COLUMN IF NOT EXISTS slot_duration_mins INT NOT NULL DEFAULT 60`);
     // tutor_profiles: reputation_score
@@ -22353,6 +22761,200 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
       }
     }
   }, 10 * 60 * 1000); // chạy mỗi 10 phút
+
+  // ── Cron: Vắng không phép (buổi 2+) — sau 48h không khiếu nại → giải ngân 50% ──
+  // Chỉ áp dụng cho booking đang HELD_48H (được đánh dấu ở PATCH .../attendance
+  // khi unexcused_absence_streak > 0 trước đó). Buổi vắng ĐẦU TIÊN không đi qua
+  // đây — vẫn giải ngân ngay 90% như cũ.
+  setInterval(async () => {
+    try {
+      const due = await pool.query(`
+        SELECT b.id, b.escrow_tx_id, b.payer_wallet_id, b.lesson_fee, b.tutor_id, b.student_id, b.subject
+        FROM bookings b
+        WHERE b.no_show_stage = 'HELD_48H'
+          AND b.no_show_email_sent_at IS NOT NULL
+          AND b.no_show_email_sent_at <= NOW() - INTERVAL '48 hours'
+          AND b.escrow_released_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM disputes d WHERE d.booking_id = b.id AND d.status = 'OPEN' AND d.withdrawn_at IS NULL
+          )
+      `);
+
+      for (const row of due.rows) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [row.tutor_id]);
+          const adminWalletId = await getAdminWalletId(client);
+          if (!tw.rows.length || !adminWalletId) { await client.query('ROLLBACK'); client.release(); continue; }
+          const tutorWalletId = tw.rows[0].id;
+          const halfFee = Math.round(Number(row.lesson_fee) * 0.5);
+
+          await setLedgerContext(client, { reason_code: 'NO_SHOW_HOLD_PARTIAL_RELEASE', source: 'cron', reference_type: 'booking', reference_id: row.id, transaction_id: row.escrow_tx_id });
+          await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+            row.escrow_tx_id, row.payer_wallet_id, tutorWalletId, adminWalletId, halfFee, 0.1,
+          ]);
+          const _phSplit = calculateCommissionSplit(halfFee);
+          await createCommissionLog(client, {
+            source_type: 'booking', source_id: row.id, booking_id: row.id,
+            transaction_id: row.escrow_tx_id,
+            student_id: row.student_id, tutor_id: row.tutor_id,
+            gross_amount: _phSplit.grossAmount, commission_rate: _phSplit.commissionRate,
+            commission_amount: _phSplit.commissionAmount, tutor_amount: _phSplit.tutorAmount,
+            event_type: 'EARNED', reason_code: 'NO_SHOW_HOLD_PARTIAL_RELEASE',
+            decision_by: 'cron',
+            idempotency_key: `commission:booking:${row.id}:NO_SHOW_HOLD_PARTIAL_RELEASE`,
+            metadata: { lesson_fee: row.lesson_fee, released_amount: halfFee },
+          });
+
+          await client.query(`UPDATE bookings SET no_show_stage='PARTIAL_RELEASED', no_show_partial_released_at=NOW() WHERE id=$1`, [row.id]);
+
+          await safeNotifyUser(client, {
+            userId: row.tutor_id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'generic', eventType: 'no_show_partial_released',
+            title: 'Đã giải ngân tạm thời 50% học phí',
+            body: `Học sinh không phản hồi sau 48h cho buổi vắng ${row.subject || ''}. ${halfFee.toLocaleString('vi-VN')}đ (50% học phí) đã tạm chuyển vào ví bạn. Phần còn lại sẽ được xử lý sau khi có kết luận cuối cùng.`,
+            icon: 'account_balance_wallet', refId: row.id, refType: 'booking',
+            sourceType: 'booking', sourceId: row.id, priority: 'normal',
+            idempotencyKey: `booking:${row.id}:no_show_partial_released:${row.tutor_id}`,
+          });
+
+          await client.query('COMMIT');
+          console.log(`✅ No-show hold: partial 50% released for booking ${row.id}`);
+        } catch (innerErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          console.error(`❌ No-show partial-release failed for booking ${row.id}:`, innerErr.message);
+        } finally {
+          client.release();
+        }
+      }
+    } catch (err) {
+      if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
+        console.error('❌ Cron no-show partial-release error:', err.message);
+      }
+    }
+  }, 30 * 60 * 1000); // chạy mỗi 30 phút
+
+  // ── Cron: Tài khoản khoá do 2 buổi vắng liên tiếp — sau 7 ngày không phản hồi
+  // → tất toán toàn bộ (50% còn lại của các buổi đã giữ + 100% các buổi tương lai
+  // đang bị ẩn) cho gia sư. Bỏ qua nếu có khiếu nại đang chờ (absence_lockdown_paused_at)
+  // hoặc admin đã xử lý xong (absence_lockdown_resolved_at).
+  setInterval(async () => {
+    try {
+      const dueStudents = await pool.query(`
+        SELECT id FROM users
+        WHERE absence_lockdown_at IS NOT NULL
+          AND absence_lockdown_at <= NOW() - INTERVAL '7 days'
+          AND absence_lockdown_resolved_at IS NULL
+          AND absence_lockdown_paused_at IS NULL
+      `);
+
+      for (const student of dueStudents.rows) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const adminWalletId = await getAdminWalletId(client);
+          if (!adminWalletId) { await client.query('ROLLBACK'); client.release(); continue; }
+
+          // 1) Giải ngân nốt 50% còn lại của các buổi đã bị giữ 1 phần
+          const partial = await client.query(`
+            SELECT id, escrow_tx_id, payer_wallet_id, lesson_fee, tutor_id, subject
+            FROM bookings
+            WHERE student_id=$1 AND no_show_stage='PARTIAL_RELEASED' AND escrow_released_at IS NULL
+          `, [student.id]);
+          for (const row of partial.rows) {
+            const tw = await client.query('SELECT id FROM wallets WHERE user_id=$1', [row.tutor_id]);
+            if (!tw.rows.length) continue;
+            const halfFee = Number(row.lesson_fee) - Math.round(Number(row.lesson_fee) * 0.5);
+            await setLedgerContext(client, { reason_code: 'NO_SHOW_LOCKDOWN_FINALIZE', source: 'cron', reference_type: 'booking', reference_id: row.id, transaction_id: row.escrow_tx_id });
+            await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+              row.escrow_tx_id, row.payer_wallet_id, tw.rows[0].id, adminWalletId, halfFee, 0.1,
+            ]);
+            const _fnSplit = calculateCommissionSplit(halfFee);
+            await createCommissionLog(client, {
+              source_type: 'booking', source_id: row.id, booking_id: row.id, transaction_id: row.escrow_tx_id,
+              student_id: student.id, tutor_id: row.tutor_id,
+              gross_amount: _fnSplit.grossAmount, commission_rate: _fnSplit.commissionRate,
+              commission_amount: _fnSplit.commissionAmount, tutor_amount: _fnSplit.tutorAmount,
+              event_type: 'EARNED', reason_code: 'NO_SHOW_LOCKDOWN_FINALIZE', decision_by: 'cron',
+              idempotency_key: `commission:booking:${row.id}:NO_SHOW_LOCKDOWN_FINALIZE`,
+              metadata: { released_amount: halfFee },
+            });
+            await client.query(`UPDATE bookings SET no_show_stage='FINALIZED', escrow_released_at=NOW() WHERE id=$1`, [row.id]);
+            await safeNotifyUser(client, {
+              userId: row.tutor_id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+              templateKey: 'generic', eventType: 'no_show_finalized',
+              title: 'Đã tất toán học phí buổi vắng mặt',
+              body: `Học sinh không phản hồi sau 7 ngày. Phần còn lại (50%) của buổi ${row.subject || ''} đã được chuyển vào ví bạn.`,
+              icon: 'account_balance_wallet', refId: row.id, refType: 'booking',
+              sourceType: 'booking', sourceId: row.id, priority: 'normal',
+              idempotencyKey: `booking:${row.id}:no_show_finalized:${row.tutor_id}`,
+            });
+          }
+
+          // 2) Giải ngân 100% các buổi tương lai đang bị ẩn DO ESCALATION (coi như tất
+          // toán toàn bộ) — không đụng buổi admin khoá tay riêng (hidden_reason khác).
+          const hidden = await client.query(`
+            SELECT id, escrow_tx_id, payer_wallet_id, lesson_fee, tutor_id, subject
+            FROM bookings
+            WHERE student_id=$1 AND hidden_from_tutor=true AND hidden_reason='ABSENCE_ESCALATION'
+              AND escrow_released_at IS NULL AND escrow_tx_id IS NOT NULL
+          `, [student.id]);
+          for (const row of hidden.rows) {
+            const tw2 = await client.query('SELECT id FROM wallets WHERE user_id=$1', [row.tutor_id]);
+            if (!tw2.rows.length || !Number(row.lesson_fee)) continue;
+            await setLedgerContext(client, { reason_code: 'NO_SHOW_LOCKDOWN_FUTURE_FORFEIT', source: 'cron', reference_type: 'booking', reference_id: row.id, transaction_id: row.escrow_tx_id });
+            await client.query('SELECT release_escrow($1,$2,$3,$4,$5,$6)', [
+              row.escrow_tx_id, row.payer_wallet_id, tw2.rows[0].id, adminWalletId, row.lesson_fee, 0.1,
+            ]);
+            const _fuSplit = calculateCommissionSplit(row.lesson_fee);
+            await createCommissionLog(client, {
+              source_type: 'booking', source_id: row.id, booking_id: row.id, transaction_id: row.escrow_tx_id,
+              student_id: student.id, tutor_id: row.tutor_id,
+              gross_amount: _fuSplit.grossAmount, commission_rate: _fuSplit.commissionRate,
+              commission_amount: _fuSplit.commissionAmount, tutor_amount: _fuSplit.tutorAmount,
+              event_type: 'EARNED', reason_code: 'NO_SHOW_LOCKDOWN_FUTURE_FORFEIT', decision_by: 'cron',
+              idempotency_key: `commission:booking:${row.id}:NO_SHOW_LOCKDOWN_FUTURE_FORFEIT`,
+              metadata: { lesson_fee: row.lesson_fee },
+            });
+            await client.query(`UPDATE bookings SET escrow_released_at=NOW(), status='Cancelled' WHERE id=$1`, [row.id]);
+            await safeNotifyUser(client, {
+              userId: row.tutor_id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+              templateKey: 'generic', eventType: 'no_show_future_forfeited',
+              title: 'Đã tất toán buổi học tương lai',
+              body: `Tài khoản học sinh không phản hồi sau 7 ngày cảnh báo. Buổi ${row.subject || ''} đã được tất toán toàn bộ (${Number(row.lesson_fee).toLocaleString('vi-VN')}đ) vào ví bạn.`,
+              icon: 'account_balance_wallet', refId: row.id, refType: 'booking',
+              sourceType: 'booking', sourceId: row.id, priority: 'normal',
+              idempotencyKey: `booking:${row.id}:no_show_future_forfeited:${row.tutor_id}`,
+            });
+          }
+
+          await client.query(`UPDATE users SET absence_lockdown_resolved_at=NOW() WHERE id=$1`, [student.id]);
+          await safeNotifyUser(client, {
+            userId: student.id, type: 'attendance', channels: ['IN_APP', 'EMAIL'],
+            templateKey: 'generic', eventType: 'account_absence_finalized',
+            title: 'Tài khoản đã được tất toán do không phản hồi',
+            body: `Sau 7 ngày không có phản hồi/khiếu nại, hệ thống đã tất toán toàn bộ học phí các buổi vắng và các buổi học sắp tới cho gia sư theo chính sách.`,
+            icon: 'warning', refId: null, refType: 'user',
+            sourceType: 'user', sourceId: student.id, priority: 'high',
+            idempotencyKey: `student:${student.id}:absence_finalized`,
+          });
+
+          await client.query('COMMIT');
+          console.log(`✅ No-show lockdown finalized for student ${student.id}`);
+        } catch (innerErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          console.error(`❌ No-show lockdown finalize failed for student ${student.id}:`, innerErr.message);
+        } finally {
+          client.release();
+        }
+      }
+    } catch (err) {
+      if (err.code !== 'ENOTFOUND' && err.code !== 'EAI_AGAIN') {
+        console.error('❌ Cron no-show lockdown-finalize error:', err.message);
+      }
+    }
+  }, 60 * 60 * 1000); // chạy mỗi giờ
 
   // ── Cron: AI case resolution (Batch 25) — hourly, gated OFF by default ───────
   // Uses the SAME runPendingAiCases() logic as POST /api/admin/ai-cases/run-pending.

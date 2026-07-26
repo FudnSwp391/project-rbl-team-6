@@ -95,7 +95,7 @@ export default function SupportCenter({ token }) {
   // form state
   const [formOpen, setFormOpen]     = useState(false);
   const [formType, setFormType]     = useState('');
-  const [tutorId, setTutorId]       = useState('');
+  const [tutorKey, setTutorKey]       = useState('');
   const [reason, setReason]         = useState('');
   const [customReason, setCustomReason] = useState('');
   const [description, setDescription]   = useState('');
@@ -132,9 +132,11 @@ export default function SupportCenter({ token }) {
       .then(d => {
         const seen = {};
         (d.bookings || []).forEach(b => {
-          if (b.tutor_id && !seen[b.tutor_id]) {
-            seen[b.tutor_id] = {
+          const key = `${b.tutor_id}_${b.subject || 'unknown'}`;
+          if (b.tutor_id && !seen[key]) {
+            seen[key] = {
               id: b.tutor_id,
+              key: key,
               name: b.tutor_full_name || b.tutor_name || 'Gia sư',
               picture: b.tutor_picture,
               subject: b.subject,
@@ -149,7 +151,7 @@ export default function SupportCenter({ token }) {
   const typeInfo = TYPE_MAP[formType] || null;
 
   const resetForm = () => {
-    setFormType(''); setTutorId(''); setReason(''); setCustomReason('');
+    setFormType(''); setTutorKey(''); setReason(''); setCustomReason('');
     setDescription(''); setFormError('');
   };
 
@@ -165,17 +167,17 @@ export default function SupportCenter({ token }) {
     if (!info) { setFormError('Vui lòng chọn loại yêu cầu.'); return; }
     const finalReason = info.reasons.length ? reason : customReason.trim();
     if (!finalReason) { setFormError('Vui lòng chọn hoặc nhập lý do.'); return; }
-    if (info.needsTutor && !tutorId) { setFormError('Vui lòng chọn gia sư liên quan.'); return; }
+    if (info.needsTutor && !tutorKey) { setFormError('Vui lòng chọn gia sư liên quan.'); return; }
     setSubmitting(true);
     setFormError('');
     try {
-      const selTutor = myTutors.find(t => t.id === tutorId);
+      const selTutor = myTutors.find(t => t.key === tutorKey);
       const res = await fetch(`${API_BASE}/api/support-requests`, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           request_type: formType,
-          tutor_id: info.needsTutor || tutorId ? tutorId || undefined : undefined,
+          tutor_id: info.needsTutor && selTutor ? selTutor.id : undefined,
           subject: selTutor?.subject || undefined,
           reason: finalReason,
           description: description.trim() || undefined,
@@ -306,11 +308,11 @@ export default function SupportCenter({ token }) {
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                     {myTutors.map(t => (
                       <button
-                        key={t.id}
+                        key={t.key}
                         type="button"
-                        onClick={() => setTutorId(t.id)}
+                        onClick={() => setTutorKey(t.key)}
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 text-left transition-all ${
-                          tutorId === t.id ? 'border-primary bg-primary/5' : 'border-outline-variant/40 hover:border-primary/40'
+                          tutorKey === t.key ? 'border-primary bg-primary/5' : 'border-outline-variant/40 hover:border-primary/40'
                         }`}
                       >
                         {t.picture ? (
@@ -324,7 +326,7 @@ export default function SupportCenter({ token }) {
                           <div className="text-sm font-semibold text-on-surface truncate">{t.name}</div>
                           {t.subject && <div className="text-[11px] text-on-surface-variant truncate">{t.subject}</div>}
                         </div>
-                        {tutorId === t.id && (
+                        {tutorKey === t.key && (
                           <span className="material-symbols-outlined text-primary ml-auto shrink-0" style={{fontVariationSettings:"'FILL' 1", fontSize: 18}}>check_circle</span>
                         )}
                       </button>
@@ -476,6 +478,15 @@ export default function SupportCenter({ token }) {
                           </p>
                           <p className="text-sm text-on-surface">{r.admin_response}</p>
                         </div>
+                      )}
+                      {r.status === 'approved' && r.request_type === 'change_tutor' && (
+                        <button
+                          onClick={() => { window.location.hash = '/find-tutors'; }}
+                          className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-on-primary text-xs font-bold hover:opacity-90 transition-opacity w-fit shadow-sm"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_search</span>
+                          Tìm gia sư mới ngay
+                        </button>
                       )}
                     </div>
                     {canCancel && (
