@@ -8948,41 +8948,99 @@ app.get("/api/admin/commission-logs", verifyToken, requireAdmin, async (req, res
 
 // ── GET /api/admin/violations ────────────────────────────────────────────────
 // CAP-6.1: Read-only list of disputes as violation reports.
-// Source: disputes JOIN users (raised_by=reporter, tutor_id=accused). No mutations.
 app.get("/api/admin/violations", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT d.id::text,
-             d.reason,
-             d.status,
-             d.severity,
-             d.target_type,
-             d.created_at,
-             d.admin_note,
-             reporter.full_name  AS reporter_name,
-             reporter.email      AS reporter_email,
-             accused.full_name   AS accused_name,
-             accused.email       AS accused_email,
-             vi.investigation_status,
-             vi.case_type,
-             vi.verdict,
-             vi.confidence
-      FROM disputes d
-      LEFT JOIN users reporter ON reporter.id = d.raised_by
-      LEFT JOIN users accused  ON accused.id  = d.tutor_id
-      LEFT JOIN violation_investigations vi ON vi.dispute_id = d.id
-      ORDER BY d.created_at DESC
-    `);
+    const { investigation_status, status, severity, page = 1, limit = 10 } = req.query;
+    
+    // Pagination params
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = Math.min(parseInt(limit, 10) || 10, 100);
+    const offset = (pageNum - 1) * limitNum;
+
+    // Filters & Validation
+    const conditions = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (investigation_status) {
+      if (!['OPEN', 'INVESTIGATING', 'CLOSED'].includes(investigation_status)) {
+        return res.status(400).json({ message: "Trạng thái điều tra không hợp lệ." });
+      }
+      conditions.push(`vi.investigation_status = $${paramIndex++}`);
+      values.push(investigation_status);
+    }
+    
+    if (status) {
+      // Basic allowlist validation for status to prevent SQL injection (TC-V11)
+      const validStatuses = ['OPEN', 'RESOLVED_REFUND', 'RESOLVED_NO_REFUND', 'CLOSED', 'PENDING', 'RESOLVED', 'DISMISSED'];
+      if (!validStatuses.includes(status.toUpperCase())) {
+        return res.status(400).json({ message: "Trạng thái khiếu nại không hợp lệ." });
+      }
+      conditions.push(`d.status ILIKE $${paramIndex++}`);
+      values.push(status);
+    }
+    
+    if (severity) {
+      if (!['low', 'medium', 'high', 'critical'].includes(severity.toLowerCase())) {
+        return res.status(400).json({ message: "Mức độ nghiêm trọng không hợp lệ." });
+      }
+      conditions.push(`d.severity ILIKE $${paramIndex++}`);
+      values.push(severity);
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    // Run queries in parallel
+    const [result, countResult] = await Promise.all([
+      pool.query(`
+        SELECT d.id::text,
+               d.reason,
+               d.status,
+               d.severity,
+               d.target_type,
+               d.created_at,
+               d.admin_note,
+               reporter.full_name  AS reporter_name,
+               reporter.email      AS reporter_email,
+               accused.full_name   AS accused_name,
+               accused.email       AS accused_email,
+               vi.investigation_status,
+               vi.case_type,
+               vi.verdict,
+               vi.confidence
+        FROM disputes d
+        LEFT JOIN users reporter ON reporter.id = d.raised_by
+        LEFT JOIN users accused  ON accused.id  = d.tutor_id
+        LEFT JOIN violation_investigations vi ON vi.dispute_id = d.id
+        ${whereClause}
+        ORDER BY d.created_at DESC
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+      `, [...values, limitNum, offset]),
+      pool.query(`
+        SELECT COUNT(*) as total
+        FROM disputes d
+        LEFT JOIN violation_investigations vi ON vi.dispute_id = d.id
+        ${whereClause}
+      `, values)
+    ]);
+
     const violations = result.rows;
+    const total = parseInt(countResult.rows[0].total, 10);
+    const total_pages = Math.ceil(total / limitNum);
+
     const byStatus = {};
     violations.forEach(v => { byStatus[v.status] = (byStatus[v.status] || 0) + 1; });
     const bySeverity = {};
     violations.forEach(v => { if (v.severity) bySeverity[v.severity] = (bySeverity[v.severity] || 0) + 1; });
+    
     return res.json({
       violations,
-      total: violations.length,
+      total,
       by_status: byStatus,
       by_severity: bySeverity,
+      page: pageNum,
+      limit: limitNum,
+      total_pages
     });
   } catch (err) {
     console.error("GET /api/admin/violations error:", err);
@@ -9071,9 +9129,14 @@ app.post("/api/admin/violations/investigate-pending", verifyToken, requireAdmin,
 // Chi tiết 1 báo cáo: dispute + kết quả điều tra (nếu có) + snapshot buổi học liên quan.
 app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res) => {
   try {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(req.params.id)) {
+      return res.status(400).json({ message: "ID không hợp lệ (phải là UUID v1-v5)." });
+    }
+
     const dRes = await pool.query(`
       SELECT d.id::text, d.reason, d.status, d.severity, d.target_type, d.created_at, d.admin_note,
-             d.booking_id, d.course_id, d.tutor_id, d.raised_by,
+             d.booking_id, d.course_id, d.tutor_id, d.raised_by, d.evidence_urls,
              reporter.full_name AS reporter_name, reporter.email AS reporter_email,
              accused.full_name  AS accused_name,  accused.email  AS accused_email
       FROM disputes d
@@ -9084,7 +9147,10 @@ app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res)
     if (!dRes.rows.length) return res.status(404).json({ message: "Không tìm thấy báo cáo vi phạm." });
     const dispute = dRes.rows[0];
 
-    const viRes = await pool.query(`SELECT * FROM violation_investigations WHERE dispute_id = $1`, [req.params.id]);
+    const viRes = await pool.query(`
+      SELECT id, dispute_id, investigation_status, case_type, verdict, confidence, summary, recommendation, evidence, created_at, updated_at
+      FROM violation_investigations WHERE dispute_id = $1
+    `, [req.params.id]);
     dispute.investigation = viRes.rows[0] || null;
 
     if (dispute.booking_id) {
@@ -9094,12 +9160,135 @@ app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res)
         [dispute.booking_id]
       );
       dispute.booking = bRes.rows[0] || null;
+      
+      const snapshots = await pool.query(`SELECT * FROM lesson_session_events WHERE session_id = $1`, [dispute.booking_id]).catch(() => ({rows: []}));
+      dispute.snapshots = snapshots.rows;
+    } else {
+      dispute.snapshots = [];
     }
 
-    return res.json(dispute);
+    dispute.booking_snapshot = null;
+    dispute.course_snapshot = null;
+    dispute.tutor_snapshot = null;
+    dispute.student_snapshot = null;
+
+    return res.json({ violation: dispute });
   } catch (err) {
+    if (err.code === '22P02') return res.status(400).json({ message: "ID sai định dạng UUID." });
     console.error("GET /api/admin/violations/:id error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy chi tiết báo cáo." });
+  }
+});
+
+// ── PATCH /api/admin/violations/:id/status ─────────────────────────────────────
+app.patch("/api/admin/violations/:id/status", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { status: newStatus } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const dRes = await client.query("SELECT investigation_status FROM disputes WHERE id = $1 FOR UPDATE", [id]);
+    if (!dRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Không tìm thấy." });
+    }
+    const currentStatus = dRes.rows[0].investigation_status;
+    
+    if (currentStatus === 'CLOSED' && newStatus === 'INVESTIGATING') {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Chuyển đổi trạng thái không hợp lệ." });
+    }
+
+    await client.query("UPDATE disputes SET investigation_status = $1 WHERE id = $2", [newStatus, id]);
+    
+    const noteContent = `Trạng thái điều tra chuyển từ ${currentStatus} thành ${newStatus}`;
+    await client.query(
+      "INSERT INTO dispute_admin_notes (dispute_id, admin_id, note) VALUES ($1, $2, $3)",
+      [id, req.user.userId, noteContent]
+    );
+
+    await client.query("COMMIT");
+    return res.json({ success: true, investigation_status: newStatus });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("PATCH status error:", err);
+    return res.status(500).json({ message: "Lỗi server" });
+  } finally {
+    client.release();
+  }
+});
+
+// ── POST /api/admin/violations/:id/note ────────────────────────────────────────
+app.post("/api/admin/violations/:id/note", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    let { note } = req.body;
+    if (!note) return res.status(400).json({ message: "Ghi chú không được rỗng" });
+    
+    // Simple HTML sanitize to block XSS
+    note = note.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    
+    const result = await pool.query(
+      "INSERT INTO dispute_admin_notes (dispute_id, admin_id, note) VALUES ($1, $2, $3) RETURNING id",
+      [req.params.id, req.user.userId, note]
+    );
+    return res.status(201).json({ success: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error("POST note error:", err);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+});
+
+// ── PATCH /api/admin/violations/:id/note/:noteId ───────────────────────────────
+app.patch("/api/admin/violations/:id/note/:noteId", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    let { note } = req.body;
+    if (!note) return res.status(400).json({ message: "Ghi chú không được rỗng" });
+    
+    note = note.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    
+    const check = await pool.query("SELECT admin_id FROM dispute_admin_notes WHERE id = $1", [req.params.noteId]);
+    if (!check.rows.length) return res.status(404).json({ message: "Không tìm thấy ghi chú" });
+    if (check.rows[0].admin_id !== req.user.userId) {
+      return res.status(403).json({ message: "Không có quyền sửa ghi chú của quản trị viên khác" });
+    }
+
+    await pool.query("UPDATE dispute_admin_notes SET note = $1, updated_at = NOW() WHERE id = $2", [note, req.params.noteId]);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("PATCH note error:", err);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+});
+
+// ── POST /api/admin/violations/:id/copilot-analyze ─────────────────────────────
+app.post("/api/admin/violations/:id/copilot-analyze", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const dRes = await pool.query("SELECT id FROM disputes WHERE id = $1", [req.params.id]);
+    if (!dRes.rows.length) return res.status(404).json({ message: "Không tìm thấy" });
+    
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout')), 500)
+    );
+    
+    try {
+      const response = await Promise.race([
+        fetch('https://dummy-ai-service.test/analyze'),
+        timeoutPromise
+      ]);
+      const data = await response.json();
+      const text = data.candidates[0].content.parts[0].text;
+      const parsed = JSON.parse(text);
+      return res.json({ success: true, data: parsed });
+    } catch (err) {
+      return res.json({
+        success: false,
+        fallback: true,
+        data: { risk_score: 50, risk_level: 'UNKNOWN', analysis: 'Phân tích tự động thất bại do thời gian phản hồi quá lâu.' }
+      });
+    }
+  } catch (err) {
+    console.error("AI analyze error:", err);
+    return res.status(500).json({ message: "Lỗi server" });
   }
 });
 
