@@ -10,8 +10,9 @@ const SEV_COLOR = {
 }
 
 const INV_STATUS_CFG = {
-  AUTO_DISMISSED: { label: 'Đã tự đóng',   cls: 'bg-slate-100 text-slate-600' },
-  NEEDS_ADMIN:    { label: 'Cần xem xét',  cls: 'bg-orange-100 text-orange-700' },
+  AUTO_DISMISSED: { label: 'Đã tự đóng',       cls: 'bg-slate-100 text-slate-600' },
+  NEEDS_ADMIN:    { label: 'Cần xem xét',      cls: 'bg-orange-100 text-orange-700' },
+  ADMIN_REVIEWED: { label: 'Admin đã xem xét', cls: 'bg-emerald-100 text-emerald-700' },
 }
 const CASE_TYPE_LABEL = {
   TUTOR_LATE:    'Gia sư vào trễ',
@@ -185,6 +186,9 @@ function ViolationDetailModal({ id, token, onClose, onChanged, notify, notifyErr
   const [detail, setDetail]   = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy]       = useState(false)
+  const [manualMode, setManualMode] = useState(null) // null | 'SUBSTANTIATED' | 'UNSUBSTANTIATED'
+  const [manualNote, setManualNote] = useState('')
+  const [manualDelta, setManualDelta] = useState('')
 
   const load = useCallback(() => {
     setLoading(true)
@@ -237,9 +241,43 @@ function ViolationDetailModal({ id, token, onClose, onChanged, notify, notifyErr
     }
   }
 
+  // Đường thoát khi hệ thống không nhận diện được loại báo cáo (verdict
+  // INCONCLUSIVE mãi mãi vì classifyCase() chỉ khớp 3 loại cố định) — admin
+  // tự kết luận thay vì bấm "Điều tra lại" vô ích lặp lại cùng 1 kết quả.
+  const submitManualReview = async () => {
+    if (!manualNote.trim()) { notifyError('Vui lòng nhập lý do kết luận.'); return }
+    const body = { verdict: manualMode, note: manualNote.trim() }
+    if (manualMode === 'SUBSTANTIATED' && manualDelta.trim()) {
+      const d = Number(manualDelta)
+      if (!Number.isInteger(d) || d >= 0) { notifyError('Điểm trừ phải là số nguyên âm, ví dụ -10.'); return }
+      body.reputation_delta = d
+    }
+    setBusy(true)
+    try {
+      const r = await fetch(`${API}/api/admin/violations/${id}/manual-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.message || `HTTP ${r.status}`)
+      notify(j.reputation_score != null
+        ? `Đã ghi nhận kết luận thủ công — điểm mới: ${j.reputation_score}/100${j.auto_banned ? ' (tài khoản đã bị tự động khóa do điểm quá thấp)' : ''}.`
+        : 'Đã ghi nhận kết luận thủ công.')
+      setManualMode(null); setManualNote(''); setManualDelta('')
+      load()
+      onChanged()
+    } catch (e) {
+      notifyError(`Ghi nhận thất bại: ${e.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const inv = detail?.investigation
   const alreadyApplied = !!inv?.reputation_applied_at
   const canApply = inv?.verdict === 'SUBSTANTIATED' && inv?.evidence?.suggested_reputation_delta && detail?.tutor_id && !alreadyApplied
+  const isAdminReviewed = inv?.investigation_status === 'ADMIN_REVIEWED'
 
   return (
     <ModalOverlay onClose={onClose}>
@@ -306,9 +344,61 @@ function ViolationDetailModal({ id, token, onClose, onChanged, notify, notifyErr
                         Đã áp dụng trừ điểm uy tín cho báo cáo này lúc {fmtDate(inv.reputation_applied_at)}.
                       </div>
                     )}
-                    <button onClick={investigateNow} disabled={busy} className="text-xs font-semibold text-gray-400 hover:text-gray-600">
-                      Điều tra lại
-                    </button>
+
+                    {isAdminReviewed ? (
+                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg p-2.5">
+                        <span className="material-symbols-outlined text-[16px]">how_to_reg</span>
+                        Admin đã xem xét thủ công lúc {fmtDate(inv.reviewed_at)}.
+                      </div>
+                    ) : !canApply && !alreadyApplied && (
+                      manualMode ? (
+                        <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                          <p className="text-xs font-semibold text-gray-700">
+                            Kết luận: {manualMode === 'SUBSTANTIATED' ? 'Có căn cứ' : 'Không có căn cứ'}
+                          </p>
+                          <textarea
+                            value={manualNote} onChange={e => setManualNote(e.target.value)}
+                            rows={2} placeholder="Lý do kết luận (bắt buộc)..."
+                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary/30"
+                          />
+                          {manualMode === 'SUBSTANTIATED' && detail?.tutor_id && (
+                            <input
+                              value={manualDelta} onChange={e => setManualDelta(e.target.value)}
+                              type="number" placeholder="Số điểm trừ (vd: -10, để trống nếu không trừ điểm)"
+                              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary/30"
+                            />
+                          )}
+                          <div className="flex gap-2">
+                            <button onClick={() => { setManualMode(null); setManualNote(''); setManualDelta('') }} disabled={busy}
+                              className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold text-gray-500 hover:bg-gray-100">
+                              Hủy
+                            </button>
+                            <button onClick={submitManualReview} disabled={busy}
+                              className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold bg-primary text-white hover:brightness-110 disabled:opacity-50">
+                              {busy && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                              Xác nhận kết luận
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2">
+                          <button onClick={() => setManualMode('SUBSTANTIATED')} disabled={busy}
+                            className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold border border-red-200 text-red-700 hover:bg-red-50">
+                            Kết luận: Có căn cứ
+                          </button>
+                          <button onClick={() => setManualMode('UNSUBSTANTIATED')} disabled={busy}
+                            className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50">
+                            Kết luận: Không có căn cứ
+                          </button>
+                        </div>
+                      )
+                    )}
+
+                    {!isAdminReviewed && (
+                      <button onClick={investigateNow} disabled={busy} className="text-xs font-semibold text-gray-400 hover:text-gray-600">
+                        Điều tra lại
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

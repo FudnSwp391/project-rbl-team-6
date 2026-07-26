@@ -1697,10 +1697,10 @@ async function saveSemanticModerationReport(r) {
 // Aggregate a tutor's review texts into semantic reputation scores (read-only).
 async function analyzeTutorSemanticReputation(tutorUserId, { days = 90 } = {}) {
   const rows = await copilotSafeRows(
-    `SELECT COALESCE(r.comment, r.content) AS text
+    `SELECT r.comment AS text
        FROM reviews r JOIN tutor_profiles tp ON tp.id = r.tutor_id
       WHERE tp.user_id = $1 AND r.created_at > NOW() - make_interval(days => $2::int)
-        AND COALESCE(r.comment, r.content) IS NOT NULL
+        AND r.comment IS NOT NULL AND TRIM(r.comment) <> ''
       ORDER BY r.created_at DESC LIMIT 200`, [tutorUserId, days]);
   const dims = { patience: [], friendliness: [], teaching_quality: [], professionalism: [] };
   const risk = { external_payment_risk: 0, toxicity_risk: 0, spam_risk: 0 };
@@ -1769,9 +1769,9 @@ async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_
   let reviews = [];
   try {
     reviews = (await pool.query(
-      `SELECT r.id, COALESCE(r.comment, r.content) AS text, tp.user_id AS tutor_user_id
+      `SELECT r.id, r.comment AS text, tp.user_id AS tutor_user_id
          FROM reviews r LEFT JOIN tutor_profiles tp ON tp.id = r.tutor_id
-        WHERE COALESCE(r.comment, r.content) IS NOT NULL AND TRIM(COALESCE(r.comment, r.content)) <> ''
+        WHERE r.comment IS NOT NULL AND TRIM(r.comment) <> ''
           AND NOT EXISTS (SELECT 1 FROM semantic_moderation_reports s WHERE s.source_type='REVIEW' AND s.source_id = r.id::text)
         ORDER BY r.created_at DESC LIMIT $1`, [limit])).rows;
   } catch (e) { limitations.push('Không quét được reviews: ' + e.message); }
@@ -1779,7 +1779,9 @@ async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_
   for (const rv of reviews) {
     stats.reviews_scanned++;
     try {
-      const a = classifyTextModeration(rv.text, { sourceType: 'REVIEW' });
+      const base = classifyTextModeration(rv.text, { sourceType: 'REVIEW' });
+      const ai = await classifyModerationWithGemini(rv.text);
+      const a = ai ? mergeModerationWithAI(base, ai) : base;
       const suspicious = a.severity !== 'LOW' || a.categories.some(c => c !== 'POSITIVE_TEACHING_SIGNAL');
       if (suspicious) {
         const id = await saveSemanticModerationReport({
@@ -1805,7 +1807,9 @@ async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_
   for (const c of chats) {
     stats.chat_scanned++;
     try {
-      const a = classifyTextModeration(c.text, { sourceType: 'CHAT_MESSAGE' });
+      const base = classifyTextModeration(c.text, { sourceType: 'CHAT_MESSAGE' });
+      const ai = await classifyModerationWithGemini(c.text);
+      const a = ai ? mergeModerationWithAI(base, ai) : base;
       const suspicious = a.severity !== 'LOW' && a.categories.some(cat => ['EXTERNAL_PAYMENT_ATTEMPT', 'TOXIC_LANGUAGE', 'SPAM_OR_SCAM', 'PRIVACY_RISK'].includes(cat));
       if (suspicious) {
         const id = await saveSemanticModerationReport({
@@ -8532,6 +8536,7 @@ app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) 
         n.type,
         n.title,
         n.body        AS message,
+        n.priority,
         n.is_read,
         n.ref_type,
         n.ref_id,
@@ -8563,14 +8568,6 @@ app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) 
       return 'other';
     };
 
-    // Derive priority
-    const typePriority = t => {
-      if (!t) return 'low';
-      if (t === 'escrow_hold' || t.includes('refund') || t === 'course_refund') return 'high';
-      if (t === 'course_enrollment' || t === 'lesson_completed') return 'medium';
-      return 'low';
-    };
-
     const notifications = rows.map(r => ({
       id:              r.id,
       title:           r.title,
@@ -8583,7 +8580,7 @@ app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) 
       recipient_role:  r.recipient_role  || null,
       sender_name:     null,
       sender_email:    null,
-      priority:        typePriority(r.type),
+      priority:        r.priority || 'normal',
       ref_type:        r.ref_type || null,
       ref_id:          r.ref_id   || null,
       source:          'notifications',
@@ -9124,6 +9121,120 @@ app.post("/api/admin/violations/:id/apply-reputation", verifyToken, requireAdmin
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("POST /api/admin/violations/:id/apply-reputation error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── POST /api/admin/violations/:id/manual-review ─────────────────────────────
+// Đường thoát cho báo cáo mà hệ thống tự động KHÔNG nhận diện được loại
+// (classifyCase() chỉ khớp 3 loại: trễ/vắng mặt/sai học phí — mọi nội dung
+// khác rơi vào verdict INCONCLUSIVE, "Điều tra lại" sẽ mãi cho cùng kết quả
+// vì nội dung báo cáo không đổi). Admin tự kết luận Có/Không căn cứ kèm lý do
+// bắt buộc, tuỳ chọn tự nhập số điểm trừ (không dựa vào gợi ý tự động vì
+// không có gợi ý nào để dựa vào). Ghi vào đúng reviewed_by/reviewed_at đã có
+// sẵn trong bảng nhưng chưa từng được dùng.
+app.post("/api/admin/violations/:id/manual-review", verifyToken, requireAdmin, async (req, res) => {
+  const disputeId = req.params.id;
+  const { verdict, note, reputation_delta } = req.body || {};
+  if (!['SUBSTANTIATED', 'UNSUBSTANTIATED'].includes(verdict)) {
+    return res.status(400).json({ message: "verdict phải là 'SUBSTANTIATED' hoặc 'UNSUBSTANTIATED'." });
+  }
+  if (!String(note || '').trim()) {
+    return res.status(400).json({ message: "Vui lòng nhập lý do kết luận." });
+  }
+  let deltaNum = null;
+  if (reputation_delta != null && reputation_delta !== '') {
+    deltaNum = Number(reputation_delta);
+    if (!Number.isInteger(deltaNum) || deltaNum >= 0 || deltaNum < -100) {
+      return res.status(400).json({ message: "Điểm trừ phải là số nguyên âm, tối đa -100." });
+    }
+    if (verdict !== 'SUBSTANTIATED') {
+      return res.status(400).json({ message: "Chỉ có thể trừ điểm khi kết luận Có căn cứ." });
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const viRes = await client.query(
+      `SELECT vi.*, d.tutor_id
+       FROM violation_investigations vi
+       JOIN disputes d ON d.id = vi.dispute_id
+       WHERE vi.dispute_id = $1 FOR UPDATE OF vi`,
+      [disputeId]
+    );
+    if (!viRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Báo cáo này chưa được điều tra sơ bộ." });
+    }
+    const vi = viRes.rows[0];
+    if (vi.investigation_status === 'ADMIN_REVIEWED') {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ message: "Báo cáo này đã được admin xem xét thủ công trước đó." });
+    }
+    if (vi.reputation_applied_at) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ message: "Báo cáo này đã áp dụng trừ điểm trước đó." });
+    }
+
+    let newScore = null;
+    let autoBanned = false;
+    let reputationApplied = false;
+    if (deltaNum != null && vi.tutor_id) {
+      const upd = await client.query(
+        `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
+         WHERE user_id = $2 RETURNING reputation_score`,
+        [deltaNum, vi.tutor_id]
+      );
+      if (upd.rows.length) {
+        newScore = upd.rows[0].reputation_score;
+        reputationApplied = true;
+        if (newScore < 30) {
+          await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [vi.tutor_id]);
+          autoBanned = true;
+          await safeNotifyUser(client, {
+            userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
+            templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
+            title: 'Tài khoản bị khóa',
+            body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+            icon: 'block', sourceType: 'user', sourceId: vi.tutor_id, priority: 'critical',
+            idempotencyKey: `reputation_auto_ban:${vi.tutor_id}:violation_manual:${disputeId}`,
+          });
+        }
+      }
+    }
+
+    const summary = `Admin đã xem xét thủ công: ${note.trim()}`;
+    await client.query(
+      `UPDATE violation_investigations SET
+         verdict = $1, investigation_status = 'ADMIN_REVIEWED',
+         summary = $2, recommendation = NULL,
+         reviewed_by = $3, reviewed_at = NOW(),
+         reputation_applied_at = CASE WHEN $4 THEN NOW() ELSE reputation_applied_at END,
+         updated_at = NOW()
+       WHERE dispute_id = $5`,
+      [verdict, summary, req.user.userId, reputationApplied, disputeId]
+    );
+
+    await client.query("COMMIT");
+
+    if (reputationApplied) {
+      await safeNotifyUser(pool, {
+        userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
+        templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
+        title: 'Điểm uy tín bị trừ',
+        body: `Admin đã trừ ${Math.abs(deltaNum)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}. Điểm hiện tại: ${newScore}/100.`,
+        icon: 'trending_down', sourceType: 'user', sourceId: vi.tutor_id, priority: 'normal',
+        idempotencyKey: `reputation_manual_adjustment:${vi.tutor_id}:violation_manual:${disputeId}`,
+      });
+    }
+
+    return res.json({ message: "Đã ghi nhận kết luận thủ công.", reputation_score: newScore, auto_banned: autoBanned });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("POST /api/admin/violations/:id/manual-review error:", err);
     return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
   } finally {
     client.release();
@@ -20193,7 +20304,7 @@ app.post('/api/admin/semantic-moderation/analyze', verifyToken, requireAdmin, as
 
     if ((!analyzeText || !analyzeText.trim()) && sourceId) {
       if (type === 'REVIEW') {
-        const r = await copilotSafeRows(`SELECT COALESCE(comment, content) AS text, tutor_id FROM reviews WHERE id=$1 LIMIT 1`, [sourceId]);
+        const r = await copilotSafeRows(`SELECT comment AS text, tutor_id FROM reviews WHERE id=$1 LIMIT 1`, [sourceId]);
         if (r.length) {
           analyzeText = r[0].text || '';
           const tp = await copilotSafeRows(`SELECT user_id FROM tutor_profiles WHERE id=$1 LIMIT 1`, [r[0].tutor_id]);
@@ -21279,7 +21390,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
         dispute_id           UUID PRIMARY KEY REFERENCES disputes(id) ON DELETE CASCADE,
         case_type            TEXT,
         investigation_status TEXT NOT NULL DEFAULT 'PENDING'
-                             CHECK (investigation_status IN ('PENDING','AUTO_DISMISSED','NEEDS_ADMIN')),
+                             CHECK (investigation_status IN ('PENDING','AUTO_DISMISSED','NEEDS_ADMIN','ADMIN_REVIEWED')),
         verdict              TEXT,
         confidence           INT,
         evidence             JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -21297,6 +21408,15 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     // trên DB thật) — thêm cột riêng để không bỏ sót trên môi trường đang chạy.
     await pool.query(`
       ALTER TABLE violation_investigations ADD COLUMN IF NOT EXISTS reputation_applied_at TIMESTAMPTZ
+    `);
+    // Bảng cũ có thể còn CHECK cũ chưa cho phép 'ADMIN_REVIEWED' (kết luận thủ
+    // công khi hệ thống không nhận diện được loại báo cáo) — nới constraint.
+    await pool.query(`
+      ALTER TABLE violation_investigations DROP CONSTRAINT IF EXISTS violation_investigations_investigation_status_check
+    `);
+    await pool.query(`
+      ALTER TABLE violation_investigations ADD CONSTRAINT violation_investigations_investigation_status_check
+        CHECK (investigation_status IN ('PENDING','AUTO_DISMISSED','NEEDS_ADMIN','ADMIN_REVIEWED'))
     `);
     console.log('✅ DB migration: violation_investigations table ready');
   } catch (err) {
