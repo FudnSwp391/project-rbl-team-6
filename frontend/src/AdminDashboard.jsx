@@ -1665,7 +1665,7 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
 }
 
 // ─── User Detail Panel ────────────────────────────────────────────────────────
-function UserDetailPanel({ user, detail, loading, onBan, onEdit, actionId, onReleaseHold, onViewDoc }) {
+function UserDetailPanel({ user, detail, loading, onBan, onEdit, actionId, onReleaseHold, onViewDoc, onLockSchedule }) {
   const roleColor  = r => ({ admin:'bg-purple-100 text-purple-700', tutor:'bg-indigo-100 text-indigo-700', student:'bg-blue-100 text-blue-700', parent:'bg-green-100 text-green-700' }[r] ?? 'bg-gray-100 text-gray-600')
   const statusColor = b => b ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'
   const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—'
@@ -1887,6 +1887,26 @@ function UserDetailPanel({ user, detail, loading, onBan, onEdit, actionId, onRel
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {user.role === 'student' && (
+            <div className="pt-3 border-t border-outline-variant">
+              {detail?.admin_locked_schedule_count > 0 && (
+                <p className="text-[11px] text-on-surface-variant mb-2 text-center">
+                  Đang ẩn <strong>{detail.admin_locked_schedule_count}</strong> buổi học khỏi lịch dạy của gia sư.
+                </p>
+              )}
+              <button
+                onClick={() => onLockSchedule(user)}
+                disabled={actionId === user.id}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${detail?.admin_locked_schedule_count > 0 ? 'bg-green-50 text-green-700 hover:bg-green-100' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'}`}
+              >
+                <span className="material-symbols-outlined text-[18px]">
+                  {actionId === user.id ? 'progress_activity' : detail?.admin_locked_schedule_count > 0 ? 'lock_open' : 'event_busy'}
+                </span>
+                {detail?.admin_locked_schedule_count > 0 ? 'Mở lại lịch học' : 'Khóa lịch học (ẩn khỏi gia sư)'}
+              </button>
             </div>
           )}
 
@@ -2114,6 +2134,19 @@ function UserManagementView({ initialSearch = '', onSearchConsumed, onViewDoc })
       // sync detail panel if this user is open
       if (selectedUser?.id === u.id) setDetail(prev => prev ? { ...prev, is_banned: updated.is_banned } : prev)
       setUMToast({ msg: updated.is_banned ? `${u.full_name} đã bị khóa tài khoản.` : `${u.full_name} đã được bỏ khóa.`, type: 'success' })
+    } catch (err) {
+      setUMToast({ msg: `Thao tác thất bại: ${err.message}`, type: 'error' })
+    } finally { setActionId(null) }
+  }
+
+  async function handleLockSchedule(u) {
+    setActionId(u.id)
+    try {
+      const isLocked = detail?.admin_locked_schedule_count > 0
+      const endpoint = isLocked ? 'unlock-schedule' : 'lock-schedule'
+      const res = await authFetch(`${API}/api/admin/students/${u.id}/${endpoint}`, token, { method: 'PATCH' })
+      setUMToast({ msg: res.message, type: 'success' })
+      fetchDetail(u.id)
     } catch (err) {
       setUMToast({ msg: `Thao tác thất bại: ${err.message}`, type: 'error' })
     } finally { setActionId(null) }
@@ -2374,6 +2407,7 @@ function UserManagementView({ initialSearch = '', onSearchConsumed, onViewDoc })
             onBan={handleBan}
             onEdit={setEditingUser}
             onRoleChange={handleRoleChange}
+            onLockSchedule={handleLockSchedule}
             actionId={actionId}
             onViewDoc={onViewDoc}
           />
@@ -3824,6 +3858,7 @@ function ComplaintsView({ token }) {
   const [penaltyType, setPenaltyType] = useState('NONE')
   const [refundRate, setRefundRate] = useState(1)
   const [resolving, setResolving] = useState(false)
+  const [reactivateAccount, setReactivateAccount] = useState(false)
 
   const fetchDisputes = async () => {
     setLoading(true)
@@ -3846,13 +3881,13 @@ function ComplaintsView({ token }) {
       const res = await fetch(API_BASE + '/api/escrow/resolve-dispute-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('token') },
-        body: JSON.stringify({ disputeId: resolveModal.id, decision, adminNote, penaltyType,
+        body: JSON.stringify({ disputeId: resolveModal.id, decision, adminNote, penaltyType, reactivateAccount,
           ...(decision === 'REFUND_TO_STUDENT' ? { refundRate } : {}) })
       })
       const data = await res.json()
       if (data.success) {
         alert('Đã xử lý: ' + (decision === 'REFUND_TO_STUDENT' ? 'Hoàn tiền cho học sinh' : 'Giải ngân cho gia sư'))
-        setResolveModal(null); setAdminNote(''); setPenaltyType('NONE'); setRefundRate(1); fetchDisputes()
+        setResolveModal(null); setAdminNote(''); setPenaltyType('NONE'); setRefundRate(1); setReactivateAccount(false); fetchDisputes()
       } else { alert(data.message || 'Có lỗi xảy ra.') }
     } catch { alert('Lỗi kết nối.') }
     setResolving(false)
@@ -4012,6 +4047,21 @@ function ComplaintsView({ token }) {
                       Có khiếu nại dịch vụ liên quan ({resolveModal.related_complaint_status})
                     </span>
                     <p className="text-xs text-on-surface-variant mt-1">Kiểm tra mục "Khiếu nại Dịch vụ" trước khi phán quyết để tránh hoàn tiền trùng lặp.</p>
+                  </div>
+                )}
+                {resolveModal.absence_lockdown_at && !resolveModal.absence_lockdown_resolved_at && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-purple-700 bg-purple-100">
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>lock</span>
+                      Tài khoản học sinh đang bị khoá (2 buổi vắng liên tiếp không lý do)
+                      {resolveModal.is_trigger_absence ? ' — đây là buổi kích hoạt khoá' : ''}
+                    </span>
+                    <label className="flex items-center gap-2 mt-2 text-sm cursor-pointer">
+                      <input type="checkbox" checked={reactivateAccount} onChange={e => setReactivateAccount(e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary" />
+                      <span>Mở lại tài khoản (hiện lại lịch học sắp tới, xoá lịch sử vắng)</span>
+                    </label>
+                    <p className="text-xs text-on-surface-variant mt-1">Chỉ tick nếu đã xác minh lý do vắng mặt hợp lý. Không tick sẽ giữ nguyên trạng thái khoá.</p>
                   </div>
                 )}
                 {resolveModal.withdrawn_at && (
