@@ -1804,6 +1804,8 @@ function MyScheduleTab() {
         time: booking.time_slot || booking.timeSlot || booking.time || 'Scheduled',
         title: booking.subject || 'Lớp học',
         meta: booking.childName || booking.studentName || 'Học sinh',
+        attendanceStatus: booking.attendance_status || null,
+        attendanceNote: booking.attendance_note || null,
       }))
       
     const bookedTimesMins = bookedSlots.map(b => parseTimeToMinutes(b.time));
@@ -1899,6 +1901,12 @@ function ScheduleSummaryCard({ icon, label, value }) {
       </div>
     </div>
   )
+}
+
+const ATTENDANCE_BADGE = {
+  present: { label: 'Có mặt', icon: 'check_circle', className: 'bg-green-600 text-white' },
+  absent: { label: 'Vắng', icon: 'cancel', className: 'bg-red-600 text-white' },
+  excused: { label: 'Có phép', icon: 'info', className: 'bg-amber-500 text-white' },
 }
 
 const parseTimeToMinutes = (timeStr) => {
@@ -2006,13 +2014,14 @@ function TimeGridWeekView({ weekDates, eventsForDate, onEventClick, sessionInfoM
                         {timeEvents.map((event) => {
                           const isBooking = event.type === 'booking';
                           const hasInfo = !!sessionInfoMap?.[event.id];
+                          const attendance = isBooking ? ATTENDANCE_BADGE[event.attendanceStatus] : null;
                           return (
                             <div
                               key={event.id}
                               onClick={isBooking ? () => onEventClick?.(event) : undefined}
                               className={`flex-1 rounded-[6px] p-1.5 px-2 overflow-hidden transition-all text-xs border shadow-sm group relative ${
-                                isBooking 
-                                  ? 'bg-blue-600 text-white border-blue-700 cursor-pointer hover:bg-blue-700 hover:shadow-md hover:z-30' 
+                                isBooking
+                                  ? 'bg-blue-600 text-white border-blue-700 cursor-pointer hover:bg-blue-700 hover:shadow-md hover:z-30'
                                   : 'bg-indigo-50/80 text-indigo-700 border-indigo-200'
                               }`}
                             >
@@ -2026,7 +2035,13 @@ function TimeGridWeekView({ weekDates, eventsForDate, onEventClick, sessionInfoM
                               {isBooking && (
                                 <div className="truncate opacity-80 text-[10px] leading-tight mt-0.5">{event.meta}</div>
                               )}
-                              
+                              {attendance && (
+                                <div className={`mt-1 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-bold leading-none ${attendance.className}`} title={event.attendanceNote || attendance.label}>
+                                  <span className="material-symbols-outlined text-[10px] leading-none">{attendance.icon}</span>
+                                  {attendance.label}
+                                </div>
+                              )}
+
                               {isBooking && (
                                 <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <span className="material-symbols-outlined text-[12px] bg-white/20 rounded-full p-0.5">{hasInfo ? 'edit' : 'add'}</span>
@@ -2057,22 +2072,29 @@ function ScheduleMonthCell({ date, events, isCurrentMonth, onEventClick, session
         {events.length > 0 && <span className="text-[10px] text-primary font-bold">{events.length}</span>}
       </div>
       <div className="space-y-1">
-        {events.slice(0, 3).map((event) => (
-          <div
-            key={event.id}
-            onClick={event.type === 'booking' ? () => onEventClick?.(event) : undefined}
-            className={`truncate rounded-md px-2 py-1 text-[10px] font-semibold flex items-center gap-1 ${
-              event.type === 'booking'
-                ? 'bg-primary text-on-primary cursor-pointer hover:bg-primary/80 active:scale-95 transition-all'
-                : 'bg-primary/10 text-primary'
-            }`}
-          >
-            <span className="truncate">{event.time}</span>
-            {event.type === 'booking' && sessionInfoMap?.[event.id] && (
-              <span className="material-symbols-outlined text-[9px] flex-shrink-0">check_circle</span>
-            )}
-          </div>
-        ))}
+        {events.slice(0, 3).map((event) => {
+          const attendance = event.type === 'booking' ? ATTENDANCE_BADGE[event.attendanceStatus] : null;
+          return (
+            <div
+              key={event.id}
+              onClick={event.type === 'booking' ? () => onEventClick?.(event) : undefined}
+              title={attendance ? (event.attendanceNote || attendance.label) : undefined}
+              className={`truncate rounded-md px-2 py-1 text-[10px] font-semibold flex items-center gap-1 ${
+                event.type === 'booking'
+                  ? 'bg-primary text-on-primary cursor-pointer hover:bg-primary/80 active:scale-95 transition-all'
+                  : 'bg-primary/10 text-primary'
+              }`}
+            >
+              <span className="truncate">{event.time}</span>
+              {event.type === 'booking' && sessionInfoMap?.[event.id] && (
+                <span className="material-symbols-outlined text-[9px] flex-shrink-0">check_circle</span>
+              )}
+              {attendance && (
+                <span className="ml-auto flex-shrink-0 material-symbols-outlined text-[10px]">{attendance.icon}</span>
+              )}
+            </div>
+          );
+        })}
         {events.length > 3 && <p className="text-[10px] text-outline">+{events.length - 3} lớp khác</p>}
       </div>
     </div>
