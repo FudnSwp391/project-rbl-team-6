@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { methodSupport } from './utils/teachingMethod';
 import CartButton from './components/CartButton';
 import { API_BASE_URL } from './config';
@@ -14,51 +14,6 @@ const SORT_OPTIONS = [
   { value: 'price_desc', label: 'Giá: Cao đến Thấp' },
   { value: 'experience', label: 'Kinh Nghiệm Nhiều Nhất' },
   { value: 'newest',     label: 'Mới Nhất' },
-];
-
-// Số liệu build trust — sẽ được ghi đè bằng số thật từ API nếu có, fallback hợp lý cho demo
-const TRUST_STATS = [
-  { icon: 'verified',       label: 'Gia sư đã xác thực',  value: '2,000+', color: '#3b82f6' },
-  { icon: 'groups',         label: 'Học sinh đang học',    value: '15,000+', color: '#8b5cf6' },
-  { icon: 'star',           label: 'Đánh giá trung bình',  value: '4.9/5',   color: '#f59e0b' },
-  { icon: 'shield_person',  label: 'Bảo đảm hoàn tiền',    value: '100%',    color: '#10b981' },
-];
-
-// 3 review "gương mặt học sinh" — dựng cho hero social-proof; tuỳ backend sau có bảng entity_reviews
-// sẽ bind dữ liệu thật vào section này (giữ layout để dễ ráp).
-const TESTIMONIALS = [
-  {
-    name: 'Nguyễn Minh An',
-    role: 'Học sinh lớp 12',
-    subject: 'Toán · Luyện thi ĐH',
-    rating: 5,
-    text: 'Sau 3 tháng học với thầy, mình tăng từ 6.5 lên 9 điểm Toán. Thầy giảng rất dễ hiểu, luôn nhắc nhở làm bài về nhà.',
-    avatar: 'https://i.pravatar.cc/80?img=15',
-  },
-  {
-    name: 'Trần Thảo My',
-    role: 'Sinh viên năm 2',
-    subject: 'IELTS Speaking',
-    rating: 5,
-    text: 'Cô rất kiên nhẫn và có phương pháp giúp mình sửa phát âm. Sau 2 tháng đạt 7.5 Speaking — vượt xa mục tiêu ban đầu.',
-    avatar: 'https://i.pravatar.cc/80?img=47',
-  },
-  {
-    name: 'Lê Hoàng Phúc',
-    role: 'Phụ huynh',
-    subject: 'Toán lớp 5 cho con',
-    rating: 5,
-    text: 'Con tôi vốn ghét Toán, giờ hào hứng chờ buổi học mỗi tuần. Nền tảng cải thiện rõ, tôi rất hài lòng.',
-    avatar: 'https://i.pravatar.cc/80?img=68',
-  },
-];
-
-// Ưu điểm — 4 lý do để "chốt đơn" ở cuối trang
-const WHY_CHOOSE = [
-  { icon: 'verified_user',  title: 'Gia sư đã xác thực', desc: 'Mỗi hồ sơ được duyệt kỹ về bằng cấp, chuyên môn và kinh nghiệm giảng dạy.' },
-  { icon: 'payments',        title: 'An tâm thanh toán',   desc: 'Không phù hợp trong 3 buổi đầu? Hoàn tiền 100% — không hỏi lý do.' },
-  { icon: 'support_agent',   title: 'Hỗ trợ 24/7',         desc: 'Đội ngũ chăm sóc sẵn sàng giúp bạn từ chọn gia sư đến buổi học đầu tiên.' },
-  { icon: 'chat',            title: 'Nhắn tin trực tiếp',  desc: 'Trao đổi với gia sư trước khi đặt lịch — hiểu rõ trước khi cam kết.' },
 ];
 
 function fmtPrice(val) {
@@ -345,36 +300,12 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
     return matchPrice && matchSearch && matchSubjects && matchMethod && matchLevel && matchCity;
   });
 
-  // Featured tutors — top 4 theo rating để làm carousel highlight ở đầu grid
-  // Chỉ hiện khi KHÔNG lọc gì đặc biệt (search rỗng, không chọn subject) để tránh gây rối kết quả tìm kiếm.
-  const featuredTutors = useMemo(() => {
-    if (search || selectedSubjects.length || method || level || city) return [];
-    return [...displayTutors]
-      .sort((a, b) => Number(b.avg_r || 0) - Number(a.avg_r || 0))
-      .slice(0, 4);
-  }, [displayTutors, search, selectedSubjects, method, level, city]);
-
   const activeFilterCount = (selectedSubjects.length ? 1 : 0) + (method ? 1 : 0) + (level ? 1 : 0) + (maxPrice !== 200 ? 1 : 0) + (search.trim() ? 1 : 0) + (city ? 1 : 0);
-
   return (
     <div className="aqua-bg min-h-screen text-[#191c1e] font-sans">
       <style>{`
         .filter-sidebar { scrollbar-width: none; }
         .filter-sidebar::-webkit-scrollbar { display: none; }
-        .ftb-blob { position:absolute; border-radius:50%; filter:blur(60px); pointer-events:none; }
-        .ftb-1 { width:280px; height:280px; top:-90px; left:-40px; background:radial-gradient(circle,#4c6ef5,transparent 70%); opacity:.6; animation:ftbFloat 13s ease-in-out infinite; }
-        .ftb-2 { width:320px; height:320px; bottom:-130px; right:-60px; background:radial-gradient(circle,#7c5cff,transparent 70%); opacity:.5; animation:ftbFloat 17s ease-in-out infinite reverse; }
-        @keyframes ftbFloat { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(30px,-20px) scale(1.1)} }
-        @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
-        .shimmer-text { background:linear-gradient(90deg,#f6d98c 20%,#fff5c8 50%,#f6d98c 80%); background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent; animation:shimmer 3s linear infinite; }
-        @keyframes pulseDot { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.4);opacity:.6} }
-        .live-dot { animation:pulseDot 1.8s ease-in-out infinite; }
-        @keyframes floatUp { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
-        .stat-card-float { animation:floatUp 4s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce){ .ftb-1,.ftb-2,.stat-card-float,.live-dot,.shimmer-text{ animation:none } }
-        /* Hide scrollbar for horizontal scroll */
-        .no-scrollbar::-webkit-scrollbar{display:none}
-        .no-scrollbar{-ms-overflow-style:none;scrollbar-width:none}
       `}</style>
 
       {/* Header */}
@@ -432,119 +363,63 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
           </div>
         )}
 
-        {/* HERO — Bigger, richer, with trust stats floating */}
-        <section className="relative mt-4 mb-10 overflow-hidden rounded-3xl border border-[#1e2a4a]"
-          style={{ background: 'radial-gradient(60% 90% at 15% 8%, rgba(76,110,245,.35), transparent 60%), radial-gradient(50% 80% at 85% 18%, rgba(124,92,255,.30), transparent 60%), linear-gradient(135deg,#0a1436,#131f5c 55%,#0a1436)' }}>
-          <span className="ftb-blob ftb-1" aria-hidden="true" />
-          <span className="ftb-blob ftb-2" aria-hidden="true" />
-
-          <div className="relative z-10 px-6 py-12 md:px-12 md:py-16">
-            {/* Live badge */}
-            <div className="flex justify-center mb-5">
-              <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-1.5 rounded-full">
-                <span className="w-2 h-2 rounded-full bg-[#22c55e] live-dot"></span>
-                <span className="text-xs font-semibold text-white/90">Có <b className="text-white">247 gia sư</b> đang trực tuyến</span>
-              </div>
+        {/* SEARCH HEADER — gọn, hướng chức năng: bấm Tìm Gia Sư là thấy gia sư ngay */}
+        <section className="mt-4 mb-8 rounded-2xl bg-white border border-[#e9ebf0] shadow-[0_10px_30px_-18px_rgba(0,40,142,0.25)] p-6 md:p-7">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-5">
+            <div>
+              <h1 className="text-xl md:text-2xl font-extrabold text-[#191c1e] flex items-center gap-2">
+                <span className="material-symbols-outlined text-[#00288e] text-[26px]" style={{fontVariationSettings:"'FILL' 1"}}>groups</span>
+                Tìm gia sư phù hợp với bạn
+              </h1>
+              <p className="text-sm text-[#5d5f5f] mt-1">Gia sư đã xác thực · Học thử buổi đầu · Hoàn tiền nếu chưa hài lòng</p>
             </div>
-
-            <h1 className="text-3xl md:text-5xl font-extrabold text-white text-center leading-tight">
-              Tìm <span className="shimmer-text">gia sư 1-1</span> phù hợp
-              <br className="hidden md:block" />
-              cho <span className="shimmer-text">mọi mục tiêu học tập</span>
-            </h1>
-            <p className="text-white/70 mt-4 text-sm md:text-lg text-center max-w-[720px] mx-auto">
-              Kết nối trực tiếp với gia sư đã xác thực · Học thử buổi đầu · Hoàn tiền nếu chưa hài lòng
-            </p>
-
-            {/* Search bar */}
-            <div className="mt-8 flex flex-col md:flex-row gap-3 max-w-[820px] mx-auto">
-              <div className="relative flex-grow">
-                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-white/50">search</span>
-                <input
-                  className="w-full pl-12 pr-4 py-4 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/50 backdrop-blur focus:outline-none focus:border-[#6ea8ff] focus:ring-2 focus:ring-[#6ea8ff]/30 transition-all text-base"
-                  placeholder="Ví dụ: luyện IELTS 7.0, ôn Toán thi lớp 10, học Python cơ bản..."
-                  value={searchInput}
-                  onChange={e => setSearchInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                />
-              </div>
-              <button
-                onClick={handleSearch}
-                className="btn-shine bg-gradient-to-r from-[#3b6fe0] to-[#7c5cff] text-white px-8 py-4 rounded-xl font-bold text-base hover:-translate-y-0.5 hover:shadow-[0_12px_30px_-8px_rgba(124,92,255,.7)] transition-all whitespace-nowrap"
-              >
-                Tìm Ngay
-              </button>
-            </div>
-
-            {/* Popular searches */}
-            <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-white/60 text-xs">
-              <span>Tìm nhiều nhất:</span>
-              {['IELTS', 'Toán 12', 'Lập trình Python', 'Tiếng Anh giao tiếp', 'Hóa 10'].map(kw => (
-                <button
-                  key={kw}
-                  onClick={() => { setSearchInput(kw); setSearch(kw); setPage(1); }}
-                  className="px-3 py-1 rounded-full bg-white/5 border border-white/10 hover:bg-white/15 hover:text-white transition-all"
-                >
-                  {kw}
-                </button>
-              ))}
-            </div>
-
-            {/* AI Matching CTA */}
-            <div className="mt-6 flex items-center justify-center">
-              <div className="bg-gradient-to-r from-[#f59e0b]/20 via-[#fbbf24]/20 to-[#f59e0b]/20 backdrop-blur-md border border-[#fbbf24]/30 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:scale-105 transition-all cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
-                <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
-                  <span className="material-symbols-outlined text-[#fbbf24] text-[22px] animate-pulse" style={{fontVariationSettings:"'FILL' 1"}}>auto_awesome</span>
-                  <span>Không biết chọn ai? Để <b className="text-[#fbbf24]">AI EduX</b> gợi ý cho bạn</span>
-                </div>
-                <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
-                <button className="text-white font-bold text-sm flex items-center gap-1 group transition-colors">
-                  Tạo yêu cầu AI
-                  <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#fbbf24]">arrow_forward</span>
-                </button>
-              </div>
+            <div className="hidden md:flex items-center gap-4 text-xs text-[#757684] shrink-0">
+              <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[16px] text-[#3b82f6]" style={{fontVariationSettings:"'FILL' 1"}}>verified</span><b className="text-[#191c1e]">2.000+</b>&nbsp;gia sư</span>
+              <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings:"'FILL' 1"}}>star</span><b className="text-[#191c1e]">4.9</b>/5</span>
             </div>
           </div>
 
-          {/* Trust stats — floating cards at bottom of hero */}
-          <div className="relative z-10 grid grid-cols-2 md:grid-cols-4 gap-3 px-6 md:px-12 pb-10">
-            {TRUST_STATS.map((s, i) => (
-              <div key={s.label}
-                className="stat-card-float bg-white/10 backdrop-blur-md border border-white/15 rounded-2xl p-4 text-center hover:bg-white/15 hover:border-white/30 transition-all"
-                style={{ animationDelay: `${i * 0.4}s` }}
+          {/* Search bar */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-grow">
+              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#9aa0ac]">search</span>
+              <input
+                className="w-full pl-12 pr-4 h-12 rounded-xl bg-[#f6f8fc] border border-[#e0e3ea] text-[#191c1e] placeholder:text-[#9aa0ac] focus:outline-none focus:bg-white focus:border-[#00288e] focus:ring-2 focus:ring-[#00288e]/15 transition-all"
+                placeholder="Bạn muốn học gì? VD: luyện IELTS 7.0, ôn Toán lớp 10, Python cơ bản..."
+                value={searchInput}
+                onChange={e => setSearchInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+              />
+            </div>
+            <button
+              onClick={handleSearch}
+              className="btn-shine bg-gradient-to-r from-[#00288e] to-[#3a6fe0] text-white px-8 h-12 rounded-xl font-bold hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_rgba(0,40,142,.6)] transition-all whitespace-nowrap flex items-center justify-center gap-2"
+            >
+              <span className="material-symbols-outlined text-[20px]">search</span>Tìm Kiếm
+            </button>
+          </div>
+
+          {/* Popular searches + AI suggest */}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-[#757684]">Gợi ý:</span>
+            {['IELTS', 'Toán 12', 'Lập trình Python', 'Tiếng Anh giao tiếp', 'Hóa 10'].map(kw => (
+              <button
+                key={kw}
+                onClick={() => { setSearchInput(kw); setSearch(kw); setPage(1); }}
+                className="px-3 py-1 rounded-full bg-[#f0f3fa] border border-[#e0e3ea] text-xs font-medium text-[#444653] hover:bg-[#00288e] hover:text-white hover:border-transparent transition-all"
               >
-                <div className="flex items-center justify-center mb-2">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${s.color}30` }}>
-                    <span className="material-symbols-outlined text-[22px]" style={{ color: s.color, fontVariationSettings: "'FILL' 1" }}>{s.icon}</span>
-                  </div>
-                </div>
-                <div className="text-xl md:text-2xl font-extrabold text-white">{s.value}</div>
-                <div className="text-[11px] md:text-xs text-white/70 mt-0.5">{s.label}</div>
-              </div>
+                {kw}
+              </button>
             ))}
+            <button
+              onClick={() => window.location.hash = '/tutor-request'}
+              className="sm:ml-auto inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-[#fef3c7] to-[#fde68a] text-[#78350f] text-xs font-bold hover:shadow-md transition-all"
+            >
+              <span className="material-symbols-outlined text-[16px]" style={{fontVariationSettings:"'FILL' 1"}}>auto_awesome</span>
+              Chưa biết chọn ai? Để AI gợi ý
+            </button>
           </div>
         </section>
-
-        {/* FEATURED TUTORS — top rated (only shows when no active filter) */}
-        {featuredTutors.length >= 2 && !loading && (
-          <section className="mb-12">
-            <div className="flex items-end justify-between mb-5">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="material-symbols-outlined text-[24px] text-[#f59e0b]" style={{fontVariationSettings:"'FILL' 1"}}>workspace_premium</span>
-                  <h2 className="text-2xl md:text-3xl font-extrabold text-[#191c1e]">Gia Sư Nổi Bật Tuần Này</h2>
-                </div>
-                <p className="text-sm text-[#5d5f5f]">Top {featuredTutors.length} gia sư có đánh giá cao nhất, được học sinh yêu thích</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
-              {featuredTutors.map(t => (
-                <TutorCard key={`featured-${t.id}`} tutor={t} isMock={false} onFav={addFav} featured />
-              ))}
-            </div>
-          </section>
-        )}
 
         {/* MAIN GRID — filter + tutors */}
         <div className="flex flex-col lg:flex-row gap-8">
@@ -891,81 +766,6 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             )}
           </div>
         </div>
-
-        {/* TESTIMONIALS */}
-        <section className="mt-20 mb-16">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center gap-1 bg-[#fef3c7] text-[#78350f] px-3 py-1 rounded-full text-xs font-bold mb-3">
-              <span className="material-symbols-outlined text-[14px]" style={{fontVariationSettings:"'FILL' 1"}}>reviews</span>
-              HỌC SINH NÓI GÌ
-            </div>
-            <h2 className="text-3xl font-extrabold text-[#191c1e] mb-2">Hàng nghìn học sinh đã tin tưởng EduX</h2>
-            <p className="text-[#5d5f5f]">Những câu chuyện thành công thật từ cộng đồng của chúng tôi</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {TESTIMONIALS.map((t, i) => (
-              <div key={i} className="relative bg-white rounded-2xl p-6 shadow-sm hover:shadow-xl transition-shadow border border-[#f1f2f4] group">
-                {/* Big quote mark */}
-                <div className="absolute top-4 right-5 text-[80px] leading-none text-[#00288e]/8 font-serif select-none">"</div>
-
-                <div className="flex items-center gap-1 text-[#f59e0b] mb-3">
-                  {[1,2,3,4,5].map(n => (
-                    <span key={n} className="material-symbols-outlined text-[18px]" style={{fontVariationSettings: n <= t.rating ? "'FILL' 1" : "'FILL' 0"}}>star</span>
-                  ))}
-                </div>
-
-                <p className="text-[#444653] text-sm leading-relaxed mb-5 relative z-10">"{t.text}"</p>
-
-                <div className="flex items-center gap-3 pt-4 border-t border-[#f1f2f4]">
-                  <img
-                    src={t.avatar}
-                    alt={t.name}
-                    className="w-12 h-12 rounded-full object-cover ring-2 ring-[#00288e]/10"
-                  />
-                  <div className="flex-grow">
-                    <div className="font-bold text-sm text-[#191c1e]">{t.name}</div>
-                    <div className="text-xs text-[#757684]">{t.role} · {t.subject}</div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* WHY CHOOSE EDUX */}
-        <section className="mt-20 mb-8">
-          <div className="rounded-3xl bg-gradient-to-br from-[#f8f9fb] via-white to-[#eef2ff] p-8 md:p-12 border border-[#e5e7eb]">
-            <div className="text-center mb-10">
-              <h2 className="text-3xl font-extrabold text-[#191c1e] mb-2">Vì sao chọn EduX?</h2>
-              <p className="text-[#5d5f5f]">Chúng tôi cam kết mang đến trải nghiệm học tập tốt nhất cho bạn</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-              {WHY_CHOOSE.map((w, i) => (
-                <div key={w.title} className="bg-white rounded-2xl p-6 text-center hover:shadow-lg hover:-translate-y-1 transition-all border border-[#f1f2f4] group">
-                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#dbeafe] to-[#eef2ff] flex items-center justify-center group-hover:from-[#00288e] group-hover:to-[#3a6fe0] transition-all">
-                    <span className="material-symbols-outlined text-[28px] text-[#00288e] group-hover:text-white transition-colors" style={{fontVariationSettings:"'FILL' 1"}}>{w.icon}</span>
-                  </div>
-                  <h3 className="font-bold text-base text-[#191c1e] mb-2">{w.title}</h3>
-                  <p className="text-xs text-[#5d5f5f] leading-relaxed">{w.desc}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Final CTA */}
-            <div className="mt-10 text-center">
-              <p className="text-sm text-[#5d5f5f] mb-4">Sẵn sàng bắt đầu hành trình học tập của bạn?</p>
-              <button
-                onClick={() => window.location.hash = '/tutor-request'}
-                className="btn-shine inline-flex items-center gap-2 bg-gradient-to-r from-[#00288e] via-[#2747c4] to-[#3a6fe0] text-white px-8 py-3.5 rounded-xl font-bold text-base hover:-translate-y-0.5 hover:shadow-[0_14px_30px_-8px_rgba(55,85,195,0.55)] transition-all shadow-md"
-              >
-                <span className="material-symbols-outlined text-[22px]">auto_awesome</span>
-                Nhận Gợi Ý AI Miễn Phí
-              </button>
-            </div>
-          </div>
-        </section>
       </main>
 
       <footer className="bg-[#edeef0] w-full mt-16">
