@@ -16,6 +16,14 @@ const SORT_OPTIONS = [
   { value: 'newest',     label: 'Mới Nhất' },
 ];
 
+// Số liệu build trust — hiển thị dạng thẻ nổi ở đáy banner hero
+const TRUST_STATS = [
+  { icon: 'verified',       label: 'Gia sư đã xác thực',  value: '2,000+', color: '#3b82f6' },
+  { icon: 'groups',         label: 'Học sinh đang học',    value: '15,000+', color: '#8b5cf6' },
+  { icon: 'star',           label: 'Đánh giá trung bình',  value: '4.9/5',   color: '#f59e0b' },
+  { icon: 'shield_person',  label: 'Bảo đảm hoàn tiền',    value: '100%',    color: '#10b981' },
+];
+
 function fmtPrice(val) {
   if (!val) return 'Thỏa thuận';
   const n = Number(val);
@@ -306,20 +314,31 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       <style>{`
         .filter-sidebar { scrollbar-width: none; }
         .filter-sidebar::-webkit-scrollbar { display: none; }
+        .ftb-blob { position:absolute; border-radius:50%; filter:blur(60px); pointer-events:none; }
+        .ftb-1 { width:280px; height:280px; top:-90px; left:-40px; background:radial-gradient(circle,#4c6ef5,transparent 70%); opacity:.6; animation:ftbFloat 13s ease-in-out infinite; }
+        .ftb-2 { width:320px; height:320px; bottom:-130px; right:-60px; background:radial-gradient(circle,#7c5cff,transparent 70%); opacity:.5; animation:ftbFloat 17s ease-in-out infinite reverse; }
+        @keyframes ftbFloat { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(30px,-20px) scale(1.1)} }
+        @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+        .shimmer-text { background:linear-gradient(90deg,#f6d98c 20%,#fff5c8 50%,#f6d98c 80%); background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent; animation:shimmer 3s linear infinite; }
+        @keyframes pulseDot { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.4);opacity:.6} }
+        .live-dot { animation:pulseDot 1.8s ease-in-out infinite; }
+        @keyframes floatUp { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+        .stat-card-float { animation:floatUp 4s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce){ .ftb-1,.ftb-2,.stat-card-float,.live-dot,.shimmer-text{ animation:none } }
       `}</style>
 
       {/* Header */}
-      <header className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md shadow-sm">
-        <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-16 relative">
+      <header className="fixed top-0 w-full z-50 bg-[#f8f9fb]/80 backdrop-blur-md border-b border-[#c4c5d5]/40 shadow-sm">
+        <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-[80px] relative">
           <a className="flex items-center gap-2 text-2xl font-bold text-[#00288e] hover:opacity-80 transition-opacity z-10" href="#/">
             <span className="material-symbols-outlined text-[28px]" style={{fontVariationSettings:"'FILL' 1"}}>school</span>
             EduX
           </a>
-          <nav className="hidden md:flex items-center gap-8">
-            <a className="text-sm font-semibold text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
+          <nav className="hidden md:flex items-center gap-10">
+            <a className="text-base font-medium text-[#00288e] border-b-2 border-[#00288e] pb-1" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
           </nav>
           <div className="flex items-center gap-6 z-10">
             {(!user || (user.role !== 'admin' && user.role !== 'tutor')) && (
@@ -348,7 +367,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         </div>
       </header>
 
-      <main className="pt-20 pb-16 max-w-[1280px] mx-auto px-6">
+      <main className="pt-24 pb-16 max-w-[1280px] mx-auto px-6">
         {error && (
           <div className="mt-4 mb-6 flex items-start gap-3 rounded-2xl border-2 border-red-200 bg-red-50 px-5 py-4 text-red-900 shadow-[0_10px_26px_-12px_rgba(200,40,40,0.25)]">
             <span className="material-symbols-outlined text-red-500 mt-0.5">cloud_off</span>
@@ -363,61 +382,96 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
           </div>
         )}
 
-        {/* SEARCH HEADER — gọn, hướng chức năng: bấm Tìm Gia Sư là thấy gia sư ngay */}
-        <section className="mt-4 mb-8 rounded-2xl bg-white border border-[#e9ebf0] shadow-[0_10px_30px_-18px_rgba(0,40,142,0.25)] p-6 md:p-7">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-5">
-            <div>
-              <h1 className="text-xl md:text-2xl font-extrabold text-[#191c1e] flex items-center gap-2">
-                <span className="material-symbols-outlined text-[#00288e] text-[26px]" style={{fontVariationSettings:"'FILL' 1"}}>groups</span>
-                Tìm gia sư phù hợp với bạn
-              </h1>
-              <p className="text-sm text-[#5d5f5f] mt-1">Gia sư đã xác thực · Học thử buổi đầu · Hoàn tiền nếu chưa hài lòng</p>
-            </div>
-            <div className="hidden md:flex items-center gap-4 text-xs text-[#757684] shrink-0">
-              <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[16px] text-[#3b82f6]" style={{fontVariationSettings:"'FILL' 1"}}>verified</span><b className="text-[#191c1e]">2.000+</b>&nbsp;gia sư</span>
-              <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings:"'FILL' 1"}}>star</span><b className="text-[#191c1e]">4.9</b>/5</span>
-            </div>
-          </div>
+        {/* HERO — banner xanh lớn (khôi phục theo yêu cầu) */}
+        <section className="relative mt-4 mb-10 overflow-hidden rounded-3xl border border-[#1e2a4a]"
+          style={{ background: 'radial-gradient(60% 90% at 15% 8%, rgba(76,110,245,.35), transparent 60%), radial-gradient(50% 80% at 85% 18%, rgba(124,92,255,.30), transparent 60%), linear-gradient(135deg,#0a1436,#131f5c 55%,#0a1436)' }}>
+          <span className="ftb-blob ftb-1" aria-hidden="true" />
+          <span className="ftb-blob ftb-2" aria-hidden="true" />
 
-          {/* Search bar */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-grow">
-              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#9aa0ac]">search</span>
-              <input
-                className="w-full pl-12 pr-4 h-12 rounded-xl bg-[#f6f8fc] border border-[#e0e3ea] text-[#191c1e] placeholder:text-[#9aa0ac] focus:outline-none focus:bg-white focus:border-[#00288e] focus:ring-2 focus:ring-[#00288e]/15 transition-all"
-                placeholder="Bạn muốn học gì? VD: luyện IELTS 7.0, ôn Toán lớp 10, Python cơ bản..."
-                value={searchInput}
-                onChange={e => setSearchInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-              />
+          <div className="relative z-10 px-6 py-12 md:px-12 md:py-16">
+            {/* Live badge */}
+            <div className="flex justify-center mb-5">
+              <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-1.5 rounded-full">
+                <span className="w-2 h-2 rounded-full bg-[#22c55e] live-dot"></span>
+                <span className="text-xs font-semibold text-white/90">Có <b className="text-white">247 gia sư</b> đang trực tuyến</span>
+              </div>
             </div>
-            <button
-              onClick={handleSearch}
-              className="btn-shine bg-gradient-to-r from-[#00288e] to-[#3a6fe0] text-white px-8 h-12 rounded-xl font-bold hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_rgba(0,40,142,.6)] transition-all whitespace-nowrap flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[20px]">search</span>Tìm Kiếm
-            </button>
-          </div>
 
-          {/* Popular searches + AI suggest */}
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-[#757684]">Gợi ý:</span>
-            {['IELTS', 'Toán 12', 'Lập trình Python', 'Tiếng Anh giao tiếp', 'Hóa 10'].map(kw => (
+            <h1 className="text-3xl md:text-5xl font-extrabold text-white text-center leading-tight">
+              Tìm <span className="shimmer-text">gia sư 1-1</span> phù hợp
+              <br className="hidden md:block" />
+              cho <span className="shimmer-text">mọi mục tiêu học tập</span>
+            </h1>
+            <p className="text-white/70 mt-4 text-sm md:text-lg text-center max-w-[720px] mx-auto">
+              Kết nối trực tiếp với gia sư đã xác thực · Học thử buổi đầu · Hoàn tiền nếu chưa hài lòng
+            </p>
+
+            {/* Search bar */}
+            <div className="mt-8 flex flex-col md:flex-row gap-3 max-w-[820px] mx-auto">
+              <div className="relative flex-grow">
+                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-white/50">search</span>
+                <input
+                  className="w-full pl-12 pr-4 py-4 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/50 backdrop-blur focus:outline-none focus:border-[#6ea8ff] focus:ring-2 focus:ring-[#6ea8ff]/30 transition-all text-base"
+                  placeholder="Ví dụ: luyện IELTS 7.0, ôn Toán thi lớp 10, học Python cơ bản..."
+                  value={searchInput}
+                  onChange={e => setSearchInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                />
+              </div>
               <button
-                key={kw}
-                onClick={() => { setSearchInput(kw); setSearch(kw); setPage(1); }}
-                className="px-3 py-1 rounded-full bg-[#f0f3fa] border border-[#e0e3ea] text-xs font-medium text-[#444653] hover:bg-[#00288e] hover:text-white hover:border-transparent transition-all"
+                onClick={handleSearch}
+                className="btn-shine bg-gradient-to-r from-[#3b6fe0] to-[#7c5cff] text-white px-8 py-4 rounded-xl font-bold text-base hover:-translate-y-0.5 hover:shadow-[0_12px_30px_-8px_rgba(124,92,255,.7)] transition-all whitespace-nowrap"
               >
-                {kw}
+                Tìm Ngay
               </button>
+            </div>
+
+            {/* Popular searches */}
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-white/60 text-xs">
+              <span>Tìm nhiều nhất:</span>
+              {['IELTS', 'Toán 12', 'Lập trình Python', 'Tiếng Anh giao tiếp', 'Hóa 10'].map(kw => (
+                <button
+                  key={kw}
+                  onClick={() => { setSearchInput(kw); setSearch(kw); setPage(1); }}
+                  className="px-3 py-1 rounded-full bg-white/5 border border-white/10 hover:bg-white/15 hover:text-white transition-all"
+                >
+                  {kw}
+                </button>
+              ))}
+            </div>
+
+            {/* AI Matching CTA */}
+            <div className="mt-6 flex items-center justify-center">
+              <div className="bg-gradient-to-r from-[#f59e0b]/20 via-[#fbbf24]/20 to-[#f59e0b]/20 backdrop-blur-md border border-[#fbbf24]/30 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:scale-105 transition-all cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
+                <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
+                  <span className="material-symbols-outlined text-[#fbbf24] text-[22px] animate-pulse" style={{fontVariationSettings:"'FILL' 1"}}>auto_awesome</span>
+                  <span>Không biết chọn ai? Để <b className="text-[#fbbf24]">AI EduX</b> gợi ý cho bạn</span>
+                </div>
+                <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
+                <button className="text-white font-bold text-sm flex items-center gap-1 group transition-colors">
+                  Tạo yêu cầu AI
+                  <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#fbbf24]">arrow_forward</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Trust stats — floating cards at bottom of hero */}
+          <div className="relative z-10 grid grid-cols-2 md:grid-cols-4 gap-3 px-6 md:px-12 pb-10">
+            {TRUST_STATS.map((s, i) => (
+              <div key={s.label}
+                className="stat-card-float bg-white/10 backdrop-blur-md border border-white/15 rounded-2xl p-4 text-center hover:bg-white/15 hover:border-white/30 transition-all"
+                style={{ animationDelay: `${i * 0.4}s` }}
+              >
+                <div className="flex items-center justify-center mb-2">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${s.color}30` }}>
+                    <span className="material-symbols-outlined text-[22px]" style={{ color: s.color, fontVariationSettings: "'FILL' 1" }}>{s.icon}</span>
+                  </div>
+                </div>
+                <div className="text-xl md:text-2xl font-extrabold text-white">{s.value}</div>
+                <div className="text-[11px] md:text-xs text-white/70 mt-0.5">{s.label}</div>
+              </div>
             ))}
-            <button
-              onClick={() => window.location.hash = '/tutor-request'}
-              className="sm:ml-auto inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-[#fef3c7] to-[#fde68a] text-[#78350f] text-xs font-bold hover:shadow-md transition-all"
-            >
-              <span className="material-symbols-outlined text-[16px]" style={{fontVariationSettings:"'FILL' 1"}}>auto_awesome</span>
-              Chưa biết chọn ai? Để AI gợi ý
-            </button>
           </div>
         </section>
 
@@ -425,7 +479,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         <div className="flex flex-col lg:flex-row gap-8">
           {/* Sidebar Filters (desktop) */}
           <aside className="hidden lg:block w-72 flex-shrink-0">
-            <div className="bg-white rounded-2xl shadow-sm p-6 sticky top-24 filter-sidebar max-h-[calc(100vh-120px)] overflow-y-auto border border-[#f1f2f4]">
+            <div className="bg-white rounded-2xl shadow-sm p-6 sticky top-28 filter-sidebar max-h-[calc(100vh-120px)] overflow-y-auto border border-[#f1f2f4]">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-lg font-bold text-[#191c1e] flex items-center gap-2">
                   <span className="material-symbols-outlined text-[20px] text-[#00288e]">tune</span>

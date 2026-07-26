@@ -3,6 +3,7 @@ import { useAuth } from '../AuthContext'
 import Toast from '../components/Toast'
 import CartButton from '../components/CartButton';
 import { API_BASE_URL } from '../config';
+import { getCourseImageUrl } from '../utils/courseImage';
 
 const API_BASE = API_BASE_URL;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -310,18 +311,18 @@ export default function CartPage({ onGoSignIn, user }) {
       <Toast toast={toast} onClose={() => setToast(null)} />
 
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-[#f8f9fb]/90 backdrop-blur-md border-b border-[#e5e7eb] shadow-sm">
-        <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-[72px]">
+      <header className="sticky top-0 z-50 bg-[#f8f9fb]/90 backdrop-blur-md border-b border-[#c4c5d5]/40 shadow-sm">
+        <div className="max-w-[1280px] mx-auto px-6 flex items-center justify-between h-[80px]">
           <a className="flex items-center gap-2 text-2xl font-bold text-[#00288e] hover:opacity-80 transition-opacity" href="#/">
             <span className="material-symbols-outlined text-[28px]" style={{ fontVariationSettings: "'FILL' 1" }}>school</span>
             EduX
           </a>
 
-          <nav className="hidden md:flex items-center gap-8">
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/courses">Khóa Học</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
-            <a className="text-sm font-semibold text-[#444653] hover:text-[#00288e] transition-colors" href="#/subjects">Môn Học</a>
+          <nav className="hidden md:flex items-center gap-10">
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/find-tutors">Tìm Gia Sư</a>
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/courses">Khóa Học</a>
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/become-tutor">Trở Thành Gia Sư</a>
+            <a className="text-base font-medium text-[#444653] hover:text-[#00288e] pb-1 transition-colors" href="#/subjects">Môn Học</a>
           </nav>
 
           <div className="flex items-center gap-6">
@@ -378,13 +379,24 @@ export default function CartPage({ onGoSignIn, user }) {
             <div className="bg-white rounded-xl card-shadow border border-[#e1e2e4] p-6 flex flex-col gap-6">
               {cartItems.map((item) => (
                 <div key={item.id} className="flex gap-4 border-b border-[#e1e2e4] pb-6 last:border-0 last:pb-0 relative pr-8">
-                  <div className="w-32 h-24 shrink-0 rounded-lg overflow-hidden bg-gradient-to-br from-[#00288e] to-[#3a6fe0] flex items-center justify-center relative">
-                    <span className="material-symbols-outlined text-white text-4xl opacity-50 absolute">school</span>
+                  <div className="w-32 h-24 shrink-0 rounded-lg overflow-hidden flex items-center justify-center relative bg-[#f0f2f5]">
+                    <img src={getCourseImageUrl(item)} alt={item.title} className="w-full h-full object-cover" />
                   </div>
                   <div className="flex flex-col justify-between flex-grow">
                     <div>
                       <h3 className="text-lg font-bold text-[#191c1e] line-clamp-2">{item.title}</h3>
-                      <p className="text-sm text-[#757684] mt-1">Gia sư: {item.tutor_name || item.tutorName || 'EduX'}</p>
+                      <div className="flex items-center gap-2 mt-2">
+                        {item.tutor_picture || item.tutorAvatar ? (
+                          <img src={item.tutor_picture || item.tutorAvatar} alt={item.tutor_name || 'Gia sư'} className="w-6 h-6 rounded-full border border-[#c4c5d5] object-cover" />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#00288e]/10 to-[#3a6fe0]/10 border border-[#c4c5d5] flex items-center justify-center text-[#00288e] text-[10px] font-bold">
+                            {(item.tutor_name || item.tutorName || 'E').charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <p className="text-sm text-[#757684]">
+                          Gia sư: <span className="font-medium text-[#191c1e]">{item.tutor_name || item.tutorName || 'EduX'}</span>
+                        </p>
+                      </div>
                     </div>
                     <div className="flex items-center justify-between mt-2">
                       <div className="font-bold text-[#00288e] text-lg">
