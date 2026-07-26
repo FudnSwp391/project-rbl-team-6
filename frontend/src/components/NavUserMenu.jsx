@@ -50,9 +50,6 @@ export default function NavUserMenu({ user, onGoSignIn, onGoSignUp }) {
           {user.role === 'student' && (
             <a href="#/my-courses" className={item}>Khóa học của tôi</a>
           )}
-          {(user.role === 'student' || user.role === 'tutor' || user.role === 'parent') && (
-            <a href="#/my-ai-cases" className={item}>Khiếu nại &amp; AI</a>
-          )}
           <button onClick={logout} className="px-4 py-3 text-sm text-left text-[#d32f2f] hover:bg-[#fef2f2] transition-colors w-full font-medium">
             Đăng xuất
           </button>

@@ -437,10 +437,6 @@ function HomePage({ onGoSignIn, onGoSignUp }) {
                   {user.role === 'student' && (
                     <a href="#/my-courses" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Khóa học của tôi</a>
                   )}
-                  {(user.role === 'student' || user.role === 'tutor' || user.role === 'parent') && (
-                    <a href="#/my-ai-cases" style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Khiếu nại &amp; AI</a>
-                  )}
-                  <a href="#" onClick={(e) => e.preventDefault()} style={{ padding: '12px 16px', color: 'var(--on-surface, #333)', textDecoration: 'none', borderBottom: '1px solid var(--surface-variant, #eee)' }}>Cài đặt</a>
                   <button 
                     onClick={logout} 
                     style={{ padding: '12px 16px', color: 'var(--error, #d32f2f)', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%', fontSize: 'inherit', fontFamily: 'inherit' }}
