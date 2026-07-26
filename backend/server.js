@@ -14638,6 +14638,7 @@ app.put('/api/admin/support-requests/:id', verifyToken, requireAdmin, async (req
       
       for (const b of bookingsRes.rows) {
         if (b.escrow_tx_id && b.payer_wallet_id && b.lesson_fee) {
+          await setLedgerContext(client, { reason_code: 'CHANGE_TUTOR_REFUND', source: 'admin', reference_type: 'booking', reference_id: b.id, transaction_id: b.escrow_tx_id, actor_id: req.user.userId });
           await client.query(`SELECT refund_escrow($1, $2, $3)`, [b.escrow_tx_id, b.payer_wallet_id, b.lesson_fee]);
         }
         await client.query(
