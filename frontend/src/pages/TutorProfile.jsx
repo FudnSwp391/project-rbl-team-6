@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import BookingModal from '../components/BookingModal'
 import { useAuth } from '../AuthContext'
 import CartButton from '../components/CartButton';
+import InstantRequestModal from '../components/InstantRequestModal';
+import PersistentSessionModal from '../components/PersistentSessionModal';
+import PostSessionReviewModal from '../components/PostSessionReviewModal';
 import { supabase } from '../services/supabase'
 import { API_BASE_URL } from '../config';
 
@@ -89,10 +92,11 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
 
   // ── Instant Booking State ──
   const [showInstantModal, setShowInstantModal] = useState(false)
-  const [instantBookingStatus, setInstantBookingStatus] = useState('idle') // 'idle' | 'creating' | 'waiting' | 'accepted' | 'rejected'
+  const [instantBookingStatus, setInstantBookingStatus] = useState('idle') // 'idle' | 'creating' | 'waiting' | 'confirmed' | 'accepted' | 'rejected'
   const [instantBookingId, setInstantBookingId] = useState(null)
-  const [instantError, setInstantError] = useState('')
   const [timeLeft, setTimeLeft] = useState(60)
+  const [activeBooking, setActiveBooking] = useState(null)
+  const [completedBooking, setCompletedBooking] = useState(null)
 
   // ── Parent Delegation cho Học Ngay ──
   const [parentChildren, setParentChildren] = useState([])
@@ -270,66 +274,55 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
       setShowChildSelectInstantModal(true);
       return;
     }
-    handleRequestInstantBooking();
+    setShowInstantModal(true);
   };
 
-  const handleRequestInstantBooking = async (targetChildId) => {
-    if (!user) { onGoSignIn(); return }
-    setInstantError('')
-    setInstantBookingStatus('creating')
-    setShowInstantModal(true)
-    setShowChildSelectInstantModal(false)
-    try {
-      const tutorActualId = tutor.user_id || tutor.id || tutorId;
-      const subjectFirst = Array.isArray(tutor.subjects)
-        ? tutor.subjects[0]
-        : (tutor.subjects ? tutor.subjects.split(',')[0].trim() : 'Môn học')
-      const res = await fetch(`${API_BASE}/api/bookings/instant`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          tutor_id: tutorActualId,
-          tutor_name: tutor.full_name || tutor.display_name || '',
-          subject: subjectFirst,
-          duration_mins: tutor.instant_duration_mins || 30,
-          note: 'Học Ngay từ profile',
-          targetStudentId: user?.role === 'parent' ? (targetChildId || selectedChildId) : undefined
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.code === 'INSUFFICIENT_FUNDS') {
-          sessionStorage.setItem('edux_payment_source', JSON.stringify({
-            returnHash: window.location.hash || '#/dashboard',
-            source: 'booking'
-          }));
-          const needed = Number(data.needed || 0);
-          const balance = Number(data.balance || 0);
-          const missing = Math.max(Number(data.missing || needed - balance), 10000);
-          setTopupInfo({ needed, balance, missing });
-          setTopupAmount(missing);
-          setShowInstantModal(false);
-          setInstantBookingStatus('idle');
-          setShowTopupModal(true);
-          return;
-        }
-        throw new Error(data.message || 'Lỗi hệ thống khi tạo yêu cầu Học Ngay');
-      }
-      const bookingId = data.booking?.id || data.booking_id;
-      if (!bookingId) throw new Error('Không nhận được mã booking từ server.');
-      setInstantBookingId(bookingId);
-      setInstantBookingStatus('waiting');
-      setTimeLeft(60);
-    } catch (e) {
-      setInstantError(e.message);
-      setInstantBookingStatus('idle');
-    }
+  // InstantRequestModal tự gọi POST /api/bookings/instant; khi ví không đủ tiền nó
+  // báo ngược lên đây để mở lại modal nạp tiền VNPAY có sẵn của trang này.
+  const handleInstantInsufficientFunds = (data) => {
+    sessionStorage.setItem('edux_payment_source', JSON.stringify({
+      returnHash: window.location.hash || '#/dashboard',
+      source: 'booking'
+    }));
+    const needed = Number(data.needed || 0);
+    const balance = Number(data.balance || 0);
+    const missing = Math.max(Number(data.missing || needed - balance), 10000);
+    setTopupInfo({ needed, balance, missing });
+    setTopupAmount(missing);
+    setShowInstantModal(false);
+    setShowTopupModal(true);
   }
 
+  // Hủy yêu cầu Học Ngay khi còn đang chờ ('waiting') hoặc gia sư đã xác nhận nhưng chưa vào
+  // phòng ('confirmed') — gọi API thật để hoàn tiền ngay, không chỉ đóng modal trên UI.
+  const handleCancelInstantRequest = async () => {
+    const bookingId = instantBookingId;
+    setInstantBookingStatus('idle');
+    setInstantBookingId(null);
+    if (!bookingId) return;
+    try {
+      await fetch(`${API_BASE}/api/bookings/${bookingId}/instant-cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (e) { /* best-effort — nếu lỗi mạng, cron 60s vẫn dọn nếu còn Pending */ }
+  };
+
   // ── Lắng nghe trạng thái thay đổi của booking Học Ngay (Polling + Realtime) ──
+  // 'waiting'   = đang chờ gia sư xem & quyết định (còn giới hạn 60s, có đếm ngược)
+  // 'confirmed' = gia sư đã bấm "Chấp Nhận", đang chuẩn bị link phòng học (không còn đếm
+  //               ngược/hết hạn — chỉ còn chờ InProgress hoặc học sinh tự hủy)
+  // 'accepted'  = phòng đã sẵn sàng (InProgress) → mở PersistentSessionModal
   useEffect(() => {
-    if (instantBookingStatus !== 'waiting' || !instantBookingId) return;
-    
+    if (!['waiting', 'confirmed'].includes(instantBookingStatus) || !instantBookingId) return;
+
+    const buildActiveBooking = () => ({
+      id: instantBookingId,
+      tutor_id: tutor?.user_id || tutor?.id,
+      tutor_name: tutor?.full_name || 'Gia sư',
+      subject: Array.isArray(tutor?.subjects) ? (tutor.subjects[0] || 'Môn học') : (tutor?.subjects || 'Môn học')
+    });
+
     // 1. Polling fallback (mỗi 3 giây)
     const pollStatus = async () => {
       try {
@@ -340,22 +333,24 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
         if (!res.ok) return;
         const data = await res.json();
         const newStatus = data.status;
-        
+
         if (newStatus === 'Confirmed' || newStatus === 'InProgress') {
           setInstantBookingStatus('accepted');
-          setTimeout(() => {
-            window.location.hash = `/session/${instantBookingId}`;
-          }, 2000);
+          setActiveBooking(buildActiveBooking());
+        } else if (newStatus === 'Accepted') {
+          setInstantBookingStatus(s => (s === 'waiting' ? 'confirmed' : s));
         } else if (newStatus === 'Cancelled' || newStatus === 'Declined' || newStatus === 'Expired' || newStatus === 'Timeout') {
           setInstantBookingStatus('rejected');
         }
       } catch (e) { /* ignore network error */ }
     };
-    
+
     pollStatus();
     const pollInterval = setInterval(pollStatus, 3000);
 
-    // 2. Supabase Realtime (khi có)
+    // 2. Supabase Realtime (khi có) — chỉ dùng làm fast-path để phát hiện thay đổi sớm hơn
+    // polling; xử lý giống hệt pollStatus ở trên (KHÔNG điều hướng sang route /session/:id
+    // vì route đó không tồn tại — luồng hiện tại dùng PersistentSessionModal qua activeBooking).
     let channel = null;
     if (supabase) {
       channel = supabase
@@ -367,9 +362,9 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             const newStatus = payload.new?.status;
             if (newStatus === 'Confirmed' || newStatus === 'InProgress') {
               setInstantBookingStatus('accepted');
-              setTimeout(() => {
-                window.location.hash = `/session/${payload.new.id}`;
-              }, 2000);
+              setActiveBooking(buildActiveBooking());
+            } else if (newStatus === 'Accepted') {
+              setInstantBookingStatus(s => (s === 'waiting' ? 'confirmed' : s));
             } else if (newStatus === 'Cancelled' || newStatus === 'Declined' || newStatus === 'Expired' || newStatus === 'Timeout') {
               setInstantBookingStatus('rejected');
             }
@@ -377,23 +372,27 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
         )
         .subscribe();
     }
-    
-    // 3. Countdown timer — tự hủy sau 60s
-    const countdownInterval = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(countdownInterval);
-          setInstantBookingStatus(s => s === 'waiting' ? 'rejected' : s);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+
+    // 3. Countdown 60s tự hủy — CHỈ áp dụng ở bước 'waiting' (chưa ai xử lý). Một khi gia sư
+    // đã "Chấp Nhận" (confirmed), không còn giới hạn thời gian cứng nữa.
+    let countdownInterval = null;
+    if (instantBookingStatus === 'waiting') {
+      countdownInterval = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev <= 1) {
+            clearInterval(countdownInterval);
+            setInstantBookingStatus(s => s === 'waiting' ? 'rejected' : s);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
 
     return () => {
       if (channel && supabase) supabase.removeChannel(channel);
       clearInterval(pollInterval);
-      clearInterval(countdownInterval);
+      if (countdownInterval) clearInterval(countdownInterval);
     };
   }, [instantBookingStatus, instantBookingId]);
 
@@ -829,7 +828,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             </button>
             {tutor.availability_status === 'Online' && (
               <button
-                onClick={() => setShowInstantModal(true)}
+                onClick={triggerInstantBooking}
                 className="p-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl hover:from-amber-600 hover:to-orange-600 shadow-md flex items-center justify-center animate-pulse"
                 title="Học Ngay"
               >
@@ -848,137 +847,71 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
           </div>
         )}
 
-        {/* ── Instant Booking Modal ── */}
-        {showInstantModal && (
+        {/* ── Waiting Modal khi đang chờ gia sư ── */}
+        {instantBookingStatus === 'waiting' && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl relative overflow-hidden">
-              {/* Header gradient */}
-              <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-6 pt-6 pb-10 text-white text-center relative">
-                <button
-                  onClick={() => { if (instantBookingStatus !== 'creating' && instantBookingStatus !== 'waiting') { setShowInstantModal(false); setInstantBookingStatus('idle'); setInstantError(''); } }}
-                  className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
-                  disabled={instantBookingStatus === 'creating' || instantBookingStatus === 'waiting'}
-                >
-                  <span className="material-symbols-outlined text-[18px]">close</span>
-                </button>
-                <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <span className="material-symbols-outlined text-[32px]">bolt</span>
-                </div>
-                <h3 className="text-[18px] font-bold">Học Ngay Cùng Gia Sư!</h3>
-                <p className="text-[13px] mt-1 text-white/80">
-                  {tutor.full_name || tutor.display_name || 'Gia sư'}
-                </p>
+            <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl p-6 text-center">
+              <div className="relative w-20 h-20 mx-auto mb-4">
+                <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+                  <circle cx="40" cy="40" r="34" fill="none" stroke="#FDE68A" strokeWidth="6"/>
+                  <circle cx="40" cy="40" r="34" fill="none" stroke="#F59E0B" strokeWidth="6"
+                    strokeDasharray={`${2 * Math.PI * 34}`}
+                    strokeDashoffset={`${2 * Math.PI * 34 * (1 - timeLeft / 60)}`}
+                    strokeLinecap="round"
+                    style={{ transition: 'stroke-dashoffset 1s linear' }}
+                  />
+                </svg>
+                <span className="absolute inset-0 flex items-center justify-center font-bold text-[22px] text-amber-600">{timeLeft}s</span>
               </div>
+              <h3 className="text-xl font-bold text-gray-800 mb-1">Đang Chờ Gia Sư Nhận Lớp</h3>
+              <p className="text-xs text-gray-500 mb-4">Gia sư đang xem yêu cầu và chuẩn bị phòng học...</p>
+              <button
+                onClick={handleCancelInstantRequest}
+                className="w-full py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-xl hover:bg-gray-200 transition text-sm"
+              >
+                Hủy Yêu Cầu
+              </button>
+            </div>
+          </div>
+        )}
 
-              {/* Body — pulled up with negative margin */}
-              <div className="px-6 pb-6 -mt-5">
-                {/* Info card */}
-                <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 mb-5">
-                  <div className="flex justify-between items-center py-2 border-b border-gray-50 text-[14px]">
-                    <span className="text-gray-500 flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-[16px] text-gray-400">school</span>
-                      Môn học
-                    </span>
-                    <span className="font-semibold text-gray-800">
-                      {Array.isArray(tutor.subjects) ? tutor.subjects[0] : (tutor.subjects ? tutor.subjects.split(',')[0].trim() : 'Môn học')}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-gray-50 text-[14px]">
-                    <span className="text-gray-500 flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-[16px] text-gray-400">schedule</span>
-                      Thời lượng
-                    </span>
-                    <span className="font-semibold text-gray-800">{tutor.instant_duration_mins || 30} phút</span>
-                  </div>
-                  <div className="flex justify-between items-center pt-2 text-[14px]">
-                    <span className="text-gray-500 flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-[16px] text-gray-400">payments</span>
-                      Học phí
-                    </span>
-                    <span className="font-bold text-amber-600 text-[16px]">
-                      {tutor.instant_price
-                        ? `${Number(tutor.instant_price).toLocaleString('vi-VN')} VNĐ`
-                        : priceDisplay}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Note */}
-                {instantBookingStatus === 'idle' && (
-                  <p className="text-[12px] text-gray-500 text-center mb-4">
-                    Tiền học phí sẽ được tạm giữ. Nếu gia sư không phản hồi trong 60 giây,
-                    tiền sẽ hoàn trả ngay về ví của bạn.
-                  </p>
-                )}
-
-                {/* Error */}
-                {instantError && (
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-4 flex items-start gap-2">
-                    <span className="material-symbols-outlined text-red-500 text-[18px] mt-0.5">error</span>
-                    <p className="text-red-600 text-[13px] leading-snug">{instantError}</p>
-                  </div>
-                )}
-
-                {/* States */}
-                {instantBookingStatus === 'idle' && (
-                  <button
-                    onClick={handleRequestInstantBooking}
-                    className="w-full h-12 bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold rounded-xl shadow-lg shadow-amber-500/30 hover:from-amber-600 hover:to-orange-600 transition-all flex items-center justify-center gap-2 text-[15px]"
-                  >
-                    <span className="material-symbols-outlined text-[20px]">bolt</span>
-                    Xác nhận &amp; Gửi yêu cầu
-                  </button>
-                )}
-
-                {(instantBookingStatus === 'creating' || instantBookingStatus === 'waiting') && (
-                  <div className="flex flex-col items-center py-4 gap-3">
-                    {/* Circular countdown */}
-                    <div className="relative w-20 h-20">
-                      <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-                        <circle cx="40" cy="40" r="34" fill="none" stroke="#FDE68A" strokeWidth="6"/>
-                        <circle cx="40" cy="40" r="34" fill="none" stroke="#F59E0B" strokeWidth="6"
-                          strokeDasharray={`${2 * Math.PI * 34}`}
-                          strokeDashoffset={`${2 * Math.PI * 34 * (1 - timeLeft / 60)}`}
-                          strokeLinecap="round"
-                          style={{ transition: 'stroke-dashoffset 1s linear' }}
-                        />
-                      </svg>
-                      <span className="absolute inset-0 flex items-center justify-center font-bold text-[22px] text-amber-600">{timeLeft}</span>
-                    </div>
-                    <p className="text-[14px] font-semibold text-gray-800">Đang chờ gia sư phản hồi...</p>
-                    <p className="text-[12px] text-gray-400">Yêu cầu tự động hủy khi hết giờ đếm ngược</p>
-                  </div>
-                )}
-
-                {instantBookingStatus === 'accepted' && (
-                  <div className="flex flex-col items-center py-4 gap-3">
-                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-                      <span className="material-symbols-outlined text-[40px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-                    </div>
-                    <p className="text-[15px] font-bold text-green-700">Gia sư đã chấp nhận!</p>
-                    <p className="text-[12px] text-gray-400 flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
-                      Đang chuyển vào phòng học...
-                    </p>
-                  </div>
-                )}
-
-                {instantBookingStatus === 'rejected' && (
-                  <div className="flex flex-col items-center py-4 gap-3">
-                    <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
-                      <span className="material-symbols-outlined text-[40px] text-red-400" style={{ fontVariationSettings: "'FILL' 1" }}>cancel</span>
-                    </div>
-                    <p className="text-[14px] font-bold text-red-600">Yêu cầu không được chấp nhận</p>
-                    <p className="text-[12px] text-gray-500 text-center">Gia sư bận hoặc không phản hồi kịp thời.<br/>Tiền học phí đã được hoàn trả về ví của bạn.</p>
-                    <button
-                      onClick={() => { setInstantBookingStatus('idle'); setInstantError(''); setTimeLeft(60); }}
-                      className="mt-2 px-5 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-[13px] font-semibold hover:bg-amber-100 transition-colors"
-                    >
-                      Thử lại
-                    </button>
-                  </div>
-                )}
+        {/* ── Gia sư đã xác nhận, đang chuẩn bị phòng học (không còn đếm ngược) ── */}
+        {instantBookingStatus === 'confirmed' && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl p-6 text-center">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="material-symbols-outlined text-[32px] text-green-600">check_circle</span>
               </div>
+              <h3 className="text-xl font-bold text-gray-800 mb-1">Gia Sư Đã Xác Nhận!</h3>
+              <p className="text-xs text-gray-500 mb-4 flex items-center justify-center gap-1">
+                <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+                Đang chờ gia sư tạo phòng học, vui lòng đợi trong giây lát...
+              </p>
+              <button
+                onClick={handleCancelInstantRequest}
+                className="w-full py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-xl hover:bg-gray-200 transition text-sm"
+              >
+                Hủy Yêu Cầu
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Yêu cầu bị từ chối / hết hạn / hủy ── */}
+        {instantBookingStatus === 'rejected' && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl p-6 text-center">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="material-symbols-outlined text-[32px] text-red-500">cancel</span>
+              </div>
+              <h3 className="text-lg font-bold text-red-600 mb-1">Yêu cầu không được chấp nhận</h3>
+              <p className="text-xs text-gray-500 mb-4">Gia sư bận hoặc không phản hồi kịp thời.<br />Học phí đã được hoàn trả về ví của bạn.</p>
+              <button
+                onClick={() => { setInstantBookingStatus('idle'); setInstantBookingId(null); }}
+                className="w-full py-2.5 bg-amber-50 border border-amber-200 text-amber-700 font-semibold rounded-xl hover:bg-amber-100 transition text-sm"
+              >
+                Đóng
+              </button>
             </div>
           </div>
         )}
@@ -1215,7 +1148,7 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
               <button onClick={() => setShowChildSelectInstantModal(false)} className="flex-1 py-2.5 rounded-xl font-semibold border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors">
                 Hủy
               </button>
-              <button onClick={() => handleRequestInstantBooking(selectedChildId)} disabled={!selectedChildId} className="flex-1 py-2.5 rounded-xl font-semibold bg-[#00288e] text-white hover:bg-[#001d6e] disabled:opacity-50 transition-colors">
+              <button onClick={() => { setShowChildSelectInstantModal(false); setShowInstantModal(true); }} disabled={!selectedChildId} className="flex-1 py-2.5 rounded-xl font-semibold bg-[#00288e] text-white hover:bg-[#001d6e] disabled:opacity-50 transition-colors">
                 Xác nhận Học Ngay
               </button>
             </div>
@@ -1293,6 +1226,43 @@ export default function TutorProfile({ tutorId, onGoSignIn, onGoSignUp, user }) 
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Yêu Cầu Học Ngay */}
+      {showInstantModal && tutor && (
+        <InstantRequestModal
+          tutor={tutor}
+          selectedChildId={user?.role === 'parent' ? selectedChildId : undefined}
+          onClose={() => setShowInstantModal(false)}
+          onInsufficientFunds={handleInstantInsufficientFunds}
+          onSuccess={(bookingId) => {
+            setShowInstantModal(false);
+            setInstantBookingId(bookingId);
+            setInstantBookingStatus('waiting');
+            setTimeLeft(60);
+          }}
+        />
+      )}
+
+      {/* Modal Cố Định Buổi Học (Persistent Session) */}
+      {activeBooking && (
+        <PersistentSessionModal
+          booking={activeBooking}
+          role="student"
+          onEndSession={(bookingData, status, result) => {
+            setActiveBooking(null);
+            setCompletedBooking(bookingData);
+          }}
+        />
+      )}
+
+      {/* Modal Đánh Giá Sau Buổi Học */}
+      {completedBooking && (
+        <PostSessionReviewModal
+          booking={completedBooking}
+          role="student"
+          onClose={() => setCompletedBooking(null)}
+        />
       )}
 
     </div>
