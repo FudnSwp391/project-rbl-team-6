@@ -39,10 +39,11 @@ export default function AdminNotificationBell({ token, onNavigate }) {
     if (!token) return
     try {
       const headers = { Authorization: `Bearer ${token}` }
-      const [statsRes, wdRes, fraudRes] = await Promise.allSettled([
+      const [statsRes, wdRes, fraudRes, bankRes] = await Promise.allSettled([
         fetch(`${API}/api/admin/analytics/dashboard/stats`, { headers }),
         fetch(`${API}/api/admin/transactions/withdrawals?status=pending&limit=50`, { headers }),
         fetch(`${API}/api/admin/fraud-alerts`, { headers }),
+        fetch(`${API}/api/admin/wallet/bank-accounts`, { headers }),
       ])
 
       const list = []
@@ -93,6 +94,29 @@ export default function AdminNotificationBell({ token, onNavigate }) {
             title: 'Yêu cầu rút tiền chờ duyệt',
             body: `${pending.length} yêu cầu · ${totalAmt > 0 ? totalAmt.toLocaleString('vi-VN') + 'đ' : ''}`,
             view: 'tx-withdrawals',
+            at: pending[0]?.created_at || null,
+          })
+        }
+      }
+
+      // ── Pending bank accounts ───────────────────────────────────────────────
+      if (bankRes.status === 'fulfilled' && bankRes.value.ok) {
+        const bd = await bankRes.value.json()
+        const rows = bd.bankAccounts || []
+        const pending = rows.filter(r => (r.status || '').toLowerCase() === 'pending')
+        if (pending.length > 0) {
+          list.push({
+            id: 'bank-pending',
+            sev: 'medium',
+            icon: 'credit_card',
+            iconCls: 'text-blue-500',
+            title: 'Tài khoản ngân hàng chờ duyệt',
+            body: `${pending.length} yêu cầu xác minh ngân hàng mới`,
+            view: 'tx-withdrawals',
+            onClick: () => {
+              sessionStorage.setItem('admin_wallet_tab', 'bank-accounts')
+              window.dispatchEvent(new Event('admin_wallet_tab_changed'))
+            },
             at: pending[0]?.created_at || null,
           })
         }
@@ -181,6 +205,7 @@ export default function AdminNotificationBell({ token, onNavigate }) {
     const next = new Set([...seen, alert.id])
     setSeen(next)
     localStorage.setItem('admin_notif_seen', JSON.stringify([...next]))
+    if (alert.onClick) alert.onClick()
     if (alert.view && onNavigate) onNavigate(alert.view)
     setOpen(false)
   }

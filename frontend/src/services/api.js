@@ -32,10 +32,11 @@ async function request(url, options = {}) {
       window.location.hash = '/signin';
       window.location.reload();
     }
-    const error = new Error(errorData.message || `API request failed with status ${response.status}`);
+    const error = new Error(errorData.error || errorData.message || `API request failed with status ${response.status}`);
     if (errorData.code) error.code = errorData.code;
     if (errorData.needed !== undefined) error.needed = errorData.needed;
     if (errorData.balance !== undefined) error.balance = errorData.balance;
+    if (errorData.error) error.serverError = errorData.error; // Keep original server error
     throw error;
   }
 
@@ -678,6 +679,16 @@ export const depositRequest = async (data) => request('/api/wallet/deposit-reque
 export const withdrawRequest = async (data) => request('/api/wallet/withdraw-request', { method: 'POST', body: JSON.stringify(data) });
 export const getWithdrawRequests = async () => request('/api/wallet/withdraw-requests');
 export const getCashflowStats = async () => request('/api/wallet/cashflow-stats');
+
+// --- Bank Account Endpoints ---
+export const getBankAccounts = async () => request('/api/wallet/bank-accounts');
+export const addBankAccount = async (data) => request('/api/wallet/bank-accounts', { method: 'POST', body: JSON.stringify(data) });
+export const updateBankAccount = async (id, data) => request(`/api/wallet/bank-accounts/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+
+export const getAdminBankAccounts = async () => request('/api/admin/wallet/bank-accounts');
+export const approveBankAccount = async (id) => request(`/api/admin/wallet/bank-accounts/${id}/approve`, { method: 'PATCH' });
+export const rejectBankAccount = async (id, note) => request(`/api/admin/wallet/bank-accounts/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ note }) });
+
 export const confirmWithdrawRequest = async (id) => request(`/api/wallet/withdraw-requests/${id}/confirm`, { method: 'PATCH' });
 export const getAdminDepositRequests = async () => request('/api/admin/wallet/deposit-requests');
 export const getAdminWithdrawRequests = async () => request('/api/admin/wallet/withdraw-requests');

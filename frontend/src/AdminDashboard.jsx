@@ -24,6 +24,7 @@ const WalletLedger          = lazy(() => import('./admin/transactions/WalletLedg
 const CommissionLogs        = lazy(() => import('./admin/transactions/CommissionLogs'))
 const NotificationOutbox     = lazy(() => import('./admin/transactions/NotificationOutbox'))
 const WalletRequests         = lazy(() => import('./admin/transactions/WalletRequests'))
+const BankAccountsAdmin      = lazy(() => import('./admin/transactions/BankAccountsAdmin'))
 const AICaseResolutions      = lazy(() => import('./admin/transactions/AICaseResolutions'))
 const DataEntryView          = lazy(() => import('./admin/DataEntryView'))
 
@@ -74,6 +75,7 @@ const TX_SUB_ITEMS = [
   { id: 'tx-lessons',      label: 'Thanh Toán Buổi Học',       icon: 'receipt_long' },
   { id: 'tx-courses',      label: 'Giao Dịch Khóa Học',   icon: 'school' },
   { id: 'tx-withdrawals',  label: 'Duyệt giao dịch Ví',  icon: 'account_balance' },
+  { id: 'tx-bank-accounts', label: 'Tài Khoản Ngân Hàng', icon: 'account_balance_wallet' },
   { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
   { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
   { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
@@ -565,6 +567,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-lessons'       && <LessonPayments token={token} />}
           {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
           {activeView === 'tx-withdrawals'   && <WalletRequests token={token} />}
+          {activeView === 'tx-bank-accounts' && <BankAccountsAdmin token={token} />}
           {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
           {activeView === 'tx-disputes'      && <DisputesCenterView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}

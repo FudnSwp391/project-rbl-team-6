@@ -24,10 +24,24 @@ const DEPOSIT_STATUS_CFG = {
 const TABS = [
   { id: 'withdraw', label: 'Yêu cầu Rút tiền', icon: 'account_balance' },
   { id: 'deposit',  label: 'Yêu cầu Nạp tiền',  icon: 'payments' },
+  { id: 'bank-accounts', label: 'Tài khoản Ngân hàng', icon: 'credit_card' },
 ]
 
 export default function WalletRequests({ token }) {
-  const [tab, setTab] = useState('withdraw')
+  const [tab, setTab] = useState(() => sessionStorage.getItem('admin_wallet_tab') || 'withdraw')
+
+  useEffect(() => {
+    sessionStorage.setItem('admin_wallet_tab', tab)
+  }, [tab])
+
+  useEffect(() => {
+    const handleTabChange = () => {
+      const stored = sessionStorage.getItem('admin_wallet_tab')
+      if (stored && stored !== tab) setTab(stored)
+    }
+    window.addEventListener('admin_wallet_tab_changed', handleTabChange)
+    return () => window.removeEventListener('admin_wallet_tab_changed', handleTabChange)
+  }, [tab])
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
@@ -48,7 +62,7 @@ export default function WalletRequests({ token }) {
         ))}
       </div>
 
-      {tab === 'withdraw' ? <WithdrawTab token={token} /> : <DepositTab token={token} />}
+      {tab === 'withdraw' ? <WithdrawTab token={token} /> : tab === 'deposit' ? <DepositTab token={token} /> : <BankAccountsTab token={token} />}
     </div>
   )
 }
@@ -404,5 +418,136 @@ function DepositTab({ token }) {
         * Luồng nạp tiền thủ công (chuyển khoản/ví điện tử tự khai báo) — không phải luồng VNPay chính, vốn cộng tiền tự động qua webhook không cần duyệt.
       </p>
     </>
+  )
+}
+// ═══ Tài khoản ngân hàng (Bank Accounts) ═══════
+function BankAccountsTab({ token }) {
+  const [data, setData]         = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState(null)
+  const [busyId, setBusyId]     = useState(null)
+
+  const load = useCallback(() => {
+    if (!token) return
+    setLoading(true); setError(null)
+    fetch(`${API}/api/admin/wallet/bank-accounts`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => setData(d.bankAccounts || []))
+      .catch(e => setError(`Không thể tải tài khoản ngân hàng (${e})`))
+      .finally(() => setLoading(false))
+  }, [token])
+
+  useEffect(() => { load() }, [load])
+
+  const act = async (id, action, promptText) => {
+    let body = {}
+    if (action === 'reject') {
+      const reason = window.prompt(promptText || 'Lý do từ chối:')
+      if (reason === null) return
+      body = { note: reason }
+    } else if (!window.confirm(promptText)) {
+      return
+    }
+    setBusyId(id)
+    try {
+      const r = await fetch(`${API}/api/admin/wallet/bank-accounts/${id}/${action}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) { alert(j.error || j.message || `Thao tác thất bại (${r.status})`); return }
+      load()
+    } catch (e) {
+      alert('Lỗi kết nối máy chủ')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  if (loading && !data.length) return <div className="text-center p-8 text-gray-500">Đang tải tài khoản ngân hàng...</div>
+  if (error) return <div className="text-center p-8 text-red-500 font-medium">{error}</div>
+
+  const pending = data.filter(a => a.status === 'PENDING')
+  const others = data.filter(a => a.status !== 'PENDING')
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <KpiCard title="Đang chờ duyệt" value={pending.length} icon="hourglass_empty" colorClass="text-amber-600 bg-amber-50" />
+        <KpiCard title="Đã duyệt" value={others.filter(a => a.status === 'APPROVED').length} icon="check_circle" colorClass="text-blue-600 bg-blue-50" />
+        <KpiCard title="Bị từ chối" value={others.filter(a => a.status === 'REJECTED').length} icon="cancel" colorClass="text-red-600 bg-red-50" />
+      </div>
+
+      {!data.length ? (
+        <EmptyState icon="credit_card" title="Chưa có tài khoản ngân hàng nào" desc="Hiện không có yêu cầu xác minh tài khoản nào trong hệ thống." />
+      ) : (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+          <table className="w-full text-left text-sm whitespace-nowrap">
+            <thead className="bg-gray-50 border-b border-gray-200 text-gray-600">
+              <tr>
+                <th className="px-4 py-3 font-semibold">Tutor</th>
+                <th className="px-4 py-3 font-semibold">Ngân hàng</th>
+                <th className="px-4 py-3 font-semibold">Số tài khoản</th>
+                <th className="px-4 py-3 font-semibold">Chủ tài khoản</th>
+                <th className="px-4 py-3 font-semibold">Thời gian thêm</th>
+                <th className="px-4 py-3 font-semibold">Trạng thái</th>
+                <th className="px-4 py-3 font-semibold text-right">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {data.map(req => {
+                const cfg = WITHDRAW_STATUS_CFG[req.status] || { label: req.status, cls: 'bg-gray-100' }
+                return (
+                  <tr key={req.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-900">{req.tutor_name || '—'}</div>
+                      <div className="text-xs text-gray-500">{req.tutor_email || '—'}</div>
+                    </td>
+                    <td className="px-4 py-3 font-medium text-gray-900">{req.bank_name}</td>
+                    <td className="px-4 py-3 text-gray-700">{req.account_number}</td>
+                    <td className="px-4 py-3 text-gray-700">{req.account_holder}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{fmtDate(req.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${cfg.cls}`}>
+                        {cfg.label}
+                      </span>
+                      {req.rejection_reason && (
+                        <div className="mt-1 text-[10px] text-red-500 max-w-[150px] truncate" title={req.rejection_reason}>
+                          Lý do: {req.rejection_reason}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex gap-2 justify-end">
+                        {req.status === 'PENDING' && (
+                          <>
+                            <button
+                              disabled={busyId === req.id}
+                              onClick={() => act(req.id, 'approve', 'Duyệt tài khoản này?')}
+                              className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                            >
+                              Duyệt
+                            </button>
+                            <button
+                              disabled={busyId === req.id}
+                              onClick={() => act(req.id, 'reject', 'Nhập lý do từ chối tài khoản này:')}
+                              className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-semibold rounded hover:bg-red-200 disabled:opacity-50 transition-colors"
+                            >
+                              Từ chối
+                            </button>
+                          </>
+                        )}
+                        {req.status !== 'PENDING' && <span className="text-gray-400 text-xs italic">Không có thao tác</span>}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   )
 }
