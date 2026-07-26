@@ -1377,7 +1377,7 @@ async function maybeCopilotLLMRewrite(report, context) {
 // positive signals, and privacy risk. NEVER bans/suspends/refunds/emails or
 // mutates account/money. Optional LLM rewrite (off by default).
 // ═══════════════════════════════════════════════════════════════════════════
-const SEMANTIC_MODERATION_LLM_ENABLED   = String(process.env.SEMANTIC_MODERATION_LLM_ENABLED ?? 'false').toLowerCase() === 'true';
+const SEMANTIC_MODERATION_LLM_ENABLED   = String(process.env.SEMANTIC_MODERATION_LLM_ENABLED ?? 'true').toLowerCase() === 'true';
 const SEMANTIC_MODERATION_PROVIDER      = String(process.env.SEMANTIC_MODERATION_PROVIDER || 'gemini').toLowerCase();
 const SEMANTIC_MODERATION_MAX_TEXT_CHARS = Number(process.env.SEMANTIC_MODERATION_MAX_TEXT_CHARS || 8000);
 const SEMANTIC_MODERATION_WORKER_ENABLED = String(process.env.SEMANTIC_MODERATION_WORKER_ENABLED ?? 'false').toLowerCase() === 'true';
@@ -1394,7 +1394,11 @@ const SEMANTIC_KEYWORDS = {
   paymentProviders: ['momo', 'zalopay', 'viettel money', 'vietcombank', 'techcombank', 'vietinbank', 'bidv', 'vcb', 'stk', 'số tài khoản', 'so tai khoan', 'bank transfer', 'internet banking', 'ngân hàng', 'ngan hang'],
   transferVerbs:    ['chuyển khoản', 'chuyen khoan', 'chuyển tiền', 'chuyen tien', 'pay me directly', 'direct payment', 'pay directly', 'thanh toán riêng', 'trả riêng', 'tra rieng'],
   avoidPlatform:    ['khỏi đặt trên web', 'khoi dat tren web', 'học ngoài app', 'hoc ngoai app', 'ngoài app', 'ngoai app', 'né phí', 'ne phi', 'đỡ mất phí', 'do mat phi', 'outside platform', 'không qua app', 'khong qua app', 'nhắn zalo riêng', 'nhan zalo rieng', 'liên hệ riêng', 'lien he rieng', 'khỏi đặt', 'khoi dat'],
-  toxic:            ['đồ ngu', 'thằng ngu', 'con ngu', 'óc chó', 'oc cho', 'im mồm', 'câm mồm', 'cam mom', 'đồ rác', 'do rac', 'vô dụng', 'vo dung', 'khốn nạn', 'khon nan', 'mất dạy', 'mat day', 'con điên', 'stupid', 'idiot', 'shut up', 'moron', 'asshole', 'loser', 'trash tutor'],
+  toxic:            ['đồ ngu', 'thằng ngu', 'con ngu', 'óc chó', 'oc cho', 'im mồm', 'câm mồm', 'cam mom', 'đồ rác', 'do rac', 'vô dụng', 'vo dung', 'khốn nạn', 'khon nan', 'mất dạy', 'mat day', 'con điên', 'ngu dốt', 'ngu dot', 'ngu si', 'đồ khốn', 'do khon', 'thằng khốn', 'thang khon', 'súc sinh', 'suc sinh', 'chó chết', 'stupid', 'idiot', 'shut up', 'moron', 'asshole', 'loser', 'trash tutor'],
+  // Explicit vulgarity/slurs — kept diacritic-exact only (no ASCII-folded forms):
+  // stripping tones on these collapses them onto common innocent words (lồn→lon "can", cặc→cac≈các, đéo→deo "wear", đĩ→di≈đi "go"),
+  // so an unaccented variant would false-positive on everyday text. Weighted heavier than `toxic` below.
+  severeToxic:      ['lồn', 'cặc', 'đụ mẹ', 'đụ má', 'địt mẹ', 'địt', 'đĩ mẹ', 'đéo', 'đm', 'vcl', 'vkl', 'fuck', 'fucking', 'bitch', 'bullshit', 'dumbass', 'bastard'],
   threat:           ['tao giết', 'giết mày', 'giet may', 'đánh cho', 'danh cho', 'cho mày biết tay', 'đe dọa', 'de doa', 'kill you', 'beat you up'],
   lowQuality:       ['không giải thích', 'khong giai thich', 'khó hiểu', 'kho hieu', 'dạy qua loa', 'day qua loa', 'không chuẩn bị', 'khong chuan bi', 'không nhiệt tình', 'khong nhiet tinh', 'thiếu kiên nhẫn', 'thieu kien nhan', 'vào trễ', 'vao tre', 'đi muộn', 'di muon', 'hủy liên tục', 'huy lien tuc', 'no-show', 'no show', 'unprepared', 'bỏ buổi', 'bo buoi'],
   positive:         ['kiên nhẫn', 'kien nhan', 'thân thiện', 'than thien', 'dễ hiểu', 'de hieu', 'chuẩn bị tốt', 'chuan bi tot', 'nhiệt tình', 'nhiet tinh', 'đúng giờ', 'dung gio', 'tận tâm', 'tan tam', 'punctual', 'helpful', 'clear explanation', 'patient', 'friendly'],
@@ -1403,6 +1407,41 @@ const SEMANTIC_KEYWORDS = {
 
 const SEM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function asUuidOrNull(v) { return (v && SEM_UUID_RE.test(String(v))) ? String(v) : null; }
+
+// Shared vocab/helpers between the rule-based classifier and the AI-assisted merge below.
+const MODERATION_CATEGORY_VI = {
+  EXTERNAL_PAYMENT_ATTEMPT: 'giao dịch ngoài nền tảng', TOXIC_LANGUAGE: 'ngôn từ tiêu cực',
+  SPAM_OR_SCAM: 'spam/lừa đảo', LOW_TEACHING_QUALITY: 'chất lượng giảng dạy thấp',
+  POSITIVE_TEACHING_SIGNAL: 'tín hiệu tích cực', PRIVACY_RISK: 'lộ thông tin cá nhân',
+};
+const MODERATION_SEVERITY_VI = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' };
+const MODERATION_CATEGORIES = Object.keys(MODERATION_CATEGORY_VI);
+const MODERATION_SEVERITY_RANK = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
+
+function buildModerationSummary(severity, catList) {
+  if (catList.length === 0) return 'Không phát hiện dấu hiệu bất thường. Nội dung trung tính.';
+  if (catList.length === 1 && catList[0] === 'POSITIVE_TEACHING_SIGNAL') return 'Nội dung tích cực về gia sư, không có rủi ro. Mức rủi ro thấp.';
+  return `Phát hiện: ${catList.map(c => MODERATION_CATEGORY_VI[c] || c).join(', ')}. Mức rủi ro ${MODERATION_SEVERITY_VI[severity]}.`;
+}
+
+// Suggested actions (allowed set only) — shared by the pure rule-based path and the AI-merged path.
+function buildSuggestedActions(severity, categories) {
+  const actions = [];
+  const add = (type, label, reason) => { if (SEMANTIC_ALLOWED_ACTIONS.has(type)) actions.push({ type, label, reason }); };
+  if (severity === 'CRITICAL' || severity === 'HIGH') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Tín hiệu rủi ro cao');
+    if (categories.has('EXTERNAL_PAYMENT_ATTEMPT')) add('REVIEW_TUTOR_QUALITY', 'Rà soát gia sư', 'Nghi ngờ giao dịch ngoài nền tảng');
+    add('COPY_WARNING_DRAFT', 'Soạn nháp cảnh báo', 'Chuẩn bị nhắc nhở');
+    add('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm');
+  } else if (severity === 'MEDIUM') {
+    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Cần xác minh thêm');
+    add('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Tín hiệu chưa rõ ràng');
+  } else {
+    add('NO_ACTION', 'Không cần hành động', categories.has('POSITIVE_TEACHING_SIGNAL') ? 'Nội dung tích cực' : 'Tín hiệu yếu/trung tính');
+  }
+  add('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai');
+  return actions;
+}
 
 // Trim, strip control chars, collapse whitespace, cap length.
 function sanitizeModerationText(text, maxChars = SEMANTIC_MODERATION_MAX_TEXT_CHARS) {
@@ -1464,13 +1503,15 @@ function classifyTextModeration(rawText, context = {}) {
 
   // 2. Toxic language
   const toxicHits = find(SEMANTIC_KEYWORDS.toxic);
+  const severeToxicHits = find(SEMANTIC_KEYWORDS.severeToxic);
   const threatHits = find(SEMANTIC_KEYWORDS.threat);
   let toxicityRisk = 0;
-  if (toxicHits.length || threatHits.length) {
+  if (toxicHits.length || severeToxicHits.length || threatHits.length) {
     categories.add('TOXIC_LANGUAGE');
-    toxicityRisk = clamp(toxicHits.length * 25 + threatHits.length * 45);
-    [...new Set([...toxicHits, ...threatHits])].forEach(kw => highlighted.push({ text: kw, reason: 'toxic' }));
-    evidence.push({ label: 'Ngôn từ tiêu cực/đe dọa', value: [...new Set([...toxicHits, ...threatHits])].join(', ') });
+    // Severe slurs/profanity outweigh mild insults so a single hit already clears the HIGH threshold below.
+    toxicityRisk = clamp(toxicHits.length * 25 + severeToxicHits.length * 50 + threatHits.length * 45);
+    [...new Set([...toxicHits, ...severeToxicHits, ...threatHits])].forEach(kw => highlighted.push({ text: kw, reason: 'toxic' }));
+    evidence.push({ label: 'Ngôn từ tiêu cực/đe dọa', value: [...new Set([...toxicHits, ...severeToxicHits, ...threatHits])].join(', ') });
   }
 
   // 3. Spam / scam
@@ -1522,34 +1563,9 @@ function classifyTextModeration(rawText, context = {}) {
   else if (externalPaymentRisk >= 60 || toxicityRisk >= 50 || repeatedContact || (phoneMatches.length + emailMatches.length) >= 2) severity = 'HIGH';
   else if (externalPaymentRisk >= 30 || toxicityRisk >= 25 || negN >= 2 || categories.has('EXTERNAL_PAYMENT_ATTEMPT') || categories.has('TOXIC_LANGUAGE') || categories.has('PRIVACY_RISK')) severity = 'MEDIUM';
 
-  // Suggested actions (allowed set only)
-  const actions = [];
-  const add = (type, label, reason) => { if (SEMANTIC_ALLOWED_ACTIONS.has(type)) actions.push({ type, label, reason }); };
-  if (severity === 'CRITICAL' || severity === 'HIGH') {
-    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Tín hiệu rủi ro cao');
-    if (categories.has('EXTERNAL_PAYMENT_ATTEMPT')) add('REVIEW_TUTOR_QUALITY', 'Rà soát gia sư', 'Nghi ngờ giao dịch ngoài nền tảng');
-    add('COPY_WARNING_DRAFT', 'Soạn nháp cảnh báo', 'Chuẩn bị nhắc nhở');
-    add('WATCHLIST', 'Đưa vào danh sách theo dõi', 'Theo dõi thêm');
-  } else if (severity === 'MEDIUM') {
-    add('MANUAL_REVIEW', 'Chuyển admin xem xét', 'Cần xác minh thêm');
-    add('REQUEST_MORE_EVIDENCE', 'Yêu cầu thêm bằng chứng', 'Tín hiệu chưa rõ ràng');
-  } else {
-    add('NO_ACTION', 'Không cần hành động', categories.has('POSITIVE_TEACHING_SIGNAL') ? 'Nội dung tích cực' : 'Tín hiệu yếu/trung tính');
-  }
-  add('MARK_FALSE_POSITIVE', 'Đánh dấu cảnh báo nhầm', 'Nếu đây là kết quả sai');
-
-  // Vietnamese summary
-  const catVi = {
-    EXTERNAL_PAYMENT_ATTEMPT: 'giao dịch ngoài nền tảng', TOXIC_LANGUAGE: 'ngôn từ tiêu cực',
-    SPAM_OR_SCAM: 'spam/lừa đảo', LOW_TEACHING_QUALITY: 'chất lượng giảng dạy thấp',
-    POSITIVE_TEACHING_SIGNAL: 'tín hiệu tích cực', PRIVACY_RISK: 'lộ thông tin cá nhân',
-  };
+  const actions = buildSuggestedActions(severity, categories);
   const catList = [...categories];
-  const sevVi = { LOW: 'thấp', MEDIUM: 'trung bình', HIGH: 'cao', CRITICAL: 'nghiêm trọng' }[severity];
-  let summary;
-  if (catList.length === 0) summary = 'Không phát hiện dấu hiệu bất thường. Nội dung trung tính.';
-  else if (catList.length === 1 && catList[0] === 'POSITIVE_TEACHING_SIGNAL') summary = 'Nội dung tích cực về gia sư, không có rủi ro. Mức rủi ro thấp.';
-  else summary = `Phát hiện: ${catList.map(c => catVi[c] || c).join(', ')}. Mức rủi ro ${sevVi}.`;
+  const summary = buildModerationSummary(severity, catList);
 
   limitations.push('Phân tích dựa trên quy tắc từ khóa, chỉ mang tính tham khảo. Admin quyết định cuối cùng.');
 
@@ -1569,31 +1585,91 @@ function analyzeChatMessageSemantic(message) {
   return { ...classifyTextModeration(text, { sourceType: 'CHAT_MESSAGE' }), source_type: 'CHAT_MESSAGE', source_id: message.id || null, text };
 }
 
-// Optional LLM rewrite of summary only (off by default). Never invents evidence.
-async function maybeSemanticLLMRewrite(report, sanitizedText) {
-  if (!SEMANTIC_MODERATION_LLM_ENABLED) return { summary: report.summary, model_used: 'RULE_BASED' };
+// Real semantic classification via Gemini — reads the text for actual meaning/context
+// (sarcasm, disguised insults, teencode, indirect phrasing) that the keyword lists in
+// classifyTextModeration can never fully enumerate. Returns null on disable/no-key/parse
+// failure across every model in GEMINI_MODELS, so the caller can fall back to rule-based
+// with zero special-casing. NEVER asked to suggest banning/refunding — advisory only,
+// same constraint as every other AI feature in this app.
+async function classifyModerationWithGemini(rawText) {
+  if (!SEMANTIC_MODERATION_LLM_ENABLED) return null;
+  if (SEMANTIC_MODERATION_PROVIDER !== 'gemini') return null;
+  if (typeof GEMINI_API_KEY !== 'string' || !GEMINI_API_KEY) return null;
   try {
-    const payload = JSON.stringify({ categories: report.categories, severity: report.severity, scores: report.scores, text: sanitizeModerationText(sanitizedText, 2000) }).slice(0, SEMANTIC_MODERATION_MAX_TEXT_CHARS);
-    const prompt = `Bạn là trợ lý kiểm duyệt nội dung cho nền tảng gia sư EduX. Viết lại TÓM TẮT bằng tiếng Việt ngắn gọn, khách quan, CHỈ dựa trên dữ liệu JSON dưới đây, KHÔNG bịa thêm bằng chứng, KHÔNG đề xuất khóa/cấm tài khoản. Trả về JSON {"summary_vi":"..."}. Dữ liệu: ${payload}`;
-    if (SEMANTIC_MODERATION_PROVIDER === 'gemini' && typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY) {
-      for (const model of GEMINI_MODELS) {
-        const r = await callGeminiModel(model, prompt);
-        if (r.ok) {
-          const t = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          try {
-            const parsed = JSON.parse(t);
-            if (parsed && typeof parsed.summary_vi === 'string' && parsed.summary_vi.trim().length > 10) {
-              return { summary: parsed.summary_vi.trim().slice(0, 2000), model_used: 'LLM_GEMINI' };
-            }
-          } catch { /* invalid -> fall through */ }
-        }
-      }
+    const text = sanitizeModerationText(rawText, 3000);
+    const prompt = `Bạn là hệ thống kiểm duyệt nội dung ngữ nghĩa cho nền tảng gia sư trực tuyến EduX. Đọc đoạn văn bản (đánh giá hoặc tin nhắn) dưới đây và PHÂN TÍCH THẬT SỰ dựa trên ý nghĩa và ngữ cảnh — không chỉ khớp từ khóa. Hãy phát hiện cả những cách diễn đạt gián tiếp, mỉa mai, viết tắt, chửi tục biến thể (teencode) mà một bộ lọc từ khóa cứng có thể bỏ lỡ.
+
+Các danh mục được phép gán (chỉ chọn trong danh sách này, có thể chọn nhiều hoặc không chọn cái nào):
+${MODERATION_CATEGORIES.join(', ')}
+
+Mức độ rủi ro hợp lệ: ${Object.keys(MODERATION_SEVERITY_RANK).join(', ')}
+
+Văn bản cần phân tích: "${text}"
+
+Trả về DUY NHẤT JSON theo đúng schema, không kèm giải thích, không markdown code fence:
+{"categories": [<0 hoặc nhiều danh mục ở trên>], "severity": "<một mức ở trên>", "scores": {"patience": <0-100>, "friendliness": <0-100>, "teaching_quality": <0-100>, "professionalism": <0-100>, "external_payment_risk": <0-100>, "toxicity_risk": <0-100>, "spam_risk": <0-100>}, "summary_vi": "<tóm tắt khách quan 1-2 câu bằng tiếng Việt, KHÔNG bịa thêm bằng chứng không có trong văn bản, KHÔNG đề xuất khóa/cấm tài khoản>", "reason": "<lý do ngắn gọn, dưới 20 từ>"}
+
+TUYỆT ĐỐI KHÔNG thêm trường nào ngoài schema trên.`;
+
+    for (const model of GEMINI_MODELS) {
+      const r = await callGeminiModel(model, prompt);
+      if (!r.ok) continue;
+      const raw = r.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      let parsed;
+      try { parsed = JSON.parse(raw.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { continue; }
+      if (!parsed || typeof parsed !== 'object') continue;
+
+      const clamp = v => Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : 0;
+      const s = parsed.scores && typeof parsed.scores === 'object' ? parsed.scores : {};
+      return {
+        categories: Array.isArray(parsed.categories) ? parsed.categories.filter(c => MODERATION_CATEGORIES.includes(c)) : [],
+        severity: typeof parsed.severity === 'string' && MODERATION_SEVERITY_RANK.hasOwnProperty(parsed.severity) ? parsed.severity : 'LOW',
+        scores: {
+          patience: clamp(s.patience), friendliness: clamp(s.friendliness), teaching_quality: clamp(s.teaching_quality),
+          professionalism: clamp(s.professionalism), external_payment_risk: clamp(s.external_payment_risk),
+          toxicity_risk: clamp(s.toxicity_risk), spam_risk: clamp(s.spam_risk),
+        },
+        summary: typeof parsed.summary_vi === 'string' && parsed.summary_vi.trim() ? parsed.summary_vi.trim().slice(0, 500) : null,
+        reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim().slice(0, 200) : null,
+      };
     }
-    return { summary: report.summary, model_used: 'RULE_BASED' };
+    return null; // every model attempt failed/malformed — caller falls back to rule-based
   } catch (err) {
-    console.warn('[semantic] LLM rewrite failed, falling back:', err.message);
-    return { summary: report.summary, model_used: 'RULE_BASED' };
+    console.warn('[semantic] Gemini classify failed, falling back:', err.message);
+    return null;
   }
+}
+
+// Merge AI classification into the rule-based result. AI can only ADD risk, never
+// remove/downgrade what the deterministic keyword pass already found — a Gemini call
+// that under-calls something (or fails outright) can never make a report look safer
+// than the rule-based floor.
+function mergeModerationWithAI(ruleResult, ai) {
+  const categories = new Set([...ruleResult.categories, ...ai.categories]);
+  const severity = MODERATION_SEVERITY_RANK[ai.severity] > MODERATION_SEVERITY_RANK[ruleResult.severity] ? ai.severity : ruleResult.severity;
+  const scores = {
+    // Quality dimensions are subjective/contextual — prefer the AI's contextual read.
+    patience: ai.scores.patience, friendliness: ai.scores.friendliness,
+    teaching_quality: ai.scores.teaching_quality, professionalism: ai.scores.professionalism,
+    // Risk dimensions keep the higher of the two — the safety floor.
+    external_payment_risk: Math.max(ruleResult.scores.external_payment_risk, ai.scores.external_payment_risk),
+    toxicity_risk: Math.max(ruleResult.scores.toxicity_risk, ai.scores.toxicity_risk),
+    spam_risk: Math.max(ruleResult.scores.spam_risk, ai.scores.spam_risk),
+  };
+  const catList = [...categories];
+  let summary = buildModerationSummary(severity, catList);
+  if (ai.summary) summary += ` Nhận định AI: ${ai.summary}`;
+
+  const evidence = [...ruleResult.evidence];
+  if (ai.reason) evidence.push({ label: 'Phân tích ngữ nghĩa AI (Gemini)', value: ai.reason });
+
+  return {
+    severity, categories: catList, scores, summary,
+    evidence, highlighted_text: ruleResult.highlighted_text,
+    suggested_actions: buildSuggestedActions(severity, categories),
+    limitations: [...ruleResult.limitations, 'Có sử dụng AI (Gemini) để phân tích ngữ nghĩa sâu hơn — vẫn chỉ mang tính tham khảo, admin quyết định cuối cùng.'],
+    model_used: 'HYBRID_GEMINI_RULES',
+  };
 }
 
 async function saveSemanticModerationReport(r) {
@@ -14727,6 +14803,56 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
   }
 });
 
+// Shared Gemini client. MUST stay top-level, not inside startServer(): classifyModerationWithGemini,
+// classifyAnalyticsWithGemini/classifyAnalyticsWithLLM, and the Copilot/fraud-intel Gemini checks are all
+// top-level functions that close over these bindings at definition time. This block used to live inside
+// startServer()'s body (~7700 lines down), which made GEMINI_API_KEY/GEMINI_MODELS/callGeminiModel
+// invisible to every one of those callers (ReferenceError, silently caught -> permanent rule-based
+// fallback for every "AI" feature in the app except the routes registered directly inside startServer).
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+
+// Danh sách model thử lần lượt: nếu model đầu hết quota (429) hoặc quá tải (503),
+// tự động fallback sang model tiếp theo. Mỗi model free tier có quota riêng,
+// nên thử nhiều model giúp tăng tổng số request dùng được mỗi ngày.
+// "gemini-2.5-flash-lite" bị Google ngừng cấp cho API key mới (404 "no longer
+// available to new users", xác nhận qua test thật 2026-07-23) — xếp cuối danh
+// sách thay vì đầu để không tốn 1 lượt gọi thất bại + độ trễ mạng mỗi lần hỏi.
+const GEMINI_MODELS = [
+  process.env.GEMINI_MODEL || "gemini-2.5-flash",
+  "gemini-flash-latest",
+  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-2.5-flash-lite",
+].filter((m, i, arr) => arr.indexOf(m) === i); // loại trùng
+
+// Gọi 1 model Gemini. Trả { ok, data?, status?, errText? }
+async function callGeminiModel(model, prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.7,
+          topP: 0.9,
+          // Để budget rộng: model 2.5 có "thinking" ngốn token, cần dư chỗ cho JSON output
+          maxOutputTokens: 2048,
+          responseMimeType: "application/json",
+        },
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false, status: res.status, errText: await res.text() };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, errText: error.message };
+  }
+}
+
 async function startServer() {
   // Auto-migrate: add is_banned column if it doesn't exist yet
   try {
@@ -17666,52 +17792,8 @@ app.delete("/api/bookings/:id", verifyToken, async (req, res) => {
   }
 });
 
-// ─── Google Gemini AI: gợi ý gia sư ──────────────────────────────────────────
-// Frontend POST { userMessage } → backend TỰ query DB (chỉ gia sư status='approved')
-// → gọi Gemini → trả { reply, tutorIds }. API key giữ kín ở backend.
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-
-// Danh sách model thử lần lượt: nếu model đầu hết quota (429) hoặc quá tải (503),
-// tự động fallback sang model tiếp theo. Mỗi model free tier có quota riêng,
-// nên thử nhiều model giúp tăng tổng số request dùng được mỗi ngày.
-// "gemini-2.5-flash-lite" bị Google ngừng cấp cho API key mới (404 "no longer
-// available to new users", xác nhận qua test thật 2026-07-23) — xếp cuối danh
-// sách thay vì đầu để không tốn 1 lượt gọi thất bại + độ trễ mạng mỗi lần hỏi.
-const GEMINI_MODELS = [
-  process.env.GEMINI_MODEL || "gemini-2.5-flash",
-  "gemini-flash-latest",
-  "gemini-2.0-flash-lite",
-  "gemini-2.0-flash",
-  "gemini-2.5-flash-lite",
-].filter((m, i, arr) => arr.indexOf(m) === i); // loại trùng
-
-// Gọi 1 model Gemini. Trả { ok, data?, status?, errText? }
-async function callGeminiModel(model, prompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.7,
-          topP: 0.9,
-          // Để budget rộng: model 2.5 có "thinking" ngốn token, cần dư chỗ cho JSON output
-          maxOutputTokens: 2048,
-          responseMimeType: "application/json",
-        },
-      }),
-    });
-    if (!res.ok) {
-      return { ok: false, status: res.status, errText: await res.text() };
-    }
-    const data = await res.json();
-    return { ok: true, data };
-  } catch (error) {
-    return { ok: false, status: 0, errText: error.message };
-  }
-}
+// Google Gemini client (GEMINI_API_KEY/GEMINI_MODELS/callGeminiModel) now lives at
+// true top-level, above — moved out of startServer() so top-level callers can see it.
 
 const rawGroqKeys = process.env.GROQ_API_KEYS || "";
 const GROQ_API_KEYS = rawGroqKeys.split(',').map(k => k.trim()).filter(Boolean);
@@ -19843,11 +19925,11 @@ app.post('/api/admin/semantic-moderation/analyze', verifyToken, requireAdmin, as
     if (!analyzeText || !analyzeText.trim()) return res.status(400).json({ message: 'Không có nội dung để phân tích.' });
 
     const base = classifyTextModeration(analyzeText, { sourceType: type });
-    const llm = await maybeSemanticLLMRewrite(base, analyzeText);
-    base.summary = llm.summary; base.model_used = llm.model_used;
+    const ai = await classifyModerationWithGemini(analyzeText);
+    const result = ai ? mergeModerationWithAI(base, ai) : base;
 
     const report = {
-      ...base, source_type: type, source_id: sourceId || null,
+      ...result, source_type: type, source_id: sourceId || null,
       tutor_id: resolvedTutorId, student_id: resolvedStudentId, target_user_id: targetUserId,
       input_hash: hashModerationInput(analyzeText, type, sourceId),
     };

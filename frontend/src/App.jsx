@@ -271,11 +271,31 @@ function HomePage({ onGoSignIn, onGoSignUp }) {
   const [topic, setTopic] = useState('')
   const [place, setPlace] = useState('')
   const [city, setCity] = useState('')
+  const [cityInput, setCityInput] = useState('')
+  const [showCityDropdown, setShowCityDropdown] = useState(false)
+  const [showSubjectSuggestions, setShowSubjectSuggestions] = useState(false)
   const [liveReviews, setLiveReviews] = useState([])
   const [featuredTutors, setFeaturedTutors] = useState([])
   const [popularSubjects, setPopularSubjects] = useState([])
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
+  const cityDropdownRef = useRef(null)
+  const subjectRef = useRef(null)
+
+  const SUBJECT_SUGGESTIONS = [
+    'Toán Học', 'Vật Lý', 'Hóa Học', 'Tiếng Anh', 'Lập Trình',
+    'Văn Học', 'Lịch Sử', 'Địa Lý', 'Sinh Học', 'IELTS', 'TOEIC',
+    'Toán 12', 'Tiếng Anh giao tiếp', 'Lập trình Python', 'Hóa 10',
+    'Âm Nhạc', 'Nghệ Thuật', 'Kinh Tế', 'Tin Học'
+  ]
+
+  const filteredSubjects = topic.trim()
+    ? SUBJECT_SUGGESTIONS.filter(s => s.toLowerCase().includes(topic.toLowerCase().trim()))
+    : []
+
+  const filteredProvinces = cityInput.trim()
+    ? VIETNAM_PROVINCES.filter(p => p.toLowerCase().includes(cityInput.toLowerCase().trim()))
+    : VIETNAM_PROVINCES
 
   useEffect(() => {
     fetch(`${API_BASE}/api/reviews/featured?limit=12`)
@@ -310,6 +330,12 @@ function HomePage({ onGoSignIn, onGoSignUp }) {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsDropdownOpen(false)
+      }
+      if (cityDropdownRef.current && !cityDropdownRef.current.contains(event.target)) {
+        setShowCityDropdown(false)
+      }
+      if (subjectRef.current && !subjectRef.current.contains(event.target)) {
+        setShowSubjectSuggestions(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -448,22 +474,68 @@ function HomePage({ onGoSignIn, onGoSignUp }) {
                 hoàn toàn miễn phí, không cần tạo tài khoản.
               </p>
               <div className={`search-panel${place === 'offline' ? ' search-panel-offline' : ''}`}>
-                <label className="search-field">
+                {/* Subject autocomplete */}
+                <div ref={subjectRef} style={{ position: 'relative' }} className="search-field">
                   <span className="material-symbols-outlined">search</span>
                   <input
                     type="text"
                     value={topic}
-                    onChange={(event) => setTopic(event.target.value)}
+                    onChange={(event) => {
+                      setTopic(event.target.value)
+                      setShowSubjectSuggestions(true)
+                    }}
+                    onFocus={() => setShowSubjectSuggestions(true)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setShowSubjectSuggestions(false)
+                        const params = new URLSearchParams({ search: topic, method: place })
+                        if (place === 'offline' && city) params.set('city', city)
+                        window.location.hash = `/find-tutors?${params.toString()}`
+                      }
+                      if (e.key === 'Escape') setShowSubjectSuggestions(false)
+                    }}
                     placeholder="Bạn muốn học gì?"
+                    autoComplete="off"
                   />
-                </label>
+                  {showSubjectSuggestions && filteredSubjects.length > 0 && (
+                    <div className="search-suggestion-list" style={{
+                      position: 'absolute', top: 'calc(100% + 8px)', left: 0, right: 0,
+                      background: '#fff', borderRadius: 14, boxShadow: '0 8px 32px -8px rgba(0,40,142,0.18)',
+                      border: '1px solid rgba(196,197,213,0.6)', zIndex: 200,
+                      maxHeight: 280, overflowY: 'auto'
+                    }}>
+                      {filteredSubjects.map((s) => (
+                        <div
+                          key={s}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setTopic(s)
+                            setShowSubjectSuggestions(false)
+                          }}
+                          style={{
+                            padding: '10px 16px', cursor: 'pointer', fontSize: 15,
+                            color: 'var(--on-surface)', display: 'flex', alignItems: 'center', gap: 10,
+                            transition: 'background 0.15s'
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#f0f4ff'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--primary)' }}>school</span>
+                          {s}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Learning method select */}
                 <label className="search-field">
                   <span className="material-symbols-outlined">tune</span>
                   <select
                     value={place}
                     onChange={(event) => {
                       setPlace(event.target.value)
-                      if (event.target.value !== 'offline') setCity('')
+                      if (event.target.value !== 'offline') { setCity(''); setCityInput('') }
                     }}
                   >
                     <option value="">Hình thức học (Tất cả)</option>
@@ -471,24 +543,76 @@ function HomePage({ onGoSignIn, onGoSignUp }) {
                     <option value="offline">Tại địa điểm cụ thể (Offline)</option>
                   </select>
                 </label>
+
+                {/* Custom city searchable dropdown — full-width row */}
                 {place === 'offline' && (
-                  <label className="search-field">
+                  <div ref={cityDropdownRef} style={{ position: 'relative' }} className="search-field search-field-city">
                     <span className="material-symbols-outlined">location_on</span>
-                    <select
-                      value={city}
-                      onChange={(event) => setCity(event.target.value)}
-                    >
-                      <option value="">Chọn tỉnh/thành</option>
-                      {VIETNAM_PROVINCES.map((p) => (
-                        <option key={p} value={p}>{p}</option>
-                      ))}
-                    </select>
-                  </label>
+                    <input
+                      type="text"
+                      value={cityInput || city}
+                      onChange={(e) => {
+                        setCityInput(e.target.value)
+                        if (!e.target.value) setCity('')
+                        setShowCityDropdown(true)
+                      }}
+                      onFocus={() => { setCityInput(''); setShowCityDropdown(true) }}
+                      onKeyDown={(e) => { if (e.key === 'Escape') setShowCityDropdown(false) }}
+                      placeholder="Chọn tỉnh / thành phố"
+                      autoComplete="off"
+                      style={{ minWidth: 0, flex: 1 }}
+                    />
+                    {city && !cityInput && (
+                      <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: 'var(--outline)', fontSize: 18 }}
+                        className="material-symbols-outlined"
+                        onMouseDown={(e) => { e.preventDefault(); setCity(''); setCityInput(''); }}
+                      >close</span>
+                    )}
+                    {showCityDropdown && (
+                      <div className="search-suggestion-list" style={{
+                        position: 'absolute', top: 'calc(100% + 8px)', left: 0, right: 0,
+                        background: '#fff', borderRadius: 14, boxShadow: '0 8px 32px -8px rgba(0,40,142,0.18)',
+                        border: '1px solid rgba(196,197,213,0.6)', zIndex: 200,
+                        maxHeight: 260, overflowY: 'auto'
+                      }}>
+                        {filteredProvinces.length === 0 && (
+                          <div style={{ padding: '12px 16px', color: 'var(--outline)', fontSize: 14 }}>Không tìm thấy tỉnh/thành phù hợp</div>
+                        )}
+                        {filteredProvinces.map((p) => (
+                          <div
+                            key={p}
+                            onMouseDown={(e) => {
+                              e.preventDefault()
+                              setCity(p)
+                              setCityInput('')
+                              setShowCityDropdown(false)
+                            }}
+                            style={{
+                              padding: '10px 16px', cursor: 'pointer', fontSize: 15,
+                              color: p === city ? 'var(--primary)' : 'var(--on-surface)',
+                              fontWeight: p === city ? 700 : 400,
+                              background: p === city ? '#f0f4ff' : 'transparent',
+                              display: 'flex', alignItems: 'center', gap: 10,
+                              transition: 'background 0.15s'
+                            }}
+                            onMouseEnter={e => { if (p !== city) e.currentTarget.style.background = '#f0f4ff' }}
+                            onMouseLeave={e => { if (p !== city) e.currentTarget.style.background = 'transparent' }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--primary)' }}>location_on</span>
+                            {p}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
+
                 <button
                   type="button"
                   className="btn btn-primary search-button"
                   onClick={() => {
+                    setShowSubjectSuggestions(false)
+                    setShowCityDropdown(false)
                     const params = new URLSearchParams({ search: topic, method: place })
                     if (place === 'offline' && city) params.set('city', city)
                     window.location.hash = `/find-tutors?${params.toString()}`

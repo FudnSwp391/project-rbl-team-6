@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { methodSupport } from './utils/teachingMethod';
 import CartButton from './components/CartButton';
 import { API_BASE_URL } from './config';
+import { VIETNAM_PROVINCES } from './constants/vietnamProvinces';
 
 const API_BASE = API_BASE_URL;
 
@@ -253,6 +254,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
   const [sort, setSort]               = useState('rating');
   const [method, setMethod]           = useState(initialParams.get('method') || '');
   const [level, setLevel]             = useState(initialParams.get('level') || '');
+  const [city, setCity]               = useState(initialParams.get('city') || '');
   const [favMsg, setFavMsg]           = useState('');
   const [showFilters, setShowFilters] = useState(false); // mobile filter toggle
 
@@ -278,6 +280,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
         ...(selectedSubjects.length && { subjects: selectedSubjects.join(',') }),
         ...(method && { method }),
         ...(level && { level }),
+        ...(city && { city }),
       });
       const res = await fetch(`${API_BASE}/api/tutors?${params}`);
       const data = await res.json();
@@ -304,7 +307,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       setError(true);
       setLoading(false);
     }
-  }, [search, selectedSubjects, sort, method, level]);
+  }, [search, selectedSubjects, sort, method, level, city]);
 
   useEffect(() => { fetchTutors(page); }, [fetchTutors, page]);
 
@@ -320,7 +323,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
 
   const handleReset = () => {
     setSearchInput(''); setSearch(''); setSelectedSubjects([]);
-    setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setPage(1);
+    setMaxPrice(200); setSort('rating'); setMethod(''); setLevel(''); setCity(''); setPage(1);
   };
 
   const displayTutors = tutors.filter(t => {
@@ -337,19 +340,21 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
       (t.suitable_students && Array.isArray(t.suitable_students) && t.suitable_students.some(l => l.toLowerCase() === level.toLowerCase())) ||
       (t.level && typeof t.level === 'string' && t.level.toLowerCase().includes(level.toLowerCase())) ||
       (!t.suitable_students && !t.level);
-    return matchPrice && matchSearch && matchSubjects && matchMethod && matchLevel;
+    const matchCity = !city ||
+      (t.city && t.city.toLowerCase().includes(city.toLowerCase()));
+    return matchPrice && matchSearch && matchSubjects && matchMethod && matchLevel && matchCity;
   });
 
   // Featured tutors — top 4 theo rating để làm carousel highlight ở đầu grid
   // Chỉ hiện khi KHÔNG lọc gì đặc biệt (search rỗng, không chọn subject) để tránh gây rối kết quả tìm kiếm.
   const featuredTutors = useMemo(() => {
-    if (search || selectedSubjects.length || method || level) return [];
+    if (search || selectedSubjects.length || method || level || city) return [];
     return [...displayTutors]
       .sort((a, b) => Number(b.avg_r || 0) - Number(a.avg_r || 0))
       .slice(0, 4);
-  }, [displayTutors, search, selectedSubjects, method, level]);
+  }, [displayTutors, search, selectedSubjects, method, level, city]);
 
-  const activeFilterCount = (selectedSubjects.length ? 1 : 0) + (method ? 1 : 0) + (level ? 1 : 0) + (maxPrice !== 200 ? 1 : 0);
+  const activeFilterCount = (selectedSubjects.length ? 1 : 0) + (method ? 1 : 0) + (level ? 1 : 0) + (maxPrice !== 200 ? 1 : 0) + (search.trim() ? 1 : 0) + (city ? 1 : 0);
 
   return (
     <div className="aqua-bg min-h-screen text-[#191c1e] font-sans">
@@ -600,7 +605,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                         type="radio"
                         name="method"
                         checked={method === opt.v}
-                        onChange={() => { setMethod(opt.v); setPage(1); }}
+                        onChange={() => { setMethod(opt.v); if (opt.v !== 'offline') setCity(''); setPage(1); }}
                         className="text-[#00288e] focus:ring-[#00288e]"
                       />
                       <span className="text-sm text-[#444653] group-hover:text-[#00288e] transition-colors flex items-center gap-1.5">
@@ -610,21 +615,45 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                     </label>
                   ))}
                 </div>
+                {method === 'offline' && (
+                  <div className="mt-3">
+                    <label className="text-xs font-semibold text-[#757684] block mb-1.5">
+                      <span className="material-symbols-outlined text-[13px] align-middle mr-1">location_on</span>
+                      Tỉnh / Thành phố
+                    </label>
+                    <select
+                      value={city}
+                      onChange={e => { setCity(e.target.value); setPage(1); }}
+                      className="w-full px-3 py-2 rounded-lg border border-[#c4c5d5] text-sm text-[#444653] bg-white focus:outline-none focus:ring-2 focus:ring-[#00288e]/20 focus:border-[#00288e] transition-all"
+                    >
+                      <option value="">Chọn tỉnh/thành</option>
+                      {VIETNAM_PROVINCES.map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="mb-7">
                 <label className="text-sm font-bold text-[#191c1e] block mb-3">Cấp Độ</label>
-                <select
-                  value={level}
-                  onChange={e => { setLevel(e.target.value); setPage(1); }}
-                  className="w-full px-3 py-2.5 rounded-lg border border-[#c4c5d5] text-sm text-[#444653] bg-white focus:outline-none focus:ring-2 focus:ring-[#00288e]/20 focus:border-[#00288e] transition-all"
-                >
-                  <option value="">Tất Cả Cấp Độ</option>
-                  <option value="Cấp 1">Cấp 1 (Tiểu học)</option>
-                  <option value="Cấp 2">Cấp 2 (THCS)</option>
-                  <option value="Cấp 3">Cấp 3 (THPT)</option>
-                  <option value="Đại học">Đại học</option>
-                </select>
+                <div className="space-y-2">
+                  {[{ v: '', l: 'Tất Cả Cấp Độ', icon: 'school' }, { v: 'Cấp 1', l: 'Cấp 1 (Tiểu học)', icon: 'child_care' }, { v: 'Cấp 2', l: 'Cấp 2 (THCS)', icon: 'menu_book' }, { v: 'Cấp 3', l: 'Cấp 3 (THPT)', icon: 'import_contacts' }, { v: 'Đại học', l: 'Đại học', icon: 'account_balance' }].map(opt => (
+                    <label key={opt.v} className="flex items-center gap-3 cursor-pointer group">
+                      <input
+                        type="radio"
+                        name="level"
+                        checked={level === opt.v}
+                        onChange={() => { setLevel(opt.v); setPage(1); }}
+                        className="text-[#00288e] focus:ring-[#00288e]"
+                      />
+                      <span className="text-sm text-[#444653] group-hover:text-[#00288e] transition-colors flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[15px]">{opt.icon}</span>
+                        {opt.l}
+                      </span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <div className="mb-6">
@@ -694,7 +723,7 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs font-bold text-[#191c1e] block mb-2">Hình thức</label>
-                    <select value={method} onChange={e => { setMethod(e.target.value); setPage(1); }}
+                    <select value={method} onChange={e => { setMethod(e.target.value); if (e.target.value !== 'offline') setCity(''); setPage(1); }}
                       className="w-full px-2 py-2 text-sm border rounded-lg">
                       <option value="">Tất cả</option>
                       <option value="online">Online</option>
@@ -712,6 +741,21 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                       <option value="Đại học">Đại học</option>
                     </select>
                   </div>
+                  {method === 'offline' && (
+                    <div className="col-span-2">
+                      <label className="text-xs font-bold text-[#191c1e] block mb-2">
+                        <span className="material-symbols-outlined text-[13px] align-middle mr-1">location_on</span>
+                        Tỉnh / Thành phố
+                      </label>
+                      <select value={city} onChange={e => { setCity(e.target.value); setPage(1); }}
+                        className="w-full px-2 py-2 text-sm border rounded-lg">
+                        <option value="">Chọn tỉnh/thành</option>
+                        {VIETNAM_PROVINCES.map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="col-span-2">
                     <label className="text-xs font-bold text-[#191c1e] block mb-2">Giá tối đa: ${maxPrice}/giờ</label>
                     <input type="range" min="20" max="200" step="10" value={maxPrice}
@@ -726,9 +770,18 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
             )}
 
             {/* Active filter chips */}
-            {(selectedSubjects.length > 0 || method || level) && (
+            {(search.trim() || selectedSubjects.length > 0 || method || level || city) && (
               <div className="flex flex-wrap gap-2 mb-5">
                 <span className="text-xs text-[#757684] self-center">Đang lọc:</span>
+                {search.trim() && (
+                  <span className="inline-flex items-center gap-1 bg-[#3b82f6] text-white text-xs font-medium px-3 py-1 rounded-full">
+                    <span className="material-symbols-outlined text-[13px]">search</span>
+                    {search.trim()}
+                    <button onClick={() => { setSearch(''); setSearchInput(''); setPage(1); }} className="hover:bg-white/20 rounded-full p-0.5">
+                      <span className="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                  </span>
+                )}
                 {selectedSubjects.map(s => (
                   <span key={s} className="inline-flex items-center gap-1 bg-[#00288e] text-white text-xs font-medium px-3 py-1 rounded-full">
                     {s}
@@ -739,8 +792,17 @@ export default function FindTutorsPage({ onGoSignIn, onGoSignUp, user }) {
                 ))}
                 {method && (
                   <span className="inline-flex items-center gap-1 bg-[#00288e] text-white text-xs font-medium px-3 py-1 rounded-full capitalize">
-                    {method}
-                    <button onClick={() => { setMethod(''); setPage(1); }} className="hover:bg-white/20 rounded-full p-0.5">
+                    {method === 'online' ? 'Online' : method === 'offline' ? 'Offline' : method}
+                    <button onClick={() => { setMethod(''); setCity(''); setPage(1); }} className="hover:bg-white/20 rounded-full p-0.5">
+                      <span className="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                  </span>
+                )}
+                {city && (
+                  <span className="inline-flex items-center gap-1 bg-[#10b981] text-white text-xs font-medium px-3 py-1 rounded-full">
+                    <span className="material-symbols-outlined text-[13px]">location_on</span>
+                    {city}
+                    <button onClick={() => { setCity(''); setPage(1); }} className="hover:bg-white/20 rounded-full p-0.5">
                       <span className="material-symbols-outlined text-[13px]">close</span>
                     </button>
                   </span>
