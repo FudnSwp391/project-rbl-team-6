@@ -7313,9 +7313,7 @@ app.get("/api/admin/payment-gateways", verifyToken, requireAdmin, async (req, re
          COALESCE(gateway, 'Internal Wallet')           AS name,
          COUNT(*)::int                                   AS transaction_count,
          COUNT(*) FILTER (WHERE status = 'SUCCESS')::int AS success_count,
-         COUNT(*) FILTER (
-           WHERE status NOT IN ('SUCCESS','HELD_IN_ESCROW')
-         )::int                                          AS failed_count,
+         COUNT(*) FILTER (WHERE status = 'FAILED')::int  AS failed_count,
          COALESCE(SUM(ABS(amount)),0)::numeric           AS total_volume,
          MAX(created_at)                                 AS last_transaction_at
        FROM transactions
