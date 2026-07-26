@@ -50,24 +50,88 @@ const NAV_ITEMS = [
 export default function TutorDashboard() {
   const { user, token, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const TAB_MAP = {
+    'overview': 'Tổng Quan',
+    'schedule': 'Lịch Trình',
+    'students': 'Học Viên',
+    'courses': 'Khóa Học',
+    'exams': 'Bài Kiểm Tra',
+    'grading': 'Chấm Điểm',
+    'earnings': 'Thu Nhập',
+    'wallet': 'Ví Tiền',
+    'messages': 'Tin Nhắn',
+    'complaints': 'Khiếu Nại',
+    'profile': 'Hồ Sơ'
+  };
+
   const getInitialTab = () => {
     try {
       const searchParams = new URLSearchParams(window.location.hash.split('?')[1]);
-      if (searchParams.has('tab')) return searchParams.get('tab');
+      if (searchParams.has('tab')) {
+        const rawTab = searchParams.get('tab');
+        return TAB_MAP[rawTab] || rawTab;
+      }
     } catch (e) {}
     return 'Tổng Quan';
   }
   const [activeTab, setActiveTab] = useState(getInitialTab)
+  const [highlightedRef, setHighlightedRef] = useState(null);
 
   useEffect(() => {
-    const handleHashChange = () => {
+    const processUrlParams = () => {
       try {
         const searchParams = new URLSearchParams(window.location.hash.split('?')[1]);
-        if (searchParams.has('tab')) setActiveTab(searchParams.get('tab'));
+        if (searchParams.has('tab')) {
+          const rawTab = searchParams.get('tab');
+          setActiveTab(TAB_MAP[rawTab] || rawTab);
+        }
+        if (searchParams.has('requestTab')) {
+          setActiveRequestTab(searchParams.get('requestTab'));
+        }
+        if (searchParams.has('ref')) {
+          const refId = searchParams.get('ref');
+          setHighlightedRef(refId);
+          setTimeout(() => {
+            const el = document.getElementById(`notif-ref-${refId}`);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            setTimeout(() => setHighlightedRef(null), 3000);
+          }, 300);
+        }
       } catch (e) {}
     };
+
+    const handleHashChange = () => {
+      processUrlParams();
+    };
+    
+    const handleNotificationNavigate = (e) => {
+      const detail = e.detail;
+      if (detail.tab) setActiveTab(TAB_MAP[detail.tab] || detail.tab);
+      if (detail.requestTab) setActiveRequestTab(detail.requestTab);
+      if (detail.refId) {
+        setHighlightedRef(detail.refId);
+        setTimeout(() => {
+          const el = document.getElementById(`notif-ref-${detail.refId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          setTimeout(() => setHighlightedRef(null), 3000);
+        }, 300);
+      }
+    };
+
     window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    window.addEventListener('notification-navigate', handleNotificationNavigate);
+    
+    // Process on mount in case it was a direct link
+    processUrlParams();
+    
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      window.removeEventListener('notification-navigate', handleNotificationNavigate);
+    };
   }, []);
 
   const searchParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
@@ -362,8 +426,15 @@ export default function TutorDashboard() {
           g.timeSlot = 'Lịch học cố định';
         });
 
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
         const approvedBookings = bookingsList
           .filter(b => b.status === 'Approved')
+          .filter(b => {
+            const d = b.lesson_date || b.lessonDate || b.date;
+            return d && String(d).slice(0, 10) === todayStr;
+          })
           .map(b => ({
             id: b.id,
             initials: toInitials(toStudentName(b)),
@@ -375,6 +446,11 @@ export default function TutorDashboard() {
             bookingType: b.bookingType || b.booking_type || 'regular',
             isNow: false
           }))
+          .sort((a, b) => {
+            const timeA = a.time.split(' - ')[1] || '';
+            const timeB = b.time.split(' - ')[1] || '';
+            return timeA.localeCompare(timeB);
+          });
 
         setRequests(groupedPendingBookings)
         setRescheduleRequests(rescheduleReqs || [])
@@ -408,29 +484,45 @@ export default function TutorDashboard() {
 
       await Promise.all(idsToAccept.map(bookingId => updateBookingStatus(bookingId, 'Approved')));
 
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
       if (targetReq.isPackage) {
-        // Add all sessions to schedule today (or just the first one if it's too much, but let's add them)
-        const newApproved = targetReq.packageSessions.map(s => ({
-          id: s.id,
-          initials: s.initials,
-          name: s.name,
-          subject: s.subject,
-          time: s.date,
-          isNow: false
-        }));
-        setScheduleToday(prev => [...newApproved, ...prev]);
-      } else {
-        setScheduleToday(prev => [
-          {
-            id: targetReq.id,
-            initials: targetReq.initials,
-            name: targetReq.name,
-            subject: targetReq.subject,
-            time: targetReq.date,
+        const newApproved = targetReq.packageSessions
+          .filter(s => s.date && String(s.date).slice(0, 10) === todayStr)
+          .map(s => ({
+            id: s.id,
+            initials: s.initials,
+            name: s.name,
+            subject: s.subject,
+            time: s.date,
             isNow: false
-          },
-          ...prev
-        ]);
+          }));
+        if (newApproved.length > 0) {
+          setScheduleToday(prev => [...newApproved, ...prev].sort((a, b) => {
+            const timeA = a.time.split(' - ')[1] || '';
+            const timeB = b.time.split(' - ')[1] || '';
+            return timeA.localeCompare(timeB);
+          }));
+        }
+      } else {
+        if (targetReq.date && String(targetReq.date).slice(0, 10) === todayStr) {
+          setScheduleToday(prev => [
+            {
+              id: targetReq.id,
+              initials: targetReq.initials,
+              name: targetReq.name,
+              subject: targetReq.subject,
+              time: targetReq.date,
+              isNow: false
+            },
+            ...prev
+          ].sort((a, b) => {
+            const timeA = a.time.split(' - ')[1] || '';
+            const timeB = b.time.split(' - ')[1] || '';
+            return timeA.localeCompare(timeB);
+          }));
+        }
       }
 
       setRequests((prev) => prev.filter((r) => r.id !== id));
@@ -727,7 +819,7 @@ export default function TutorDashboard() {
             <div className="lg:col-span-2 space-y-md">
               <div className="flex items-center justify-between">
                 <h3 className="font-headline-md text-headline-md text-on-surface">
-                  Pending Requests
+                  Yêu cầu chờ xử lý
                 </h3>
                 {requests.length > 0 && (
                   <span className="bg-error text-on-error text-xs font-bold px-2 py-0.5 rounded-full">
@@ -768,12 +860,14 @@ export default function TutorDashboard() {
                   ) : (
                     <div className="divide-y divide-surface-variant/50">
                       {rescheduleRequests.map((req) => (
-                        <RescheduleRequestRow
-                          key={req.id}
-                          request={req}
-                          onAccept={() => handleAcceptReschedule(req.id)}
-                          onDecline={() => handleRejectReschedule(req.id)}
-                        />
+                        <div key={req.id} id={`notif-ref-${req.id}`}>
+                          <RescheduleRequestRow
+                            request={req}
+                            isHighlighted={req.id === highlightedRef}
+                            onAccept={() => handleAcceptReschedule(req.id)}
+                            onDecline={() => handleRejectReschedule(req.id)}
+                          />
+                        </div>
                       ))}
                     </div>
                   )
@@ -785,13 +879,15 @@ export default function TutorDashboard() {
                 ) : (
                   <div className="divide-y divide-surface-variant/50">
                     {requests.filter(r => activeRequestTab === 'monthly' ? r.isPackage : !r.isPackage).map((req) => (
-                      <RequestRow
-                        key={req.id}
-                        request={req}
-                        isConflicting={conflictingIds.has(req.id)}
-                        onAccept={() => handleAccept(req.id)}
-                        onDecline={() => handleDecline(req.id)}
-                      />
+                      <div key={req.id} id={`notif-ref-${req.id}`}>
+                        <RequestRow
+                          request={req}
+                          isConflicting={conflictingIds.has(req.id)}
+                          isHighlighted={req.id === highlightedRef}
+                          onAccept={() => handleAccept(req.id)}
+                          onDecline={() => handleDecline(req.id)}
+                        />
+                      </div>
                     ))}
                   </div>
                 )}
@@ -877,7 +973,10 @@ export default function TutorDashboard() {
           )}
 
           {activeTab === 'WalletWithdraw' && (
-            <WalletWithdraw onBack={() => setActiveTab('Ví Tiền')} />
+            <WalletWithdraw 
+              onBack={() => setActiveTab('Ví Tiền')} 
+              initialAccountId={highlightedRef}
+            />
           )}
 
           {/* Instant Request Modal */}
@@ -926,8 +1025,8 @@ export default function TutorDashboard() {
   )
 }
 
-// Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬ Request Row Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
-function RequestRow({ request, isConflicting, onAccept, onDecline }) {
+// Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬ Request Row Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬
+function RequestRow({ request, isConflicting, isHighlighted, onAccept, onDecline }) {
   const [expanded, setExpanded] = useState(false)
   const isTrial = request.bookingType === 'trial'
 
@@ -952,7 +1051,7 @@ function RequestRow({ request, isConflicting, onAccept, onDecline }) {
   const displayDate = request.isPackage ? request.date : (request.lessonDate ? formatDate(request.lessonDate) : request.date || '')
 
   return (
-    <div className={`border-b border-gray-100 last:border-0 transition-colors ${expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50/60'} ${isConflicting ? 'opacity-60 grayscale-[30%]' : ''}`}>
+    <div className={`border-b border-gray-100 last:border-0 transition-colors ${expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50/60'} ${isHighlighted ? 'notification-highlight' : ''} ${isConflicting ? 'opacity-60 grayscale-[30%]' : ''}`}>
       {/* ── Collapsed summary row (always visible) ── */}
       <button
         onClick={() => setExpanded(v => !v)}
@@ -1151,7 +1250,7 @@ function RequestRow({ request, isConflicting, onAccept, onDecline }) {
 }
 
 
-// Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬ Schedule Item Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
+// Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬ Schedule Item Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬
 function ScheduleItem({ slot }) {
   if (slot.isNow) {
     return (
@@ -1207,7 +1306,7 @@ function ScheduleItem({ slot }) {
   )
 }
 
-// Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬ My Profile Tab Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬Ă¢â€â‚¬
+// Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬ My Profile Tab Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬Ă¢â€ â‚¬
 
 function TutorEarningsTab() {
   const [data, setData] = useState(null)
@@ -2665,6 +2764,9 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
     teaching_style: '',
     demo_video_url: '',
     teaching_methods: [],
+    teaching_mode: 'Online',
+    offline_address: '',
+    offline_radius_km: '',
   })
   const [cvSaving, setCvSaving]         = useState(false)
   const [videoUploading, setVideoUploading] = useState(false)
@@ -2762,6 +2864,9 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
           teaching_style: data.teaching_style || '',
           demo_video_url: data.demo_video_url || '',
           teaching_methods: Array.isArray(data.teaching_methods) ? data.teaching_methods : [],
+          teaching_mode: data.teaching_mode || 'Online',
+          offline_address: data.offline_address || '',
+          offline_radius_km: data.offline_radius_km || '',
         })
         setInstantForm({
           price: data.instant_price || '',
@@ -3117,6 +3222,25 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                   </div>
                   <p className="mt-2 text-[12px] text-outline">Học sinh chỉ đặt lịch được theo hình thức bạn chọn. Chọn "Cả hai" để linh hoạt nhất.</p>
                 </div>
+                <div>
+                  <label className="block text-[13px] font-bold text-on-surface mb-2">Hình thức dạy học (Mới)</label>
+                  <select
+                    className="w-full h-11 px-3 border border-outline-variant rounded-xl text-[14px] outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow"
+                    value={cvForm.teaching_mode}
+                    onChange={e => setCvForm(f => ({ ...f, teaching_mode: e.target.value }))}
+                  >
+                    <option value="Online">Chỉ Dạy Online</option>
+                    <option value="Offline">Chỉ Dạy Offline</option>
+                    <option value="Both">Cả Online & Offline</option>
+                  </select>
+                </div>
+                {['Offline', 'Both'].includes(cvForm.teaching_mode) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 bg-surface-container-low rounded-xl border border-outline-variant">
+                    <CvInput label="Địa Chỉ Dạy Offline *" value={cvForm.offline_address} onChange={v => setCvForm(f => ({ ...f, offline_address: v }))} placeholder="VD: Khu vực Đại học FPT Đà Nẵng..." />
+                    <CvInput label="Bán Kính Di Chuyển (km) *" type="number" value={cvForm.offline_radius_km} onChange={v => setCvForm(f => ({ ...f, offline_radius_km: v }))} placeholder="VD: 10" />
+                  </div>
+                )}
+
                 <CvTextarea label="Giới thiệu bản thân" rows={4} value={cvForm.bio} onChange={v => setCvForm(f => ({ ...f, bio: v }))} />
                 <CvTextarea label="Phong cách giảng dạy" rows={3} value={cvForm.teaching_style} onChange={v => setCvForm(f => ({ ...f, teaching_style: v }))} />
                 <div>
@@ -3146,6 +3270,18 @@ function TutorProfileTab({ user, displayName, initials, updateUserContext }) {
                 <InfoItem icon="history" label="Kinh nghiệm" value={profile?.experience_years ? `${profile.experience_years} năm` : ''} />
                 <InfoItem icon="phone" label="Điện thoại" value={profile?.phone} />
                 <InfoItem icon="sync_alt" label="Hình thức dạy" value={METHOD_LABELS[methodChoiceOf(profile?.teaching_methods)] || 'Chưa chọn'} />
+                <div className="md:col-span-2">
+                  <InfoItem icon="laptop_mac" label="Hình thức dạy học (Mới)" value={
+                    profile?.teaching_mode === 'Both' ? 'Cả Online & Offline' : 
+                    profile?.teaching_mode === 'Offline' ? 'Chỉ Dạy Offline' : 'Chỉ Dạy Online'
+                  } />
+                </div>
+                {['Offline', 'Both'].includes(profile?.teaching_mode) && (
+                  <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <InfoItem icon="map" label="Địa Chỉ Dạy Offline" value={profile?.offline_address || 'Chưa cập nhật'} />
+                    <InfoItem icon="moving" label="Bán Kính Di Chuyển" value={profile?.offline_radius_km ? `${profile.offline_radius_km} km` : 'Chưa cập nhật'} />
+                  </div>
+                )}
                 <div className="md:col-span-2"><InfoItem icon="lightbulb" label="Phong cách giảng dạy" value={profile?.teaching_style} /></div>
                 {profile?.demo_video_url && <div className="md:col-span-2 mt-2"><p className="font-bold text-on-surface mb-3 flex items-center gap-2"><span className="material-symbols-outlined text-primary">play_circle</span>Video Demo</p><video className="w-full max-h-80 rounded-2xl bg-black border border-outline-variant/30 shadow-md" src={profile.demo_video_url} controls /></div>}
               </div>
@@ -3633,7 +3769,7 @@ function CredentialSection({ title, icon, items, type, onAdd, onDelete, noProof 
 }
 
 // ─── Reschedule Request Row Component ───────────────────────────────────────
-function RescheduleRequestRow({ request, onAccept, onDecline }) {
+function RescheduleRequestRow({ request, isHighlighted, onAccept, onDecline }) {
   const [expanded, setExpanded] = useState(false);
 
   const formatDate = (dateStr) => {
@@ -3655,7 +3791,7 @@ function RescheduleRequestRow({ request, onAccept, onDecline }) {
   const studentName = request.student_name_full || request.studentName || 'Học sinh';
 
   return (
-    <div className={`border-b border-gray-100 last:border-0 transition-colors ${expanded ? 'bg-amber-50/40' : 'hover:bg-gray-50/60'}`}>
+    <div className={`border-b border-gray-100 last:border-0 transition-colors ${expanded ? 'bg-amber-50/40' : 'hover:bg-gray-50/60'} ${isHighlighted ? 'notification-highlight' : ''}`}>
       {/* ── Collapsed summary row ── */}
       <button
         onClick={() => setExpanded(v => !v)}

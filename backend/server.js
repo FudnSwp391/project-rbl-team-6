@@ -23,6 +23,8 @@ const {
 const { computeReconciliation } = require("./services/reconciliation/computeReconciliation");
 const { buildFindingKey, resolveFinding } = require("./services/reconciliation/findingKey");
 const { computeSeverity } = require("./services/reconciliation/severity");
+const { geocodeAddress } = require("./utils/geocode");
+const { calculateDistance } = require("./utils/distance");
 const { gatherEvidence, gatherSystemLogs } = require("./services/reconciliation/evidenceService");
 const { buildAnalysis } = require("./services/reconciliation/aiExplanationService");
 const { buildTimeline: buildReconciliationTimeline } = require("./services/reconciliation/timelineService");
@@ -2464,7 +2466,7 @@ function validateAnalyticsTemplate(t) {
   const sql = t.sql.trim();
   if (!/^(select|with)\b/i.test(sql)) return { ok: false, reason: 'NOT_SELECT' };
   if (!/\blimit\b/i.test(sql)) return { ok: false, reason: 'NO_LIMIT' };
-  if (ANALYTICS_BLOCKED_RE.test(sql.replace(/\$\d+/g, '')) && /\b(insert|update|delete|drop|alter|truncate|grant|revoke)\b/i.test(sql)) return { ok: false, reason: 'BLOCKED_KEYWORD' };
+  if (ANALYTICS_BLOCKED_RE.test(sql.replace(/$\d+/g, '')) && /\b(insert|update|delete|drop|alter|truncate|grant|revoke)\b/i.test(sql)) return { ok: false, reason: 'BLOCKED_KEYWORD' };
   return { ok: true };
 }
 // ── Fuzzy/synonym-tolerant intent matching (Step 3/4/14). Still fully rule-based
@@ -4100,9 +4102,9 @@ app.post("/api/auth/google", async (req, res) => {
   }
 });
 
-// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
-// ΓöÇΓöÇ TUTOR APIs ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+// ═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═
+// ── TUTOR APIs ──────────────────────────────────────────────────────────────────────────────────────────────────
+// ═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═
 
 // PUT /api/tutor/availability
 app.put("/api/tutor/availability", verifyToken, async (req, res) => {
@@ -4131,8 +4133,9 @@ app.put("/api/tutor/availability", verifyToken, async (req, res) => {
       };
 
       for (const day in rangesObj) {
-        result[day] = [];
         const ranges = rangesObj[day] || [];
+        if (ranges.length === 0) continue;
+        result[day] = [];
         for (const range of ranges) {
           if (!range.start || !range.end) continue;
           const startMins = timeToMinutes(range.start);
@@ -4144,6 +4147,11 @@ app.put("/api/tutor/availability", verifyToken, async (req, res) => {
             result[day].push(minutesToTime(current));
             current += durationMins;
           }
+        }
+      }
+      for (const day in result) {
+        if (result[day].length === 0) {
+          delete result[day];
         }
       }
       return result;
@@ -4497,11 +4505,33 @@ app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
       } catch { methods = cur.teaching_methods; }
     }
 
+    let offline_lat = cur.offline_latitude;
+    let offline_lng = cur.offline_longitude;
+
+    if (['Offline', 'Both'].includes(b.teaching_mode)) {
+      if (!b.offline_address) {
+        return res.status(400).json({ message: "Vui lòng nhập địa chỉ Offline." });
+      }
+      if (!b.offline_radius_km || b.offline_radius_km <= 0) {
+        return res.status(400).json({ message: "Bán kính dạy Offline phải lớn hơn 0." });
+      }
+      if (b.offline_address !== cur.offline_address) {
+        const coords = await geocodeAddress(b.offline_address);
+        if (!coords) {
+          return res.status(400).json({ message: "Không thể tìm thấy tọa độ cho địa chỉ này. Vui lòng nhập địa chỉ rõ ràng hơn." });
+        }
+        offline_lat = coords.latitude;
+        offline_lng = coords.longitude;
+      }
+    }
+
     const result = await pool.query(
       `UPDATE tutor_profiles SET
          headline = $1, phone = $2, location = $3, subjects = $4,
          hourly_rate = $5, experience_years = $6, bio = $7,
-         teaching_style = $8, demo_video_url = $9, teaching_methods = $10
+         teaching_style = $8, demo_video_url = $9, teaching_methods = $10,
+         teaching_mode = $12, offline_address = $13, offline_radius_km = $14,
+         offline_latitude = $15, offline_longitude = $16
        WHERE user_id = $11 RETURNING *`,
       [
         b.headline !== undefined ? b.headline : cur.headline,
@@ -4516,6 +4546,11 @@ app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
         // Cột teaching_methods là text[] trong DB (không phải jsonb) — truyền mảng JS trực tiếp
         Array.isArray(methods) ? methods : [],
         userId,
+        b.teaching_mode || cur.teaching_mode || 'Online',
+        b.teaching_mode === 'Online' ? null : (b.offline_address || cur.offline_address),
+        b.teaching_mode === 'Online' ? null : (b.offline_radius_km || cur.offline_radius_km),
+        b.teaching_mode === 'Online' ? null : offline_lat,
+        b.teaching_mode === 'Online' ? null : offline_lng,
       ]
     );
 
@@ -4639,9 +4674,21 @@ app.post(
         teaching_style, qualifications,
         teaching_methods, suitable_students, cert_metadata,
         certificate_urls,
-        profile_photo_url, cccd_url, cccd_front_url, cccd_back_url
+        profile_photo_url, cccd_url, cccd_front_url, cccd_back_url,
+        teaching_mode, offline_address, offline_radius_km
       } = req.body;
       const userId = req.user.userId;
+
+      let offline_lat = null;
+      let offline_lng = null;
+      if (['Offline', 'Both'].includes(teaching_mode)) {
+        if (!offline_address) return res.status(400).json({ message: "Vui lòng nhập địa chỉ Offline." });
+        if (!offline_radius_km || offline_radius_km <= 0) return res.status(400).json({ message: "Bán kính dạy Offline phải lớn hơn 0." });
+        const coords = await geocodeAddress(offline_address);
+        if (!coords) return res.status(400).json({ message: "Không thể tìm thấy tọa độ cho địa chỉ này. Vui lòng nhập địa chỉ rõ ràng hơn." });
+        offline_lat = coords.latitude;
+        offline_lng = coords.longitude;
+      }
 
       let parsedTeachingMethods = [];
       let parsedSuitableStudents = [];
@@ -4734,12 +4781,22 @@ app.post(
         await pool.query(
           `UPDATE tutor_profiles SET
             teaching_methods  = $1,
-            suitable_students = $2::jsonb
+            suitable_students = $2::jsonb,
+            teaching_mode = $4,
+            offline_address = $5,
+            offline_radius_km = $6,
+            offline_latitude = $7,
+            offline_longitude = $8
            WHERE id = $3`,
           [
             Array.isArray(parsedTeachingMethods) ? parsedTeachingMethods : [],
             JSON.stringify(parsedSuitableStudents),
             result.rows[0].id,
+            teaching_mode || 'Online',
+            teaching_mode === 'Online' ? null : offline_address,
+            teaching_mode === 'Online' ? null : offline_radius_km,
+            teaching_mode === 'Online' ? null : offline_lat,
+            teaching_mode === 'Online' ? null : offline_lng,
           ]
         );
       } catch (structErr) {
@@ -14157,6 +14214,11 @@ async function startServer() {
         ADD COLUMN IF NOT EXISTS country           TEXT,
         ADD COLUMN IF NOT EXISTS phone             TEXT,
         ADD COLUMN IF NOT EXISTS headline          TEXT,
+        ADD COLUMN IF NOT EXISTS teaching_mode     VARCHAR(50) DEFAULT 'Online',
+        ADD COLUMN IF NOT EXISTS offline_address   TEXT,
+        ADD COLUMN IF NOT EXISTS offline_radius_km NUMERIC(5,2),
+        ADD COLUMN IF NOT EXISTS offline_latitude  NUMERIC(10,7),
+        ADD COLUMN IF NOT EXISTS offline_longitude NUMERIC(10,7),
         ADD COLUMN IF NOT EXISTS reject_reason     TEXT
     `);
     console.log("✅ DB migration: tutor_profiles extra columns ready");
@@ -14210,7 +14272,10 @@ async function startServer() {
         ADD COLUMN IF NOT EXISTS method_change_reason    TEXT,
         ADD COLUMN IF NOT EXISTS method_change_status    TEXT,
         ADD COLUMN IF NOT EXISTS reminded_24h_at         TIMESTAMPTZ,
-        ADD COLUMN IF NOT EXISTS reminded_1h_at          TIMESTAMPTZ
+        ADD COLUMN IF NOT EXISTS reminded_1h_at          TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS meeting_address         TEXT,
+        ADD COLUMN IF NOT EXISTS meeting_latitude        NUMERIC(10,7),
+        ADD COLUMN IF NOT EXISTS meeting_longitude       NUMERIC(10,7)
     `);
     await pool.query(`
       ALTER TABLE tutor_profiles
@@ -15657,7 +15722,8 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     // Nếu có tutorId, kiểm tra gia sư đó đã được duyệt và lấy tên nếu chưa truyền
     if (tutorId) {
       const tutorCheck = await pool.query(
-        `SELECT u.full_name, tp.teaching_methods FROM tutor_profiles tp
+        `SELECT u.full_name, tp.teaching_methods, tp.teaching_mode, tp.offline_radius_km, tp.offline_latitude, tp.offline_longitude
+         FROM tutor_profiles tp
          JOIN users u ON tp.user_id = u.id
          WHERE tp.user_id = $1 AND tp.status = 'approved'`,
         [tutorId]
@@ -15680,6 +15746,44 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       if (!teachingMethod) {
         if (support.online && !support.offline) teachingMethod = 'online';
         else if (!support.online && support.offline) teachingMethod = 'offline';
+      }
+
+      // Offline Booking Validation
+      if (teachingMethod === 'offline') {
+        const tMode = tutorCheck.rows[0].teaching_mode;
+        if (tMode === 'Online') {
+          return res.status(400).json({ message: "Gia sư này không hỗ trợ dạy Offline." });
+        }
+
+        const meetingAddress = body.meeting_address || body.meetingAddress;
+        if (!meetingAddress) {
+          return res.status(400).json({ message: "Vui lòng nhập địa điểm học (Địa chỉ hẹn) để tính khoảng cách." });
+        }
+
+        const coords = await geocodeAddress(meetingAddress);
+        if (!coords) {
+          return res.status(400).json({ message: "Không thể xác định tọa độ từ địa chỉ hẹn. Vui lòng nhập địa chỉ rõ ràng hơn." });
+        }
+
+        const tLat = tutorCheck.rows[0].offline_latitude;
+        const tLon = tutorCheck.rows[0].offline_longitude;
+        const maxRadius = parseFloat(tutorCheck.rows[0].offline_radius_km);
+
+        if (!tLat || !tLon || !maxRadius) {
+          return res.status(400).json({ message: "Gia sư chưa thiết lập đầy đủ thông tin dạy Offline." });
+        }
+
+        const dist = calculateDistance(coords.latitude, coords.longitude, tLat, tLon);
+        if (dist > maxRadius) {
+          return res.status(400).json({ message: `Vị trí hẹn cách gia sư ${dist.toFixed(1)} km, vượt quá bán kính di chuyển cho phép (${maxRadius} km).` });
+        }
+
+        // Attach snapshots to all sessions
+        bookingSessions.forEach(session => {
+          session.meeting_address = meetingAddress;
+          session.meeting_latitude = coords.latitude;
+          session.meeting_longitude = coords.longitude;
+        });
       }
     }
 
@@ -15762,10 +15866,10 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         }
 
         const result = await client.query(
-          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id, meeting_address, meeting_latitude, meeting_longitude)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
            RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at, package_id`,
-          [effectiveStudentId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId]
+          [effectiveStudentId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId, session.meeting_address || null, session.meeting_latitude || null, session.meeting_longitude || null]
         );
         const booking = result.rows[0];
 
@@ -17954,44 +18058,115 @@ app.get("/api/tutor/earnings", verifyToken, requireTutor, async (req, res) => {
 // ============ TUTOR WITHDRAWAL / PAYOUT ROUTES (Batch 19) ================
 // =========================================================================
 
-// POST /api/tutor/withdrawals — tutor requests a withdrawal (holds the money)
+// -----------------------------------------------------------------------------
+// BANK ACCOUNT APIS
+// -----------------------------------------------------------------------------
+
+// GET /api/tutor/bank-accounts — get tutor's bank account
+app.get('/api/tutor/bank-accounts', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM tutor_bank_accounts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1', [req.user.userId]);
+    return res.json(result.rows[0] || null);
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/tutor/bank-accounts — register bank account
+app.post('/api/tutor/bank-accounts', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { bankName, accountNumber, accountHolder } = req.body;
+    if (!bankName || !accountNumber || !accountHolder) return res.status(400).json({ message: 'Thiếu thông tin.' });
+    
+    // Check if pending/approved exists
+    const existing = await pool.query("SELECT * FROM tutor_bank_accounts WHERE user_id = $1 AND status IN ('PENDING', 'APPROVED')", [req.user.userId]);
+    if (existing.rows.length > 0) return res.status(400).json({ message: 'Bạn đã có tài khoản đang chờ duyệt hoặc đã duyệt.' });
+
+    const result = await pool.query(
+      `INSERT INTO tutor_bank_accounts (user_id, bank_name, account_number, account_holder, status)
+       VALUES ($1, $2, $3, $4, 'PENDING') RETURNING *`,
+      [req.user.userId, bankName, accountNumber, accountHolder]
+    );
+    return res.json(result.rows[0]);
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/admin/bank-accounts — list all bank accounts
+app.get('/api/admin/bank-accounts', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT b.*, u.full_name AS tutor_name, u.email AS tutor_email
+      FROM tutor_bank_accounts b
+      JOIN users u ON b.user_id = u.id
+      ORDER BY (b.status = 'PENDING') DESC, b.created_at DESC
+    `);
+    return res.json(result.rows);
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/admin/bank-accounts/:id/approve
+app.post('/api/admin/bank-accounts/:id/approve', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`UPDATE tutor_bank_accounts SET status='APPROVED', updated_at=NOW() WHERE id=$1 RETURNING *`, [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ message: 'Không tìm thấy.' });
+    
+    await safeNotifyUser(pool, {
+      userId: result.rows[0].user_id, channels: ['IN_APP'],
+      templateKey: 'bank_account_approved', eventType: 'bank_account_approved',
+      data: { bankName: result.rows[0].bank_name }, refId: req.params.id, refType: 'bank_account',
+      idempotencyKey: `bank_account_approved:${req.params.id}`
+    });
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/admin/bank-accounts/:id/reject
+app.post('/api/admin/bank-accounts/:id/reject', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const result = await pool.query(`UPDATE tutor_bank_accounts SET status='REJECTED', rejection_reason=$2, updated_at=NOW() WHERE id=$1 RETURNING *`, [req.params.id, reason || 'Không hợp lệ']);
+    if (!result.rows.length) return res.status(404).json({ message: 'Không tìm thấy.' });
+    
+    await safeNotifyUser(pool, {
+      userId: result.rows[0].user_id, channels: ['IN_APP'],
+      templateKey: 'bank_account_rejected', eventType: 'bank_account_rejected',
+      data: { bankName: result.rows[0].bank_name, reason }, refId: req.params.id, refType: 'bank_account',
+      idempotencyKey: `bank_account_rejected:${req.params.id}`
+    });
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/tutor/withdrawals — auto-approved since bank account is approved
 app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) => {
   const client = await pool.connect();
   try {
     const amount = normalizeWithdrawalAmount(req.body?.amount);
-    const bankName        = sanitizeBankText(req.body?.bankName, 120);
-    const bankAccountNo   = sanitizeBankText(req.body?.bankAccountNo, 40);
-    const bankAccountName = sanitizeBankText(req.body?.bankAccountName, 120);
-    const payoutNote      = sanitizeBankText(req.body?.payoutNote, 300);
-    const clientKey       = sanitizeBankText(req.body?.idempotencyKey, 100);
+    const clientKey = sanitizeBankText(req.body?.idempotencyKey, 100);
 
     if (amount < MIN_WITHDRAWAL_AMOUNT) {
       return res.status(400).json({ message: `Số tiền rút tối thiểu là ${MIN_WITHDRAWAL_AMOUNT.toLocaleString('vi-VN')}đ.` });
     }
-    if (!bankName || !bankAccountNo || !bankAccountName) {
-      return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin ngân hàng.' });
-    }
-
-    const idemKey = clientKey ? `withdrawal:tutor:${req.user.userId}:${clientKey}` : null;
-
-    // --- Rate Limit / Cooldown chống spam rút tiền (2 phút) ---
-    const recentWd = await pool.query(
-      `SELECT created_at FROM withdrawal_requests WHERE tutor_id = $1 ORDER BY created_at DESC LIMIT 1`,
-      [req.user.userId]
-    );
-    if (recentWd.rows.length > 0) {
-      const lastReqTime = new Date(recentWd.rows[0].created_at).getTime();
-      const elapsedMs = Date.now() - lastReqTime;
-      const cooldownMs = 2 * 60 * 1000;
-      if (elapsedMs < cooldownMs) {
-        const waitSec = Math.ceil((cooldownMs - elapsedMs) / 1000);
-        return res.status(429).json({ message: `Vui lòng đợi thêm ${waitSec} giây trước khi tạo yêu cầu rút tiền mới.` });
-      }
-    }
 
     await client.query('BEGIN');
 
-    // Idempotency: if this client key was already used, return the existing request
+    // 1. Check if tutor has an APPROVED bank account
+    const bankRes = await client.query("SELECT * FROM tutor_bank_accounts WHERE user_id=$1 AND status='APPROVED' LIMIT 1", [req.user.userId]);
+    if (bankRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Bạn cần có tài khoản ngân hàng đã được duyệt để rút tiền.' });
+    }
+    const bank = bankRes.rows[0];
+
+    const idemKey = clientKey ? `withdrawal:tutor:${req.user.userId}:${clientKey}` : null;
     if (idemKey) {
       const existing = await client.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1', [idemKey]);
       if (existing.rows.length) {
@@ -18008,37 +18183,34 @@ app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) =
       return res.status(400).json({ code: 'INSUFFICIENT_FUNDS', message: 'Số dư khả dụng không đủ để rút.', balance: Number(wallet.balance), requested: amount });
     }
 
-    // 1) Record a PENDING WITHDRAW transaction (enum: type=WITHDRAW, status=PENDING)
+    // 2. Directly create a COMPLETED withdrawal since bank is verified
     const txRes = await client.query(
       `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
-       VALUES ($1, $2, 'WITHDRAW', 'PENDING', 'MANUAL', $3) RETURNING id`,
-      [wallet.id, -amount, 'Yêu cầu rút tiền gia sư']
+       VALUES ($1, $2, 'WITHDRAW', 'COMPLETED', 'MANUAL', $3) RETURNING id`,
+      [wallet.id, -amount, 'Rút tiền tự động (Đã duyệt)']
     );
     const holdTxId = txRes.rows[0].id;
 
-    // 2) Reserve the money: balance → held_balance (ledger reason WITHDRAWAL_HOLD)
+    // Deduct directly from balance (no hold)
     await setLedgerContext(client, {
-      reason_code: 'WITHDRAWAL_HOLD', source: 'api', reference_type: 'withdrawal',
+      reason_code: 'WITHDRAWAL_PAYOUT', source: 'api', reference_type: 'withdrawal',
       transaction_id: holdTxId, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
     });
-    await client.query('UPDATE wallets SET balance = balance - $1, held_balance = held_balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+    await client.query('UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
 
-    // 3) Create the withdrawal request row
     const wr = await client.query(
       `INSERT INTO withdrawal_requests
          (tutor_id, wallet_id, amount, fee_amount, net_amount, status, payout_method,
           bank_name, bank_account_no, bank_account_name, payout_note, policy_version,
           hold_transaction_id, idempotency_key, metadata)
-       VALUES ($1,$2,$3,0,$3,'PENDING','BANK_TRANSFER',$4,$5,$6,$7,$8,$9,$10,'{}'::jsonb)
+       VALUES ($1,$2,$3,0,$3,'COMPLETED','BANK_TRANSFER',$4,$5,$6,$7,$8,$9,$10,'{}'::jsonb)
        RETURNING *`,
-      [req.user.userId, wallet.id, amount, bankName, bankAccountNo, bankAccountName, payoutNote, WITHDRAWAL_POLICY_VERSION, holdTxId, idemKey]
+      [req.user.userId, wallet.id, amount, bank.bank_name, bank.account_number, bank.account_holder, 'Tự động duyệt', WITHDRAWAL_POLICY_VERSION, holdTxId, idemKey]
     );
     const request = wr.rows[0];
 
-    // Link the transaction back to the request for traceability
     await client.query('UPDATE transactions SET reference_id=$1 WHERE id=$2', [request.id, holdTxId]);
 
-    // Notify tutor (Batch 20: in-app + email outbox, same client so rollback-safe)
     await safeNotifyUser(client, {
       userId: req.user.userId, channels: ['IN_APP', 'EMAIL'],
       templateKey: 'withdrawal_created', eventType: 'withdrawal_created',
@@ -18047,30 +18219,10 @@ app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) =
       idempotencyKey: `withdrawal:${request.id}:created:${req.user.userId}`,
     });
 
-    // Báo admin có yêu cầu rút tiền mới cần xử lý (chuông + email)
-    const wdAdmins = await client.query(
-      `SELECT id FROM users WHERE role = 'admin' AND COALESCE(is_banned, FALSE) = FALSE`
-    );
-    for (const admin of wdAdmins.rows) {
-      await safeNotifyUser(client, {
-        userId: admin.id, type: 'admin_alert', channels: ['IN_APP', 'EMAIL'],
-        templateKey: 'admin_new_withdrawal', eventType: 'admin_new_withdrawal',
-        refId: request.id, refType: 'withdrawal',
-        idempotencyKey: `admin_new_withdrawal:${request.id}:${admin.id}`,
-        data: { tutorName: req.user.name || '', amount },
-      });
-    }
-
     await client.query('COMMIT');
     return res.status(201).json({ success: true, request });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    if (err.code === '23505') { // unique_violation on idempotency_key (race)
-      const ex = await pool.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1',
-        [`withdrawal:tutor:${req.user.userId}:${sanitizeBankText(req.body?.idempotencyKey, 100)}`]).catch(() => ({ rows: [] }));
-      if (ex.rows.length) return res.status(200).json({ success: true, duplicate: true, request: ex.rows[0] });
-      return res.status(409).json({ message: 'Yêu cầu rút tiền trùng lặp.' });
-    }
     console.error('POST /api/tutor/withdrawals error:', err);
     return res.status(500).json({ message: 'Lỗi khi tạo yêu cầu rút tiền.' });
   } finally {
@@ -21110,6 +21262,27 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: reconciliation_investigations/_audit_logs/_incidents/_incident_comments/_runs ready (Batch 37)');
   } catch (err) {
     console.error('⚠️  DB migration (Reconciliation Investigation Center Batch 37) warning:', err.message);
+  }
+
+  // ── Auto-migrate: tutor_bank_accounts ───────────────────────────────────────
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_bank_accounts (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES users(id),
+          bank_name TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          account_holder TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+          rejection_reason TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(user_id, bank_name, account_number)
+      );
+    `);
+    console.log('✅ DB migration: tutor_bank_accounts ready');
+  } catch (err) {
+    console.error('⚠️  DB migration (tutor_bank_accounts) warning:', err.message);
   }
 
   // Prime the dynamic subject index so admin-created subjects resolve from the

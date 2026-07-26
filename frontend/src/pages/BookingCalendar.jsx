@@ -85,6 +85,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   const [selectedBookings, setSelectedBookings] = useState({});
   const [subject, setSubject]                   = useState('');
   const [teachingMethod, setTeachingMethod]     = useState('');
+  const [meetingAddress, setMeetingAddress]     = useState('');
   const [notes, setNotes]                       = useState('');
   const [selectedChild, setSelectedChild]       = useState('');
 
@@ -143,6 +144,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     if (pending.selectedBookings) setSelectedBookings(pending.selectedBookings);
     if (pending.subject) setSubject(pending.subject);
     if (pending.teachingMethod) setTeachingMethod(pending.teachingMethod);
+    if (pending.meetingAddress) setMeetingAddress(pending.meetingAddress);
     if (pending.notes) setNotes(pending.notes);
     if (typeof pending.currentYear === 'number') setCurrentYear(pending.currentYear);
     if (typeof pending.currentMonth === 'number') setCurrentMonth(pending.currentMonth);
@@ -418,6 +420,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
           selectedBookings,
           subject,
           teachingMethod,
+          meetingAddress: (teachingMethod || (tutor && (() => { const ms = methodSupport(tutor.teaching_methods); return !(ms.online && ms.offline) ? (ms.online ? 'online' : 'offline') : null; })())) === 'offline' ? meetingAddress : null,
           notes,
           currentYear,
           currentMonth,
@@ -457,6 +460,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
         selectedBookings,
         subject,
         teachingMethod,
+        meetingAddress: (teachingMethod || (tutor && (() => { const ms = methodSupport(tutor.teaching_methods); return !(ms.online && ms.offline) ? (ms.online ? 'online' : 'offline') : null; })())) === 'offline' ? meetingAddress : null,
         notes,
         currentYear,
         currentMonth,
@@ -531,6 +535,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       subject:   subject || (tutor.subjects?.[0] ?? null),
       notes:     notes || null,
       teachingMethod: teachingMethod || null,
+      meeting_address: (teachingMethod || (tutor && (() => { const ms = methodSupport(tutor.teaching_methods); return !(ms.online && ms.offline) ? (ms.online ? 'online' : 'offline') : null; })())) === 'offline' ? meetingAddress : null,
       targetStudentId: user?.role === 'parent' ? selectedChild : undefined,
     };
 
@@ -1015,6 +1020,15 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
                         <span className="material-symbols-outlined" style={{ fontSize: 14 }}>info</span>
                         {hint}
                       </p>
+                    )}
+                    {(teachingMethod || single) === 'offline' && (
+                      <div style={{ marginTop: 12 }}>
+                        <label style={S.label}>Địa điểm học (Bắt buộc) *</label>
+                        <input type="text" value={meetingAddress} onChange={e => setMeetingAddress(e.target.value)}
+                          placeholder="VD: Quán Cafe XYZ, đường ABC..." required
+                          style={S.input} />
+                        <p style={{ margin: '4px 0 0', fontSize: 11, color: '#8a8ca0' }}>Hệ thống sẽ tự động kiểm tra khoảng cách đến gia sư.</p>
+                      </div>
                     )}
                   </div>
                 );

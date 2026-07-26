@@ -12,6 +12,16 @@
   animation: aquaFlow 22s ease-in-out infinite;
 }
 
+@keyframes highlightPulse {
+  0%, 100% { background-color: transparent; }
+  30% { background-color: rgba(var(--color-primary-rgb), 0.12); }
+}
+.notification-highlight {
+  animation: highlightPulse 1.5s ease 2;
+  border-left: 3px solid var(--color-primary);
+  scroll-margin-top: 80px;
+}
+
 .container {
   width: min(1280px, calc(100% - 48px));
   margin: 0 auto;
@@ -987,3 +997,15 @@
   line-height: 1.6;
 }
 
+/* =========================================
+   Notification Highlight Animation
+   ========================================= */
+@keyframes highlightPulse {
+  0%, 100% { background-color: transparent; }
+  30% { background-color: rgba(var(--color-primary-rgb, 15, 23, 42), 0.12); }
+}
+.notification-highlight {
+  animation: highlightPulse 1.5s ease 2;
+  border-left: 3px solid var(--primary, #0f172a);
+  scroll-margin-top: 80px;
+}
