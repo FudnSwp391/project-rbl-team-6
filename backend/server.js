@@ -14626,17 +14626,29 @@ app.put('/api/admin/support-requests/:id', verifyToken, requireAdmin, async (req
     }
     let cancelledCount = 0;
     if (status === 'approved' && sr.request_type === 'change_tutor' && sr.tutor_id) {
-      const cancelled = await client.query(
-        `UPDATE bookings
-         SET status = 'Cancelled',
-             note = COALESCE(note,'') || ' [Hệ thống hủy: admin duyệt yêu cầu đổi gia sư]'
+      const bookingsRes = await client.query(
+        `SELECT id, escrow_tx_id, payer_wallet_id, lesson_fee 
+         FROM bookings
          WHERE student_id = $1 AND tutor_id = $2
            AND lesson_date >= CURRENT_DATE
            AND status IN ('Pending', 'Approved')
-         RETURNING id`,
+         FOR UPDATE`,
         [sr.student_id, sr.tutor_id]
       );
-      cancelledCount = cancelled.rows.length;
+      
+      for (const b of bookingsRes.rows) {
+        if (b.escrow_tx_id && b.payer_wallet_id && b.lesson_fee) {
+          await client.query(`SELECT refund_escrow($1, $2, $3)`, [b.escrow_tx_id, b.payer_wallet_id, b.lesson_fee]);
+        }
+        await client.query(
+          `UPDATE bookings
+           SET status = 'Cancelled',
+               note = COALESCE(note,'') || ' [Hệ thống hủy & Hoàn tiền: admin duyệt yêu cầu đổi gia sư]'
+           WHERE id = $1`,
+          [b.id]
+        );
+      }
+      cancelledCount = bookingsRes.rows.length;
       await client.query(
         `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
          VALUES ($1,'support_request','Lịch dạy thay đổi',$2,'event_busy',$3,'support_request')`,

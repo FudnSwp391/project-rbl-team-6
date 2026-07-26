@@ -479,6 +479,15 @@ export default function SupportCenter({ token }) {
                           <p className="text-sm text-on-surface">{r.admin_response}</p>
                         </div>
                       )}
+                      {r.status === 'approved' && r.request_type === 'change_tutor' && (
+                        <button
+                          onClick={() => { window.location.hash = '/find-tutors'; }}
+                          className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-on-primary text-xs font-bold hover:opacity-90 transition-opacity w-fit shadow-sm"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_search</span>
+                          Tìm gia sư mới ngay
+                        </button>
+                      )}
                     </div>
                     {canCancel && (
                       <button
