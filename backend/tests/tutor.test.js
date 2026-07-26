@@ -20,10 +20,17 @@ test('TC28 GET /api/tutor/profile — 401 without token', async () => {
 
 // ─── TC29 ─────────────────────────────────────────────────────────────────────
 test('TC29 GET /api/tutor/profile — 200 with tutor token', async () => {
-  pool.query.mockResolvedValue({
-    rows: [{ id: 'tp1', user_id: TUTOR_ID, status: 'approved', bio: 'Experienced', hourly_rate: 200000 }],
-    rowCount: 1,
-  });
+  // Route now makes 2 sequential queries (profile, then tutor_certificates) —
+  // must mock each call distinctly. A shared mockResolvedValue would make the
+  // credentials query return the same rows array as the profile query, so
+  // `profile.credentials = credsResult.rows` sets profile.credentials[0] to
+  // profile itself (circular), and res.json() throws on JSON.stringify.
+  pool.query
+    .mockResolvedValueOnce({
+      rows: [{ id: 'tp1', user_id: TUTOR_ID, status: 'approved', bio: 'Experienced', hourly_rate: 200000 }],
+      rowCount: 1,
+    })
+    .mockResolvedValueOnce({ rows: [], rowCount: 0 });
   const res = await request(app)
     .get('/api/tutor/profile')
     .set('Authorization', `Bearer ${tutorToken}`);
