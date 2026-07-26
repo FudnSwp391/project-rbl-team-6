@@ -29,6 +29,7 @@ const AICaseResolutions      = lazy(() => import('./admin/transactions/AICaseRes
 const DataEntryView          = lazy(() => import('./admin/DataEntryView'))
 
 const CourseComplaintsAdminView = lazy(() => import('./admin/services/CourseComplaints'))
+const SupportRequestsAdminView = lazy(() => import('./admin/services/SupportRequests'))
 const Violations = lazy(() => import('./admin/services/Violations'))
 const Moderation = lazy(() => import('./admin/services/Moderation'))
 const SemanticModeration = lazy(() => import('./admin/semantic/SemanticModeration'))
@@ -37,6 +38,7 @@ const SafeAnalytics = lazy(() => import('./admin/analytics/SafeAnalytics'))
 const PinnedWidgets = lazy(() => import('./admin/analytics/PinnedWidgets'))
 const SubjectsView = lazy(() => import('./admin/subjects/SubjectsView'))
 import { subjectMeta as sharedSubjectMeta } from './admin/subjects/subjectMeta'
+import UserEditModal from './admin/users/UserEditModal'
 import { uploadCourseThumbnail } from './services/upload'
 
 import { API_BASE_URL as API } from './config'
@@ -95,6 +97,7 @@ const TX_VIEW_IDS = new Set(TX_SUB_ITEMS.map(i => i.id))
 
 const SM_SUB_ITEMS = [
   { id: 'sm-complaints',   label: 'Khiếu nại Dịch vụ',     icon: 'report_problem' },
+  { id: 'sm-support',      label: 'Hỗ trợ Học sinh',       icon: 'support_agent' },
   { id: 'sm-reviews',      label: 'Đánh giá',              icon: 'reviews' },
   { id: 'sm-violations',   label: 'Báo cáo vi phạm',       icon: 'gavel' },
   { id: 'sm-moderation',   label: 'Giám sát nội dung',     icon: 'policy' },
@@ -172,20 +175,44 @@ export default function AdminDashboard() {
   const [previewError,   setPreviewError]   = useState(null)
 
   // ── Fetch data ────────────────────────────────────────────────────────────
+  const [credActionId, setCredActionId] = useState(null)
+
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [statsData, tutorsData, credentialsData] = await Promise.all([
+      const [statsData, tutorsData, credsData] = await Promise.all([
         authFetch(`${API}/api/admin/tutors/stats`, token),
         authFetch(`${API}/api/admin/tutors/pending`, token),
-        authFetch(`${API}/api/admin/credentials/pending`, token).catch(() => []),
+        authFetch(`${API}/api/admin/tutor-certificates/pending`, token),
       ])
       setStats(statsData)
       setTutors(tutorsData)
-      setPendingCredentials(credentialsData || [])
+      setPendingCredentials(credsData.credentials || [])
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }, [token])
+
+  const handleApproveCredential = async (id) => {
+    setCredActionId(id)
+    try {
+      await authFetch(`${API}/api/admin/tutor-certificates/${id}/approve`, token, { method: 'PATCH' })
+      setPendingCredentials(prev => prev.filter(c => c.id !== id))
+      setToast({ msg: 'Đã duyệt chứng chỉ.', type: 'success' })
+    } catch (err) {
+      setToast({ msg: `Duyệt thất bại: ${err.message}`, type: 'error' })
+    } finally { setCredActionId(null) }
+  }
+
+  const handleRejectCredential = async (id) => {
+    setCredActionId(id)
+    try {
+      await authFetch(`${API}/api/admin/tutor-certificates/${id}/reject`, token, { method: 'PATCH' })
+      setPendingCredentials(prev => prev.filter(c => c.id !== id))
+      setToast({ msg: 'Đã từ chối chứng chỉ.', type: 'success' })
+    } catch (err) {
+      setToast({ msg: `Từ chối thất bại: ${err.message}`, type: 'error' })
+    } finally { setCredActionId(null) }
+  }
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -275,36 +302,6 @@ export default function AdminDashboard() {
     } finally { setActionLoading(false) }
   }
 
-  // ── Approve/Reject Credentials ────────────────────────────────────────────
-  const handleApproveCredential = async (credId) => {
-    setActionLoading(true)
-    try {
-      await authFetch(`${API}/api/admin/credentials/${credId}/approve`, token, { method: 'PATCH' })
-      setPendingCredentials(prev => prev.filter(c => c.id !== credId))
-      setToast({ msg: 'Đã duyệt chứng chỉ/bằng cấp.', type: 'success' })
-    } catch (err) {
-      setToast({ msg: `Duyệt thất bại: ${err.message}`, type: 'error' })
-    } finally { setActionLoading(false) }
-  }
-
-  const handleRejectCredentialAction = async (credId) => {
-    const reason = window.prompt("Nhập lý do từ chối bằng cấp/chứng chỉ này:")
-    if (reason === null) return // Canceled
-    if (!reason.trim()) { setToast({ msg: 'Vui lòng nhập lý do.', type: 'error' }); return }
-    
-    setActionLoading(true)
-    try {
-      await authFetch(`${API}/api/admin/credentials/${credId}/reject`, token, { 
-        method: 'PATCH',
-        body: JSON.stringify({ reason: reason.trim() }) 
-      })
-      setPendingCredentials(prev => prev.filter(c => c.id !== credId))
-      setToast({ msg: 'Đã từ chối chứng chỉ/bằng cấp.', type: 'success' })
-    } catch (err) {
-      setToast({ msg: `Từ chối thất bại: ${err.message}`, type: 'error' })
-    } finally { setActionLoading(false) }
-  }
-
   // ── Document preview ──────────────────────────────────────────────────────
   const handleViewDoc = async (path) => {
     if (!path) return
@@ -351,7 +348,8 @@ export default function AdminDashboard() {
 
             const active = activeView === item.id || (isTxParent && isTxActive) || (isSmParent && isSmActive)
             const showSection = item.section && item.section !== arr[idx - 1]?.section
-            const badge = item.id === 'tutor-approval' && kpiStats.pending_tutors > 0 ? kpiStats.pending_tutors : null
+            const tutorApprovalCount = (kpiStats.pending_tutors || 0) + pendingCredentials.length
+            const badge = item.id === 'tutor-approval' && tutorApprovalCount > 0 ? tutorApprovalCount : null
 
             const sectionHeader = showSection && (
               <p key={`${item.id}-sec`} className="px-3 pt-4 pb-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-on-surface-variant/60 select-none">
@@ -555,12 +553,12 @@ export default function AdminDashboard() {
             <TutorCredentialsView
               credentials={pendingCredentials}
               onApprove={handleApproveCredential}
-              onReject={handleRejectCredentialAction}
+              onReject={handleRejectCredential}
               onViewDoc={handleViewDoc}
             />
           )}
           {activeView === 'data-entry'      && <DataEntryView />}
-          {activeView === 'user-management' && <UserManagementView initialSearch={userMgmtSearch} onSearchConsumed={() => setUserMgmtSearch('')} />}
+          {activeView === 'user-management' && <UserManagementView initialSearch={userMgmtSearch} onSearchConsumed={() => setUserMgmtSearch('')} onViewDoc={handleViewDoc} />}
           {activeView === 'subjects'         && <SubjectsView token={token} />}
           {activeView === 'lessons'          && <CourseManagementView token={token} />}
           {activeView === 'transactions'     && <TransactionsView token={token} />}
@@ -588,6 +586,7 @@ export default function AdminDashboard() {
 
           {/* ── Service Management Module ── */}
           {activeView === 'sm-complaints'    && <CourseComplaintsAdminView token={token} />}
+          {activeView === 'sm-support'       && <SupportRequestsAdminView token={token} />}
           {activeView === 'sm-reviews'       && <ReviewsView token={token} />}
           {activeView === 'sm-violations'    && <Violations token={token} />}
           {activeView === 'sm-moderation'    && <Moderation token={token} />}
@@ -1005,6 +1004,7 @@ function DashboardView({
         {[
           { id: 'tutor-approval', icon: 'how_to_reg',     label: 'Duyệt gia sư', desc: 'Xem xét hồ sơ chờ duyệt',          tile: 'bg-blue-50 text-blue-600',       count: kpiLoading ? null : (K.pending_tutors || null) },
           { id: 'sm-complaints',  icon: 'report_problem', label: 'Khiếu nại Dịch vụ', desc: 'Xem và xử lý khiếu nại chất lượng dịch vụ', tile: 'bg-amber-50 text-amber-600',     count: null },
+          { id: 'sm-support',     icon: 'support_agent',  label: 'Hỗ trợ Học sinh',   desc: 'Đổi gia sư, khiếu nại, hoàn tiền, kỹ thuật', tile: 'bg-violet-50 text-violet-600',   count: null },
           { id: 'transactions',   icon: 'payments',       label: 'Giao dịch',    desc: 'Theo dõi hoạt động thanh toán',     tile: 'bg-emerald-50 text-emerald-600', count: null },
         ].map(item => (
           <button
@@ -1668,11 +1668,12 @@ function TutorApprovalView({ tutors, loading, error, selectedTutor, actionLoadin
 }
 
 // ─── User Detail Panel ────────────────────────────────────────────────────────
-function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold }) {
+function UserDetailPanel({ user, detail, loading, onBan, onEdit, actionId, onReleaseHold, onViewDoc, onLockSchedule }) {
   const roleColor  = r => ({ admin:'bg-purple-100 text-purple-700', tutor:'bg-indigo-100 text-indigo-700', student:'bg-blue-100 text-blue-700', parent:'bg-green-100 text-green-700' }[r] ?? 'bg-gray-100 text-gray-600')
   const statusColor = b => b ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'
   const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—'
   const fmtCurrency = v => v != null ? `${Number(v).toLocaleString('vi-VN')} ₫/hr` : '—'
+  const fmtMoney = v => `${Number(v || 0).toLocaleString('vi-VN')} đ`
 
   if (!user) return (
     <div className="bg-white rounded-xl shadow-sm border border-outline-variant p-8 flex flex-col items-center justify-center gap-3 text-center min-h-[320px]">
@@ -1686,7 +1687,16 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-outline-variant overflow-hidden">
-      <div className="bg-gradient-to-br from-primary/10 to-primary/5 px-5 pt-6 pb-5 flex flex-col items-center gap-2 text-center border-b border-outline-variant">
+      <div className="bg-gradient-to-br from-primary/10 to-primary/5 px-5 pt-6 pb-5 flex flex-col items-center gap-2 text-center border-b border-outline-variant relative">
+        {user.role !== 'admin' && (
+          <button
+            onClick={() => onEdit?.(user)}
+            title="Chỉnh sửa thông tin"
+            className="absolute top-3 right-3 w-8 h-8 rounded-lg bg-white/70 hover:bg-white text-on-surface-variant hover:text-primary flex items-center justify-center transition-colors shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[18px]">edit</span>
+          </button>
+        )}
         {detail?.picture ? (
           <img src={detail.picture} alt={detail.full_name} className="w-16 h-16 rounded-full object-cover ring-4 ring-white shadow-sm" />
         ) : (
@@ -1741,15 +1751,44 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold
             )}
           </div>
 
+          <div className="space-y-2 pt-2 border-t border-outline-variant">
+            <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Ví tiền</p>
+            <InfoRow icon="account_balance_wallet" label="Số dư" value={fmtMoney(detail.wallet?.balance)} />
+            <InfoRow icon="lock_clock" label="Đang tạm giữ" value={fmtMoney(detail.wallet?.held_balance)} />
+          </div>
+
+          {detail.flags && (detail.flags.disputes_total > 0 || detail.flags.fraud_investigations_total > 0 || detail.flags.fraud_intel_reports_total > 0) && (
+            <div className="space-y-2 pt-2 border-t border-outline-variant">
+              <p className="text-xs font-semibold text-orange-600 uppercase tracking-wide flex items-center gap-1">
+                <span className="material-symbols-outlined text-[14px]">gpp_maybe</span>Cờ cảnh báo
+              </p>
+              {detail.flags.disputes_total > 0 && (
+                <InfoRow icon="gavel" label="Tranh chấp" value={`${detail.flags.disputes_total} (${detail.flags.disputes_open} đang mở)`} />
+              )}
+              {detail.flags.fraud_investigations_total > 0 && (
+                <InfoRow icon="policy" label="Điều tra gian lận" value={detail.flags.fraud_investigations_total} />
+              )}
+              {detail.flags.fraud_intel_reports_total > 0 && (
+                <InfoRow icon="analytics" label="Báo cáo tình báo gian lận" value={detail.flags.fraud_intel_reports_total} />
+              )}
+            </div>
+          )}
+
           {detail.role === 'tutor' && detail.tutor_profile && (
             <div className="space-y-2 pt-2 border-t border-outline-variant">
               <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Hồ sơ gia sư</p>
-              <InfoRow icon="menu_book" label="Môn học" value={detail.tutor_profile.subjects?.join(', ') || '—'} />
+              <InfoRow icon="menu_book" label="Môn học" value={detail.tutor_profile.subjects || '—'} />
               <InfoRow icon="work" label="Kinh nghiệm" value={detail.tutor_profile.experience_years != null ? `${detail.tutor_profile.experience_years} năm` : '—'} />
               <InfoRow icon="payments" label="Học phí" value={fmtCurrency(detail.tutor_profile.hourly_rate)} />
+              <InfoRow icon="military_tech" label="Điểm uy tín" value={detail.tutor_profile.reputation_score != null ? `${detail.tutor_profile.reputation_score}/100` : '—'} />
+              <InfoRow icon="star" label="Đánh giá" value={detail.tutor_profile.review_count > 0 ? `${Number(detail.tutor_profile.avg_rating).toFixed(1)}★ (${detail.tutor_profile.review_count} đánh giá)` : 'Chưa có đánh giá'} />
               <InfoRow icon="verified_user" label="Trạng thái duyệt" value={detail.tutor_profile.status || '—'} />
               {detail.tutor_profile.reject_reason && (
                 <InfoRow icon="cancel" label="Lý do từ chối" value={detail.tutor_profile.reject_reason} />
+              )}
+              {detail.tutor_profile.phone && <InfoRow icon="call" label="Điện thoại" value={detail.tutor_profile.phone} />}
+              {(detail.tutor_profile.city || detail.tutor_profile.country) && (
+                <InfoRow icon="location_on" label="Địa chỉ" value={[detail.tutor_profile.city, detail.tutor_profile.country].filter(Boolean).join(', ')} />
               )}
               {detail.tutor_profile.bio && (
                 <div>
@@ -1759,6 +1798,32 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold
                   <p className="text-xs text-on-surface bg-gray-50 rounded-lg p-2.5 leading-relaxed">{detail.tutor_profile.bio}</p>
                 </div>
               )}
+              <div className="flex gap-2 pt-1">
+                {detail.tutor_profile.certificate_url ? (
+                  <button
+                    onClick={() => onViewDoc?.(detail.tutor_profile.certificate_url)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold bg-primary/5 text-primary hover:bg-primary/10 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">workspace_premium</span>Xem chứng chỉ
+                  </button>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium bg-gray-50 text-on-surface-variant">
+                    <span className="material-symbols-outlined text-[16px]">workspace_premium</span>Chưa có chứng chỉ
+                  </div>
+                )}
+                {detail.tutor_profile.cccd_url ? (
+                  <button
+                    onClick={() => onViewDoc?.(detail.tutor_profile.cccd_url)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold bg-primary/5 text-primary hover:bg-primary/10 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">badge</span>Xem CCCD
+                  </button>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium bg-gray-50 text-on-surface-variant">
+                    <span className="material-symbols-outlined text-[16px]">badge</span>Chưa có CCCD
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1772,6 +1837,36 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold
             <div className="space-y-2 pt-2 border-t border-outline-variant">
               <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Thống kê học tập</p>
               <InfoRow icon="quiz" label="Số lần làm bài" value={detail.quiz_attempts ?? 0} />
+            </div>
+          )}
+
+          {detail.role === 'student' && (
+            <div className="space-y-2 pt-2 border-t border-outline-variant">
+              <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Phụ huynh đã liên kết</p>
+              {detail.linked_parents?.length > 0 ? (
+                <div className="space-y-1.5">
+                  {detail.linked_parents.map(p => (
+                    <LinkedPersonRow key={p.id} person={p} fmtDate={fmtDate} />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-on-surface-variant italic">Chưa liên kết với phụ huynh nào.</p>
+              )}
+            </div>
+          )}
+
+          {detail.role === 'parent' && (
+            <div className="space-y-2 pt-2 border-t border-outline-variant">
+              <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Học sinh đã liên kết</p>
+              {detail.linked_children?.length > 0 ? (
+                <div className="space-y-1.5">
+                  {detail.linked_children.map(c => (
+                    <LinkedPersonRow key={c.id} person={c} fmtDate={fmtDate} />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-on-surface-variant italic">Chưa liên kết với học sinh nào.</p>
+              )}
             </div>
           )}
 
@@ -1795,6 +1890,26 @@ function UserDetailPanel({ user, detail, loading, onBan, actionId, onReleaseHold
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {user.role === 'student' && (
+            <div className="pt-3 border-t border-outline-variant">
+              {detail?.admin_locked_schedule_count > 0 && (
+                <p className="text-[11px] text-on-surface-variant mb-2 text-center">
+                  Đang ẩn <strong>{detail.admin_locked_schedule_count}</strong> buổi học khỏi lịch dạy của gia sư.
+                </p>
+              )}
+              <button
+                onClick={() => onLockSchedule(user)}
+                disabled={actionId === user.id}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${detail?.admin_locked_schedule_count > 0 ? 'bg-green-50 text-green-700 hover:bg-green-100' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'}`}
+              >
+                <span className="material-symbols-outlined text-[18px]">
+                  {actionId === user.id ? 'progress_activity' : detail?.admin_locked_schedule_count > 0 ? 'lock_open' : 'event_busy'}
+                </span>
+                {detail?.admin_locked_schedule_count > 0 ? 'Mở lại lịch học' : 'Khóa lịch học (ẩn khỏi gia sư)'}
+              </button>
             </div>
           )}
 
@@ -1824,6 +1939,30 @@ function InfoRow({ icon, label, value }) {
       <span className="material-symbols-outlined text-[15px] text-on-surface-variant mt-0.5 flex-shrink-0">{icon}</span>
       <span className="text-xs text-on-surface-variant min-w-[80px]">{label}</span>
       <span className="text-xs text-on-surface font-medium flex-1 text-right">{String(value)}</span>
+    </div>
+  )
+}
+
+function LinkedPersonRow({ person, fmtDate }) {
+  return (
+    <div className="flex items-center gap-2 p-2 rounded-lg bg-surface-container-low">
+      {person.picture ? (
+        <img src={person.picture} alt={person.full_name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+      ) : (
+        <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs flex-shrink-0">
+          {(person.full_name || person.email || '?').charAt(0).toUpperCase()}
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-on-surface truncate">
+          {person.full_name || '—'}
+          {person.nickname && <span className="text-on-surface-variant font-normal"> ({person.nickname})</span>}
+        </p>
+        <p className="text-[11px] text-on-surface-variant truncate">{person.email}</p>
+      </div>
+      <p className="text-[10px] text-on-surface-variant flex-shrink-0 text-right">
+        Liên kết<br />{fmtDate(person.linked_at)}
+      </p>
     </div>
   )
 }
@@ -1907,7 +2046,7 @@ function TutorCredentialsView({ credentials, onApprove, onReject, onViewDoc }) {
 }
 
 // ─── User Management View ─────────────────────────────────────────────────────
-function UserManagementView({ initialSearch = '', onSearchConsumed }) {
+function UserManagementView({ initialSearch = '', onSearchConsumed, onViewDoc }) {
   const { token } = useAuth()
 
   const [users,         setUsers]         = useState([])
@@ -1922,6 +2061,7 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
   const [selectedUser,  setSelectedUser]  = useState(null)   // row clicked
   const [detail,        setDetail]        = useState(null)   // full profile from API
   const [detailLoading, setDetailLoading] = useState(false)
+  const [editingUser,   setEditingUser]   = useState(null)   // user being edited in UserEditModal
 
   const LIMIT = 20
   const totalPages = Math.max(1, Math.ceil(total / LIMIT))
@@ -2002,6 +2142,19 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
     } finally { setActionId(null) }
   }
 
+  async function handleLockSchedule(u) {
+    setActionId(u.id)
+    try {
+      const isLocked = detail?.admin_locked_schedule_count > 0
+      const endpoint = isLocked ? 'unlock-schedule' : 'lock-schedule'
+      const res = await authFetch(`${API}/api/admin/students/${u.id}/${endpoint}`, token, { method: 'PATCH' })
+      setUMToast({ msg: res.message, type: 'success' })
+      fetchDetail(u.id)
+    } catch (err) {
+      setUMToast({ msg: `Thao tác thất bại: ${err.message}`, type: 'error' })
+    } finally { setActionId(null) }
+  }
+
   async function handleRoleChange(u, newRole) {
     setActionId(u.id)
     try {
@@ -2015,6 +2168,28 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
     } catch (err) {
       setUMToast({ msg: `Thay đổi vai trò thất bại: ${err.message}`, type: 'error' })
     } finally { setActionId(null) }
+  }
+
+  // Gia sư dùng chung route PATCH /api/admin/tutors/:id (sửa cả users + tutor_profiles
+  // trong 1 giao dịch); vai trò khác dùng route PATCH /api/admin/users/:id (chỉ users).
+  async function handleSaveUser(form) {
+    if (!editingUser) return
+    if (editingUser.role === 'tutor') {
+      await authFetch(`${API}/api/admin/tutors/${editingUser.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ ...form, photo: form.picture }),
+      })
+      await fetchDetail(editingUser.id)
+      setUsers(prev => prev.map(x => x.id === editingUser.id ? { ...x, full_name: form.full_name, picture: form.picture || x.picture } : x))
+    } else {
+      const updated = await authFetch(`${API}/api/admin/users/${editingUser.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ full_name: form.full_name, picture: form.picture, city: form.city, phone: form.phone }),
+      })
+      setUsers(prev => prev.map(x => x.id === editingUser.id ? { ...x, full_name: updated.full_name, picture: updated.picture } : x))
+      setDetail(prev => prev ? { ...prev, full_name: updated.full_name, picture: updated.picture, city: updated.city, phone: updated.phone } : prev)
+    }
+    setUMToast({ msg: `Đã cập nhật thông tin của ${form.full_name}.`, type: 'success' })
   }
 
   const statusColor = isBanned => isBanned ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
@@ -2103,12 +2278,15 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
               <p className="text-sm">Không tìm thấy người dùng.</p>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-gray-50 border-b border-outline-variant">
                 <tr>
                   <th className="py-3 px-5 text-xs font-semibold text-on-surface-variant uppercase">Người dùng</th>
+                  <th className="py-3 px-5 text-xs font-semibold text-on-surface-variant uppercase">Mã người dùng</th>
                   <th className="py-3 px-5 text-xs font-semibold text-on-surface-variant uppercase">Vai trò</th>
                   <th className="py-3 px-5 text-xs font-semibold text-on-surface-variant uppercase">Trạng thái</th>
+                  <th className="py-3 px-5 text-xs font-semibold text-on-surface-variant uppercase">IP gần nhất</th>
                   <th className="py-3 px-5 text-xs font-semibold text-on-surface-variant uppercase">Ngày tham gia</th>
                   <th className="py-3 px-5 text-xs font-semibold text-on-surface-variant uppercase text-right">Thao tác</th>
                 </tr>
@@ -2138,6 +2316,9 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
                         </div>
                       </td>
                       <td className="py-3.5 px-5">
+                        <span className="text-xs font-mono text-on-surface-variant" title={u.id}>#{u.id.slice(0, 8)}…</span>
+                      </td>
+                      <td className="py-3.5 px-5">
                         {u.role === 'admin' ? (
                           <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${roleColor(u.role)}`}>{u.role}</span>
                         ) : (
@@ -2159,6 +2340,15 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
                           {u.is_banned ? 'Bị khóa' : 'Hoạt động'}
                         </span>
                       </td>
+                      <td className="py-3.5 px-5">
+                        {u.last_ip ? (
+                          <span className="text-xs font-mono text-on-surface-variant whitespace-nowrap" title={u.last_ip_at ? `Lúc ${new Date(u.last_ip_at).toLocaleString('vi-VN')}` : undefined}>
+                            {u.last_ip}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-on-surface-variant">—</span>
+                        )}
+                      </td>
                       <td className="py-3.5 px-5 text-xs text-on-surface-variant whitespace-nowrap">{fmtDate(u.created_at)}</td>
                       <td className="py-3.5 px-5 text-right">
                         {u.role !== 'admin' && (
@@ -2179,6 +2369,7 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
                 })}
               </tbody>
             </table>
+            </div>
           )}
 
           {/* Pagination */}
@@ -2217,11 +2408,23 @@ function UserManagementView({ initialSearch = '', onSearchConsumed }) {
             detail={detail}
             loading={detailLoading}
             onBan={handleBan}
+            onEdit={setEditingUser}
             onRoleChange={handleRoleChange}
+            onLockSchedule={handleLockSchedule}
             actionId={actionId}
+            onViewDoc={onViewDoc}
           />
         </div>
       </div>
+
+      {editingUser && (
+        <UserEditModal
+          user={editingUser}
+          detail={editingUser.id === selectedUser?.id ? detail : null}
+          onClose={() => setEditingUser(null)}
+          onSubmit={handleSaveUser}
+        />
+      )}
     </div>
   )
 }
@@ -3658,6 +3861,7 @@ function ComplaintsView({ token }) {
   const [penaltyType, setPenaltyType] = useState('NONE')
   const [refundRate, setRefundRate] = useState(1)
   const [resolving, setResolving] = useState(false)
+  const [reactivateAccount, setReactivateAccount] = useState(false)
 
   const fetchDisputes = async () => {
     setLoading(true)
@@ -3680,13 +3884,13 @@ function ComplaintsView({ token }) {
       const res = await fetch(API_BASE + '/api/escrow/resolve-dispute-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('token') },
-        body: JSON.stringify({ disputeId: resolveModal.id, decision, adminNote, penaltyType,
+        body: JSON.stringify({ disputeId: resolveModal.id, decision, adminNote, penaltyType, reactivateAccount,
           ...(decision === 'REFUND_TO_STUDENT' ? { refundRate } : {}) })
       })
       const data = await res.json()
       if (data.success) {
         alert('Đã xử lý: ' + (decision === 'REFUND_TO_STUDENT' ? 'Hoàn tiền cho học sinh' : 'Giải ngân cho gia sư'))
-        setResolveModal(null); setAdminNote(''); setPenaltyType('NONE'); setRefundRate(1); fetchDisputes()
+        setResolveModal(null); setAdminNote(''); setPenaltyType('NONE'); setRefundRate(1); setReactivateAccount(false); fetchDisputes()
       } else { alert(data.message || 'Có lỗi xảy ra.') }
     } catch { alert('Lỗi kết nối.') }
     setResolving(false)
@@ -3846,6 +4050,21 @@ function ComplaintsView({ token }) {
                       Có khiếu nại dịch vụ liên quan ({resolveModal.related_complaint_status})
                     </span>
                     <p className="text-xs text-on-surface-variant mt-1">Kiểm tra mục "Khiếu nại Dịch vụ" trước khi phán quyết để tránh hoàn tiền trùng lặp.</p>
+                  </div>
+                )}
+                {resolveModal.absence_lockdown_at && !resolveModal.absence_lockdown_resolved_at && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-purple-700 bg-purple-100">
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>lock</span>
+                      Tài khoản học sinh đang bị khoá (2 buổi vắng liên tiếp không lý do)
+                      {resolveModal.is_trigger_absence ? ' — đây là buổi kích hoạt khoá' : ''}
+                    </span>
+                    <label className="flex items-center gap-2 mt-2 text-sm cursor-pointer">
+                      <input type="checkbox" checked={reactivateAccount} onChange={e => setReactivateAccount(e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary" />
+                      <span>Mở lại tài khoản (hiện lại lịch học sắp tới, xoá lịch sử vắng)</span>
+                    </label>
+                    <p className="text-xs text-on-surface-variant mt-1">Chỉ tick nếu đã xác minh lý do vắng mặt hợp lý. Không tick sẽ giữ nguyên trạng thái khoá.</p>
                   </div>
                 )}
                 {resolveModal.withdrawn_at && (

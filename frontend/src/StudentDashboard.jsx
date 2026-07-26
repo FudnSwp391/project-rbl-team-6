@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './AuthContext'
 import AssessmentsWrapper from './components/AssessmentsWrapper'
 import MyComplaints from './pages/MyComplaints'
+import SupportCenter from './pages/SupportCenter'
 import PracticeMode from './PracticeMode'
 import MessagesSection from './components/MessagesSection'
 import WalletWidget from './components/WalletWidget'
@@ -197,6 +198,11 @@ export default function StudentDashboard() {
             {/* ── Complaints Section ── */}
             {activeSection === 'complaints' && (
               <MyComplaints token={token} />
+            )}
+
+            {/* ── Support Center Section ── */}
+            {activeSection === 'support' && (
+              <SupportCenter token={token} />
             )}
 
             {/* ── Assessments Section (Gộp Bài tập & Đề thi) ── */}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { PageHeader, EmptyState } from './components'
+import { PageHeader, EmptyState, ModalOverlay } from './components'
 
 import { API_BASE_URL as API } from '../../config'
 
@@ -26,6 +26,7 @@ export default function NotificationOutbox({ token }) {
   const [filterChannel, setFilterChannel] = useState('')
   const [filterEvent, setFilterEvent]   = useState('')
   const [busyId, setBusyId]     = useState(null)
+  const [viewingItem, setViewingItem] = useState(null)
   const limit = 50
 
   const load = useCallback(() => {
@@ -166,13 +167,22 @@ export default function NotificationOutbox({ token }) {
                         {it.error_message || '—'}
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap">
-                        {canRetry ? (
+                        <div className="flex items-center gap-1.5">
                           <button
-                            onClick={() => retry(it.id)}
-                            disabled={busyId === it.id}
-                            className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                          >Thử lại</button>
-                        ) : <span className="text-xs text-gray-300">—</span>}
+                            onClick={() => setViewingItem(it)}
+                            title="Xem nội dung"
+                            className="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">visibility</span>
+                          </button>
+                          {canRetry && (
+                            <button
+                              onClick={() => retry(it.id)}
+                              disabled={busyId === it.id}
+                              className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                            >Thử lại</button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -201,6 +211,38 @@ export default function NotificationOutbox({ token }) {
       <p className="text-xs text-gray-400 mt-4 italic">
         * Email được gửi bởi cron xử lý hàng đợi (mỗi phút). "Thử lại" chỉ đưa bản ghi vào hàng đợi — không gửi ngay lập tức. SMTP chưa cấu hình sẽ đánh dấu Bỏ qua thay vì lỗi.
       </p>
+
+      {viewingItem && (
+        <ModalOverlay onClose={() => setViewingItem(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[640px] max-w-[90vw] max-h-[85vh] flex flex-col">
+            <div className="flex items-start justify-between gap-3 p-5 border-b border-gray-100">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-gray-900 truncate">
+                  {viewingItem.channel === 'EMAIL' ? (viewingItem.subject || '(Không có tiêu đề)') : (viewingItem.title || '(Không có tiêu đề)')}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Gửi tới {viewingItem.recipient_name || '—'}{viewingItem.email ? ` · ${viewingItem.email}` : ''} · {fmtDate(viewingItem.created_at)}
+                </p>
+              </div>
+              <button onClick={() => setViewingItem(null)} className="w-8 h-8 shrink-0 rounded-lg text-gray-400 hover:bg-gray-100 flex items-center justify-center">
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              {viewingItem.channel === 'EMAIL' && viewingItem.html_body ? (
+                <iframe
+                  title="Nội dung email"
+                  srcDoc={viewingItem.html_body}
+                  className="w-full h-[420px] rounded-lg border border-gray-200"
+                  sandbox=""
+                />
+              ) : (
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">{viewingItem.body || '(Không có nội dung)'}</p>
+              )}
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
     </div>
   )
 }

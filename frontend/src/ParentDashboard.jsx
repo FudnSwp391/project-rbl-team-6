@@ -11,9 +11,17 @@ import WalletWidget from './components/WalletWidget'
 import NotificationDropdown from './components/NotificationDropdown'
 import MessageIcon from './components/MessageIcon'
 import ParentTimeline from './components/MicroFeedback/ParentTimeline'
+import StudentEvaluationReportModal from './components/StudentEvaluationReportModal'
 import { API_BASE_URL } from './config';
 
 const API_BASE = API_BASE_URL
+
+// Badge điểm danh thực tế — khác với `status` (trạng thái booking theo giờ).
+const ATTENDANCE_BADGE = {
+  present: { label: 'Có mặt', icon: 'check_circle', className: 'bg-green-100 text-green-700' },
+  absent: { label: 'Vắng mặt', icon: 'cancel', className: 'bg-red-100 text-red-700' },
+  excused: { label: 'Vắng có phép', icon: 'info', className: 'bg-amber-100 text-amber-700' },
+}
 
 const NAV = [
   { key: 'overview',  icon: 'dashboard',       label: 'Tổng quan' },
@@ -626,6 +634,7 @@ function StudentDetailView({ token, student, onBack }) {
   const [reviewsLoading, setReviewsLoading] = useState(true)
   const [leaveModal, setLeaveModal] = useState(null)
   const [messageModal, setMessageModal] = useState(null)
+  const [selectedEvalBooking, setSelectedEvalBooking] = useState(null)
 
   useEffect(() => {
     // Fetch schedule + absences
@@ -658,9 +667,10 @@ function StudentDetailView({ token, student, onBack }) {
         body: JSON.stringify({ reason })
       }
     )
-    if (!res.ok) throw new Error('Gửi yêu cầu thất bại')
-    // Update local state
-    setSchedule(prev => prev.map(s => s.id === sessionId ? { ...s, status: 'cancelled' } : s))
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.message || 'Gửi yêu cầu thất bại')
+    // Update local state: keep original status active, record leave_reason for pending tutor approval
+    setSchedule(prev => prev.map(s => s.id === sessionId ? { ...s, leave_reason: reason } : s))
   }
 
   // Derived stats
@@ -763,6 +773,7 @@ function StudentDetailView({ token, student, onBack }) {
             <div className="divide-y divide-outline-variant/10">
               {schedule.map(item => {
                 const isCancelled = item.status === 'cancelled'
+                const attendance = ATTENDANCE_BADGE[item.attendance_status]
                 return (
                   <div key={item.id} className={`flex items-center gap-md p-4 transition-colors ${isCancelled ? 'opacity-50 bg-surface-container-low' : 'hover:bg-surface-container-low/50'}`}>
                     <div className={`shrink-0 px-3 py-1.5 rounded-xl border text-sm font-semibold ${subjectColor(item.subject)}`}>
@@ -773,21 +784,42 @@ function StudentDetailView({ token, student, onBack }) {
                         <span className="material-symbols-outlined text-[15px] text-on-surface-variant">schedule</span>
                         {fmtScheduleTime(item.scheduled_at, item.duration_mins)}
                       </p>
-                      <p className="font-label-sm text-on-surface-variant flex items-center gap-1 mt-0.5">
+                      <p className="font-label-sm text-on-surface-variant flex items-center gap-1 mt-0.5 flex-wrap">
                         <span className="material-symbols-outlined text-[14px]">person</span>
                         {item.tutor_name}
-                        {isCancelled && <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">Đã hủy</span>}
+                        {isCancelled ? (
+                          <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200 font-semibold">
+                            {item.leave_reason ? 'Đã duyệt nghỉ phép (Đã hoàn 100% tiền)' : 'Đã hủy'}
+                          </span>
+                        ) : item.leave_reason ? (
+                          <span className="ml-2 text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-semibold flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px] text-amber-600">hourglass_top</span>
+                            Đã gửi xin nghỉ phép (Chờ gia sư duyệt)
+                          </span>
+                        ) : attendance ? (
+                          <span title={item.attendance_note || attendance.label} className={`ml-2 inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full font-semibold ${attendance.className}`}>
+                            <span className="material-symbols-outlined text-[13px]">{attendance.icon}</span>
+                            {attendance.label}
+                          </span>
+                        ) : null}
                       </p>
+                      {item.leave_reason && (
+                        <p className="text-xs text-amber-800 mt-1 bg-amber-50/80 p-2 rounded-lg border border-amber-200/60">
+                          <strong className="font-semibold">Lý do xin nghỉ:</strong> {item.leave_reason}
+                        </p>
+                      )}
                     </div>
-                    {!isCancelled && (
+                    {!isCancelled && !item.leave_reason && (
                       <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => setLeaveModal(item)}
-                          className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors flex items-center gap-1"
-                        >
-                          <span className="material-symbols-outlined text-[14px]">event_busy</span>
-                          Xin nghỉ
-                        </button>
+                        {item.status !== 'completed' && (
+                          <button
+                            onClick={() => setLeaveModal(item)}
+                            className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors flex items-center gap-1"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">event_busy</span>
+                            Xin nghỉ
+                          </button>
+                        )}
                         <button
                           onClick={() => setMessageModal({ tutorId: item.tutor_id, tutorName: item.tutor_name })}
                           className="h-8 px-3 rounded-lg border border-primary/30 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 transition-colors flex items-center gap-1"
@@ -838,7 +870,17 @@ function StudentDetailView({ token, student, onBack }) {
                       </div>
                       <StarRating value={review.rating} />
                     </div>
-                    <p className="font-body-sm text-on-surface leading-relaxed">{review.content}</p>
+                    <p className="font-body-sm text-on-surface leading-relaxed whitespace-pre-line">{review.content}</p>
+                    {review.booking_id && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedEvalBooking({ id: review.booking_id, subject: review.subject, tutor_name: review.tutor_name, student_name: student.student_name })}
+                        className="mt-3 text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl border border-indigo-200 transition-colors flex items-center gap-1.5"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">analytics</span>
+                        Xem Báo Cáo 5 Tiêu Chí Chi Tiết
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -853,6 +895,15 @@ function StudentDetailView({ token, student, onBack }) {
       </div>
 
       {/* Modals */}
+      {selectedEvalBooking && (
+        <StudentEvaluationReportModal
+          isOpen={!!selectedEvalBooking}
+          onClose={() => setSelectedEvalBooking(null)}
+          booking={selectedEvalBooking}
+          token={token}
+          API_BASE={API_BASE}
+        />
+      )}
       {leaveModal && (
         <LeaveRequestModal
           token={token}
@@ -881,10 +932,14 @@ function LeaveRequestModal({ token, studentId, scheduleItem, onClose, onSubmit }
   const [error, setError] = useState('')
 
   const handleSend = async () => {
+    if (!reason || !reason.trim()) {
+      setError('Vui lòng nhập lý do xin nghỉ phép trước khi gửi.')
+      return
+    }
     setSending(true)
     setError('')
     try {
-      await onSubmit(scheduleItem.id, reason)
+      await onSubmit(scheduleItem.id, reason.trim())
       setSent(true)
       setTimeout(onClose, 1500)
     } catch (e) {
@@ -920,9 +975,11 @@ function LeaveRequestModal({ token, studentId, scheduleItem, onClose, onSubmit }
               </div>
               {error && <p className="text-sm text-error bg-error/10 p-2 rounded-lg">{error}</p>}
               <div>
-                <label className="block text-xs font-medium text-on-surface-variant mb-1">Lý do nghỉ (không bắt buộc)</label>
+                <label className="block text-xs font-semibold text-on-surface mb-1">
+                  Lý do nghỉ (bắt buộc) <span className="text-red-500">*</span>
+                </label>
                 <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
-                  placeholder="VD: Bé bệnh, có việc gia đình..."
+                  placeholder="VD: Bé bệnh, có việc gia đình đột xuất..."
                   className="w-full p-3 rounded-xl border border-outline-variant bg-surface focus:border-primary focus:ring-1 focus:ring-primary resize-none text-sm"
                 />
               </div>

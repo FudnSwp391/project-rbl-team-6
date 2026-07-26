@@ -171,6 +171,10 @@ export async function createBooking(bookingData) {
     childName,
     teachingMethod,
     teaching_method,
+    location,
+    locationNote,
+    location_note,
+    targetStudentId,
   } = bookingData || {};
 
   // Resolve tutorId — accept both camelCase and snake_case
@@ -198,6 +202,9 @@ export async function createBooking(bookingData) {
     notes: resolvedNote,
     childName: childName || null,
     teaching_method: teachingMethod || teaching_method || null,
+    location: location || null,
+    location_note: locationNote || location_note || null,
+    targetStudentId: targetStudentId || undefined,
   };
   console.log('[createBooking] Sending payload to /api/bookings:', payload);
   const result = await request('/api/bookings', {
@@ -410,41 +417,17 @@ export async function updateTutorAvatar(pictureUrl) {
  * Fallback: lÆ°u vĂ o localStorage vá»›i status pending.
  */
 export async function addTutorCredential(credential) {
-  try {
-    return await request('/api/tutor/credentials', {
-      method: 'POST',
-      body: JSON.stringify(credential),
-    });
-  } catch (error) {
-    console.warn(`[API] addTutorCredential failed: ${error.message}. Saving locally.`);
-    const stored = localStorage.getItem('tutor_credentials_local');
-    const list = stored ? JSON.parse(stored) : [];
-    const newItem = {
-      id: `local_${Date.now()}`,
-      ...credential,
-      status: 'approved',
-      created_at: new Date().toISOString(),
-    };
-    list.push(newItem);
-    localStorage.setItem('tutor_credentials_local', JSON.stringify(list));
-    return newItem;
-  }
+  return await request('/api/tutor/credentials', {
+    method: 'POST',
+    body: JSON.stringify(credential),
+  });
 }
 
 /**
- * XoĂ¡ 1 credential.
+ * Xoá 1 credential.
  */
 export async function deleteTutorCredential(id) {
-  try {
-    return await request(`/api/tutor/credentials/${id}`, { method: 'DELETE' });
-  } catch (error) {
-    console.warn(`[API] deleteTutorCredential failed: ${error.message}. Removing locally.`);
-    const stored = localStorage.getItem('tutor_credentials_local');
-    const list = stored ? JSON.parse(stored) : [];
-    localStorage.setItem('tutor_credentials_local',
-      JSON.stringify(list.filter(c => c.id !== id)));
-    return { message: 'Deleted locally.' };
-  }
+  return await request(`/api/tutor/credentials/${id}`, { method: 'DELETE' });
 }
 
 /**
