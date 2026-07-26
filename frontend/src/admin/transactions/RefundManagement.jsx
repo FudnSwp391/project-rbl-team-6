@@ -24,7 +24,7 @@ function mapStatus(s) {
 function mapRow(r) {
   return {
     id:          r.id,
-    user:        { name: r.user_name || 'Người dùng', email: r.user_email || '', avatar: null },
+    user:        { name: r.user_name || 'Người dùng', email: r.user_email || '', avatar: null, isBanned: !!r.user_is_banned },
     courseTitle: r.course_title || '—',
     reason:      r.reason       || '—',
     amount:      parseFloat(r.amount) || 0,
@@ -34,7 +34,46 @@ function mapRow(r) {
     resolvedAt:  r.resolved_at,
     evidenceUrls: Array.isArray(r.evidence_urls) ? r.evidence_urls : [],
     source:      'dispute',
+    requesterHistory: {
+      total: r.requester_dispute_total || 0,
+      won:   r.requester_dispute_won   || 0,
+      lost:  r.requester_dispute_lost  || 0,
+      open:  r.requester_dispute_open  || 0,
+      fraudFlags: r.requester_fraud_flags || 0,
+    },
   }
+}
+
+// Chỉ hiện khi có tín hiệu đáng chú ý (>1 tranh chấp trước, có thua, có cờ
+// gian lận, hoặc bị khóa) — tránh làm rối bảng với dòng "Thắng 1/1" vô nghĩa
+// cho người mới tranh chấp lần đầu.
+function RequesterTrustBadge({ user, history }) {
+  const notable = user.isBanned || history.fraudFlags > 0 || history.total > 1
+  if (!notable) return null
+  const lossHeavy = history.total > 0 && history.lost > history.won
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1">
+      {user.isBanned && (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">
+          <span className="material-symbols-outlined text-[11px]">block</span>Đã bị khóa
+        </span>
+      )}
+      {history.fraudFlags > 0 && (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">
+          <span className="material-symbols-outlined text-[11px]">shield_person</span>{history.fraudFlags} cờ gian lận
+        </span>
+      )}
+      {history.total > 1 && (
+        <span
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${lossHeavy ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}
+          title={`Trong ${history.total} tranh chấp từng gửi: ${history.won} được hoàn tiền, ${history.lost} bị từ chối (giải ngân cho gia sư), ${history.open} đang mở.`}
+        >
+          <span className="material-symbols-outlined text-[11px]">gavel</span>
+          Thắng {history.won}/{history.total} tranh chấp trước
+        </span>
+      )}
+    </div>
+  )
 }
 
 export default function RefundManagement({ token }) {
@@ -114,7 +153,10 @@ export default function RefundManagement({ token }) {
         {paginated.map(r => (
           <tr key={r.id} className="hover:bg-gray-50 transition-colors">
             <td className="py-3.5 px-5"><span className="text-xs font-mono font-bold text-blue-600">{r.id}</span></td>
-            <td className="py-3.5 px-5"><AvatarCell name={r.user.name} email={r.user.email} avatar={r.user.avatar} /></td>
+            <td className="py-3.5 px-5">
+              <AvatarCell name={r.user.name} email={r.user.email} avatar={r.user.avatar} />
+              <RequesterTrustBadge user={r.user} history={r.requesterHistory} />
+            </td>
             <td className="py-3.5 px-5">
               <span className="text-sm font-semibold text-gray-800 max-w-[180px] truncate block">{r.courseTitle}</span>
             </td>

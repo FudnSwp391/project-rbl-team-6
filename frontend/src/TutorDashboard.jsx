@@ -3609,6 +3609,15 @@ function CredentialSection({ title, icon, items, type, onAdd, onDelete, noProof 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap mb-0.5">
                   <p className="font-label-md text-[14px] text-on-surface font-semibold">{item.title}</p>
+                  {item.status === 'pending' && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">Chờ duyệt</span>
+                  )}
+                  {item.status === 'rejected' && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">Bị từ chối</span>
+                  )}
+                  {item.status === 'approved' && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-700">Đã duyệt</span>
+                  )}
                 </div>
                 {item.description && (
                   <p className="text-[12px] text-on-surface-variant mt-0.5">{item.description}</p>

@@ -35,6 +35,7 @@ import CompleteStudentProfile from './pages/CompleteStudentProfile'
 import MyAiCases from './pages/MyAiCases'
 import { useAuth } from './AuthContext'
 import { API_BASE_URL } from './config';
+import { VIETNAM_PROVINCES } from './constants/vietnamProvinces';
 
 const subjects = [
   { name: 'Toán Học', icon: 'calculate' },
@@ -265,12 +266,14 @@ function mapApiTutor(t) {
   }
 }
 
-function HomePage({ onGoSignIn }) {
+function HomePage({ onGoSignIn, onGoSignUp }) {
   const { user, logout } = useAuth()
   const [topic, setTopic] = useState('')
   const [place, setPlace] = useState('')
+  const [city, setCity] = useState('')
   const [liveReviews, setLiveReviews] = useState([])
   const [featuredTutors, setFeaturedTutors] = useState([])
+  const [popularSubjects, setPopularSubjects] = useState([])
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
 
@@ -288,6 +291,17 @@ function HomePage({ onGoSignIn }) {
       .then(data => {
         const rows = data && Array.isArray(data.tutors) ? data.tutors : []
         if (rows.length > 0) setFeaturedTutors(rows.map(mapApiTutor))
+      })
+      .catch(() => {})
+  }, [])
+
+  // Môn học phổ biến: lấy đúng danh mục môn đang có gia sư/khóa học thật trên nền tảng
+  useEffect(() => {
+    fetch(`${API_BASE}/api/subjects/overview`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const rows = data && Array.isArray(data.subjects) ? data.subjects : []
+        if (rows.length > 0) setPopularSubjects(rows.slice(0, 6).map(s => ({ name: s.name, icon: s.icon || 'menu_book' })))
       })
       .catch(() => {})
   }, [])
@@ -333,6 +347,7 @@ function HomePage({ onGoSignIn }) {
   const reviewsToShow = liveReviews.length > 0 ? liveReviews : feedbackData
   const displayFeedbackLive = [...reviewsToShow, ...reviewsToShow]
   const featuredToShow = featuredTutors.length > 0 ? featuredTutors : tutors
+  const subjectsToShow = popularSubjects.length > 0 ? popularSubjects : subjects
 
   return (
     <div className="academia-page">
@@ -410,95 +425,175 @@ function HomePage({ onGoSignIn }) {
               )}
             </div>
           ) : (
-            <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
-              Đăng Nhập
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+              <button type="button" onClick={onGoSignUp} style={{ background: 'none', border: 0, cursor: 'pointer', color: 'var(--on-surface-variant)', fontWeight: 600, fontSize: 14 }}>
+                Đăng Ký
+              </button>
+              <button type="button" className="btn btn-primary" onClick={onGoSignIn}>
+                Đăng Nhập
+              </button>
+            </div>
           )}
         </div>
       </header>
 
       <main>
         <section className="hero">
-          <div className="hero-overlay" />
-          <div className="hero-glow-ring" aria-hidden="true" />
-          <div className="hero-bg-anim" aria-hidden="true">
-            <span className="hero-blob hero-blob-1" />
-            <span className="hero-blob hero-blob-2" />
-            <span className="hero-blob hero-blob-3" />
-            <span className="hero-grid" />
-            <span className="hero-particle hero-particle-1" />
-            <span className="hero-particle hero-particle-2" />
-            <span className="hero-particle hero-particle-3" />
-            <span className="hero-particle hero-particle-4" />
-            <span className="hero-particle hero-particle-5" />
-          </div>
-          <div className="hero-shine" aria-hidden="true" />
-
-          {/* Thẻ kính nổi — phong cách sàn khóa học */}
-          <div className="hero-stat hero-stat-1" aria-hidden="true">
-            <div className="hero-stat-ico"><span className="material-symbols-outlined" style={{ fontSize: 20 }}>menu_book</span></div>
-            <div><div className="hero-stat-num">12K+</div><div className="hero-stat-label">Khóa học</div></div>
-          </div>
-          <div className="hero-stat hero-stat-2" aria-hidden="true">
-            <div className="hero-stat-ico"><span className="material-symbols-outlined" style={{ fontSize: 20 }}>groups</span></div>
-            <div><div className="hero-stat-num">500+</div><div className="hero-stat-label">Giảng viên</div></div>
-          </div>
-          <div className="hero-stat hero-stat-3" aria-hidden="true">
-            <div className="hero-stat-ico"><span className="material-symbols-outlined icon-fill" style={{ fontSize: 20 }}>star</span></div>
-            <div><div className="hero-stat-num">4.9★</div><div className="hero-stat-label">Đánh giá</div></div>
-          </div>
-
           <div className="container hero-content">
-            <div className="hero-badge"><span className="hero-badge-dot" />Cộng đồng học tập hàng đầu Việt Nam</div>
-            <h1>Tìm <span className="hero-highlight">gia sư &amp; khóa học</span> hoàn hảo cho hành trình học tập của bạn</h1>
-            <p>
-              Các nhà giáo dục chuyên nghiệp sẵn sàng giúp bạn nắm vững các môn học mới
-              và đạt được mục tiêu học tập của bạn.
-            </p>
-            <div className="search-panel">
-              <label className="search-field">
-                <span className="material-symbols-outlined">search</span>
-                <input
-                  type="text"
-                  value={topic}
-                  onChange={(event) => setTopic(event.target.value)}
-                  placeholder="Bạn muốn học gì?"
-                />
-              </label>
-              <label className="search-field">
-                <span className="material-symbols-outlined">location_on</span>
-                <select
-                  value={place}
-                  onChange={(event) => setPlace(event.target.value)}
-                >
-                  <option value="">Hình thức học (Tất cả)</option>
-                  <option value="online">Học trực tuyến (Online)</option>
-                  <option value="offline">Tại địa điểm cụ thể (Offline)</option>
-                </select>
-              </label>
-              <button 
-                type="button" 
-                className="btn btn-primary search-button"
-                onClick={() => {
-                  window.location.hash = `/find-tutors?search=${encodeURIComponent(topic)}&method=${encodeURIComponent(place)}`;
-                }}
-              >
-                Tìm Kiếm
-              </button>
-            </div>
-            {/* AI Matching flow CTA - Premium Style for Home Hero */}
-            <div className="mt-4 flex items-center justify-center relative z-10 w-full max-w-[800px] mx-auto pb-6">
-              <div className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-full flex flex-col sm:flex-row items-center gap-3 sm:gap-4 hover:bg-white/20 hover:shadow-[0_0_25px_rgba(255,255,255,0.3)] transition-all duration-300 shadow-[0_0_15px_rgba(0,0,0,0.1)] cursor-pointer" onClick={() => window.location.hash = '/tutor-request'}>
-                <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
-                  <span className="material-symbols-outlined text-[#ffd166] text-[20px] animate-pulse">auto_awesome</span>
-                  <span>Muốn được gợi ý gia sư phù hợp nhất?</span>
-                </div>
-                <div className="hidden sm:block w-[1px] h-4 bg-white/30"></div>
+            <div className="hero-text">
+              <div className="hero-badge"><span className="hero-badge-dot" />Cộng đồng học tập hàng đầu Việt Nam</div>
+              <h1>Tìm <span className="hero-highlight">gia sư &amp; khóa học</span> phù hợp — không cần chờ đợi</h1>
+              <p>
+                Duyệt hồ sơ gia sư, khóa học và để AI gợi ý lựa chọn phù hợp nhất —
+                hoàn toàn miễn phí, không cần tạo tài khoản.
+              </p>
+              <div className={`search-panel${place === 'offline' ? ' search-panel-offline' : ''}`}>
+                <label className="search-field">
+                  <span className="material-symbols-outlined">search</span>
+                  <input
+                    type="text"
+                    value={topic}
+                    onChange={(event) => setTopic(event.target.value)}
+                    placeholder="Bạn muốn học gì?"
+                  />
+                </label>
+                <label className="search-field">
+                  <span className="material-symbols-outlined">tune</span>
+                  <select
+                    value={place}
+                    onChange={(event) => {
+                      setPlace(event.target.value)
+                      if (event.target.value !== 'offline') setCity('')
+                    }}
+                  >
+                    <option value="">Hình thức học (Tất cả)</option>
+                    <option value="online">Học trực tuyến (Online)</option>
+                    <option value="offline">Tại địa điểm cụ thể (Offline)</option>
+                  </select>
+                </label>
+                {place === 'offline' && (
+                  <label className="search-field">
+                    <span className="material-symbols-outlined">location_on</span>
+                    <select
+                      value={city}
+                      onChange={(event) => setCity(event.target.value)}
+                    >
+                      <option value="">Chọn tỉnh/thành</option>
+                      {VIETNAM_PROVINCES.map((p) => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <button
-                  className="text-white font-bold text-sm flex items-center gap-1 group transition-colors"
+                  type="button"
+                  className="btn btn-primary search-button"
+                  onClick={() => {
+                    const params = new URLSearchParams({ search: topic, method: place })
+                    if (place === 'offline' && city) params.set('city', city)
+                    window.location.hash = `/find-tutors?${params.toString()}`
+                  }}
                 >
-                  Tạo yêu cầu AI
-                  <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform text-[#ffd166]">arrow_forward</span>
+                  Tìm Kiếm
+                </button>
+              </div>
+
+              {/* AI Matching flow CTA — miễn phí, dùng được không cần đăng nhập */}
+              <button type="button" className="hero-ai-cta" onClick={() => window.location.hash = '/tutor-request'}>
+                <span className="material-symbols-outlined hero-ai-cta-ico">auto_awesome</span>
+                <span className="hero-ai-cta-text">Chưa biết chọn ai? Để AI gợi ý gia sư miễn phí</span>
+                <span className="material-symbols-outlined hero-ai-cta-arrow">arrow_forward</span>
+              </button>
+
+              <div className="hero-trust">
+                <div className="hero-avatars" aria-hidden="true">
+                  <span style={{ background: '#2563eb' }}>LM</span>
+                  <span style={{ background: '#db2777' }}>AP</span>
+                  <span style={{ background: '#0d9488' }}>JK</span>
+                  <span className="hero-avatars-more">+2K</span>
+                </div>
+                <span className="hero-trust-text"><span className="hero-trust-stars">★★★★★</span> <b>4.9/5</b> từ hơn 2.000 học sinh &amp; phụ huynh</span>
+              </div>
+            </div>
+
+            <div className="hero-visual" aria-hidden="true">
+              <div className="hero-visual-wash" />
+              <div className="hero-visual-card hero-match-card">
+                <span className="hero-match-badge">
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>auto_awesome</span>
+                  96% phù hợp
+                </span>
+                <div className="hero-match-top">
+                  <div className="hero-match-avatar">SJ</div>
+                  <div>
+                    <p className="hero-match-name">Sarah Jenkins</p>
+                    <p className="hero-match-rating">
+                      <span className="material-symbols-outlined icon-fill">star</span>
+                      4.9 <small>(120 đánh giá)</small>
+                    </p>
+                  </div>
+                </div>
+                <div className="hero-match-chips">
+                  <span>Toán Nâng Cao</span>
+                  <span>Vật Lý</span>
+                </div>
+                <div className="hero-match-bar-track"><div className="hero-match-bar-fill" /></div>
+              </div>
+
+              <div className="hero-visual-card hero-stat-card">
+                <div className="hero-stat-card-row">
+                  <div className="hero-stat-card-ico"><span className="material-symbols-outlined" style={{ fontSize: 18 }}>groups</span></div>
+                  <div>
+                    <div className="hero-stat-card-num">12.458</div>
+                    <div className="hero-stat-card-label">Học sinh đang học</div>
+                  </div>
+                </div>
+                <div className="hero-stat-card-row">
+                  <div className="hero-stat-card-ico"><span className="material-symbols-outlined icon-fill" style={{ fontSize: 18, color: '#f59e0b' }}>star</span></div>
+                  <div>
+                    <div className="hero-stat-card-num">4.9 / 5</div>
+                    <div className="hero-stat-card-label">Đánh giá trung bình</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Không cần đăng nhập — khách vẫn dùng được các tính năng chính, đúng nghiệp vụ */}
+        <section className="section section-guest">
+          <div className="container">
+            <div className="reveal">
+              <p className="section-eyebrow">Dành cho khách chưa đăng nhập</p>
+              <h2>Khám phá miễn phí — đăng ký khi bạn sẵn sàng học</h2>
+            </div>
+            <div className="guest-grid reveal reveal-stagger">
+              <div className="guest-card">
+                <div className="guest-card-ico"><span className="material-symbols-outlined">search</span></div>
+                <span className="guest-card-free">Miễn phí</span>
+                <h3>Tìm &amp; lọc gia sư</h3>
+                <p>Duyệt toàn bộ hồ sơ, đánh giá và học phí của gia sư — không cần tài khoản.</p>
+              </div>
+              <div className="guest-card">
+                <div className="guest-card-ico"><span className="material-symbols-outlined">auto_awesome</span></div>
+                <span className="guest-card-free">Miễn phí</span>
+                <h3>AI ghép gia sư</h3>
+                <p>Trả lời vài câu hỏi, nhận danh sách gia sư phù hợp nhất trong chưa đầy 1 phút.</p>
+              </div>
+              <div className="guest-card">
+                <div className="guest-card-ico"><span className="material-symbols-outlined">menu_book</span></div>
+                <span className="guest-card-free">Miễn phí</span>
+                <h3>Khám phá khóa học</h3>
+                <p>Xem chương trình học theo Tiểu học, THCS, THPT và các môn học phổ biến.</p>
+              </div>
+              <div className="guest-card guest-card-unlock">
+                <div className="guest-card-ico"><span className="material-symbols-outlined">lock_open</span></div>
+                <span className="guest-card-free">Cần tài khoản</span>
+                <h3>Đặt lịch &amp; học cùng gia sư</h3>
+                <p>Tạo tài khoản miễn phí để đặt lịch, nhắn tin với gia sư và theo dõi tiến độ học tập.</p>
+                <button type="button" className="guest-card-cta" onClick={onGoSignUp || onGoSignIn}>
+                  Đăng ký ngay
+                  <span className="material-symbols-outlined">arrow_forward</span>
                 </button>
               </div>
             </div>
@@ -512,8 +607,12 @@ function HomePage({ onGoSignIn }) {
               <h2>Môn Học Phổ Biến</h2>
             </div>
             <div className="subject-grid reveal reveal-stagger">
-              {subjects.map((item) => (
-                <a href="#" onClick={(e) => e.preventDefault()} className="subject-card" key={item.name}>
+              {subjectsToShow.map((item) => (
+                <a
+                  href={`#/find-tutors?subjects=${encodeURIComponent(item.name)}`}
+                  className="subject-card"
+                  key={item.name}
+                >
                   <span className="subject-icon material-symbols-outlined">
                     {item.icon}
                   </span>
@@ -610,10 +709,8 @@ function HomePage({ onGoSignIn }) {
           <style>{`
             .shadow-level-2 { box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08); }
             .glass-card {
-                background: rgba(255, 255, 255, 0.7);
-                backdrop-filter: blur(12px);
-                -webkit-backdrop-filter: blur(12px);
-                border: 1px solid rgba(255, 255, 255, 0.4);
+                background: #ffffff;
+                border: 1px solid rgba(196, 197, 213, 0.35);
             }
             @keyframes scroll {
                 0% { transform: translateX(0); }
@@ -652,8 +749,18 @@ function HomePage({ onGoSignIn }) {
                   ['bg-[#fce7f3]','text-[#7c3aed]'], ['bg-[#dcfce7]','text-[#15803d]'],
                 ]
                 const [bgColor, textColor] = avatarColors[idx % avatarColors.length]
+                // Gắn review với đúng gia sư/khóa học đang được nhắc tới, cho phép bấm để xem tiếp
+                const targetHref = fb.tutor_id ? `#/tutor-detail/${fb.tutor_id}`
+                  : fb.course_id ? `#/course/${fb.course_id}` : null
+                const targetIcon = fb.tutor_id ? 'person' : fb.course_id ? 'menu_book' : null
+                const targetLabel = fb.tutor_id ? 'Xem gia sư' : fb.course_id ? 'Xem khóa học' : null
                 return (
-                  <div key={`${fb.id || idx}-${idx}`} className="glass-card w-[380px] p-6 rounded-xl shadow-level-2 flex flex-col gap-3">
+                  <a
+                    key={`${fb.id || idx}-${idx}`}
+                    href={targetHref || undefined}
+                    className="glass-card w-[380px] p-6 rounded-xl shadow-level-2 flex flex-col gap-3 no-underline"
+                    style={{ cursor: targetHref ? 'pointer' : 'default' }}
+                  >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         {picture ? (
@@ -673,13 +780,24 @@ function HomePage({ onGoSignIn }) {
                       </span>
                     </div>
                     <div>
-                      {subject && <span className="text-xs font-bold uppercase tracking-wider text-[#00288e]">Phản hồi đã xác minh cho {subject}</span>}
+                      {subject && (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[#00288e]">
+                          {targetIcon && <span className="material-symbols-outlined text-[14px]">{targetIcon}</span>}
+                          Phản hồi đã xác minh cho {subject}
+                        </span>
+                      )}
                       <div className="flex mt-1">
                         {[1,2,3,4,5].map(i => <span key={i} className="material-symbols-outlined text-[16px] text-[#f59e0b]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
                       </div>
                     </div>
                     <p className="text-[#444653] text-sm line-clamp-3">{content}</p>
-                  </div>
+                    {targetLabel && (
+                      <span className="mt-auto pt-1 text-xs font-bold text-[#00288e] inline-flex items-center gap-1">
+                        {targetLabel}
+                        <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                      </span>
+                    )}
+                  </a>
                 )
               })}
             </div>
@@ -1130,7 +1248,7 @@ function App() {
   }
 
   // ── Route: Home ──
-  return <HomePage onGoSignIn={() => navigateTo('signin')} />
+  return <HomePage onGoSignIn={() => navigateTo('signin')} onGoSignUp={() => navigateTo('signup')} />
 }
 
 export default App

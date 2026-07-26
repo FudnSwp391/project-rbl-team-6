@@ -203,6 +203,13 @@ export default function SupportRequests({ token }) {
 
                     <p className="text-sm font-semibold text-gray-900 mb-1">{r.reason}</p>
                     {r.description && <p className="text-xs text-gray-500 mb-2 line-clamp-2">{r.description}</p>}
+                    {r.related_dispute_id && (
+                      <p className="flex items-center gap-1 text-[11px] font-semibold text-amber-700 mb-2"
+                        title="Buổi học này đã có tranh chấp escrow — tiền chỉ thực sự di chuyển khi tranh chấp đó được xử lý ở Quản Lý Tranh Chấp">
+                        <span className="material-symbols-outlined text-[13px]">gavel</span>
+                        Có tranh chấp escrow liên quan ({r.related_dispute_status})
+                      </p>
+                    )}
 
                     <div className="flex items-center gap-4 flex-wrap text-xs text-gray-500">
                       <span className="flex items-center gap-1.5">
@@ -293,6 +300,18 @@ export default function SupportRequests({ token }) {
                 <span>
                   Duyệt sẽ <b>tự động hủy mọi buổi học sắp tới</b> giữa học sinh <b>{actionReq.student_name}</b> và
                   gia sư <b>{actionReq.tutor_name}</b> (trạng thái Pending/Approved), đồng thời thông báo cho cả hai bên.
+                </span>
+              </div>
+            )}
+
+            {['refund', 'tutor_complaint'].includes(actionReq.request_type) && actionStatus !== 'rejected' && (
+              <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800 leading-relaxed">
+                <span className="material-symbols-outlined text-amber-600 shrink-0" style={{ fontSize: 16 }}>warning</span>
+                <span>
+                  Xác nhận ở đây <b>chỉ cập nhật trạng thái yêu cầu</b> — hệ thống <b>không tự động hoàn tiền hay trừ điểm gia sư</b>.
+                  {actionReq.related_dispute_id
+                    ? <> Buổi học này đã có tranh chấp escrow ({actionReq.related_dispute_status}) — kiểm tra tranh chấp đó ở <b>Quản Lý Tranh Chấp</b> để biết tiền đã được xử lý chưa.</>
+                    : <> Nếu cần hoàn tiền thật hoặc xử phạt gia sư, hãy tạo/xử lý ở <b>Quản Lý Tranh Chấp</b> trước khi xác nhận ở đây.</>}
                 </span>
               </div>
             )}

@@ -42,7 +42,11 @@ async function resolveFinding(pool, findingKey) {
       findingType: 'check',
       finding: check,
       difference: check.difference,
-      severity: computeSeverity(check.difference),
+      // review_only checks are marked that way BECAUSE exact matching is
+      // structurally impossible (see computeReconciliation.js) — the gap is
+      // expected and can never be "resolved" down to a transaction, so it
+      // must never be allowed to read as CRITICAL purely from its magnitude.
+      severity: check.status === 'review_only' ? 'LOW' : computeSeverity(check.difference),
       computed,
     };
   }
@@ -54,7 +58,12 @@ async function resolveFinding(pool, findingKey) {
     findingType: 'item',
     finding: item,
     difference: item.amount,
-    severity: computeSeverity(item.amount),
+    // Items already carry a deliberately-calibrated low/medium severity from
+    // computeReconciliation.js (they're routine review items, not detected
+    // discrepancies) — reuse it instead of recomputing on the CRITICAL-capable
+    // magnitude scale, which used to mislabel routine large transactions/
+    // withdrawals as CRITICAL.
+    severity: String(item.severity || 'low').toUpperCase(),
     computed,
   };
 }
