@@ -253,6 +253,9 @@ function DetailModal({ token, id, onClose, onChanged }) {
                 <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${(STATUS_CFG[d.status] || STATUS_CFG.OPEN).cls}`}>{(STATUS_CFG[d.status] || {}).label}</span>
                 <span className="text-xs text-gray-400">{d.source_type} · {d.model_used}</span>
               </div>
+              {d.flagged_text && (
+                <div><p className="text-xs text-gray-400 uppercase font-semibold mb-1">Nội dung gốc bị gắn cờ</p><p className="text-gray-900 bg-yellow-50 border border-yellow-200 rounded-lg p-3 whitespace-pre-wrap break-words">{d.flagged_text}</p></div>
+              )}
               <div><p className="text-xs text-gray-400 uppercase font-semibold mb-1">Tóm tắt</p><p className="text-gray-800 bg-gray-50 rounded-lg p-3">{d.summary}</p></div>
               <div>
                 <p className="text-xs text-gray-400 uppercase font-semibold mb-1">Danh mục</p>

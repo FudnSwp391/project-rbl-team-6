@@ -1680,8 +1680,8 @@ async function saveSemanticModerationReport(r) {
       `INSERT INTO semantic_moderation_reports
         (source_type, source_id, tutor_id, student_id, target_user_id, severity, status,
          categories, scores, summary, evidence, highlighted_text, suggested_actions, limitations,
-         model_used, rule_version, input_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,'OPEN',$7::jsonb,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16)
+         model_used, rule_version, input_hash, flagged_text)
+       VALUES ($1,$2,$3,$4,$5,$6,'OPEN',$7::jsonb,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16,$17)
        RETURNING id`,
       [
         r.source_type, r.source_id != null ? String(r.source_id) : null,
@@ -1690,6 +1690,7 @@ async function saveSemanticModerationReport(r) {
         JSON.stringify(r.evidence || []), JSON.stringify(r.highlighted_text || []),
         JSON.stringify(r.suggested_actions || []), JSON.stringify(r.limitations || []),
         r.model_used || 'RULE_BASED', SEMANTIC_MODERATION_RULE_VERSION, r.input_hash || null,
+        r.text ? sanitizeModerationText(r.text, SEMANTIC_MODERATION_MAX_TEXT_CHARS) : null,
       ]
     );
     return ins.rows[0].id;
@@ -1787,7 +1788,7 @@ async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_
       const suspicious = a.severity !== 'LOW' || a.categories.some(c => c !== 'POSITIVE_TEACHING_SIGNAL');
       if (suspicious) {
         const id = await saveSemanticModerationReport({
-          ...a, source_type: 'REVIEW', source_id: rv.id,
+          ...a, source_type: 'REVIEW', source_id: rv.id, text: rv.text,
           tutor_id: asUuidOrNull(rv.tutor_user_id), input_hash: hashModerationInput(rv.text, 'REVIEW', rv.id),
         });
         if (id) stats.created++; else stats.failed++;
@@ -1815,7 +1816,7 @@ async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_
       const suspicious = a.severity !== 'LOW' && a.categories.some(cat => ['EXTERNAL_PAYMENT_ATTEMPT', 'TOXIC_LANGUAGE', 'SPAM_OR_SCAM', 'PRIVACY_RISK'].includes(cat));
       if (suspicious) {
         const id = await saveSemanticModerationReport({
-          ...a, source_type: 'CHAT_MESSAGE', source_id: c.id,
+          ...a, source_type: 'CHAT_MESSAGE', source_id: c.id, text: c.text,
           target_user_id: asUuidOrNull(c.sender_id), input_hash: hashModerationInput(c.text, 'CHAT_MESSAGE', c.id),
         });
         if (id) stats.created++; else stats.failed++;
@@ -5707,10 +5708,57 @@ app.patch("/api/admin/tutors/:id", verifyToken, requireAdmin, async (req, res) =
   } finally { client.release(); }
 });
 
+// Shared reputation-score mutator. Previously this exact SQL + <30 auto-ban /
+// ≥30 auto-unban threshold was copy-pasted across 4 call sites (this manual
+// endpoint, violations/apply-reputation, course-complaints tutor penalty, and
+// escrow resolve-dispute-v2) — one of them had drifted to skip the standalone
+// "account banned" notification entirely. Top-level (not inside startServer())
+// so every call site — including ones nested inside startServer() — can see it.
+// Callers still send their own contextual "why" notification; this only owns
+// the score math and the two fixed ban/unban notifications.
+async function applyTutorReputationDelta(client, tutorId, delta, sourceLabel) {
+  const upd = await client.query(
+    `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
+     WHERE user_id = $2 RETURNING reputation_score`,
+    [delta, tutorId]
+  );
+  if (!upd.rows.length) return null;
+  const newScore = upd.rows[0].reputation_score;
+
+  const chk = await client.query(`SELECT is_banned, banned_reason FROM users WHERE id=$1`, [tutorId]);
+  const wasAutoBanned = !!(chk.rows[0]?.is_banned && chk.rows[0]?.banned_reason === 'reputation_auto_ban');
+
+  let autoBanned = false, autoUnbanned = false;
+  if (newScore < 30 && !wasAutoBanned) {
+    await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [tutorId]);
+    autoBanned = true;
+    await safeNotifyUser(client, {
+      userId: tutorId, type: 'system', channels: ['IN_APP'],
+      templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
+      title: 'Tài khoản bị khóa',
+      body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+      icon: 'block', sourceType: 'user', sourceId: tutorId, priority: 'critical',
+      idempotencyKey: `reputation_auto_ban:${tutorId}:${sourceLabel}`,
+    });
+  } else if (newScore >= 30 && wasAutoBanned) {
+    await client.query(`UPDATE users SET is_banned=false, banned_reason=NULL WHERE id=$1`, [tutorId]);
+    autoUnbanned = true;
+    await safeNotifyUser(client, {
+      userId: tutorId, type: 'system', channels: ['IN_APP'],
+      templateKey: 'reputation_auto_unban', eventType: 'reputation_auto_unban',
+      title: 'Tài khoản đã được mở khóa lại',
+      body: 'Điểm uy tín của bạn đã hồi phục trên ngưỡng tối thiểu — tài khoản đã được mở khóa lại.',
+      icon: 'lock_open', sourceType: 'user', sourceId: tutorId, priority: 'critical',
+      idempotencyKey: `reputation_auto_unban:${tutorId}:${sourceLabel}`,
+    });
+  }
+  return { newScore, autoBanned, autoUnbanned };
+}
+
 // ── POST /api/admin/tutors/:id/reputation ── tăng/giảm điểm uy tín thủ công ──
 // Body: { delta: number (int, ≠0, |delta|≤100), reason: string (bắt buộc) }
-// Cùng ngưỡng auto-ban <30 điểm như luồng xử lý tranh chấp (xem penalty ở
-// resolve-dispute-v2 phía dưới) — giữ hành vi nhất quán dù điểm bị trừ từ đâu.
+// Cùng ngưỡng auto-ban <30 điểm như luồng xử lý tranh chấp — giữ hành vi nhất
+// quán dù điểm bị trừ từ đâu (xem applyTutorReputationDelta ở trên).
 app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { delta, reason } = req.body || {};
@@ -5730,42 +5778,12 @@ app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (r
     if (chk.rows[0].role !== "tutor") return res.status(400).json({ message: "User này không phải gia sư." });
 
     await client.query("BEGIN");
-    const upd = await client.query(
-      `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
-       WHERE user_id = $2 RETURNING reputation_score`,
-      [deltaNum, id]
-    );
-    if (!upd.rows.length) {
+    const result = await applyTutorReputationDelta(client, id, deltaNum, `manual:${Date.now()}`);
+    if (!result) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Gia sư chưa có hồ sơ." });
     }
-    const newScore = upd.rows[0].reputation_score;
-
-    let autoBanned = false;
-    let autoUnbanned = false;
-    if (newScore < 30) {
-      await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [id]);
-      autoBanned = true;
-      await safeNotifyUser(client, {
-        userId: id, type: 'system', channels: ['IN_APP'],
-        templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
-        title: 'Tài khoản bị khóa',
-        body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
-        icon: 'block', sourceType: 'user', sourceId: id, priority: 'critical',
-        idempotencyKey: `reputation_auto_ban:${id}:manual:${Date.now()}`,
-      });
-    } else if (chk.rows[0].is_banned && chk.rows[0].banned_reason === 'reputation_auto_ban') {
-      await client.query(`UPDATE users SET is_banned=false, banned_reason=NULL WHERE id=$1`, [id]);
-      autoUnbanned = true;
-      await safeNotifyUser(client, {
-        userId: id, type: 'system', channels: ['IN_APP'],
-        templateKey: 'reputation_auto_unban', eventType: 'reputation_auto_unban',
-        title: 'Tài khoản đã được mở khóa lại',
-        body: 'Điểm uy tín của bạn đã hồi phục trên ngưỡng tối thiểu — tài khoản đã được mở khóa lại.',
-        icon: 'lock_open', sourceType: 'user', sourceId: id, priority: 'critical',
-        idempotencyKey: `reputation_auto_unban:${id}:manual:${Date.now()}`,
-      });
-    }
+    const { newScore, autoBanned, autoUnbanned } = result;
 
     await client.query("COMMIT");
 
@@ -5773,7 +5791,7 @@ app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (r
       userId: id, type: 'system', channels: ['IN_APP'],
       templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
       title: deltaNum > 0 ? 'Điểm uy tín được cộng thêm' : 'Điểm uy tín bị trừ',
-      body: `Admin đã ${deltaNum > 0 ? 'cộng' : 'trừ'} ${Math.abs(deltaNum)} điểm uy tín. Lý do: ${reason.trim()}. Điểm hiện tại: ${newScore}/100.`,
+      body: `Admin đã ${deltaNum > 0 ? 'cộng' : 'trừ'} ${Math.abs(deltaNum)} điểm uy tín. Lý do: ${reason.trim()}.`,
       icon: deltaNum > 0 ? 'trending_up' : 'trending_down',
       sourceType: 'user', sourceId: id, priority: 'normal',
       idempotencyKey: `reputation_manual_adjustment:${id}:${Date.now()}`,
@@ -9145,7 +9163,8 @@ app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res)
     const dispute = dRes.rows[0];
 
     const viRes = await pool.query(`
-      SELECT id, dispute_id, investigation_status, case_type, verdict, confidence, summary, recommendation, evidence, created_at, updated_at
+      SELECT dispute_id, investigation_status, case_type, verdict, confidence, summary, recommendation, evidence,
+             investigated_at, reviewed_by, reviewed_at, reputation_applied_at, created_at, updated_at
       FROM violation_investigations WHERE dispute_id = $1
     `, [req.params.id]);
     dispute.investigation = viRes.rows[0] || null;
@@ -9169,7 +9188,7 @@ app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res)
     dispute.tutor_snapshot = null;
     dispute.student_snapshot = null;
 
-    return res.json({ violation: dispute });
+    return res.json(dispute);
   } catch (err) {
     if (err.code === '22P02') return res.status(400).json({ message: "ID sai định dạng UUID." });
     console.error("GET /api/admin/violations/:id error:", err);
@@ -9322,30 +9341,12 @@ app.post("/api/admin/violations/:id/apply-reputation", verifyToken, requireAdmin
       return res.status(400).json({ message: "Báo cáo này chưa có khuyến nghị trừ điểm uy tín để áp dụng." });
     }
 
-    const upd = await client.query(
-      `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
-       WHERE user_id = $2 RETURNING reputation_score`,
-      [delta, vi.tutor_id]
-    );
-    if (!upd.rows.length) {
+    const result = await applyTutorReputationDelta(client, vi.tutor_id, delta, `violation:${disputeId}`);
+    if (!result) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Gia sư chưa có hồ sơ." });
     }
-    const newScore = upd.rows[0].reputation_score;
-
-    let autoBanned = false;
-    if (newScore < 30) {
-      await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [vi.tutor_id]);
-      autoBanned = true;
-      await safeNotifyUser(client, {
-        userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
-        templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
-        title: 'Tài khoản bị khóa',
-        body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
-        icon: 'block', sourceType: 'user', sourceId: vi.tutor_id, priority: 'critical',
-        idempotencyKey: `reputation_auto_ban:${vi.tutor_id}:violation:${disputeId}`,
-      });
-    }
+    const { newScore, autoBanned } = result;
 
     await client.query(
       `UPDATE violation_investigations SET reputation_applied_at = NOW(), updated_at = NOW() WHERE dispute_id = $1`,
@@ -9358,7 +9359,7 @@ app.post("/api/admin/violations/:id/apply-reputation", verifyToken, requireAdmin
       userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
       templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
       title: 'Điểm uy tín bị trừ',
-      body: `Admin đã trừ ${Math.abs(delta)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}. Điểm hiện tại: ${newScore}/100.`,
+      body: `Admin đã trừ ${Math.abs(delta)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}.`,
       icon: 'trending_down', sourceType: 'user', sourceId: vi.tutor_id, priority: 'normal',
       idempotencyKey: `reputation_manual_adjustment:${vi.tutor_id}:violation:${disputeId}`,
     });
@@ -9471,7 +9472,7 @@ app.post("/api/admin/violations/:id/manual-review", verifyToken, requireAdmin, a
         userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
         templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
         title: 'Điểm uy tín bị trừ',
-        body: `Admin đã trừ ${Math.abs(deltaNum)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}. Điểm hiện tại: ${newScore}/100.`,
+        body: `Admin đã trừ ${Math.abs(deltaNum)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}.`,
         icon: 'trending_down', sourceType: 'user', sourceId: vi.tutor_id, priority: 'normal',
         idempotencyKey: `reputation_manual_adjustment:${vi.tutor_id}:violation_manual:${disputeId}`,
       });
@@ -15307,15 +15308,8 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
         let newReputationScore = null;
         let autoBanned = false;
         if (repDeduct > 0) {
-          const tp = await client.query(
-            `UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`,
-            [repDeduct, tutorId]
-          );
-          newReputationScore = tp.rows[0]?.reputation_score ?? null;
-          if (newReputationScore !== null && newReputationScore < 30) {
-            await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [tutorId]);
-            autoBanned = true;
-          }
+          const penaltyResult = await applyTutorReputationDelta(client, tutorId, -repDeduct, `complaint:${req.params.id}`);
+          if (penaltyResult) { newReputationScore = penaltyResult.newScore; autoBanned = penaltyResult.autoBanned; }
         }
         if (penalty_type === 'BAN') {
           await client.query(`UPDATE users SET is_banned=true, banned_reason='admin_penalty_ban' WHERE id=$1`, [tutorId]);
@@ -20885,7 +20879,7 @@ app.post('/api/admin/semantic-moderation/analyze', verifyToken, requireAdmin, as
     const result = ai ? mergeModerationWithAI(base, ai) : base;
 
     const report = {
-      ...result, source_type: type, source_id: sourceId || null,
+      ...result, source_type: type, source_id: sourceId || null, text: analyzeText,
       tutor_id: resolvedTutorId, student_id: resolvedStudentId, target_user_id: targetUserId,
       input_hash: hashModerationInput(analyzeText, type, sourceId),
     };
@@ -21535,21 +21529,8 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
 
     let autoBanned = false;
     if (repDeduct > 0) {
-      const tp = await client.query(`UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`, [repDeduct, tutorId]);
-      // Auto-ban check
-      if (tp.rows.length && tp.rows[0].reputation_score < 30) {
-        await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [tutorId]);
-        autoBanned = true;
-        // Batch 20.1: safeNotifyUser, same client, priority critical
-        await safeNotifyUser(client, {
-          userId: tutorId, type: 'system', channels: ['IN_APP'],
-          templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
-          title: 'Tài khoản bị khóa',
-          body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
-          icon: 'block', sourceType: 'user', sourceId: tutorId, priority: 'critical',
-          idempotencyKey: `reputation_auto_ban:${tutorId}:${disputeId}`,
-        });
-      }
+      const penaltyResult = await applyTutorReputationDelta(client, tutorId, -repDeduct, `${disputeId}`);
+      if (penaltyResult) autoBanned = penaltyResult.autoBanned;
     }
 
     if (penaltyType === 'BAN') {
@@ -22520,6 +22501,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
         model_used     TEXT DEFAULT 'RULE_BASED',
         rule_version   TEXT NOT NULL DEFAULT 'SEMANTIC_MODERATION_V1',
         input_hash     TEXT,
+        flagged_text   TEXT,
         created_at     TIMESTAMPTZ DEFAULT NOW(),
         reviewed_at    TIMESTAMPTZ,
         reviewed_by    UUID,
@@ -22531,6 +22513,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
       CREATE INDEX IF NOT EXISTS idx_sem_reports_sev      ON semantic_moderation_reports(severity, status, created_at);
       CREATE INDEX IF NOT EXISTS idx_sem_reports_hash     ON semantic_moderation_reports(input_hash);
       CREATE INDEX IF NOT EXISTS idx_sem_reports_cat      ON semantic_moderation_reports USING GIN (categories);
+      ALTER TABLE semantic_moderation_reports ADD COLUMN IF NOT EXISTS flagged_text TEXT;
 
       CREATE TABLE IF NOT EXISTS tutor_reputation_semantic_scores (
         id                          BIGSERIAL PRIMARY KEY,
