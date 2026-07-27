@@ -6,10 +6,46 @@ dotenv.config();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || "" });
+function getGroqKeys() {
+  const keysStr = [process.env.GROQ_API_KEYS, process.env.GROQ_API_KEY]
+    .filter(Boolean)
+    .join(",");
+  return Array.from(new Set(keysStr.split(",").map((k) => k.trim()).filter(Boolean)));
+}
+
+const GROQ_KEYS = getGroqKeys();
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 
-const hasGroq = !!process.env.GROQ_API_KEY;
+const hasGroq = GROQ_KEYS.length > 0;
+let groqKeyIndex = 0;
+
+/**
+ * Executes a function with Groq SDK, rotating through available API keys on error.
+ */
+async function callGroqWithRetry(actionFn) {
+  const keys = getGroqKeys();
+  if (keys.length === 0) {
+    throw new Error("No Groq API keys configured");
+  }
+
+  let lastErr = null;
+  const maxAttempts = keys.length;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const key = keys[groqKeyIndex];
+    groqKeyIndex = (groqKeyIndex + 1) % keys.length;
+    const client = new Groq({ apiKey: key });
+
+    try {
+      return await actionFn(client);
+    } catch (err) {
+      lastErr = err;
+      console.warn(`⚠️ Groq API key (ending ...${key.slice(-6)}) failed: ${err.message || err}. Retrying next key...`);
+    }
+  }
+
+  throw lastErr || new Error("All Groq API keys failed");
+}
 
 function isQuotaError(err) {
   const msg = err?.message || "";
@@ -323,6 +359,9 @@ Difficulty level: ${difficultyMap[difficulty] || difficultyMap.medium}.
 CRITICAL RULES:
 ${typeRules}
 - Questions must test actual knowledge of "${coreTopic}", NOT meta-questions about how to study it.
+- ABSOLUTELY NO UNSEEN IMAGE REFERENCES:
+  Do NOT generate questions that refer to unseen images, figures, diagrams, or drawings (e.g., "trong hình sau", "ở hình bên", "xem hình dưới đây", "sơ đồ sau", "bức tranh bên", "đếm số hình trong hình dưới").
+  The test system is TEXT-ONLY. ALL questions MUST be 100% self-contained using text, numbers, formulas, or explicit word-problem descriptions. For math or geometry, describe all shapes, counts, and dimensions explicitly in words so students can solve without needing an image!
 - If Multiple Choice: Questions must have SPECIFIC, MEANINGFUL answer options.
 - If Essay: Questions must require students to write sentences, paragraphs or solve problems with steps.
 - If Mathematics: include actual calculations or mathematical concepts.
@@ -340,11 +379,21 @@ ${jsonFormat}
 Generate ${count} diverse questions covering different aspects of "${topic}".`;
 }
 
+function sanitizeQuestionText(text) {
+  if (!text) return text;
+  return text
+    .replace(/\b(trong|ở|xem|xem qua|theo|dựa vào)\s+hình\s+(sau|bên|dưới|dưới đây|vẽ sau)\b/gi, "bài toán")
+    .replace(/\bhình\s+(sau|bên|dưới|dưới đây|vẽ sau)\b/gi, "đề bài")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function normalizeQuestions(questions) {
   return questions.map((q, i) => {
     const isEssay = q.question_type === 'essay';
+    const rawQuestion = q.question || 'Question ' + (i + 1);
     const normalized = {
-      question: q.question || 'Question ' + (i + 1),
+      question: sanitizeQuestionText(rawQuestion),
       question_type: q.question_type || 'multiple_choice',
       explanation: q.explanation || "No explanation provided.",
     };
@@ -382,22 +431,24 @@ async function generateWithGemini(prompt) {
 }
 
 async function generateWithGroq(prompt) {
-  const completion = await groq.chat.completions.create({
-    model: GROQ_MODEL,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an expert Vietnamese educator. Always respond with ONLY a valid JSON array. No markdown, no explanation, no code blocks.",
-      },
-      { role: "user", content: prompt },
-    ],
-    temperature: 0.7,
-    max_tokens: 4096,
-  });
+  return await callGroqWithRetry(async (groqClient) => {
+    const completion = await groqClient.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an expert Vietnamese educator. Always respond with ONLY a valid JSON array. No markdown, no explanation, no code blocks.",
+        },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 4096,
+    });
 
-  const text = completion.choices[0]?.message?.content?.trim() || "[]";
-  return parseJsonResponse(text);
+    const text = completion.choices[0]?.message?.content?.trim() || "[]";
+    return parseJsonResponse(text);
+  });
 }
 
 async function chatWithGroq(messages, systemInstruction) {
@@ -409,14 +460,16 @@ async function chatWithGroq(messages, systemInstruction) {
     })),
   ];
 
-  const completion = await groq.chat.completions.create({
-    model: GROQ_MODEL,
-    messages: groqMessages,
-    temperature: 0.7,
-    max_tokens: 1024,
-  });
+  return await callGroqWithRetry(async (groqClient) => {
+    const completion = await groqClient.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: groqMessages,
+      temperature: 0.7,
+      max_tokens: 1024,
+    });
 
-  return completion.choices[0]?.message?.content?.trim() || "";
+    return completion.choices[0]?.message?.content?.trim() || "";
+  });
 }
 
 async function generateQuizQuestions(topic, count = 10, difficulty = "medium", questionType = "multiple_choice") {
@@ -580,16 +633,18 @@ IMPORTANT: Return ONLY a valid JSON object. No markdown, no extra text.
     console.error("AI grading failed:", e);
     if (hasGroq) {
         try {
-          const completion = await groq.chat.completions.create({
-            model: GROQ_MODEL,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.3,
-            max_tokens: 1024,
+          const parsed = await callGroqWithRetry(async (groqClient) => {
+            const completion = await groqClient.chat.completions.create({
+              model: GROQ_MODEL,
+              messages: [{ role: "user", content: prompt }],
+              temperature: 0.3,
+              max_tokens: 1024,
+            });
+            const text = completion.choices[0]?.message?.content?.trim() || "{}";
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            const clean = jsonMatch ? jsonMatch[0] : "{}";
+            return JSON.parse(clean);
           });
-          const text = completion.choices[0]?.message?.content?.trim() || "{}";
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          const clean = jsonMatch ? jsonMatch[0] : "{}";
-          const parsed = JSON.parse(clean);
           return { score: parsed.score || 0, feedback: parsed.feedback || "Không thể tải nhận xét." };
         } catch (err) {
             console.error("Groq fallback grading failed:", err);
@@ -659,16 +714,18 @@ YÊU CẦU CỦA NGƯỜI DÙNG: "${userPrompt}"`;
     return parseObjectResponse(r.response.text().trim());
   }
   async function viaGroq() {
-    const c = await groq.chat.completions.create({
-      model: GROQ_MODEL,
-      messages: [
-        { role: "system", content: "Bạn là trợ lý tìm gia sư. CHỈ trả về 1 JSON object hợp lệ, không markdown, không giải thích." },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.5,
-      max_tokens: 1024,
+    return await callGroqWithRetry(async (groqClient) => {
+      const c = await groqClient.chat.completions.create({
+        model: GROQ_MODEL,
+        messages: [
+          { role: "system", content: "Bạn là trợ lý tìm gia sư. CHỈ trả về 1 JSON object hợp lệ, không markdown, không giải thích." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.5,
+        max_tokens: 1024,
+      });
+      return parseObjectResponse((c.choices[0]?.message?.content || "{}").trim());
     });
-    return parseObjectResponse((c.choices[0]?.message?.content || "{}").trim());
   }
 
   try {

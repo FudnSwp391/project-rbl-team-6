@@ -18143,14 +18143,21 @@ app.delete("/api/bookings/:id", verifyToken, async (req, res) => {
 // Google Gemini client (GEMINI_API_KEY/GEMINI_MODELS/callGeminiModel) now lives at
 // true top-level, above — moved out of startServer() so top-level callers can see it.
 
-const rawGroqKeys = process.env.GROQ_API_KEYS || "";
-const GROQ_API_KEYS = rawGroqKeys.split(',').map(k => k.trim()).filter(Boolean);
+function getGroqApiKeys() {
+  const keysStr = [process.env.GROQ_API_KEYS, process.env.GROQ_API_KEY]
+    .filter(Boolean)
+    .join(",");
+  return Array.from(new Set(keysStr.split(',').map(k => k.trim()).filter(Boolean)));
+}
+
 let currentGroqKeyIndex = 0;
 
 async function callGroqModel(prompt, jsonMode = false) {
-  const apiKey = GROQ_API_KEYS[currentGroqKeyIndex];
-  currentGroqKeyIndex = (currentGroqKeyIndex + 1) % GROQ_API_KEYS.length;
-  
+  const keys = getGroqApiKeys();
+  if (keys.length === 0) {
+    return { ok: false, status: 500, errText: "No Groq API keys configured" };
+  }
+
   const url = "https://api.groq.com/openai/v1/chat/completions";
   const body = {
     model: "llama-3.3-70b-versatile",
@@ -18163,24 +18170,39 @@ async function callGroqModel(prompt, jsonMode = false) {
     body.response_format = { type: "json_object" };
   }
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
-      },
-      body: JSON.stringify(body),
-    });
-    
-    if (!res.ok) {
-      return { ok: false, status: res.status, errText: await res.text() };
+  let lastResult = null;
+  const maxAttempts = keys.length;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const apiKey = keys[currentGroqKeyIndex];
+    currentGroqKeyIndex = (currentGroqKeyIndex + 1) % keys.length;
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        lastResult = { ok: false, status: res.status, errText };
+        console.warn(`[Groq] API key ...${apiKey.slice(-6)} returned status ${res.status}: ${errText}. Retrying next key...`);
+        continue;
+      }
+
+      const data = await res.json();
+      return { ok: true, data };
+    } catch (error) {
+      lastResult = { ok: false, status: 0, errText: error.message };
+      console.warn(`[Groq] Fetch error with key ...${apiKey.slice(-6)}: ${error.message}. Retrying next key...`);
     }
-    const data = await res.json();
-    return { ok: true, data };
-  } catch (error) {
-    return { ok: false, status: 0, errText: error.message };
   }
+
+  return lastResult || { ok: false, status: 500, errText: "All Groq API keys failed" };
 }
 
 
