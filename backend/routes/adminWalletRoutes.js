@@ -286,4 +286,103 @@ router.patch('/withdraw-requests/:id/reject', adminAuthMiddleware, async (req, r
   }
 });
 
+// --- GET Bank Accounts (For Admin Approval) ---
+router.get('/bank-accounts', adminAuthMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.*, u.full_name as tutor_name, u.email as tutor_email 
+       FROM tutor_bank_accounts b
+       JOIN users u ON b.user_id = u.id
+       ORDER BY 
+         CASE WHEN b.status = 'PENDING' THEN 1 ELSE 2 END, 
+         b.created_at DESC`
+    );
+    res.json({ bankAccounts: result.rows });
+  } catch (error) {
+    console.error("Error fetching admin bank accounts:", error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- PATCH Approve Bank Account ---
+router.patch('/bank-accounts/:id/approve', adminAuthMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      "UPDATE tutor_bank_accounts SET status = 'APPROVED', updated_at = NOW() WHERE id = $1 AND status = 'PENDING' RETURNING *",
+      [id]
+    );
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Không tìm thấy tài khoản hoặc tài khoản đã được xử lý.' });
+    }
+
+    const bankAccount = result.rows[0];
+    const maskedAccount = bankAccount.account_number.slice(-4).padStart(bankAccount.account_number.length, '*');
+    
+    // Create notification for the tutor
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1, 'system', 'Tài khoản ngân hàng đã được duyệt', $2, 'check_circle', $3, 'wallet_withdraw')`,
+      [
+        bankAccount.user_id, 
+        `Tài khoản ${bankAccount.bank_name} ${maskedAccount} của bạn đã được Admin xác minh. Bạn có thể sử dụng tài khoản này để rút tiền.`,
+        bankAccount.id
+      ]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Đã duyệt tài khoản ngân hàng.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error approving bank account:", error);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// --- PATCH Reject Bank Account ---
+router.patch('/bank-accounts/:id/reject', adminAuthMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { note } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      "UPDATE tutor_bank_accounts SET status = 'REJECTED', rejection_reason = $1, updated_at = NOW() WHERE id = $2 AND status = 'PENDING' RETURNING *",
+      [note || 'Thông tin không hợp lệ', id]
+    );
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Không tìm thấy tài khoản hoặc tài khoản đã được xử lý.' });
+    }
+
+    const bankAccount = result.rows[0];
+    const maskedAccount = bankAccount.account_number.slice(-4).padStart(bankAccount.account_number.length, '*');
+    
+    // Create notification for the tutor
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES ($1, 'system', 'Tài khoản ngân hàng bị từ chối', $2, 'cancel', $3, 'wallet_withdraw')`,
+      [
+        bankAccount.user_id, 
+        `Tài khoản ${bankAccount.bank_name} ${maskedAccount} của bạn đã bị từ chối với lý do: ${bankAccount.rejection_reason}. Vui lòng cập nhật lại.`,
+        bankAccount.id
+      ]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Đã từ chối tài khoản ngân hàng.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error rejecting bank account:", error);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;

@@ -126,28 +126,142 @@ router.post('/deposit-request', authMiddleware, async (req, res) => {
   }
 });
 
+// --- GET Bank Accounts ---
+router.get('/bank-accounts', authMiddleware, async (req, res) => {
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
+  if (!userId) return res.status(400).json({ error: 'User ID missing' });
+
+  try {
+    const result = await pool.query(
+      'SELECT * FROM tutor_bank_accounts WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
+    );
+    res.json({ bankAccounts: result.rows });
+  } catch (error) {
+    console.error("Error fetching bank accounts:", error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- POST Bank Account ---
+router.post('/bank-accounts', authMiddleware, async (req, res) => {
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
+  const { bankName, accountNumber, accountHolder } = req.body;
+
+  if (!bankName || !accountNumber || !accountHolder) {
+    return res.status(400).json({ error: 'Vui lòng nhập đầy đủ thông tin ngân hàng' });
+  }
+
+  try {
+    const existing = await pool.query(
+      'SELECT id FROM tutor_bank_accounts WHERE user_id = $1 AND bank_name = $2 AND account_number = $3',
+      [userId, bankName, accountNumber]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Tài khoản ngân hàng này đã tồn tại trong danh sách của bạn.' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO tutor_bank_accounts (user_id, bank_name, account_number, account_holder, status)
+       VALUES ($1, $2, $3, $4, 'PENDING') RETURNING *`,
+      [userId, bankName, accountNumber, accountHolder]
+    );
+
+    // Create notification for admin
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, body, icon, ref_id, ref_type)
+       VALUES (
+         (SELECT id FROM users WHERE role = 'admin' LIMIT 1),
+         'system',
+         'Yêu cầu xác minh ngân hàng',
+         'Có tài khoản ngân hàng mới cần xác minh.',
+         'credit_card',
+         $1,
+         'bank_account'
+       )`,
+      [result.rows[0].id]
+    ).catch(err => console.error('Failed to insert admin notification:', err));
+
+    res.json({ success: true, bankAccount: result.rows[0], message: 'Đã thêm tài khoản. Vui lòng chờ Admin duyệt.' });
+  } catch (error) {
+    console.error("Error creating bank account:", error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- PATCH Bank Account (Re-submit rejected) ---
+router.patch('/bank-accounts/:id', authMiddleware, async (req, res) => {
+  const userId = req.user?.userId || req.user?.id || req.user?.sub;
+  const { id } = req.params;
+  const { bankName, accountNumber, accountHolder } = req.body;
+
+  if (!bankName || !accountNumber || !accountHolder) {
+    return res.status(400).json({ error: 'Vui lòng nhập đầy đủ thông tin ngân hàng' });
+  }
+
+  try {
+    // Only allow editing if it belongs to user and is REJECTED
+    const acc = await pool.query('SELECT status FROM tutor_bank_accounts WHERE id = $1 AND user_id = $2', [id, userId]);
+    if (acc.rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy tài khoản.' });
+    if (acc.rows[0].status !== 'REJECTED') {
+      return res.status(400).json({ error: 'Chỉ có thể cập nhật tài khoản bị từ chối.' });
+    }
+
+    const result = await pool.query(
+      `UPDATE tutor_bank_accounts 
+       SET bank_name = $1, account_number = $2, account_holder = $3, status = 'PENDING', rejection_reason = NULL, updated_at = NOW()
+       WHERE id = $4 AND user_id = $5 RETURNING *`,
+      [bankName, accountNumber, accountHolder, id, userId]
+    );
+
+    res.json({ success: true, bankAccount: result.rows[0], message: 'Đã cập nhật tài khoản. Vui lòng chờ Admin duyệt lại.' });
+  } catch (error) {
+    console.error("Error updating bank account:", error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // --- POST Withdraw Request ---
 router.post('/withdraw-request', authMiddleware, async (req, res) => {
   const userId = req.user?.userId || req.user?.id || req.user?.sub;
-  const { amount, method, accountDetails } = req.body;
+  const { amount, method, bankAccountId } = req.body;
 
-  if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
+  if (!amount || amount <= 0) return res.status(400).json({ error: 'Số tiền không hợp lệ' });
+  if (!bankAccountId) return res.status(400).json({ error: 'Vui lòng chọn tài khoản ngân hàng' });
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     
+    // Validate bank account
+    const bankResult = await client.query(
+      'SELECT * FROM tutor_bank_accounts WHERE id = $1 AND user_id = $2', 
+      [bankAccountId, userId]
+    );
+    
+    if (bankResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Không tìm thấy tài khoản ngân hàng.' });
+    }
+    
+    const bankAccount = bankResult.rows[0];
+    if (bankAccount.status !== 'APPROVED') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Tài khoản ngân hàng chưa được duyệt. Không thể rút tiền.' });
+    }
+
     // Lock wallet row for update to prevent race conditions
     const walletResult = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
     if (walletResult.rows.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Wallet not found' });
+      return res.status(400).json({ error: 'Không tìm thấy ví.' });
     }
     
     const wallet = walletResult.rows[0];
     if (parseFloat(wallet.balance) < amount) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Insufficient balance' });
+      return res.status(400).json({ error: 'Số dư không đủ.' });
     }
 
     // Deduct balance immediately
@@ -157,14 +271,21 @@ router.post('/withdraw-request', authMiddleware, async (req, res) => {
     );
 
     // Create a pending withdraw request
+    const accountDetails = {
+      bankAccountId: bankAccount.id,
+      bankName: bankAccount.bank_name,
+      accountNumber: bankAccount.account_number,
+      accountHolder: bankAccount.account_holder
+    };
+
     await client.query(
       `INSERT INTO withdraw_requests (wallet_id, amount, method, account_details, status)
        VALUES ($1, $2, $3, $4, 'PENDING')`,
-      [wallet.id, amount, method, accountDetails]
+      [wallet.id, amount, 'BANK_TRANSFER', accountDetails]
     );
 
     await client.query('COMMIT');
-    res.json({ success: true, message: 'Yêu cầu rút tiền đã được tạo và chờ duyệt' });
+    res.json({ success: true, message: 'Yêu cầu rút tiền đã được tạo và chờ duyệt.' });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error("Error on withdraw:", error);

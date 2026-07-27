@@ -1,45 +1,64 @@
-import React, { useState, useEffect } from 'react';
-import { withdrawRequest, getWalletOverview, getWalletTransactions } from '../../services/api';
+import { useState, useEffect } from 'react';
+import { 
+  withdrawRequest, 
+  getWalletOverview, 
+  getWalletTransactions,
+  getBankAccounts,
+  addBankAccount,
+  updateBankAccount
+} from '../../services/api';
 
-export default function WalletWithdraw({ onBack }) {
+export default function WalletWithdraw({ onBack, initialAccountId }) {
   const [amount, setAmount] = useState('');
-  const [method, setMethod] = useState('bank');
   
-  // Form fields
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId || 'new');
+  
+  // Fields for adding/editing bank account
   const [bankName, setBankName] = useState('Vietcombank');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountHolder, setAccountHolder] = useState('');
-  
-  const [momoPhone, setMomoPhone] = useState('');
-  const [momoName, setMomoName] = useState('');
-  
-  const [zaloPhone, setZaloPhone] = useState('');
-  const [zaloName, setZaloName] = useState('');
 
   const [wallet, setWallet] = useState(null);
   const [recentTx, setRecentTx] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+
+  const fetchData = async () => {
+    try {
+      const [overviewRes, txRes, bankRes] = await Promise.all([
+        getWalletOverview(),
+        getWalletTransactions(),
+        getBankAccounts()
+      ]);
+      setWallet(overviewRes.wallet);
+      
+      const withdraws = (txRes.transactions || []).filter(tx => tx.type === 'WITHDRAW').slice(0, 3);
+      setRecentTx(withdraws);
+      
+      const accounts = bankRes.bankAccounts || [];
+      setBankAccounts(accounts);
+      if (initialAccountId && accounts.some(a => a.id === initialAccountId)) {
+        setSelectedAccountId(initialAccountId);
+      } else if (accounts.length > 0) {
+        setSelectedAccountId(accounts[0].id);
+      }
+    } catch (err) {
+      console.error("Error fetching data", err);
+    }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [overviewRes, txRes] = await Promise.all([
-          getWalletOverview(),
-          getWalletTransactions()
-        ]);
-        setWallet(overviewRes.wallet);
-        
-        // Filter recent withdraw transactions
-        const withdraws = (txRes.transactions || []).filter(tx => tx.type === 'WITHDRAW').slice(0, 3);
-        setRecentTx(withdraws);
-      } catch (err) {
-        console.error("Error fetching data", err);
-      }
-    };
     fetchData();
   }, []);
+
+  useEffect(() => {
+    if (initialAccountId && bankAccounts.some(a => a.id === initialAccountId)) {
+      setSelectedAccountId(initialAccountId);
+    }
+  }, [initialAccountId, bankAccounts]);
 
   const handleAmountChange = (e) => {
     const val = e.target.value.replace(/\D/g, '');
@@ -52,14 +71,66 @@ export default function WalletWithdraw({ onBack }) {
     }
   };
 
-  const handleSubmit = async (e) => {
+  const handleSelectAccount = (id) => {
+    setSelectedAccountId(id);
+    setError(null);
+    if (id !== 'new') {
+      const acc = bankAccounts.find(a => a.id === id);
+      if (acc && acc.status === 'REJECTED') {
+        setBankName(acc.bank_name);
+        setAccountNumber(acc.account_number);
+        setAccountHolder(acc.account_holder);
+      }
+    }
+  };
+
+  const handleSaveBankAccount = async () => {
+    setError(null);
+    if (!bankName || !accountNumber || !accountHolder) {
+      setError('Vui lòng nhập đầy đủ thông tin ngân hàng');
+      return;
+    }
+    setLoading(true);
+    try {
+      let res;
+      if (selectedAccountId === 'new') {
+        res = await addBankAccount({ bankName, accountNumber, accountHolder });
+      } else {
+        res = await updateBankAccount(selectedAccountId, { bankName, accountNumber, accountHolder });
+      }
+      setSuccess(true);
+      setSuccessMessage(res.message || 'Đã gửi yêu cầu xác minh.');
+      await fetchData();
+      setTimeout(() => {
+        setSuccess(false);
+        setSuccessMessage('');
+        setAccountNumber('');
+        setAccountHolder('');
+      }, 3000);
+    } catch (err) {
+      setError(err.serverError || err.message || 'Lỗi khi lưu tài khoản ngân hàng');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmitWithdraw = async (e) => {
     e.preventDefault();
     setError(null);
     setSuccess(false);
     
-    const numAmount = Number(amount);
+    if (selectedAccountId === 'new') {
+      await handleSaveBankAccount();
+      return;
+    }
     
-    // Validation
+    const selectedAccount = bankAccounts.find(a => a.id === selectedAccountId);
+    if (selectedAccount?.status === 'REJECTED') {
+      await handleSaveBankAccount();
+      return;
+    }
+
+    const numAmount = Number(amount);
     if (!amount || isNaN(numAmount) || numAmount <= 0) {
       setError('Vui lòng nhập số tiền hợp lệ');
       return;
@@ -73,37 +144,16 @@ export default function WalletWithdraw({ onBack }) {
       return;
     }
 
-    let accountDetails = {};
-    if (method === 'bank') {
-      if (!accountNumber || !accountHolder) {
-        setError('Vui lòng nhập đầy đủ thông tin ngân hàng');
-        return;
-      }
-      accountDetails = { bankName, accountNumber, accountHolder };
-    } else if (method === 'momo') {
-      if (!momoPhone || !momoName) {
-        setError('Vui lòng nhập đầy đủ thông tin ví MoMo');
-        return;
-      }
-      accountDetails = { phone: momoPhone, name: momoName };
-    } else if (method === 'zalopay') {
-      if (!zaloPhone || !zaloName) {
-        setError('Vui lòng nhập đầy đủ thông tin ví ZaloPay');
-        return;
-      }
-      accountDetails = { phone: zaloPhone, name: zaloName };
-    }
-
     setLoading(true);
     try {
-      await withdrawRequest({ amount: numAmount, method: method === 'bank' ? 'Bank Transfer' : method === 'momo' ? 'MoMo' : 'ZaloPay', accountDetails });
+      await withdrawRequest({ amount: numAmount, method: 'BANK_TRANSFER', bankAccountId: selectedAccountId });
       setSuccess(true);
-      // Redirect back after 2 seconds or show success state
+      setSuccessMessage('Yêu cầu rút tiền đã được gửi. Đang chờ xử lý!');
       setTimeout(() => {
         if (onBack) onBack();
       }, 2500);
     } catch (err) {
-      setError(err.response?.data?.error || 'Lỗi khi yêu cầu rút tiền');
+      setError(err.serverError || err.message || 'Lỗi khi yêu cầu rút tiền');
     } finally {
       setLoading(false);
     }
@@ -116,23 +166,28 @@ export default function WalletWithdraw({ onBack }) {
     return `${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })} • ${d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`;
   };
 
+  const selectedAccObj = bankAccounts.find(a => a.id === selectedAccountId);
+  const isSelectedPending = selectedAccObj && selectedAccObj.status === 'PENDING';
+  const isSelectedRejected = selectedAccObj && selectedAccObj.status === 'REJECTED';
+  const isSelectedApproved = selectedAccObj && selectedAccObj.status === 'APPROVED';
+
   return (
     <div className="p-container-padding max-w-6xl mx-auto animate-fade-in">
       {/* Page Header */}
       <div className="mb-8">
         <nav className="flex items-center text-sm text-on-surface-variant mb-2 gap-2">
-          <button onClick={onBack} className="hover:text-primary transition-colors cursor-pointer">Wallet</button>
+          <button onClick={onBack} className="hover:text-primary transition-colors cursor-pointer">Ví</button>
           <span className="material-symbols-outlined text-xs">chevron_right</span>
           <span className="text-on-surface font-medium">Trang rút tiền</span>
         </nav>
         <h1 className="font-headline-xl text-headline-xl text-on-surface">Yêu cầu rút tiền</h1>
-        <p className="text-on-surface-variant mt-2">Dễ dàng rút thu nhập của bạn về tài khoản ngân hàng hoặc ví điện tử.</p>
+        <p className="text-on-surface-variant mt-2">Dễ dàng rút thu nhập của bạn về tài khoản ngân hàng đã được xác minh.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-gutter-md">
         {/* Left Column: Form */}
         <div className="lg:col-span-2 space-y-gutter-md">
-          {/* Balance Card (Bento Style) */}
+          {/* Balance Card */}
           <div className="bg-primary-container p-8 rounded-xl text-white relative overflow-hidden flex flex-col justify-between h-48 card-shadow">
             <div className="relative z-10">
               <p className="font-label-caps text-label-caps opacity-90 uppercase tracking-wider">Số dư khả dụng</p>
@@ -144,7 +199,6 @@ export default function WalletWithdraw({ onBack }) {
               <span className="material-symbols-outlined text-sm">verified_user</span>
               Tiền có thể rút ngay
             </div>
-            {/* Abstract Background Decoration */}
             <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-white/10 rounded-full blur-3xl"></div>
             <div className="absolute -top-10 -left-10 w-32 h-32 bg-white/5 rounded-full blur-2xl"></div>
           </div>
@@ -154,215 +208,188 @@ export default function WalletWithdraw({ onBack }) {
             <h3 className="font-headline-lg text-lg mb-6">Thông tin rút tiền</h3>
             
             {error && <div className="mb-6 p-4 bg-error-container text-on-error-container text-sm rounded-xl">{error}</div>}
-            {success && <div className="mb-6 p-4 bg-green-50 text-green-700 text-sm rounded-xl flex items-center gap-2"><span className="material-symbols-outlined text-[18px]">check_circle</span>Yêu cầu rút tiền đã được gửi. Đang chờ Admin duyệt!</div>}
+            {success && <div className="mb-6 p-4 bg-green-50 text-green-700 text-sm rounded-xl flex items-center gap-2"><span className="material-symbols-outlined text-[18px]">check_circle</span>{successMessage}</div>}
             
-            <form className="space-y-6" onSubmit={handleSubmit}>
-              {/* Amount Field */}
+            <form className="space-y-6" onSubmit={handleSubmitWithdraw}>
+              
+              {/* Select Bank Account */}
               <div>
-                <label className="block text-sm font-semibold mb-2 text-on-surface">Số tiền cần rút</label>
-                <div className="relative">
-                  <input 
-                    className="w-full bg-background border border-outline-variant rounded-lg p-4 text-lg font-bold focus:ring-2 focus:ring-primary outline-none transition-all pr-12" 
-                    placeholder="Nhập số tiền..." 
-                    type="text" 
-                    value={amount ? Number(amount).toLocaleString('vi-VN') : ''}
-                    onChange={handleAmountChange}
-                  />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant font-bold underline">đ</span>
-                </div>
-                <div className="flex justify-between mt-2">
-                  <span className="text-xs text-on-surface-variant italic">Số tiền rút tối thiểu là 100.000đ</span>
-                  <button type="button" onClick={handleMaxWithdraw} className="text-xs text-primary font-bold hover:underline">Rút toàn bộ số dư</button>
-                </div>
-              </div>
-
-              {/* Payout Method */}
-              <div>
-                <label className="block text-sm font-semibold mb-4 text-on-surface">Phương thức thanh toán</label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <label className="cursor-pointer group">
-                    <input 
-                      checked={method === 'bank'} 
-                      onChange={() => setMethod('bank')} 
-                      className="hidden peer" 
-                      name="method" 
-                      type="radio" 
-                      value="bank"
-                    />
-                    <div className="flex flex-col items-center justify-center p-4 border border-outline-variant rounded-xl peer-checked:border-primary peer-checked:bg-primary/5 group-hover:border-primary/50 transition-all">
-                      <span className="material-symbols-outlined text-3xl mb-2 text-on-surface-variant peer-checked:text-primary">account_balance</span>
-                      <span className="text-sm font-medium">Ngân hàng</span>
-                    </div>
-                  </label>
-                  
-                  <label className="cursor-pointer group">
-                    <input 
-                      checked={method === 'momo'} 
-                      onChange={() => setMethod('momo')} 
-                      className="hidden peer" 
-                      name="method" 
-                      type="radio" 
-                      value="momo"
-                    />
-                    <div className="flex flex-col items-center justify-center p-4 border border-outline-variant rounded-xl peer-checked:border-primary peer-checked:bg-primary/5 group-hover:border-primary/50 transition-all">
-                      <div className="w-8 h-8 rounded mb-2 bg-[#A50064] flex items-center justify-center text-white text-[10px] font-black">MoMo</div>
-                      <span className="text-sm font-medium">MoMo</span>
-                    </div>
-                  </label>
-                  
-                  <label className="cursor-pointer group">
-                    <input 
-                      checked={method === 'zalopay'} 
-                      onChange={() => setMethod('zalopay')} 
-                      className="hidden peer" 
-                      name="method" 
-                      type="radio" 
-                      value="zalopay"
-                    />
-                    <div className="flex flex-col items-center justify-center p-4 border border-outline-variant rounded-xl peer-checked:border-primary peer-checked:bg-primary/5 group-hover:border-primary/50 transition-all">
-                      <div className="w-8 h-8 rounded mb-2 bg-[#0068FF] flex items-center justify-center text-white text-[10px] font-black">Zalo</div>
-                      <span className="text-sm font-medium">ZaloPay</span>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              {/* Dynamic Fields Section */}
-              <div className="space-y-4 pt-4 border-t border-outline-variant">
-                {method === 'bank' && (
-                  <>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Tên ngân hàng</label>
-                        <select 
-                          value={bankName}
-                          onChange={(e) => setBankName(e.target.value)}
-                          className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none"
-                        >
-                          <option value="Vietcombank">Vietcombank</option>
-                          <option value="Techcombank">Techcombank</option>
-                          <option value="MB Bank">MB Bank</option>
-                          <option value="TPBank">TPBank</option>
-                          <option value="Agribank">Agribank</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Số tài khoản</label>
+                <label className="block text-sm font-semibold mb-4 text-on-surface">Tài khoản ngân hàng</label>
+                <div className="space-y-3">
+                  {bankAccounts.map((acc) => (
+                    <label key={acc.id} className="flex items-start gap-4 p-4 border border-outline-variant rounded-xl cursor-pointer hover:bg-surface-container-low transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                      <div className="pt-1">
                         <input 
-                          type="text"
-                          value={accountNumber}
-                          onChange={(e) => setAccountNumber(e.target.value.replace(/\D/g, ''))}
-                          className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none" 
-                          placeholder="Nhập số tài khoản..." 
+                          type="radio" 
+                          name="bankAccount" 
+                          value={acc.id} 
+                          checked={selectedAccountId === acc.id}
+                          onChange={() => handleSelectAccount(acc.id)}
+                          className="w-4 h-4 text-primary focus:ring-primary accent-primary" 
                         />
                       </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Tên chủ tài khoản</label>
-                      <input 
-                        type="text"
-                        value={accountHolder}
-                        onChange={(e) => setAccountHolder(e.target.value.toUpperCase())}
-                        className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none uppercase font-semibold" 
-                        placeholder="VIET TUONG PHAM" 
-                      />
-                    </div>
-                  </>
-                )}
-
-                {method === 'momo' && (
-                  <>
-                    <div>
-                      <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Số điện thoại MoMo</label>
-                      <input 
-                        type="text"
-                        value={momoPhone}
-                        onChange={(e) => setMomoPhone(e.target.value.replace(/\D/g, ''))}
-                        className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none" 
-                        placeholder="Nhập số điện thoại..." 
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Tên chủ ví</label>
-                      <input 
-                        type="text"
-                        value={momoName}
-                        onChange={(e) => setMomoName(e.target.value.toUpperCase())}
-                        className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none uppercase font-semibold" 
-                        placeholder="VD: NGUYEN VAN A" 
-                      />
-                    </div>
-                  </>
-                )}
-
-                {method === 'zalopay' && (
-                  <>
-                    <div>
-                      <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Số điện thoại ZaloPay</label>
-                      <input 
-                        type="text"
-                        value={zaloPhone}
-                        onChange={(e) => setZaloPhone(e.target.value.replace(/\D/g, ''))}
-                        className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none" 
-                        placeholder="Nhập số điện thoại..." 
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Tên chủ ví</label>
-                      <input 
-                        type="text"
-                        value={zaloName}
-                        onChange={(e) => setZaloName(e.target.value.toUpperCase())}
-                        className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none uppercase font-semibold" 
-                        placeholder="VD: NGUYEN VAN A" 
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Summary Area */}
-              <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant space-y-2 mt-6">
-                <div className="flex justify-between text-sm">
-                  <span className="text-on-surface-variant">Số tiền rút:</span>
-                  <span className="font-medium">{amount ? Number(amount).toLocaleString('vi-VN') : 0}đ</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-on-surface-variant">Phí giao dịch:</span>
-                  <span className="font-medium text-green-600">Miễn phí</span>
-                </div>
-                <div className="border-t border-outline-variant pt-2 flex justify-between font-bold">
-                  <span>Số tiền thực nhận:</span>
-                  <span className="text-primary text-lg">{amount ? Number(amount).toLocaleString('vi-VN') : 0}đ</span>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="font-bold text-on-surface">{acc.bank_name}</span>
+                          {acc.status === 'APPROVED' && <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded font-semibold">Đã xác minh</span>}
+                          {acc.status === 'PENDING' && <span className="bg-yellow-100 text-yellow-700 text-xs px-2 py-1 rounded font-semibold">Chờ duyệt</span>}
+                          {acc.status === 'REJECTED' && <span className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded font-semibold">Bị từ chối</span>}
+                        </div>
+                        <div className="text-sm text-on-surface-variant flex gap-2">
+                          <span>{acc.account_number}</span>
+                          <span>•</span>
+                          <span>{acc.account_holder}</span>
+                        </div>
+                        {acc.status === 'REJECTED' && acc.rejection_reason && (
+                          <div className="mt-2 text-xs text-error font-medium bg-error-container p-2 rounded">
+                            Lý do: {acc.rejection_reason}
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                  
+                  <label className="flex items-center gap-4 p-4 border border-outline-variant border-dashed rounded-xl cursor-pointer hover:bg-surface-container-low transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                    <input 
+                      type="radio" 
+                      name="bankAccount" 
+                      value="new" 
+                      checked={selectedAccountId === 'new'}
+                      onChange={() => handleSelectAccount('new')}
+                      className="w-4 h-4 text-primary focus:ring-primary accent-primary" 
+                    />
+                    <span className="font-medium text-on-surface flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[18px]">add</span>
+                      Thêm tài khoản ngân hàng mới
+                    </span>
+                  </label>
                 </div>
               </div>
+
+              {/* Dynamic Fields Section (For New or Rejected Account) */}
+              {(selectedAccountId === 'new' || isSelectedRejected) && (
+                <div className="space-y-4 pt-4 border-t border-outline-variant bg-surface-container-lowest p-4 rounded-xl">
+                  <h4 className="font-semibold text-sm text-on-surface mb-2">{isSelectedRejected ? 'Cập nhật tài khoản ngân hàng' : 'Nhập thông tin tài khoản mới'}</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Tên ngân hàng</label>
+                      <select 
+                        value={bankName}
+                        onChange={(e) => setBankName(e.target.value)}
+                        className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none"
+                      >
+                        <option value="Vietcombank">Vietcombank</option>
+                        <option value="Techcombank">Techcombank</option>
+                        <option value="MB Bank">MB Bank</option>
+                        <option value="TPBank">TPBank</option>
+                        <option value="Agribank">Agribank</option>
+                        <option value="BIDV">BIDV</option>
+                        <option value="VietinBank">VietinBank</option>
+                        <option value="VPBank">VPBank</option>
+                        <option value="ACB">ACB</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Số tài khoản</label>
+                      <input 
+                        type="text"
+                        value={accountNumber}
+                        onChange={(e) => setAccountNumber(e.target.value.replace(/\D/g, ''))}
+                        className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none" 
+                        placeholder="Nhập số tài khoản..." 
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Tên chủ tài khoản</label>
+                    <input 
+                      type="text"
+                      value={accountHolder}
+                      onChange={(e) => setAccountHolder(e.target.value.toUpperCase())}
+                      className="w-full bg-background border border-outline-variant rounded-lg p-3 text-sm focus:ring-2 focus:ring-primary outline-none uppercase font-semibold" 
+                      placeholder="VD: NGUYEN VAN A" 
+                    />
+                  </div>
+                  {(selectedAccountId === 'new' || isSelectedRejected) && (
+                    <div className="text-xs text-primary-600 bg-primary-50 p-3 rounded-lg flex gap-2 items-start mt-2">
+                      <span className="material-symbols-outlined text-[16px] mt-0.5">info</span>
+                      <p>Tài khoản sau khi thêm sẽ được Admin kiểm duyệt để đảm bảo an toàn trước khi có thể thực hiện rút tiền.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* Amount Field (Only show if account is approved) */}
+              {isSelectedApproved && (
+                <div className="pt-4 border-t border-outline-variant">
+                  <label className="block text-sm font-semibold mb-2 text-on-surface">Số tiền cần rút</label>
+                  <div className="relative">
+                    <input 
+                      className="w-full bg-background border border-outline-variant rounded-lg p-4 text-lg font-bold focus:ring-2 focus:ring-primary outline-none transition-all pr-12" 
+                      placeholder="Nhập số tiền..." 
+                      type="text" 
+                      value={amount ? Number(amount).toLocaleString('vi-VN') : ''}
+                      onChange={handleAmountChange}
+                    />
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant font-bold underline">đ</span>
+                  </div>
+                  <div className="flex justify-between mt-2">
+                    <span className="text-xs text-on-surface-variant italic">Số tiền rút tối thiểu là 100.000đ</span>
+                    <button type="button" onClick={handleMaxWithdraw} className="text-xs text-primary font-bold hover:underline">Rút toàn bộ số dư</button>
+                  </div>
+                  
+                  {/* Summary Area */}
+                  <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant space-y-2 mt-6">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-on-surface-variant">Số tiền rút:</span>
+                      <span className="font-medium">{amount ? Number(amount).toLocaleString('vi-VN') : 0}đ</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-on-surface-variant">Phí giao dịch:</span>
+                      <span className="font-medium text-green-600">Miễn phí</span>
+                    </div>
+                    <div className="border-t border-outline-variant pt-2 flex justify-between font-bold">
+                      <span>Số tiền thực nhận:</span>
+                      <span className="text-primary text-lg">{amount ? Number(amount).toLocaleString('vi-VN') : 0}đ</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {isSelectedPending && (
+                <div className="pt-4">
+                  <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded-xl flex items-start gap-3">
+                    <span className="material-symbols-outlined text-yellow-600">pending_actions</span>
+                    <div>
+                      <p className="font-bold text-sm">Tài khoản đang chờ duyệt</p>
+                      <p className="text-xs mt-1">Vui lòng chờ Admin xác minh tài khoản này trước khi tạo lệnh rút tiền.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="pt-4">
                 <button 
                   type="submit"
-                  disabled={loading || success}
+                  disabled={loading || success || isSelectedPending}
                   className={`w-full text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-primary/20 hover:scale-[1.01] active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${success ? 'bg-[#10b981]' : 'bg-primary'} disabled:opacity-50`}
                 >
                   {loading ? (
                     <><span className="material-symbols-outlined animate-spin">progress_activity</span> Đang xử lý...</>
                   ) : success ? (
                     <><span className="material-symbols-outlined">check_circle</span> Thành công!</>
+                  ) : (selectedAccountId === 'new' || isSelectedRejected) ? (
+                    <><span className="material-symbols-outlined">save</span> Lưu tài khoản ngân hàng</>
                   ) : (
-                    <>
-                      Yêu cầu rút tiền
-                      <span className="material-symbols-outlined">send</span>
-                    </>
+                    <><span className="material-symbols-outlined">account_balance_wallet</span> Yêu cầu rút tiền</>
                   )}
                 </button>
-                <p className="text-center text-xs text-on-surface-variant mt-4">
-                  Bằng việc nhấn yêu cầu, bạn đồng ý với <a href="#" className="text-primary underline">Điều khoản rút tiền</a> của EduX.
-                </p>
               </div>
             </form>
           </div>
         </div>
 
-        {/* Right Column: Sidebar info */}
+        {/* Right Column: History & Info */}
         <div className="space-y-gutter-md">
           {/* Processing Info Card */}
           <div className="bg-surface-container p-6 rounded-xl border border-outline-variant/30">

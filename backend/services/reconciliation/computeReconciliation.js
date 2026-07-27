@@ -17,6 +17,7 @@ async function computeReconciliation(pool) {
     integrityRes,
     refundRes,
     largeRes,
+    ledgerRes,
   ] = await Promise.all([
     pool.query(`SELECT COALESCE(SUM(balance),0)::numeric AS balance, COALESCE(SUM(held_balance),0)::numeric AS held FROM wallets`),
     pool.query(`
@@ -40,6 +41,17 @@ async function computeReconciliation(pool) {
       ORDER BY ABS(t.amount) DESC
       LIMIT 20
     `),
+    // Ground-truth check (CAP-17.2 pattern): wallet_ledger is the DB-trigger-enforced,
+    // append-only log of every wallets.balance change (see trg_wallet_ledger). Summing
+    // it per wallet and comparing to the live balance is a real integrity check, unlike
+    // the deposits-vs-payments approximation below — reuses the same math as
+    // GET /api/admin/wallet-integrity so the two pages never disagree.
+    pool.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN direction='credit' THEN amount ELSE -amount END) FILTER (WHERE balance_type='balance'),0)::numeric AS expected_balance,
+        COUNT(DISTINCT wallet_id) FILTER (WHERE balance_type='balance')::int AS wallets_with_ledger
+      FROM wallet_ledger
+    `),
   ]);
 
   const wallet    = walletRes.rows[0];
@@ -47,6 +59,7 @@ async function computeReconciliation(pool) {
   const escrow    = escrowRes.rows[0];
   const integ     = integrityRes.rows[0];
   const refundCnt = refundRes.rows[0].count;
+  const ledger    = ledgerRes.rows[0];
 
   // ── Withdrawal reconciliation (Batch 19.1): prefer new withdrawal_requests,
   //    fall back to the legacy withdraw_requests only if the new table is absent.
@@ -107,16 +120,24 @@ async function computeReconciliation(pool) {
     description: 'So sánh tổng giao dịch HELD_IN_ESCROW với tổng held_balance của ví. Chỉ kiểm tra, không điều chỉnh.',
   });
 
-  // 2. Wallet balance vs net transaction flow (review only — internal transfers exist)
-  const flowDiff = walletBalance - netFlow;
+  // 2. Wallet balance vs wallet_ledger (CAP-17.2 ground truth — see query above).
+  //    Replaces the old "deposits - payments" approximation, which ignored every
+  //    other transaction type that legitimately moves balance (WITHDRAW, COMMISSION,
+  //    REFUND, escrow release...) and so was permanently off by design — it could
+  //    only ever be labeled "review_only" and never actually confirm anything. This
+  //    version sums the same trigger-enforced ledger /api/admin/wallet-integrity uses,
+  //    so a difference here means a real gap between wallets.balance and its audit
+  //    trail, not a limitation of the formula.
+  const ledgerExpectedBalance = Number(ledger.expected_balance);
+  const ledgerDiff = walletBalance - ledgerExpectedBalance;
   checks.push({
     id: 'wallet-vs-transactions',
-    name: 'Số dư ví vs Dòng tiền giao dịch',
-    status: 'review_only',
-    expected_amount: Math.round(netFlow),
+    name: 'Số dư ví vs Sổ cái ví (wallet_ledger)',
+    status: Math.round(ledgerDiff) === 0 ? 'matched' : 'issue',
+    expected_amount: Math.round(ledgerExpectedBalance),
     actual_amount: Math.round(walletBalance),
-    difference: Math.round(flowDiff),
-    description: 'Nạp trừ Thanh toán so với tổng số dư ví. Chênh lệch dự kiến do chuyển khoản nội bộ / giải ngân escrow không lưu theo từng giao dịch — chỉ để xem.',
+    difference: Math.round(ledgerDiff),
+    description: `Tổng số dư ví thực tế so với tổng cộng dồn từ wallet_ledger (nhật ký do trigger DB tự ghi mỗi lần balance đổi — CAP-17.2). Lệch khác 0 nghĩa là có thay đổi balance không được ghi log. Xem chi tiết từng ví lệch tại trang "Sổ Cái Ví".`,
   });
 
   // 3. Transaction integrity

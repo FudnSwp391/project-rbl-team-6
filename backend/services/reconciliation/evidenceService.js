@@ -152,6 +152,26 @@ const CHECK_EVIDENCE = {
   },
   async 'wallet-vs-transactions'(pool) {
     const bundle = emptyBundle();
+    // Pinpoint exactly which wallets don't sum to their own ledger history —
+    // same per-wallet math as GET /api/admin/wallet-integrity. This is the
+    // direct cause of a nonzero check now (see computeReconciliation.js);
+    // the reason-code breakdown below is a secondary, indirect lead.
+    const discrepantRes = await pool.query(`
+      SELECT w.id AS wallet_id, w.user_id, u.full_name AS owner_name, u.email AS owner_email,
+             w.balance::numeric AS actual_balance, COALESCE(b.expected,0)::numeric AS expected_balance,
+             (w.balance::numeric - COALESCE(b.expected,0)::numeric) AS diff
+      FROM wallets w
+      LEFT JOIN users u ON u.id = w.user_id
+      LEFT JOIN (
+        SELECT wallet_id, SUM(CASE WHEN direction='credit' THEN amount ELSE -amount END) AS expected
+        FROM wallet_ledger WHERE balance_type='balance' GROUP BY wallet_id
+      ) b ON b.wallet_id = w.id
+      WHERE ABS(w.balance::numeric - COALESCE(b.expected,0)::numeric) > 0.001
+      ORDER BY ABS(w.balance::numeric - COALESCE(b.expected,0)::numeric) DESC
+      LIMIT 20
+    `);
+    bundle.aggregates.discrepantWallets = discrepantRes.rows;
+
     const summaryRes = await pool.query(`
       SELECT reason_code, COUNT(*)::int AS count, COALESCE(SUM(amount),0)::numeric AS total
       FROM wallet_ledger WHERE created_at > NOW() - INTERVAL '30 days'
@@ -159,8 +179,11 @@ const CHECK_EVIDENCE = {
     `);
     bundle.aggregates.ledgerReasonSummary = summaryRes.rows;
     bundle.walletLedger = summaryRes.rows;
-    bundle.notes.push('Chênh lệch dự kiến do các thay đổi số dư không phải DEPOSIT/PAYMENT trực tiếp (chuyển nội bộ, giải ngân escrow, hoa hồng).');
-    bundle.notes.push(`${summaryRes.rows.length} nhóm lý do thay đổi số dư (reason_code) khác nhau trong 30 ngày qua.`);
+
+    bundle.notes.push(discrepantRes.rows.length > 0
+      ? `${discrepantRes.rows.length} ví có số dư thực tế lệch với tổng cộng dồn từ wallet_ledger — đây là các thay đổi balance không hề được ghi log (khác với nhóm reason_code UNKNOWN_WALLET_UPDATE, vốn CÓ ghi log nhưng thiếu lý do).`
+      : 'Mọi ví đều khớp chính xác với wallet_ledger — không có thay đổi balance nào bị thiếu log.');
+    bundle.notes.push(`${summaryRes.rows.length} nhóm lý do thay đổi số dư (reason_code) khác nhau trong 30 ngày qua (bối cảnh tham khảo thêm, không chắc là nguyên nhân trực tiếp).`);
     return bundle;
   },
   async 'transaction-integrity'(pool) {

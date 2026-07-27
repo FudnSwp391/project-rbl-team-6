@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '../services/supabase';
 import { API_BASE_URL } from '../config';
+import { navigateFromNotification } from '../utils/notificationNavigation';
 
 const API_BASE = API_BASE_URL;
 
@@ -191,7 +192,11 @@ export default function NotificationDropdown({ token }) {
                 return (
                   <button
                     key={n.id}
-                    onClick={() => markRead(n.id)}
+                    onClick={() => {
+                      if (!n.is_read) markRead(n.id);
+                      setOpen(false);
+                      navigateFromNotification(n, window.location.hash.startsWith('#/dashboard'));
+                    }}
                     className={`w-full text-left flex items-start gap-3 p-4 hover:bg-surface-container-low transition-colors ${!n.is_read ? 'bg-primary/5' : ''}`}
                   >
                     <div className={`w-10 h-10 rounded-full ${style.bg} flex items-center justify-center shrink-0`}>
@@ -227,8 +232,14 @@ export default function NotificationDropdown({ token }) {
           {toasts.map(t => {
             const style = notifStyle(t.type);
             return (
-              <div key={t.toastId} className="pointer-events-auto bg-white rounded-xl shadow-lg border border-gray-100 p-4 w-80 flex items-start gap-3 animate-[slideInRight_0.3s_ease-out] relative">
-                <button onClick={() => removeToast(t.toastId)} className="absolute top-2 right-2 text-gray-400 hover:text-gray-600">
+              <div key={t.toastId} 
+                   onClick={() => {
+                     if (!t.is_read) markRead(t.id);
+                     removeToast(t.toastId);
+                     navigateFromNotification(t, window.location.hash.startsWith('#/dashboard'));
+                   }}
+                   className="pointer-events-auto bg-white rounded-xl shadow-lg border border-gray-100 p-4 w-80 flex items-start gap-3 animate-[slideInRight_0.3s_ease-out] relative cursor-pointer hover:bg-gray-50">
+                <button onClick={(e) => { e.stopPropagation(); removeToast(t.toastId); }} className="absolute top-2 right-2 text-gray-400 hover:text-gray-600">
                   <span className="material-symbols-outlined text-[16px]">close</span>
                 </button>
                 <div className={`w-10 h-10 rounded-full ${style.bg} flex items-center justify-center shrink-0`}>

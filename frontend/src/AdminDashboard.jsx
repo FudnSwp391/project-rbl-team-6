@@ -24,6 +24,7 @@ const WalletLedger          = lazy(() => import('./admin/transactions/WalletLedg
 const CommissionLogs        = lazy(() => import('./admin/transactions/CommissionLogs'))
 const NotificationOutbox     = lazy(() => import('./admin/transactions/NotificationOutbox'))
 const WalletRequests         = lazy(() => import('./admin/transactions/WalletRequests'))
+const BankAccountsAdmin      = lazy(() => import('./admin/transactions/BankAccountsAdmin'))
 const AICaseResolutions      = lazy(() => import('./admin/transactions/AICaseResolutions'))
 const DataEntryView          = lazy(() => import('./admin/DataEntryView'))
 
@@ -74,6 +75,7 @@ const TX_SUB_ITEMS = [
   { id: 'tx-lessons',      label: 'Thanh Toán Buổi Học',       icon: 'receipt_long' },
   { id: 'tx-courses',      label: 'Giao Dịch Khóa Học',   icon: 'school' },
   { id: 'tx-withdrawals',  label: 'Duyệt giao dịch Ví',  icon: 'account_balance' },
+  { id: 'tx-bank-accounts', label: 'Tài Khoản Ngân Hàng', icon: 'account_balance_wallet' },
   { id: 'tx-refunds',      label: 'Quản Lý Hoàn Tiền',     icon: 'undo' },
   { id: 'tx-disputes',     label: 'Quản Lý Tranh Chấp',    icon: 'gavel' },
   { id: 'tx-failed',       label: 'Giao Dịch Thất Bại',   icon: 'error' },
@@ -85,7 +87,6 @@ const TX_SUB_ITEMS = [
   { id: 'tx-reports',      label: 'Báo Cáo Tài Chính',     icon: 'assessment' },
   { id: 'tx-reconciliation', label: 'Đối Soát',      icon: 'compare_arrows' },
   { id: 'tx-fraud',        label: 'Cảnh Báo Gian Lận',          icon: 'warning' },
-  { id: 'tx-notifications', label: 'Trung Tâm Thông Báo',  icon: 'notifications' },
   { id: 'tx-wallet-ledger',    label: 'Sổ Cái Ví',            icon: 'account_balance_wallet' },
   { id: 'tx-commission-logs', label: 'Nhật Ký Hoa Hồng',    icon: 'receipt_long' },
   { id: 'notifications-outbox', label: 'Email / Hàng Đợi Thông Báo', icon: 'mark_email_read' },
@@ -117,6 +118,7 @@ const NAV_ITEMS = [
   { id: 'services',        label: 'Quản lý dịch vụ',       icon: 'support_agent', hasSubmenu: true, section: 'Tài chính & Dịch vụ' },
   { id: 'ai-insights',     label: 'AI Insights',           icon: 'psychology',           section: 'Hệ thống' },
   { id: 'audit-logs',      label: 'Nhật ký hệ thống',      icon: 'history_edu',          section: 'Hệ thống' },
+  { id: 'notification-center', label: 'Trung Tâm Thông Báo', icon: 'notifications',      section: 'Hệ thống' },
 ]
 
 // Bản đồ nhãn dùng cho breadcrumb ở thanh trên cùng
@@ -565,6 +567,7 @@ export default function AdminDashboard() {
           {activeView === 'tx-lessons'       && <LessonPayments token={token} />}
           {activeView === 'tx-courses'       && <CourseTransactions token={token} />}
           {activeView === 'tx-withdrawals'   && <WalletRequests token={token} />}
+          {activeView === 'tx-bank-accounts' && <BankAccountsAdmin token={token} />}
           {activeView === 'tx-refunds'       && <RefundManagement token={token} />}
           {activeView === 'tx-disputes'      && <DisputesCenterView token={token} />}
           {activeView === 'tx-failed'        && <FailedTransactions token={token} />}
@@ -576,7 +579,6 @@ export default function AdminDashboard() {
           {activeView === 'tx-reports'       && <FinancialReports token={token} />}
           {activeView === 'tx-reconciliation' && <Reconciliation token={token} />}
           {activeView === 'tx-fraud'         && <FraudAlerts token={token} onNavigate={setActiveView} />}
-          {activeView === 'tx-notifications' && <NotificationCenter token={token} />}
           {activeView === 'tx-wallet-ledger'    && <WalletLedger token={token} />}
           {activeView === 'tx-commission-logs' && <CommissionLogs token={token} />}
           {activeView === 'notifications-outbox' && <NotificationOutbox token={token} />}
@@ -593,6 +595,7 @@ export default function AdminDashboard() {
 
           {activeView === 'ai-insights'      && <AIInsightsView token={token} onNavigate={setActiveView} />}
           {activeView === 'audit-logs'       && <AuditLogs token={token} />}
+          {activeView === 'notification-center' && <NotificationCenter token={token} />}
         </Suspense>
         </div>
       </main>

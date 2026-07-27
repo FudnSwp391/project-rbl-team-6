@@ -68,6 +68,7 @@ test('TC32 POST /api/tutor/withdrawals — 201 creates withdrawal request', asyn
   pool.connect.mockResolvedValue(pool.mockClient);
   pool.mockClientQuery
     .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // BEGIN
+    .mockResolvedValueOnce({ rows: [{ id: 'b1', user_id: TUTOR_ID, status: 'APPROVED' }], rowCount: 1 }) // SELECT tutor_bank_accounts
     .mockResolvedValueOnce({ rows: [{ id: 'w1', user_id: TUTOR_ID, balance: 1000000, held_balance: 0 }], rowCount: 1 })  // getTutorWalletForUpdate
     .mockResolvedValueOnce({ rows: [{ id: 'tx1' }], rowCount: 1 })  // INSERT transactions
     .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // setLedgerContext (set_config)

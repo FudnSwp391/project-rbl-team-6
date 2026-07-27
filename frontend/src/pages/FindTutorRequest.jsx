@@ -78,6 +78,17 @@ function loadSavedProgress() {
         formData: { ...defaultFormData, ...parsed.formData }
       };
     }
+
+    // Nếu không có progress đang dở dang (ví dụ bấm Chỉnh sửa yêu cầu từ trang kết quả),
+    // thử lấy dữ liệu từ tutorRequestData đã hoàn thành trước đó
+    const completedData = sessionStorage.getItem('tutorRequestData');
+    if (completedData) {
+      const parsed = JSON.parse(completedData);
+      return {
+        step: 1, // Bắt đầu lại từ bước 1 để chỉnh sửa
+        formData: { ...defaultFormData, ...parsed }
+      };
+    }
   } catch (e) {
     console.warn('Failed to restore tutor request progress:', e);
   }

@@ -286,6 +286,9 @@ export default function TutorProfileForm() {
 
   // ── Step 2 structured fields ──────────────────────────────────────────────────
   const [teachingMethods, setTeachingMethods] = useState([''])
+  const [teachingMode, setTeachingMode] = useState('Online')
+  const [offlineAddress, setOfflineAddress] = useState('')
+  const [offlineRadiusKm, setOfflineRadiusKm] = useState('')
   const [suitableStudents, setSuitableStudents] = useState([])
 
   // ── Step 3 files ────────────────────────────────────────────────────────────
@@ -376,6 +379,10 @@ export default function TutorProfileForm() {
     else if (isNaN(Number(experienceYears)) || Number(experienceYears) < 0) e.experienceYears = 'Phải là một số hợp lệ.'
     if (!language) e.language = 'Vui lòng chọn ngôn ngữ giảng dạy.'
     if (hourlyRate !== '' && (isNaN(Number(hourlyRate)) || Number(hourlyRate) < 0)) e.hourlyRate = 'Phải là một số hợp lệ.'
+    if (['Offline', 'Both'].includes(teachingMode)) {
+      if (!offlineAddress.trim()) e.offlineAddress = 'Địa chỉ dạy Offline là bắt buộc.'
+      if (!offlineRadiusKm || isNaN(Number(offlineRadiusKm)) || Number(offlineRadiusKm) <= 0) e.offlineRadiusKm = 'Bán kính hợp lệ (lớn hơn 0) là bắt buộc.'
+    }
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -493,6 +500,9 @@ export default function TutorProfileForm() {
         cccd_url: cccd_front_url,         // backward compat: gửi mặt trước làm cccd_url chính
         cccd_front_url,
         cccd_back_url,
+        teaching_mode: teachingMode,
+        offline_address: offlineAddress.trim(),
+        offline_radius_km: offlineRadiusKm !== '' ? Number(offlineRadiusKm) : null,
       }
 
       if (birthDay && birthMonth && birthYear) {
@@ -879,6 +889,55 @@ export default function TutorProfileForm() {
                       <FieldError msg={errors.hourlyRate} />
                     </div>
                   </div>
+
+                  {/* Teaching Mode & Offline Support */}
+                  <div className="flex flex-col gap-2">
+                    <label className="font-label-md text-label-md text-on-surface-variant">Hình Thức Dạy Học</label>
+                    <select
+                      className={selectCls()}
+                      value={teachingMode}
+                      onChange={e => setTeachingMode(e.target.value)}
+                    >
+                      <option value="Online">Chỉ Dạy Online</option>
+                      <option value="Offline">Chỉ Dạy Offline</option>
+                      <option value="Both">Cả Online & Offline</option>
+                    </select>
+                  </div>
+
+                  {['Offline', 'Both'].includes(teachingMode) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 bg-surface-container-low p-4 rounded-xl border border-outline-variant">
+                      <div className="flex flex-col gap-2">
+                        <label className="font-label-md text-label-md text-on-surface-variant">
+                          Địa Chỉ Dạy Offline
+                          <span className="text-error ml-1">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          className={inputCls(errors.offlineAddress)}
+                          placeholder="Ví dụ: Khu vực Đại học FPT Đà Nẵng..."
+                          value={offlineAddress}
+                          onChange={e => setOfflineAddress(e.target.value)}
+                        />
+                        <FieldError msg={errors.offlineAddress} />
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <label className="font-label-md text-label-md text-on-surface-variant">
+                          Bán Kính Di Chuyển (km)
+                          <span className="text-error ml-1">*</span>
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          className={inputCls(errors.offlineRadiusKm)}
+                          placeholder="Ví dụ: 10"
+                          value={offlineRadiusKm}
+                          onChange={e => setOfflineRadiusKm(e.target.value)}
+                        />
+                        <FieldError msg={errors.offlineRadiusKm} />
+                      </div>
+                    </div>
+                  )}
 
                   {/* Teaching Style */}
                   <div className="flex flex-col gap-2">

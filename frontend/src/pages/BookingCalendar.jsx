@@ -86,6 +86,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
   const [selectedBookings, setSelectedBookings] = useState({});
   const [subject, setSubject]                   = useState('');
   const [teachingMethod, setTeachingMethod]     = useState('');
+  const [meetingAddress, setMeetingAddress]     = useState('');
   const [notes, setNotes]                       = useState('');
   // Địa điểm học Offline
   const [province, setProvince]         = useState('');
@@ -149,6 +150,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
     if (pending.selectedBookings) setSelectedBookings(pending.selectedBookings);
     if (pending.subject) setSubject(pending.subject);
     if (pending.teachingMethod) setTeachingMethod(pending.teachingMethod);
+    if (pending.meetingAddress) setMeetingAddress(pending.meetingAddress);
     if (pending.notes) setNotes(pending.notes);
     if (typeof pending.currentYear === 'number') setCurrentYear(pending.currentYear);
     if (typeof pending.currentMonth === 'number') setCurrentMonth(pending.currentMonth);
@@ -428,6 +430,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
           selectedBookings,
           subject,
           teachingMethod,
+          meetingAddress: (teachingMethod || (tutor && (() => { const ms = methodSupport(tutor.teaching_methods); return !(ms.online && ms.offline) ? (ms.online ? 'online' : 'offline') : null; })())) === 'offline' ? meetingAddress : null,
           notes,
           currentYear,
           currentMonth,
@@ -467,6 +470,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
         selectedBookings,
         subject,
         teachingMethod,
+        meetingAddress: (teachingMethod || (tutor && (() => { const ms = methodSupport(tutor.teaching_methods); return !(ms.online && ms.offline) ? (ms.online ? 'online' : 'offline') : null; })())) === 'offline' ? meetingAddress : null,
         notes,
         currentYear,
         currentMonth,
@@ -553,6 +557,7 @@ export default function BookingCalendar({ tutorId, onGoHome }) {
       notes:     notes || null,
       teachingMethod: teachingMethod || null,
       location:     fullLocation,
+      meeting_address: fullLocation,
       locationNote: effectiveMethod === 'offline' ? (locationNote.trim() || null) : null,
       targetStudentId: user?.role === 'parent' ? selectedChild : undefined,
     };

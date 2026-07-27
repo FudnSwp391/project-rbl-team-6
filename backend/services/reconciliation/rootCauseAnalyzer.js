@@ -159,16 +159,15 @@ function ruleManualAdjustment(_resolved, bundle) {
   };
 }
 
-// Chỉ khớp với evidence của check 'wallet-vs-transactions' (evidenceService.js
-// gom bundle.aggregates.ledgerReasonSummary = SUM(amount) theo reason_code,
-// 30 ngày gần nhất). Không có rule nào khác trong file này đọc field đó, nên
-// trước đây check này LUÔN rơi vào nhánh "Unknown/0%" của analyzeRootCause dù
-// dữ liệu breakdown thật đã được thu thập sẵn — không phải vì không có gì để
-// nói, mà vì không rule nào từng đọc nó. Đây không phải rule "tìm 1 nguyên
-// nhân duy nhất" (check này về bản chất do NHIỀU nhóm lý do hợp lệ cộng lại,
-// xem computeReconciliation.js) — mục tiêu là thay "Unknown" bằng breakdown
-// thật để admin tự đối chiếu, và gọi tên riêng UNKNOWN_WALLET_UPDATE nếu nhóm
-// đó chiếm phần đáng kể (nghĩa là có code path cập nhật ví không gắn lý do).
+// Evidence for check 'wallet-vs-transactions' now carries two signals (see
+// evidenceService.js): bundle.aggregates.discrepantWallets (wallets whose
+// balance doesn't sum to their own wallet_ledger — the DIRECT cause of a
+// nonzero check, handled by ruleLedgerGapWallets below with higher confidence)
+// and bundle.aggregates.ledgerReasonSummary (a 30-day reason_code breakdown —
+// an INDIRECT lead: it names UNKNOWN_WALLET_UPDATE if a real share of balance
+// changes were logged without a reason via setLedgerContext(), which is a
+// code-hygiene gap worth fixing but does not by itself explain a ledger-vs-
+// balance mismatch, since those rows ARE present in the sum).
 function ruleWalletLedgerReasonBreakdown(_resolved, bundle) {
   const rows = bundle.aggregates?.ledgerReasonSummary;
   if (!Array.isArray(rows) || rows.length === 0) return null;
@@ -181,7 +180,7 @@ function ruleWalletLedgerReasonBreakdown(_resolved, bundle) {
       cause: 'Có thay đổi số dư không gắn lý do (UNKNOWN_WALLET_UPDATE)',
       confidence: 40,
       evidence: [
-        `${unknown.count} thay đổi số dư (tổng đ${Number(unknown.total).toLocaleString('vi-VN')}) được ghi nhận với reason_code mặc định UNKNOWN_WALLET_UPDATE — nghĩa là có (các) đoạn code cập nhật wallets mà không khai báo lý do qua setLedgerContext() trước khi chạy.`,
+        `${unknown.count} thay đổi số dư (tổng đ${Number(unknown.total).toLocaleString('vi-VN')}) được ghi nhận với reason_code mặc định UNKNOWN_WALLET_UPDATE — nghĩa là có (các) đoạn code cập nhật wallets mà không khai báo lý do qua setLedgerContext() trước khi chạy. Các bản ghi này VẪN nằm trong tổng sổ cái, không phải nguyên nhân trực tiếp gây lệch — chỉ là dấu hiệu code-hygiene cần dọn.`,
         ...breakdown,
       ],
       recommendation: ['Review Transaction'],
@@ -189,10 +188,33 @@ function ruleWalletLedgerReasonBreakdown(_resolved, bundle) {
   }
 
   return {
-    cause: 'Tổng hợp nhiều loại thay đổi số dư hợp lệ (xem breakdown)',
-    confidence: 30,
-    evidence: breakdown,
-    recommendation: ['Review Transaction'],
+    cause: 'Không xác định được nhóm lý do bất thường trong 30 ngày qua',
+    confidence: 20,
+    evidence: [
+      'Chênh lệch có thể phát sinh từ trước mốc 30 ngày, hoặc do một lần ghi log wallet_ledger thất bại âm thầm (trigger có EXCEPTION WHEN others nuốt lỗi để không chặn giao dịch gốc).',
+      ...breakdown,
+    ],
+    recommendation: ['Manual Investigation Required'],
+  };
+}
+
+// Direct cause: specific wallets whose balance doesn't reconcile against their
+// own wallet_ledger sum (evidenceService.js 'wallet-vs-transactions' handler).
+// Ranked above the reason-code breakdown rule because it names the exact
+// wallet(s) and amount(s) instead of an indirect, repo-wide statistical lead.
+function ruleLedgerGapWallets(_resolved, bundle) {
+  const rows = bundle.aggregates?.discrepantWallets;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const totalDiff = rows.reduce((sum, r) => sum + Math.abs(Number(r.diff)), 0);
+  return {
+    cause: 'Có ví bị thiếu bản ghi wallet_ledger (balance thực tế ≠ tổng cộng dồn ledger)',
+    confidence: Math.min(90, 65 + rows.length * 5),
+    evidence: [
+      `${rows.length} ví lệch, tổng chênh lệch đ${Math.round(totalDiff).toLocaleString('vi-VN')}.`,
+      ...rows.slice(0, 5).map(r =>
+        `Ví ${r.wallet_id} (${r.owner_name || r.owner_email || r.user_id}): thực tế đ${Number(r.actual_balance).toLocaleString('vi-VN')}, ledger cộng dồn đ${Number(r.expected_balance).toLocaleString('vi-VN')}, lệch đ${Number(r.diff).toLocaleString('vi-VN')}.`),
+    ],
+    recommendation: ['Review Transaction', 'Create Incident'],
   };
 }
 
@@ -208,6 +230,7 @@ const RULES = [
   rulePaymentCallbackMissing,
   ruleManualAdjustment,
   ruleWalletLedgerReasonBreakdown,
+  ruleLedgerGapWallets,
 ];
 
 function analyzeRootCause(resolved, bundle) {

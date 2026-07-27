@@ -23,6 +23,8 @@ const {
 const { computeReconciliation } = require("./services/reconciliation/computeReconciliation");
 const { buildFindingKey, resolveFinding } = require("./services/reconciliation/findingKey");
 const { computeSeverity } = require("./services/reconciliation/severity");
+const { geocodeAddress } = require("./utils/geocode");
+const { calculateDistance } = require("./utils/distance");
 const { gatherEvidence, gatherSystemLogs } = require("./services/reconciliation/evidenceService");
 const { buildAnalysis } = require("./services/reconciliation/aiExplanationService");
 const { buildTimeline: buildReconciliationTimeline } = require("./services/reconciliation/timelineService");
@@ -1678,8 +1680,8 @@ async function saveSemanticModerationReport(r) {
       `INSERT INTO semantic_moderation_reports
         (source_type, source_id, tutor_id, student_id, target_user_id, severity, status,
          categories, scores, summary, evidence, highlighted_text, suggested_actions, limitations,
-         model_used, rule_version, input_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,'OPEN',$7::jsonb,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16)
+         model_used, rule_version, input_hash, flagged_text)
+       VALUES ($1,$2,$3,$4,$5,$6,'OPEN',$7::jsonb,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16,$17)
        RETURNING id`,
       [
         r.source_type, r.source_id != null ? String(r.source_id) : null,
@@ -1688,6 +1690,7 @@ async function saveSemanticModerationReport(r) {
         JSON.stringify(r.evidence || []), JSON.stringify(r.highlighted_text || []),
         JSON.stringify(r.suggested_actions || []), JSON.stringify(r.limitations || []),
         r.model_used || 'RULE_BASED', SEMANTIC_MODERATION_RULE_VERSION, r.input_hash || null,
+        r.text ? sanitizeModerationText(r.text, SEMANTIC_MODERATION_MAX_TEXT_CHARS) : null,
       ]
     );
     return ins.rows[0].id;
@@ -1697,10 +1700,10 @@ async function saveSemanticModerationReport(r) {
 // Aggregate a tutor's review texts into semantic reputation scores (read-only).
 async function analyzeTutorSemanticReputation(tutorUserId, { days = 90 } = {}) {
   const rows = await copilotSafeRows(
-    `SELECT COALESCE(r.comment, r.content) AS text
+    `SELECT r.comment AS text
        FROM reviews r JOIN tutor_profiles tp ON tp.id = r.tutor_id
       WHERE tp.user_id = $1 AND r.created_at > NOW() - make_interval(days => $2::int)
-        AND COALESCE(r.comment, r.content) IS NOT NULL
+        AND r.comment IS NOT NULL AND TRIM(r.comment) <> ''
       ORDER BY r.created_at DESC LIMIT 200`, [tutorUserId, days]);
   const dims = { patience: [], friendliness: [], teaching_quality: [], professionalism: [] };
   const risk = { external_payment_risk: 0, toxicity_risk: 0, spam_risk: 0 };
@@ -1769,9 +1772,9 @@ async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_
   let reviews = [];
   try {
     reviews = (await pool.query(
-      `SELECT r.id, COALESCE(r.comment, r.content) AS text, tp.user_id AS tutor_user_id
+      `SELECT r.id, r.comment AS text, tp.user_id AS tutor_user_id
          FROM reviews r LEFT JOIN tutor_profiles tp ON tp.id = r.tutor_id
-        WHERE COALESCE(r.comment, r.content) IS NOT NULL AND TRIM(COALESCE(r.comment, r.content)) <> ''
+        WHERE r.comment IS NOT NULL AND TRIM(r.comment) <> ''
           AND NOT EXISTS (SELECT 1 FROM semantic_moderation_reports s WHERE s.source_type='REVIEW' AND s.source_id = r.id::text)
         ORDER BY r.created_at DESC LIMIT $1`, [limit])).rows;
   } catch (e) { limitations.push('Không quét được reviews: ' + e.message); }
@@ -1779,11 +1782,13 @@ async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_
   for (const rv of reviews) {
     stats.reviews_scanned++;
     try {
-      const a = classifyTextModeration(rv.text, { sourceType: 'REVIEW' });
+      const base = classifyTextModeration(rv.text, { sourceType: 'REVIEW' });
+      const ai = await classifyModerationWithGemini(rv.text);
+      const a = ai ? mergeModerationWithAI(base, ai) : base;
       const suspicious = a.severity !== 'LOW' || a.categories.some(c => c !== 'POSITIVE_TEACHING_SIGNAL');
       if (suspicious) {
         const id = await saveSemanticModerationReport({
-          ...a, source_type: 'REVIEW', source_id: rv.id,
+          ...a, source_type: 'REVIEW', source_id: rv.id, text: rv.text,
           tutor_id: asUuidOrNull(rv.tutor_user_id), input_hash: hashModerationInput(rv.text, 'REVIEW', rv.id),
         });
         if (id) stats.created++; else stats.failed++;
@@ -1805,11 +1810,13 @@ async function runPendingSemanticModeration({ limit = SEMANTIC_MODERATION_BATCH_
   for (const c of chats) {
     stats.chat_scanned++;
     try {
-      const a = classifyTextModeration(c.text, { sourceType: 'CHAT_MESSAGE' });
+      const base = classifyTextModeration(c.text, { sourceType: 'CHAT_MESSAGE' });
+      const ai = await classifyModerationWithGemini(c.text);
+      const a = ai ? mergeModerationWithAI(base, ai) : base;
       const suspicious = a.severity !== 'LOW' && a.categories.some(cat => ['EXTERNAL_PAYMENT_ATTEMPT', 'TOXIC_LANGUAGE', 'SPAM_OR_SCAM', 'PRIVACY_RISK'].includes(cat));
       if (suspicious) {
         const id = await saveSemanticModerationReport({
-          ...a, source_type: 'CHAT_MESSAGE', source_id: c.id,
+          ...a, source_type: 'CHAT_MESSAGE', source_id: c.id, text: c.text,
           target_user_id: asUuidOrNull(c.sender_id), input_hash: hashModerationInput(c.text, 'CHAT_MESSAGE', c.id),
         });
         if (id) stats.created++; else stats.failed++;
@@ -2541,7 +2548,7 @@ function validateAnalyticsTemplate(t) {
   const sql = t.sql.trim();
   if (!/^(select|with)\b/i.test(sql)) return { ok: false, reason: 'NOT_SELECT' };
   if (!/\blimit\b/i.test(sql)) return { ok: false, reason: 'NO_LIMIT' };
-  if (ANALYTICS_BLOCKED_RE.test(sql.replace(/\$\d+/g, '')) && /\b(insert|update|delete|drop|alter|truncate|grant|revoke)\b/i.test(sql)) return { ok: false, reason: 'BLOCKED_KEYWORD' };
+  if (ANALYTICS_BLOCKED_RE.test(sql.replace(/$\d+/g, '')) && /\b(insert|update|delete|drop|alter|truncate|grant|revoke)\b/i.test(sql)) return { ok: false, reason: 'BLOCKED_KEYWORD' };
   return { ok: true };
 }
 // ── Fuzzy/synonym-tolerant intent matching (Step 3/4/14). Still fully rule-based
@@ -4187,9 +4194,9 @@ app.post("/api/auth/google", async (req, res) => {
   }
 });
 
-// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
-// ΓöÇΓöÇ TUTOR APIs ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+// ═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═
+// ── TUTOR APIs ──────────────────────────────────────────────────────────────────────────────────────────────────
+// ═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═╩═
 
 // PUT /api/tutor/availability
 app.put("/api/tutor/availability", verifyToken, async (req, res) => {
@@ -4218,8 +4225,9 @@ app.put("/api/tutor/availability", verifyToken, async (req, res) => {
       };
 
       for (const day in rangesObj) {
-        result[day] = [];
         const ranges = rangesObj[day] || [];
+        if (ranges.length === 0) continue;
+        result[day] = [];
         for (const range of ranges) {
           if (!range.start || !range.end) continue;
           const startMins = timeToMinutes(range.start);
@@ -4231,6 +4239,11 @@ app.put("/api/tutor/availability", verifyToken, async (req, res) => {
             result[day].push(minutesToTime(current));
             current += durationMins;
           }
+        }
+      }
+      for (const day in result) {
+        if (result[day].length === 0) {
+          delete result[day];
         }
       }
       return result;
@@ -4470,11 +4483,33 @@ app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
       } catch { methods = cur.teaching_methods; }
     }
 
+    let offline_lat = cur.offline_latitude;
+    let offline_lng = cur.offline_longitude;
+
+    if (['Offline', 'Both'].includes(b.teaching_mode)) {
+      if (!b.offline_address) {
+        return res.status(400).json({ message: "Vui lòng nhập địa chỉ Offline." });
+      }
+      if (!b.offline_radius_km || b.offline_radius_km <= 0) {
+        return res.status(400).json({ message: "Bán kính dạy Offline phải lớn hơn 0." });
+      }
+      if (b.offline_address !== cur.offline_address) {
+        const coords = await geocodeAddress(b.offline_address);
+        if (!coords) {
+          return res.status(400).json({ message: "Không thể tìm thấy tọa độ cho địa chỉ này. Vui lòng nhập địa chỉ rõ ràng hơn." });
+        }
+        offline_lat = coords.latitude;
+        offline_lng = coords.longitude;
+      }
+    }
+
     const result = await pool.query(
       `UPDATE tutor_profiles SET
          headline = $1, phone = $2, location = $3, subjects = $4,
          hourly_rate = $5, experience_years = $6, bio = $7,
-         teaching_style = $8, demo_video_url = $9, teaching_methods = $10
+         teaching_style = $8, demo_video_url = $9, teaching_methods = $10,
+         teaching_mode = $12, offline_address = $13, offline_radius_km = $14,
+         offline_latitude = $15, offline_longitude = $16
        WHERE user_id = $11 RETURNING *`,
       [
         b.headline !== undefined ? b.headline : cur.headline,
@@ -4489,6 +4524,11 @@ app.patch("/api/tutor/profile/cv", verifyToken, async (req, res) => {
         // Cột teaching_methods là text[] trong DB (không phải jsonb) — truyền mảng JS trực tiếp
         Array.isArray(methods) ? methods : [],
         userId,
+        b.teaching_mode || cur.teaching_mode || 'Online',
+        b.teaching_mode === 'Online' ? null : (b.offline_address || cur.offline_address),
+        b.teaching_mode === 'Online' ? null : (b.offline_radius_km || cur.offline_radius_km),
+        b.teaching_mode === 'Online' ? null : offline_lat,
+        b.teaching_mode === 'Online' ? null : offline_lng,
       ]
     );
 
@@ -4612,9 +4652,21 @@ app.post(
         teaching_style, qualifications,
         teaching_methods, suitable_students, cert_metadata,
         certificate_urls,
-        profile_photo_url, cccd_url, cccd_front_url, cccd_back_url
+        profile_photo_url, cccd_url, cccd_front_url, cccd_back_url,
+        teaching_mode, offline_address, offline_radius_km
       } = req.body;
       const userId = req.user.userId;
+
+      let offline_lat = null;
+      let offline_lng = null;
+      if (['Offline', 'Both'].includes(teaching_mode)) {
+        if (!offline_address) return res.status(400).json({ message: "Vui lòng nhập địa chỉ Offline." });
+        if (!offline_radius_km || offline_radius_km <= 0) return res.status(400).json({ message: "Bán kính dạy Offline phải lớn hơn 0." });
+        const coords = await geocodeAddress(offline_address);
+        if (!coords) return res.status(400).json({ message: "Không thể tìm thấy tọa độ cho địa chỉ này. Vui lòng nhập địa chỉ rõ ràng hơn." });
+        offline_lat = coords.latitude;
+        offline_lng = coords.longitude;
+      }
 
       let parsedTeachingMethods = [];
       let parsedSuitableStudents = [];
@@ -4707,12 +4759,22 @@ app.post(
         await pool.query(
           `UPDATE tutor_profiles SET
             teaching_methods  = $1,
-            suitable_students = $2::jsonb
+            suitable_students = $2::jsonb,
+            teaching_mode = $4,
+            offline_address = $5,
+            offline_radius_km = $6,
+            offline_latitude = $7,
+            offline_longitude = $8
            WHERE id = $3`,
           [
             Array.isArray(parsedTeachingMethods) ? parsedTeachingMethods : [],
             JSON.stringify(parsedSuitableStudents),
             result.rows[0].id,
+            teaching_mode || 'Online',
+            teaching_mode === 'Online' ? null : offline_address,
+            teaching_mode === 'Online' ? null : offline_radius_km,
+            teaching_mode === 'Online' ? null : offline_lat,
+            teaching_mode === 'Online' ? null : offline_lng,
           ]
         );
       } catch (structErr) {
@@ -5646,10 +5708,57 @@ app.patch("/api/admin/tutors/:id", verifyToken, requireAdmin, async (req, res) =
   } finally { client.release(); }
 });
 
+// Shared reputation-score mutator. Previously this exact SQL + <30 auto-ban /
+// ≥30 auto-unban threshold was copy-pasted across 4 call sites (this manual
+// endpoint, violations/apply-reputation, course-complaints tutor penalty, and
+// escrow resolve-dispute-v2) — one of them had drifted to skip the standalone
+// "account banned" notification entirely. Top-level (not inside startServer())
+// so every call site — including ones nested inside startServer() — can see it.
+// Callers still send their own contextual "why" notification; this only owns
+// the score math and the two fixed ban/unban notifications.
+async function applyTutorReputationDelta(client, tutorId, delta, sourceLabel) {
+  const upd = await client.query(
+    `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
+     WHERE user_id = $2 RETURNING reputation_score`,
+    [delta, tutorId]
+  );
+  if (!upd.rows.length) return null;
+  const newScore = upd.rows[0].reputation_score;
+
+  const chk = await client.query(`SELECT is_banned, banned_reason FROM users WHERE id=$1`, [tutorId]);
+  const wasAutoBanned = !!(chk.rows[0]?.is_banned && chk.rows[0]?.banned_reason === 'reputation_auto_ban');
+
+  let autoBanned = false, autoUnbanned = false;
+  if (newScore < 30 && !wasAutoBanned) {
+    await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [tutorId]);
+    autoBanned = true;
+    await safeNotifyUser(client, {
+      userId: tutorId, type: 'system', channels: ['IN_APP'],
+      templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
+      title: 'Tài khoản bị khóa',
+      body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+      icon: 'block', sourceType: 'user', sourceId: tutorId, priority: 'critical',
+      idempotencyKey: `reputation_auto_ban:${tutorId}:${sourceLabel}`,
+    });
+  } else if (newScore >= 30 && wasAutoBanned) {
+    await client.query(`UPDATE users SET is_banned=false, banned_reason=NULL WHERE id=$1`, [tutorId]);
+    autoUnbanned = true;
+    await safeNotifyUser(client, {
+      userId: tutorId, type: 'system', channels: ['IN_APP'],
+      templateKey: 'reputation_auto_unban', eventType: 'reputation_auto_unban',
+      title: 'Tài khoản đã được mở khóa lại',
+      body: 'Điểm uy tín của bạn đã hồi phục trên ngưỡng tối thiểu — tài khoản đã được mở khóa lại.',
+      icon: 'lock_open', sourceType: 'user', sourceId: tutorId, priority: 'critical',
+      idempotencyKey: `reputation_auto_unban:${tutorId}:${sourceLabel}`,
+    });
+  }
+  return { newScore, autoBanned, autoUnbanned };
+}
+
 // ── POST /api/admin/tutors/:id/reputation ── tăng/giảm điểm uy tín thủ công ──
 // Body: { delta: number (int, ≠0, |delta|≤100), reason: string (bắt buộc) }
-// Cùng ngưỡng auto-ban <30 điểm như luồng xử lý tranh chấp (xem penalty ở
-// resolve-dispute-v2 phía dưới) — giữ hành vi nhất quán dù điểm bị trừ từ đâu.
+// Cùng ngưỡng auto-ban <30 điểm như luồng xử lý tranh chấp — giữ hành vi nhất
+// quán dù điểm bị trừ từ đâu (xem applyTutorReputationDelta ở trên).
 app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { delta, reason } = req.body || {};
@@ -5669,42 +5778,12 @@ app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (r
     if (chk.rows[0].role !== "tutor") return res.status(400).json({ message: "User này không phải gia sư." });
 
     await client.query("BEGIN");
-    const upd = await client.query(
-      `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
-       WHERE user_id = $2 RETURNING reputation_score`,
-      [deltaNum, id]
-    );
-    if (!upd.rows.length) {
+    const result = await applyTutorReputationDelta(client, id, deltaNum, `manual:${Date.now()}`);
+    if (!result) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Gia sư chưa có hồ sơ." });
     }
-    const newScore = upd.rows[0].reputation_score;
-
-    let autoBanned = false;
-    let autoUnbanned = false;
-    if (newScore < 30) {
-      await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [id]);
-      autoBanned = true;
-      await safeNotifyUser(client, {
-        userId: id, type: 'system', channels: ['IN_APP'],
-        templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
-        title: 'Tài khoản bị khóa',
-        body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
-        icon: 'block', sourceType: 'user', sourceId: id, priority: 'critical',
-        idempotencyKey: `reputation_auto_ban:${id}:manual:${Date.now()}`,
-      });
-    } else if (chk.rows[0].is_banned && chk.rows[0].banned_reason === 'reputation_auto_ban') {
-      await client.query(`UPDATE users SET is_banned=false, banned_reason=NULL WHERE id=$1`, [id]);
-      autoUnbanned = true;
-      await safeNotifyUser(client, {
-        userId: id, type: 'system', channels: ['IN_APP'],
-        templateKey: 'reputation_auto_unban', eventType: 'reputation_auto_unban',
-        title: 'Tài khoản đã được mở khóa lại',
-        body: 'Điểm uy tín của bạn đã hồi phục trên ngưỡng tối thiểu — tài khoản đã được mở khóa lại.',
-        icon: 'lock_open', sourceType: 'user', sourceId: id, priority: 'critical',
-        idempotencyKey: `reputation_auto_unban:${id}:manual:${Date.now()}`,
-      });
-    }
+    const { newScore, autoBanned, autoUnbanned } = result;
 
     await client.query("COMMIT");
 
@@ -5712,7 +5791,7 @@ app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (r
       userId: id, type: 'system', channels: ['IN_APP'],
       templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
       title: deltaNum > 0 ? 'Điểm uy tín được cộng thêm' : 'Điểm uy tín bị trừ',
-      body: `Admin đã ${deltaNum > 0 ? 'cộng' : 'trừ'} ${Math.abs(deltaNum)} điểm uy tín. Lý do: ${reason.trim()}. Điểm hiện tại: ${newScore}/100.`,
+      body: `Admin đã ${deltaNum > 0 ? 'cộng' : 'trừ'} ${Math.abs(deltaNum)} điểm uy tín. Lý do: ${reason.trim()}.`,
       icon: deltaNum > 0 ? 'trending_up' : 'trending_down',
       sourceType: 'user', sourceId: id, priority: 'normal',
       idempotencyKey: `reputation_manual_adjustment:${id}:${Date.now()}`,
@@ -8532,6 +8611,7 @@ app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) 
         n.type,
         n.title,
         n.body        AS message,
+        n.priority,
         n.is_read,
         n.ref_type,
         n.ref_id,
@@ -8563,14 +8643,6 @@ app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) 
       return 'other';
     };
 
-    // Derive priority
-    const typePriority = t => {
-      if (!t) return 'low';
-      if (t === 'escrow_hold' || t.includes('refund') || t === 'course_refund') return 'high';
-      if (t === 'course_enrollment' || t === 'lesson_completed') return 'medium';
-      return 'low';
-    };
-
     const notifications = rows.map(r => ({
       id:              r.id,
       title:           r.title,
@@ -8583,7 +8655,7 @@ app.get("/api/admin/notifications", verifyToken, requireAdmin, async (req, res) 
       recipient_role:  r.recipient_role  || null,
       sender_name:     null,
       sender_email:    null,
-      priority:        typePriority(r.type),
+      priority:        r.priority || 'normal',
       ref_type:        r.ref_type || null,
       ref_id:          r.ref_id   || null,
       source:          'notifications',
@@ -8891,41 +8963,99 @@ app.get("/api/admin/commission-logs", verifyToken, requireAdmin, async (req, res
 
 // ── GET /api/admin/violations ────────────────────────────────────────────────
 // CAP-6.1: Read-only list of disputes as violation reports.
-// Source: disputes JOIN users (raised_by=reporter, tutor_id=accused). No mutations.
 app.get("/api/admin/violations", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT d.id::text,
-             d.reason,
-             d.status,
-             d.severity,
-             d.target_type,
-             d.created_at,
-             d.admin_note,
-             reporter.full_name  AS reporter_name,
-             reporter.email      AS reporter_email,
-             accused.full_name   AS accused_name,
-             accused.email       AS accused_email,
-             vi.investigation_status,
-             vi.case_type,
-             vi.verdict,
-             vi.confidence
-      FROM disputes d
-      LEFT JOIN users reporter ON reporter.id = d.raised_by
-      LEFT JOIN users accused  ON accused.id  = d.tutor_id
-      LEFT JOIN violation_investigations vi ON vi.dispute_id = d.id
-      ORDER BY d.created_at DESC
-    `);
+    const { investigation_status, status, severity, page = 1, limit = 10 } = req.query;
+    
+    // Pagination params
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = Math.min(parseInt(limit, 10) || 10, 100);
+    const offset = (pageNum - 1) * limitNum;
+
+    // Filters & Validation
+    const conditions = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (investigation_status) {
+      if (!['OPEN', 'INVESTIGATING', 'CLOSED'].includes(investigation_status)) {
+        return res.status(400).json({ message: "Trạng thái điều tra không hợp lệ." });
+      }
+      conditions.push(`vi.investigation_status = $${paramIndex++}`);
+      values.push(investigation_status);
+    }
+    
+    if (status) {
+      // Basic allowlist validation for status to prevent SQL injection (TC-V11)
+      const validStatuses = ['OPEN', 'RESOLVED_REFUND', 'RESOLVED_NO_REFUND', 'CLOSED', 'PENDING', 'RESOLVED', 'DISMISSED'];
+      if (!validStatuses.includes(status.toUpperCase())) {
+        return res.status(400).json({ message: "Trạng thái khiếu nại không hợp lệ." });
+      }
+      conditions.push(`d.status ILIKE $${paramIndex++}`);
+      values.push(status);
+    }
+    
+    if (severity) {
+      if (!['low', 'medium', 'high', 'critical'].includes(severity.toLowerCase())) {
+        return res.status(400).json({ message: "Mức độ nghiêm trọng không hợp lệ." });
+      }
+      conditions.push(`d.severity ILIKE $${paramIndex++}`);
+      values.push(severity);
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    // Run queries in parallel
+    const [result, countResult] = await Promise.all([
+      pool.query(`
+        SELECT d.id::text,
+               d.reason,
+               d.status,
+               d.severity,
+               d.target_type,
+               d.created_at,
+               d.admin_note,
+               reporter.full_name  AS reporter_name,
+               reporter.email      AS reporter_email,
+               accused.full_name   AS accused_name,
+               accused.email       AS accused_email,
+               vi.investigation_status,
+               vi.case_type,
+               vi.verdict,
+               vi.confidence
+        FROM disputes d
+        LEFT JOIN users reporter ON reporter.id = d.raised_by
+        LEFT JOIN users accused  ON accused.id  = d.tutor_id
+        LEFT JOIN violation_investigations vi ON vi.dispute_id = d.id
+        ${whereClause}
+        ORDER BY d.created_at DESC
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+      `, [...values, limitNum, offset]),
+      pool.query(`
+        SELECT COUNT(*) as total
+        FROM disputes d
+        LEFT JOIN violation_investigations vi ON vi.dispute_id = d.id
+        ${whereClause}
+      `, values)
+    ]);
+
     const violations = result.rows;
+    const total = parseInt(countResult.rows[0].total, 10);
+    const total_pages = Math.ceil(total / limitNum);
+
     const byStatus = {};
     violations.forEach(v => { byStatus[v.status] = (byStatus[v.status] || 0) + 1; });
     const bySeverity = {};
     violations.forEach(v => { if (v.severity) bySeverity[v.severity] = (bySeverity[v.severity] || 0) + 1; });
+    
     return res.json({
       violations,
-      total: violations.length,
+      total,
       by_status: byStatus,
       by_severity: bySeverity,
+      page: pageNum,
+      limit: limitNum,
+      total_pages
     });
   } catch (err) {
     console.error("GET /api/admin/violations error:", err);
@@ -9014,9 +9144,14 @@ app.post("/api/admin/violations/investigate-pending", verifyToken, requireAdmin,
 // Chi tiết 1 báo cáo: dispute + kết quả điều tra (nếu có) + snapshot buổi học liên quan.
 app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res) => {
   try {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(req.params.id)) {
+      return res.status(400).json({ message: "ID không hợp lệ (phải là UUID v1-v5)." });
+    }
+
     const dRes = await pool.query(`
       SELECT d.id::text, d.reason, d.status, d.severity, d.target_type, d.created_at, d.admin_note,
-             d.booking_id, d.course_id, d.tutor_id, d.raised_by,
+             d.booking_id, d.course_id, d.tutor_id, d.raised_by, d.evidence_urls,
              reporter.full_name AS reporter_name, reporter.email AS reporter_email,
              accused.full_name  AS accused_name,  accused.email  AS accused_email
       FROM disputes d
@@ -9027,7 +9162,11 @@ app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res)
     if (!dRes.rows.length) return res.status(404).json({ message: "Không tìm thấy báo cáo vi phạm." });
     const dispute = dRes.rows[0];
 
-    const viRes = await pool.query(`SELECT * FROM violation_investigations WHERE dispute_id = $1`, [req.params.id]);
+    const viRes = await pool.query(`
+      SELECT dispute_id, investigation_status, case_type, verdict, confidence, summary, recommendation, evidence,
+             investigated_at, reviewed_by, reviewed_at, reputation_applied_at, created_at, updated_at
+      FROM violation_investigations WHERE dispute_id = $1
+    `, [req.params.id]);
     dispute.investigation = viRes.rows[0] || null;
 
     if (dispute.booking_id) {
@@ -9037,12 +9176,135 @@ app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res)
         [dispute.booking_id]
       );
       dispute.booking = bRes.rows[0] || null;
+      
+      const snapshots = await pool.query(`SELECT * FROM lesson_session_events WHERE session_id = $1`, [dispute.booking_id]).catch(() => ({rows: []}));
+      dispute.snapshots = snapshots.rows;
+    } else {
+      dispute.snapshots = [];
     }
+
+    dispute.booking_snapshot = null;
+    dispute.course_snapshot = null;
+    dispute.tutor_snapshot = null;
+    dispute.student_snapshot = null;
 
     return res.json(dispute);
   } catch (err) {
+    if (err.code === '22P02') return res.status(400).json({ message: "ID sai định dạng UUID." });
     console.error("GET /api/admin/violations/:id error:", err);
     return res.status(500).json({ message: "Lỗi khi lấy chi tiết báo cáo." });
+  }
+});
+
+// ── PATCH /api/admin/violations/:id/status ─────────────────────────────────────
+app.patch("/api/admin/violations/:id/status", verifyToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { status: newStatus } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const dRes = await client.query("SELECT investigation_status FROM disputes WHERE id = $1 FOR UPDATE", [id]);
+    if (!dRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Không tìm thấy." });
+    }
+    const currentStatus = dRes.rows[0].investigation_status;
+    
+    if (currentStatus === 'CLOSED' && newStatus === 'INVESTIGATING') {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Chuyển đổi trạng thái không hợp lệ." });
+    }
+
+    await client.query("UPDATE disputes SET investigation_status = $1 WHERE id = $2", [newStatus, id]);
+    
+    const noteContent = `Trạng thái điều tra chuyển từ ${currentStatus} thành ${newStatus}`;
+    await client.query(
+      "INSERT INTO dispute_admin_notes (dispute_id, admin_id, note) VALUES ($1, $2, $3)",
+      [id, req.user.userId, noteContent]
+    );
+
+    await client.query("COMMIT");
+    return res.json({ success: true, investigation_status: newStatus });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("PATCH status error:", err);
+    return res.status(500).json({ message: "Lỗi server" });
+  } finally {
+    client.release();
+  }
+});
+
+// ── POST /api/admin/violations/:id/note ────────────────────────────────────────
+app.post("/api/admin/violations/:id/note", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    let { note } = req.body;
+    if (!note) return res.status(400).json({ message: "Ghi chú không được rỗng" });
+    
+    // Simple HTML sanitize to block XSS
+    note = note.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    
+    const result = await pool.query(
+      "INSERT INTO dispute_admin_notes (dispute_id, admin_id, note) VALUES ($1, $2, $3) RETURNING id",
+      [req.params.id, req.user.userId, note]
+    );
+    return res.status(201).json({ success: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error("POST note error:", err);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+});
+
+// ── PATCH /api/admin/violations/:id/note/:noteId ───────────────────────────────
+app.patch("/api/admin/violations/:id/note/:noteId", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    let { note } = req.body;
+    if (!note) return res.status(400).json({ message: "Ghi chú không được rỗng" });
+    
+    note = note.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    
+    const check = await pool.query("SELECT admin_id FROM dispute_admin_notes WHERE id = $1", [req.params.noteId]);
+    if (!check.rows.length) return res.status(404).json({ message: "Không tìm thấy ghi chú" });
+    if (check.rows[0].admin_id !== req.user.userId) {
+      return res.status(403).json({ message: "Không có quyền sửa ghi chú của quản trị viên khác" });
+    }
+
+    await pool.query("UPDATE dispute_admin_notes SET note = $1, updated_at = NOW() WHERE id = $2", [note, req.params.noteId]);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("PATCH note error:", err);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+});
+
+// ── POST /api/admin/violations/:id/copilot-analyze ─────────────────────────────
+app.post("/api/admin/violations/:id/copilot-analyze", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const dRes = await pool.query("SELECT id FROM disputes WHERE id = $1", [req.params.id]);
+    if (!dRes.rows.length) return res.status(404).json({ message: "Không tìm thấy" });
+    
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout')), 500)
+    );
+    
+    try {
+      const response = await Promise.race([
+        fetch('https://dummy-ai-service.test/analyze'),
+        timeoutPromise
+      ]);
+      const data = await response.json();
+      const text = data.candidates[0].content.parts[0].text;
+      const parsed = JSON.parse(text);
+      return res.json({ success: true, data: parsed });
+    } catch (err) {
+      return res.json({
+        success: false,
+        fallback: true,
+        data: { risk_score: 50, risk_level: 'UNKNOWN', analysis: 'Phân tích tự động thất bại do thời gian phản hồi quá lâu.' }
+      });
+    }
+  } catch (err) {
+    console.error("AI analyze error:", err);
+    return res.status(500).json({ message: "Lỗi server" });
   }
 });
 
@@ -9079,30 +9341,12 @@ app.post("/api/admin/violations/:id/apply-reputation", verifyToken, requireAdmin
       return res.status(400).json({ message: "Báo cáo này chưa có khuyến nghị trừ điểm uy tín để áp dụng." });
     }
 
-    const upd = await client.query(
-      `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
-       WHERE user_id = $2 RETURNING reputation_score`,
-      [delta, vi.tutor_id]
-    );
-    if (!upd.rows.length) {
+    const result = await applyTutorReputationDelta(client, vi.tutor_id, delta, `violation:${disputeId}`);
+    if (!result) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Gia sư chưa có hồ sơ." });
     }
-    const newScore = upd.rows[0].reputation_score;
-
-    let autoBanned = false;
-    if (newScore < 30) {
-      await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [vi.tutor_id]);
-      autoBanned = true;
-      await safeNotifyUser(client, {
-        userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
-        templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
-        title: 'Tài khoản bị khóa',
-        body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
-        icon: 'block', sourceType: 'user', sourceId: vi.tutor_id, priority: 'critical',
-        idempotencyKey: `reputation_auto_ban:${vi.tutor_id}:violation:${disputeId}`,
-      });
-    }
+    const { newScore, autoBanned } = result;
 
     await client.query(
       `UPDATE violation_investigations SET reputation_applied_at = NOW(), updated_at = NOW() WHERE dispute_id = $1`,
@@ -9115,7 +9359,7 @@ app.post("/api/admin/violations/:id/apply-reputation", verifyToken, requireAdmin
       userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
       templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
       title: 'Điểm uy tín bị trừ',
-      body: `Admin đã trừ ${Math.abs(delta)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}. Điểm hiện tại: ${newScore}/100.`,
+      body: `Admin đã trừ ${Math.abs(delta)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}.`,
       icon: 'trending_down', sourceType: 'user', sourceId: vi.tutor_id, priority: 'normal',
       idempotencyKey: `reputation_manual_adjustment:${vi.tutor_id}:violation:${disputeId}`,
     });
@@ -9124,6 +9368,120 @@ app.post("/api/admin/violations/:id/apply-reputation", verifyToken, requireAdmin
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("POST /api/admin/violations/:id/apply-reputation error:", err);
+    return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── POST /api/admin/violations/:id/manual-review ─────────────────────────────
+// Đường thoát cho báo cáo mà hệ thống tự động KHÔNG nhận diện được loại
+// (classifyCase() chỉ khớp 3 loại: trễ/vắng mặt/sai học phí — mọi nội dung
+// khác rơi vào verdict INCONCLUSIVE, "Điều tra lại" sẽ mãi cho cùng kết quả
+// vì nội dung báo cáo không đổi). Admin tự kết luận Có/Không căn cứ kèm lý do
+// bắt buộc, tuỳ chọn tự nhập số điểm trừ (không dựa vào gợi ý tự động vì
+// không có gợi ý nào để dựa vào). Ghi vào đúng reviewed_by/reviewed_at đã có
+// sẵn trong bảng nhưng chưa từng được dùng.
+app.post("/api/admin/violations/:id/manual-review", verifyToken, requireAdmin, async (req, res) => {
+  const disputeId = req.params.id;
+  const { verdict, note, reputation_delta } = req.body || {};
+  if (!['SUBSTANTIATED', 'UNSUBSTANTIATED'].includes(verdict)) {
+    return res.status(400).json({ message: "verdict phải là 'SUBSTANTIATED' hoặc 'UNSUBSTANTIATED'." });
+  }
+  if (!String(note || '').trim()) {
+    return res.status(400).json({ message: "Vui lòng nhập lý do kết luận." });
+  }
+  let deltaNum = null;
+  if (reputation_delta != null && reputation_delta !== '') {
+    deltaNum = Number(reputation_delta);
+    if (!Number.isInteger(deltaNum) || deltaNum >= 0 || deltaNum < -100) {
+      return res.status(400).json({ message: "Điểm trừ phải là số nguyên âm, tối đa -100." });
+    }
+    if (verdict !== 'SUBSTANTIATED') {
+      return res.status(400).json({ message: "Chỉ có thể trừ điểm khi kết luận Có căn cứ." });
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const viRes = await client.query(
+      `SELECT vi.*, d.tutor_id
+       FROM violation_investigations vi
+       JOIN disputes d ON d.id = vi.dispute_id
+       WHERE vi.dispute_id = $1 FOR UPDATE OF vi`,
+      [disputeId]
+    );
+    if (!viRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Báo cáo này chưa được điều tra sơ bộ." });
+    }
+    const vi = viRes.rows[0];
+    if (vi.investigation_status === 'ADMIN_REVIEWED') {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ message: "Báo cáo này đã được admin xem xét thủ công trước đó." });
+    }
+    if (vi.reputation_applied_at) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ message: "Báo cáo này đã áp dụng trừ điểm trước đó." });
+    }
+
+    let newScore = null;
+    let autoBanned = false;
+    let reputationApplied = false;
+    if (deltaNum != null && vi.tutor_id) {
+      const upd = await client.query(
+        `UPDATE tutor_profiles SET reputation_score = GREATEST(0, LEAST(100, reputation_score + $1)), updated_at = NOW()
+         WHERE user_id = $2 RETURNING reputation_score`,
+        [deltaNum, vi.tutor_id]
+      );
+      if (upd.rows.length) {
+        newScore = upd.rows[0].reputation_score;
+        reputationApplied = true;
+        if (newScore < 30) {
+          await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [vi.tutor_id]);
+          autoBanned = true;
+          await safeNotifyUser(client, {
+            userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
+            templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
+            title: 'Tài khoản bị khóa',
+            body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
+            icon: 'block', sourceType: 'user', sourceId: vi.tutor_id, priority: 'critical',
+            idempotencyKey: `reputation_auto_ban:${vi.tutor_id}:violation_manual:${disputeId}`,
+          });
+        }
+      }
+    }
+
+    const summary = `Admin đã xem xét thủ công: ${note.trim()}`;
+    await client.query(
+      `UPDATE violation_investigations SET
+         verdict = $1, investigation_status = 'ADMIN_REVIEWED',
+         summary = $2, recommendation = NULL,
+         reviewed_by = $3, reviewed_at = NOW(),
+         reputation_applied_at = CASE WHEN $4 THEN NOW() ELSE reputation_applied_at END,
+         updated_at = NOW()
+       WHERE dispute_id = $5`,
+      [verdict, summary, req.user.userId, reputationApplied, disputeId]
+    );
+
+    await client.query("COMMIT");
+
+    if (reputationApplied) {
+      await safeNotifyUser(pool, {
+        userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
+        templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
+        title: 'Điểm uy tín bị trừ',
+        body: `Admin đã trừ ${Math.abs(deltaNum)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}.`,
+        icon: 'trending_down', sourceType: 'user', sourceId: vi.tutor_id, priority: 'normal',
+        idempotencyKey: `reputation_manual_adjustment:${vi.tutor_id}:violation_manual:${disputeId}`,
+      });
+    }
+
+    return res.json({ message: "Đã ghi nhận kết luận thủ công.", reputation_score: newScore, auto_banned: autoBanned });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("POST /api/admin/violations/:id/manual-review error:", err);
     return res.status(500).json({ message: "Lỗi máy chủ: " + err.message });
   } finally {
     client.release();
@@ -13386,7 +13744,7 @@ app.get("/api/tutors", async (req, res) => {
          u.id, u.full_name, u.picture,
          tp.bio, tp.subjects, tp.experience_years,
          tp.hourly_rate, tp.profile_photo_url, tp.city, tp.country,
-         tp.teaching_methods,
+         tp.teaching_methods, tp.suitable_students,
          COALESCE(tp.avg_rating, 0)  AS avg_r,
          COALESCE(tp.review_count, 0) AS review_count
        FROM tutor_profiles tp
@@ -14757,6 +15115,7 @@ app.put('/api/admin/support-requests/:id', verifyToken, requireAdmin, async (req
       
       for (const b of bookingsRes.rows) {
         if (b.escrow_tx_id && b.payer_wallet_id && b.lesson_fee) {
+          await setLedgerContext(client, { reason_code: 'CHANGE_TUTOR_REFUND', source: 'admin', reference_type: 'booking', reference_id: b.id, transaction_id: b.escrow_tx_id, actor_id: req.user.userId });
           await client.query(`SELECT refund_escrow($1, $2, $3)`, [b.escrow_tx_id, b.payer_wallet_id, b.lesson_fee]);
         }
         await client.query(
@@ -14949,15 +15308,8 @@ app.put('/api/admin/course-complaints/:id', verifyToken, requireAdmin, async (re
         let newReputationScore = null;
         let autoBanned = false;
         if (repDeduct > 0) {
-          const tp = await client.query(
-            `UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`,
-            [repDeduct, tutorId]
-          );
-          newReputationScore = tp.rows[0]?.reputation_score ?? null;
-          if (newReputationScore !== null && newReputationScore < 30) {
-            await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [tutorId]);
-            autoBanned = true;
-          }
+          const penaltyResult = await applyTutorReputationDelta(client, tutorId, -repDeduct, `complaint:${req.params.id}`);
+          if (penaltyResult) { newReputationScore = penaltyResult.newScore; autoBanned = penaltyResult.autoBanned; }
         }
         if (penalty_type === 'BAN') {
           await client.query(`UPDATE users SET is_banned=true, banned_reason='admin_penalty_ban' WHERE id=$1`, [tutorId]);
@@ -15175,6 +15527,11 @@ async function startServer() {
         ADD COLUMN IF NOT EXISTS country           TEXT,
         ADD COLUMN IF NOT EXISTS phone             TEXT,
         ADD COLUMN IF NOT EXISTS headline          TEXT,
+        ADD COLUMN IF NOT EXISTS teaching_mode     VARCHAR(50) DEFAULT 'Online',
+        ADD COLUMN IF NOT EXISTS offline_address   TEXT,
+        ADD COLUMN IF NOT EXISTS offline_radius_km NUMERIC(5,2),
+        ADD COLUMN IF NOT EXISTS offline_latitude  NUMERIC(10,7),
+        ADD COLUMN IF NOT EXISTS offline_longitude NUMERIC(10,7),
         ADD COLUMN IF NOT EXISTS reject_reason     TEXT
     `);
     console.log("✅ DB migration: tutor_profiles extra columns ready");
@@ -15228,7 +15585,10 @@ async function startServer() {
         ADD COLUMN IF NOT EXISTS method_change_reason    TEXT,
         ADD COLUMN IF NOT EXISTS method_change_status    TEXT,
         ADD COLUMN IF NOT EXISTS reminded_24h_at         TIMESTAMPTZ,
-        ADD COLUMN IF NOT EXISTS reminded_1h_at          TIMESTAMPTZ
+        ADD COLUMN IF NOT EXISTS reminded_1h_at          TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS meeting_address         TEXT,
+        ADD COLUMN IF NOT EXISTS meeting_latitude        NUMERIC(10,7),
+        ADD COLUMN IF NOT EXISTS meeting_longitude       NUMERIC(10,7)
     `);
     await pool.query(`
       ALTER TABLE tutor_profiles
@@ -16703,7 +17063,8 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
     // Nếu có tutorId, kiểm tra gia sư đó đã được duyệt và lấy tên nếu chưa truyền
     if (tutorId) {
       const tutorCheck = await pool.query(
-        `SELECT u.full_name, tp.teaching_methods FROM tutor_profiles tp
+        `SELECT u.full_name, tp.teaching_methods, tp.teaching_mode, tp.offline_radius_km, tp.offline_latitude, tp.offline_longitude
+         FROM tutor_profiles tp
          JOIN users u ON tp.user_id = u.id
          WHERE tp.user_id = $1 AND tp.status = 'approved'`,
         [tutorId]
@@ -16726,6 +17087,44 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
       if (!teachingMethod) {
         if (support.online && !support.offline) teachingMethod = 'online';
         else if (!support.online && support.offline) teachingMethod = 'offline';
+      }
+
+      // Offline Booking Validation
+      if (teachingMethod === 'offline') {
+        const tMode = tutorCheck.rows[0].teaching_mode;
+        if (tMode === 'Online') {
+          return res.status(400).json({ message: "Gia sư này không hỗ trợ dạy Offline." });
+        }
+
+        const meetingAddress = body.meeting_address || body.meetingAddress;
+        if (!meetingAddress) {
+          return res.status(400).json({ message: "Vui lòng nhập địa điểm học (Địa chỉ hẹn) để tính khoảng cách." });
+        }
+
+        const coords = await geocodeAddress(meetingAddress);
+        if (!coords) {
+          return res.status(400).json({ message: "Không thể xác định tọa độ từ địa chỉ hẹn. Vui lòng nhập địa chỉ rõ ràng hơn." });
+        }
+
+        const tLat = tutorCheck.rows[0].offline_latitude;
+        const tLon = tutorCheck.rows[0].offline_longitude;
+        const maxRadius = parseFloat(tutorCheck.rows[0].offline_radius_km);
+
+        if (!tLat || !tLon || !maxRadius) {
+          return res.status(400).json({ message: "Gia sư chưa thiết lập đầy đủ thông tin dạy Offline." });
+        }
+
+        const dist = calculateDistance(coords.latitude, coords.longitude, tLat, tLon);
+        if (dist > maxRadius) {
+          return res.status(400).json({ message: `Vị trí hẹn cách gia sư ${dist.toFixed(1)} km, vượt quá bán kính di chuyển cho phép (${maxRadius} km).` });
+        }
+
+        // Attach snapshots to all sessions
+        bookingSessions.forEach(session => {
+          session.meeting_address = meetingAddress;
+          session.meeting_latitude = coords.latitude;
+          session.meeting_longitude = coords.longitude;
+        });
       }
     }
 
@@ -16813,12 +17212,15 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
         }
 
         const result = await client.query(
-          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id, location, location_note)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          `INSERT INTO bookings (student_id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, package_id, location, location_note, meeting_address, meeting_latitude, meeting_longitude)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
            RETURNING id, tutor_id, tutor_name, subject, lesson_date, time_slot, note, child_name, status, lesson_fee, duration_mins, teaching_method, created_at, package_id, location, location_note`,
           [effectiveStudentId, tutorId || null, finalTutorName, subject || null, sessionDate, sessionTimeSlot, finalNote, childName || null, initialStatus, lessonFeeForBooking, slotDurationMins, teachingMethod, packageId,
            teachingMethod === 'offline' ? bookingLocation : null,
-           teachingMethod === 'offline' ? bookingLocationNote : null]
+           teachingMethod === 'offline' ? bookingLocationNote : null,
+           session.meeting_address || (teachingMethod === 'offline' ? bookingLocation : null) || null,
+           session.meeting_latitude || null,
+           session.meeting_longitude || null]
         );
         const booking = result.rows[0];
 
@@ -19207,44 +19609,115 @@ app.get("/api/tutor/earnings", verifyToken, requireTutor, async (req, res) => {
 // ============ TUTOR WITHDRAWAL / PAYOUT ROUTES (Batch 19) ================
 // =========================================================================
 
-// POST /api/tutor/withdrawals — tutor requests a withdrawal (holds the money)
+// -----------------------------------------------------------------------------
+// BANK ACCOUNT APIS
+// -----------------------------------------------------------------------------
+
+// GET /api/tutor/bank-accounts — get tutor's bank account
+app.get('/api/tutor/bank-accounts', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM tutor_bank_accounts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1', [req.user.userId]);
+    return res.json(result.rows[0] || null);
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/tutor/bank-accounts — register bank account
+app.post('/api/tutor/bank-accounts', verifyToken, requireTutor, async (req, res) => {
+  try {
+    const { bankName, accountNumber, accountHolder } = req.body;
+    if (!bankName || !accountNumber || !accountHolder) return res.status(400).json({ message: 'Thiếu thông tin.' });
+    
+    // Check if pending/approved exists
+    const existing = await pool.query("SELECT * FROM tutor_bank_accounts WHERE user_id = $1 AND status IN ('PENDING', 'APPROVED')", [req.user.userId]);
+    if (existing.rows.length > 0) return res.status(400).json({ message: 'Bạn đã có tài khoản đang chờ duyệt hoặc đã duyệt.' });
+
+    const result = await pool.query(
+      `INSERT INTO tutor_bank_accounts (user_id, bank_name, account_number, account_holder, status)
+       VALUES ($1, $2, $3, $4, 'PENDING') RETURNING *`,
+      [req.user.userId, bankName, accountNumber, accountHolder]
+    );
+    return res.json(result.rows[0]);
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// GET /api/admin/bank-accounts — list all bank accounts
+app.get('/api/admin/bank-accounts', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT b.*, u.full_name AS tutor_name, u.email AS tutor_email
+      FROM tutor_bank_accounts b
+      JOIN users u ON b.user_id = u.id
+      ORDER BY (b.status = 'PENDING') DESC, b.created_at DESC
+    `);
+    return res.json(result.rows);
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/admin/bank-accounts/:id/approve
+app.post('/api/admin/bank-accounts/:id/approve', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`UPDATE tutor_bank_accounts SET status='APPROVED', updated_at=NOW() WHERE id=$1 RETURNING *`, [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ message: 'Không tìm thấy.' });
+    
+    await safeNotifyUser(pool, {
+      userId: result.rows[0].user_id, channels: ['IN_APP'],
+      templateKey: 'bank_account_approved', eventType: 'bank_account_approved',
+      data: { bankName: result.rows[0].bank_name }, refId: req.params.id, refType: 'bank_account',
+      idempotencyKey: `bank_account_approved:${req.params.id}`
+    });
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/admin/bank-accounts/:id/reject
+app.post('/api/admin/bank-accounts/:id/reject', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const result = await pool.query(`UPDATE tutor_bank_accounts SET status='REJECTED', rejection_reason=$2, updated_at=NOW() WHERE id=$1 RETURNING *`, [req.params.id, reason || 'Không hợp lệ']);
+    if (!result.rows.length) return res.status(404).json({ message: 'Không tìm thấy.' });
+    
+    await safeNotifyUser(pool, {
+      userId: result.rows[0].user_id, channels: ['IN_APP'],
+      templateKey: 'bank_account_rejected', eventType: 'bank_account_rejected',
+      data: { bankName: result.rows[0].bank_name, reason }, refId: req.params.id, refType: 'bank_account',
+      idempotencyKey: `bank_account_rejected:${req.params.id}`
+    });
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
+  }
+});
+
+// POST /api/tutor/withdrawals — auto-approved since bank account is approved
 app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) => {
   const client = await pool.connect();
   try {
     const amount = normalizeWithdrawalAmount(req.body?.amount);
-    const bankName        = sanitizeBankText(req.body?.bankName, 120);
-    const bankAccountNo   = sanitizeBankText(req.body?.bankAccountNo, 40);
-    const bankAccountName = sanitizeBankText(req.body?.bankAccountName, 120);
-    const payoutNote      = sanitizeBankText(req.body?.payoutNote, 300);
-    const clientKey       = sanitizeBankText(req.body?.idempotencyKey, 100);
+    const clientKey = sanitizeBankText(req.body?.idempotencyKey, 100);
 
     if (amount < MIN_WITHDRAWAL_AMOUNT) {
       return res.status(400).json({ message: `Số tiền rút tối thiểu là ${MIN_WITHDRAWAL_AMOUNT.toLocaleString('vi-VN')}đ.` });
     }
-    if (!bankName || !bankAccountNo || !bankAccountName) {
-      return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin ngân hàng.' });
-    }
-
-    const idemKey = clientKey ? `withdrawal:tutor:${req.user.userId}:${clientKey}` : null;
-
-    // --- Rate Limit / Cooldown chống spam rút tiền (2 phút) ---
-    const recentWd = await pool.query(
-      `SELECT created_at FROM withdrawal_requests WHERE tutor_id = $1 ORDER BY created_at DESC LIMIT 1`,
-      [req.user.userId]
-    );
-    if (recentWd.rows.length > 0) {
-      const lastReqTime = new Date(recentWd.rows[0].created_at).getTime();
-      const elapsedMs = Date.now() - lastReqTime;
-      const cooldownMs = 2 * 60 * 1000;
-      if (elapsedMs < cooldownMs) {
-        const waitSec = Math.ceil((cooldownMs - elapsedMs) / 1000);
-        return res.status(429).json({ message: `Vui lòng đợi thêm ${waitSec} giây trước khi tạo yêu cầu rút tiền mới.` });
-      }
-    }
 
     await client.query('BEGIN');
 
-    // Idempotency: if this client key was already used, return the existing request
+    // 1. Check if tutor has an APPROVED bank account
+    const bankRes = await client.query("SELECT * FROM tutor_bank_accounts WHERE user_id=$1 AND status='APPROVED' LIMIT 1", [req.user.userId]);
+    if (bankRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Bạn cần có tài khoản ngân hàng đã được duyệt để rút tiền.' });
+    }
+    const bank = bankRes.rows[0];
+
+    const idemKey = clientKey ? `withdrawal:tutor:${req.user.userId}:${clientKey}` : null;
     if (idemKey) {
       const existing = await client.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1', [idemKey]);
       if (existing.rows.length) {
@@ -19261,37 +19734,34 @@ app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) =
       return res.status(400).json({ code: 'INSUFFICIENT_FUNDS', message: 'Số dư khả dụng không đủ để rút.', balance: Number(wallet.balance), requested: amount });
     }
 
-    // 1) Record a PENDING WITHDRAW transaction (enum: type=WITHDRAW, status=PENDING)
+    // 2. Directly create a COMPLETED withdrawal since bank is verified
     const txRes = await client.query(
       `INSERT INTO transactions (wallet_id, amount, type, status, gateway, description)
-       VALUES ($1, $2, 'WITHDRAW', 'PENDING', 'MANUAL', $3) RETURNING id`,
-      [wallet.id, -amount, 'Yêu cầu rút tiền gia sư']
+       VALUES ($1, $2, 'WITHDRAW', 'COMPLETED', 'MANUAL', $3) RETURNING id`,
+      [wallet.id, -amount, 'Rút tiền tự động (Đã duyệt)']
     );
     const holdTxId = txRes.rows[0].id;
 
-    // 2) Reserve the money: balance → held_balance (ledger reason WITHDRAWAL_HOLD)
+    // Deduct directly from balance (no hold)
     await setLedgerContext(client, {
-      reason_code: 'WITHDRAWAL_HOLD', source: 'api', reference_type: 'withdrawal',
+      reason_code: 'WITHDRAWAL_PAYOUT', source: 'api', reference_type: 'withdrawal',
       transaction_id: holdTxId, actor_id: req.user.userId, policy_version: WITHDRAWAL_POLICY_VERSION,
     });
-    await client.query('UPDATE wallets SET balance = balance - $1, held_balance = held_balance + $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
+    await client.query('UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE id = $2', [amount, wallet.id]);
 
-    // 3) Create the withdrawal request row
     const wr = await client.query(
       `INSERT INTO withdrawal_requests
          (tutor_id, wallet_id, amount, fee_amount, net_amount, status, payout_method,
           bank_name, bank_account_no, bank_account_name, payout_note, policy_version,
           hold_transaction_id, idempotency_key, metadata)
-       VALUES ($1,$2,$3,0,$3,'PENDING','BANK_TRANSFER',$4,$5,$6,$7,$8,$9,$10,'{}'::jsonb)
+       VALUES ($1,$2,$3,0,$3,'COMPLETED','BANK_TRANSFER',$4,$5,$6,$7,$8,$9,$10,'{}'::jsonb)
        RETURNING *`,
-      [req.user.userId, wallet.id, amount, bankName, bankAccountNo, bankAccountName, payoutNote, WITHDRAWAL_POLICY_VERSION, holdTxId, idemKey]
+      [req.user.userId, wallet.id, amount, bank.bank_name, bank.account_number, bank.account_holder, 'Tự động duyệt', WITHDRAWAL_POLICY_VERSION, holdTxId, idemKey]
     );
     const request = wr.rows[0];
 
-    // Link the transaction back to the request for traceability
     await client.query('UPDATE transactions SET reference_id=$1 WHERE id=$2', [request.id, holdTxId]);
 
-    // Notify tutor (Batch 20: in-app + email outbox, same client so rollback-safe)
     await safeNotifyUser(client, {
       userId: req.user.userId, channels: ['IN_APP', 'EMAIL'],
       templateKey: 'withdrawal_created', eventType: 'withdrawal_created',
@@ -19300,30 +19770,10 @@ app.post('/api/tutor/withdrawals', verifyToken, requireTutor, async (req, res) =
       idempotencyKey: `withdrawal:${request.id}:created:${req.user.userId}`,
     });
 
-    // Báo admin có yêu cầu rút tiền mới cần xử lý (chuông + email)
-    const wdAdmins = await client.query(
-      `SELECT id FROM users WHERE role = 'admin' AND COALESCE(is_banned, FALSE) = FALSE`
-    );
-    for (const admin of wdAdmins.rows) {
-      await safeNotifyUser(client, {
-        userId: admin.id, type: 'admin_alert', channels: ['IN_APP', 'EMAIL'],
-        templateKey: 'admin_new_withdrawal', eventType: 'admin_new_withdrawal',
-        refId: request.id, refType: 'withdrawal',
-        idempotencyKey: `admin_new_withdrawal:${request.id}:${admin.id}`,
-        data: { tutorName: req.user.name || '', amount },
-      });
-    }
-
     await client.query('COMMIT');
     return res.status(201).json({ success: true, request });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    if (err.code === '23505') { // unique_violation on idempotency_key (race)
-      const ex = await pool.query('SELECT * FROM withdrawal_requests WHERE idempotency_key=$1',
-        [`withdrawal:tutor:${req.user.userId}:${sanitizeBankText(req.body?.idempotencyKey, 100)}`]).catch(() => ({ rows: [] }));
-      if (ex.rows.length) return res.status(200).json({ success: true, duplicate: true, request: ex.rows[0] });
-      return res.status(409).json({ message: 'Yêu cầu rút tiền trùng lặp.' });
-    }
     console.error('POST /api/tutor/withdrawals error:', err);
     return res.status(500).json({ message: 'Lỗi khi tạo yêu cầu rút tiền.' });
   } finally {
@@ -20428,7 +20878,7 @@ app.post('/api/admin/semantic-moderation/analyze', verifyToken, requireAdmin, as
 
     if ((!analyzeText || !analyzeText.trim()) && sourceId) {
       if (type === 'REVIEW') {
-        const r = await copilotSafeRows(`SELECT COALESCE(comment, content) AS text, tutor_id FROM reviews WHERE id=$1 LIMIT 1`, [sourceId]);
+        const r = await copilotSafeRows(`SELECT comment AS text, tutor_id FROM reviews WHERE id=$1 LIMIT 1`, [sourceId]);
         if (r.length) {
           analyzeText = r[0].text || '';
           const tp = await copilotSafeRows(`SELECT user_id FROM tutor_profiles WHERE id=$1 LIMIT 1`, [r[0].tutor_id]);
@@ -20451,7 +20901,7 @@ app.post('/api/admin/semantic-moderation/analyze', verifyToken, requireAdmin, as
     const result = ai ? mergeModerationWithAI(base, ai) : base;
 
     const report = {
-      ...result, source_type: type, source_id: sourceId || null,
+      ...result, source_type: type, source_id: sourceId || null, text: analyzeText,
       tutor_id: resolvedTutorId, student_id: resolvedStudentId, target_user_id: targetUserId,
       input_hash: hashModerationInput(analyzeText, type, sourceId),
     };
@@ -21101,21 +21551,8 @@ app.post('/api/escrow/resolve-dispute-v2', verifyToken, async (req, res) => {
 
     let autoBanned = false;
     if (repDeduct > 0) {
-      const tp = await client.query(`UPDATE tutor_profiles SET reputation_score=GREATEST(0, reputation_score - $1) WHERE user_id=$2 RETURNING reputation_score`, [repDeduct, tutorId]);
-      // Auto-ban check
-      if (tp.rows.length && tp.rows[0].reputation_score < 30) {
-        await client.query(`UPDATE users SET is_banned=true, banned_reason='reputation_auto_ban' WHERE id=$1`, [tutorId]);
-        autoBanned = true;
-        // Batch 20.1: safeNotifyUser, same client, priority critical
-        await safeNotifyUser(client, {
-          userId: tutorId, type: 'system', channels: ['IN_APP'],
-          templateKey: 'reputation_auto_ban', eventType: 'reputation_auto_ban',
-          title: 'Tài khoản bị khóa',
-          body: 'Tài khoản của bạn đã bị khóa do điểm uy tín quá thấp.',
-          icon: 'block', sourceType: 'user', sourceId: tutorId, priority: 'critical',
-          idempotencyKey: `reputation_auto_ban:${tutorId}:${disputeId}`,
-        });
-      }
+      const penaltyResult = await applyTutorReputationDelta(client, tutorId, -repDeduct, `${disputeId}`);
+      if (penaltyResult) autoBanned = penaltyResult.autoBanned;
     }
 
     if (penaltyType === 'BAN') {
@@ -21519,7 +21956,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
         dispute_id           UUID PRIMARY KEY REFERENCES disputes(id) ON DELETE CASCADE,
         case_type            TEXT,
         investigation_status TEXT NOT NULL DEFAULT 'PENDING'
-                             CHECK (investigation_status IN ('PENDING','AUTO_DISMISSED','NEEDS_ADMIN')),
+                             CHECK (investigation_status IN ('PENDING','AUTO_DISMISSED','NEEDS_ADMIN','ADMIN_REVIEWED')),
         verdict              TEXT,
         confidence           INT,
         evidence             JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -21537,6 +21974,15 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     // trên DB thật) — thêm cột riêng để không bỏ sót trên môi trường đang chạy.
     await pool.query(`
       ALTER TABLE violation_investigations ADD COLUMN IF NOT EXISTS reputation_applied_at TIMESTAMPTZ
+    `);
+    // Bảng cũ có thể còn CHECK cũ chưa cho phép 'ADMIN_REVIEWED' (kết luận thủ
+    // công khi hệ thống không nhận diện được loại báo cáo) — nới constraint.
+    await pool.query(`
+      ALTER TABLE violation_investigations DROP CONSTRAINT IF EXISTS violation_investigations_investigation_status_check
+    `);
+    await pool.query(`
+      ALTER TABLE violation_investigations ADD CONSTRAINT violation_investigations_investigation_status_check
+        CHECK (investigation_status IN ('PENDING','AUTO_DISMISSED','NEEDS_ADMIN','ADMIN_REVIEWED'))
     `);
     console.log('✅ DB migration: violation_investigations table ready');
   } catch (err) {
@@ -22077,6 +22523,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
         model_used     TEXT DEFAULT 'RULE_BASED',
         rule_version   TEXT NOT NULL DEFAULT 'SEMANTIC_MODERATION_V1',
         input_hash     TEXT,
+        flagged_text   TEXT,
         created_at     TIMESTAMPTZ DEFAULT NOW(),
         reviewed_at    TIMESTAMPTZ,
         reviewed_by    UUID,
@@ -22088,6 +22535,7 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
       CREATE INDEX IF NOT EXISTS idx_sem_reports_sev      ON semantic_moderation_reports(severity, status, created_at);
       CREATE INDEX IF NOT EXISTS idx_sem_reports_hash     ON semantic_moderation_reports(input_hash);
       CREATE INDEX IF NOT EXISTS idx_sem_reports_cat      ON semantic_moderation_reports USING GIN (categories);
+      ALTER TABLE semantic_moderation_reports ADD COLUMN IF NOT EXISTS flagged_text TEXT;
 
       CREATE TABLE IF NOT EXISTS tutor_reputation_semantic_scores (
         id                          BIGSERIAL PRIMARY KEY,
@@ -22531,6 +22979,27 @@ app.get('/api/payment/wallet/full', verifyToken, async (req, res) => {
     console.log('✅ DB migration: reconciliation_investigations/_audit_logs/_incidents/_incident_comments/_runs ready (Batch 37)');
   } catch (err) {
     console.error('⚠️  DB migration (Reconciliation Investigation Center Batch 37) warning:', err.message);
+  }
+
+  // ── Auto-migrate: tutor_bank_accounts ───────────────────────────────────────
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tutor_bank_accounts (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES users(id),
+          bank_name TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          account_holder TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+          rejection_reason TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(user_id, bank_name, account_number)
+      );
+    `);
+    console.log('✅ DB migration: tutor_bank_accounts ready');
+  } catch (err) {
+    console.error('⚠️  DB migration (tutor_bank_accounts) warning:', err.message);
   }
 
   // Prime the dynamic subject index so admin-created subjects resolve from the
