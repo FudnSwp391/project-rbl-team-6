@@ -1,0 +1,152 @@
+import { API_BASE_URL } from '../config';
+
+const IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+const DOC_TYPES = ['application/pdf']
+const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime']
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('Không đọc được file.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function uploadViaBackend(file, folder, targetBucket = 'edux-media') {
+  const token = localStorage.getItem('token')
+
+  // Xin quyền upload từ Backend (Lấy Presigned URL)
+  const resUrl = await fetch(`${API_BASE_URL}/api/tutor/presigned-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      filename: file.name,
+      bucket: targetBucket,
+      folder
+    })
+  })
+
+  if (!resUrl.ok) {
+    const errorData = await resUrl.json().catch(() => ({}))
+    throw new Error(errorData.message || 'Không thể xin quyền upload.')
+  }
+
+  const { signedUrl, publicUrl, viewUrl, storageUrl } = await resUrl.json()
+
+  // Upload thẳng từ trình duyệt lên Supabase
+  const uploadRes = await fetch(signedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+    body: file
+  })
+
+  if (!uploadRes.ok) {
+    throw new Error('Upload lên Supabase thất bại.')
+  }
+
+  // Trả về full URL để lưu vào Database
+  return {
+    url: viewUrl || publicUrl || storageUrl,
+    storageUrl: storageUrl || publicUrl,
+    previewUrl: viewUrl || publicUrl,
+  }
+}
+
+export function validateProofFile(file) {
+  const maxMb = 10
+  if (![...IMAGE_TYPES, ...DOC_TYPES].includes(file.type)) {
+    return 'Chỉ chấp nhận JPG, PNG, WebP hoặc PDF.'
+  }
+  if (file.size > maxMb * 1024 * 1024) {
+    return `File không được vượt quá ${maxMb}MB.`
+  }
+  return null
+}
+
+export function validateAvatarFile(file) {
+  const maxMb = 5
+  if (!IMAGE_TYPES.includes(file.type)) {
+    return 'Avatar chỉ chấp nhận JPG, PNG hoặc WebP.'
+  }
+  if (file.size > maxMb * 1024 * 1024) {
+    return `Avatar không được vượt quá ${maxMb}MB.`
+  }
+  return null
+}
+
+export function validateVideoFile(file) {
+  const maxMb = 100
+  if (!VIDEO_TYPES.includes(file.type)) {
+    return 'Video demo chỉ chấp nhận MP4, WebM hoặc MOV.'
+  }
+  if (file.size > maxMb * 1024 * 1024) {
+    return `Video không được vượt quá ${maxMb}MB.`
+  }
+  return null
+}
+
+export async function uploadProofFile(file, folder = 'proofs') {
+  const err = validateProofFile(file)
+  if (err) throw new Error(err)
+  const uploaded = await uploadViaBackend(file, folder, 'tutor-documents')
+  return uploaded.previewUrl || uploaded.url
+}
+
+export async function uploadAvatarFile(file, userId = 'anonymous') {
+  const err = validateAvatarFile(file)
+  if (err) throw new Error(err)
+  const uploaded = await uploadViaBackend(file, `avatars/${userId}`)
+  return uploaded.previewUrl || uploaded.url
+}
+
+export async function uploadDemoVideo(file, userId = 'anonymous') {
+  const err = validateVideoFile(file)
+  if (err) throw new Error(err)
+  const uploaded = await uploadViaBackend(file, `demo-videos/${userId}`)
+  return uploaded.storageUrl || uploaded.url
+}
+
+export async function uploadCourseVideo(file, userId = 'anonymous') {
+  const err = validateVideoFile(file)
+  if (err) throw new Error(err)
+  const uploaded = await uploadViaBackend(file, `course-videos/${userId}`)
+  return uploaded.storageUrl || uploaded.url
+}
+
+export async function uploadCourseThumbnail(file, userId = 'anonymous') {
+  const err = validateAvatarFile(file)
+  if (err) throw new Error(err)
+  return uploadViaBackend(file, `course-thumbnails/${userId}`)
+}
+
+export async function getSignedStorageUrl(storageUrl) {
+  if (!storageUrl || !String(storageUrl).startsWith('storage://')) return storageUrl
+  const token = localStorage.getItem('token')
+  const res = await fetch(`${API_BASE_URL}/api/storage/signed-url?path=${encodeURIComponent(storageUrl)}`, {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  })
+  if (!res.ok) return storageUrl
+  const data = await res.json()
+  return data.signedUrl || storageUrl
+}
+
+export async function uploadHomeworkFile(file, userId = 'anonymous') {
+  // Accept all file types for homework (PDF, Word, images, zip, etc.)
+  const uploaded = await uploadViaBackend(file, `homeworks/${userId}`)
+  // Return real HTTPS URL (previewUrl/publicUrl), NOT the internal storage:// path
+  const url = uploaded.previewUrl || uploaded.url || uploaded.storageUrl
+  if (!url) throw new Error('Upload thành công nhưng không lấy được URL. Vui lòng thử lại.')
+  return url
+}
+
+export async function uploadEvidenceFile(file, userId = 'anonymous') {
+  const err = validateProofFile(file)
+  if (err) throw new Error(err)
+  return uploadViaBackend(file, `dispute-evidence/${userId}`)
+}

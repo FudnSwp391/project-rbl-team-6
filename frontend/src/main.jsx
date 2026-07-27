@@ -1,0 +1,25 @@
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { GoogleOAuthProvider } from '@react-oauth/google'
+import { Toaster } from 'react-hot-toast'
+import { AuthProvider } from './AuthContext'   // ← NEW: Auth state wrapper
+import './index.css'
+import App from './App.jsx'
+import AIChatWidget from './components/AIChatWidget'
+
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || 'dummy_client_id'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <GoogleOAuthProvider clientId={googleClientId}>
+      {/* AuthProvider makes user/token available to the whole app */}
+      <AuthProvider>
+        <App />
+        {/* Chatbox AI nổi — hiện ở mọi trang */}
+        <AIChatWidget />
+        {/* Global Toast và Poller */}
+        <Toaster position="bottom-right" reverseOrder={false} />
+      </AuthProvider>
+    </GoogleOAuthProvider>
+  </StrictMode>,
+)

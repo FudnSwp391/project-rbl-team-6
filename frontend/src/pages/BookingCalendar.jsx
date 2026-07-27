@@ -1,0 +1,1315 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../AuthContext';
+import { getTutorDetail, getTutorAvailability, createBooking } from '../services/api';
+import { API_BASE_URL } from '../config';
+import BookingConfirmationModal from '../components/BookingConfirmationModal';
+import { methodSupport, methodLabel, METHOD_OPTIONS } from '../utils/teachingMethod';
+import { VN_LOCATIONS, VN_PROVINCES, matchProvince } from '../constants/vietnamLocations';
+
+const toDateKey = (date) => {
+  const value = new Date(date);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getVisibleRange = (year, month) => {
+  const from = toDateKey(new Date(year, month, 1));
+  const to = toDateKey(new Date(year, month + 1, 0));
+  return { from, to };
+};
+
+function getTutorIdentifiers(tutor = {}) {
+  return [
+    tutor.id,
+    tutor.user_id,
+    tutor.userId,
+    tutor.tutor_id,
+    tutor.tutorId,
+    tutor.profile_id,
+    tutor.profileId,
+    tutor.account_id,
+    tutor.accountId,
+  ].filter((value) => value !== undefined && value !== null).map(String);
+}
+
+function normalizeBookingTutor(tutor = {}, fallbackId = '') {
+  const subject = tutor.subject || (Array.isArray(tutor.subjects) ? tutor.subjects[0] : '') || 'General';
+  return {
+    ...tutor,
+    id: tutor.id || tutor.profile_id || tutor.profileId || fallbackId,
+    profile_id: tutor.profile_id || tutor.profileId || tutor.id || fallbackId,
+    user_id: tutor.user_id || tutor.userId || tutor.account_id || tutor.accountId || tutor.tutor_id || tutor.tutorId || tutor.id || fallbackId,
+    tutor_id: tutor.tutor_id || tutor.tutorId || tutor.user_id || tutor.userId || tutor.id || fallbackId,
+    name: tutor.name || tutor.full_name || tutor.tutorName || 'Tutor',
+    avatar: tutor.avatar || tutor.picture || tutor.tutorAvatar || '',
+    rate: tutor.rate ?? tutor.hourly_rate ?? tutor.hourlyRate ?? null,
+    subjects: Array.isArray(tutor.subjects) && tutor.subjects.length ? tutor.subjects : [subject],
+    availability: tutor.availability || {},
+  };
+}
+
+function getCachedBookingTutor(tutorId) {
+  try {
+    const raw = sessionStorage.getItem('edux_last_booking_tutor');
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    const ids = getTutorIdentifiers(cached);
+    if (!ids.includes(String(tutorId))) return null;
+    return normalizeBookingTutor(cached, tutorId);
+  } catch {
+    return null;
+  }
+}
+
+function getAvailabilityLookupId(tutor, fallbackId) {
+  return tutor.profile_id || tutor.profileId || tutor.user_id || tutor.userId || tutor.id || fallbackId;
+}
+
+/**
+ * BookingCalendar Page
+ * Improved: responsive mobile, today highlight, month transition animation.
+ */
+export default function BookingCalendar({ tutorId, onGoHome }) {
+  const { user } = useAuth();
+
+  const [tutor, setTutor]               = useState(null);
+  const [availability, setAvailability] = useState({});
+  const [monthlyAvailability, setMonthlyAvailability] = useState({});
+  const [bookedSlots, setBookedSlots]   = useState({});
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState(null);
+
+  const [selectedDate, setSelectedDate]         = useState(null);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState('');
+  const [selectedBookings, setSelectedBookings] = useState({});
+  const [subject, setSubject]                   = useState('');
+  const [teachingMethod, setTeachingMethod]     = useState('');
+  const [meetingAddress, setMeetingAddress]     = useState('');
+  const [notes, setNotes]                       = useState('');
+  // Địa điểm học Offline
+  const [province, setProvince]         = useState('');
+  const [district, setDistrict]         = useState('');
+  const [streetAddress, setStreetAddress] = useState('');
+  const [locationNote, setLocationNote]   = useState('');
+  const [selectedChild, setSelectedChild]       = useState('');
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const [currentYear, setCurrentYear]   = useState(today.getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(today.getMonth());
+  const [slideDir, setSlideDir]         = useState(''); // 'left' | 'right'
+  const [animKey, setAnimKey]           = useState(0);
+
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting]             = useState(false);
+  const [submitError, setSubmitError]               = useState(null);
+  const [bookingSuccessData, setBookingSuccessData] = useState(null);
+  const [topupInfo, setTopupInfo]                   = useState(null); // { needed, balance, missing }
+  const [isTopupLoading, setIsTopupLoading]          = useState(false);
+
+  // --- Monthly Booking States ---
+  const [bookingMode, setBookingMode]               = useState('custom'); // 'custom' | 'monthly'
+  const [monthlyDuration, setMonthlyDuration]       = useState(1); // 1 to 6 months
+  const [monthlyStartDate, setMonthlyStartDate]     = useState(toDateKey(today));
+  const [monthlySelectedSlots, setMonthlySelectedSlots] = useState({}); // e.g. { 'Monday': ['07:00 PM'] }
+  const [monthlyGeneratedSessions, setMonthlyGeneratedSessions] = useState([]);
+  const [monthlySkippedCount, setMonthlySkippedCount] = useState(0);
+  const [futureBookedSlots, setFutureBookedSlots]   = useState({}); // To hold multi-month bookings
+
+  const [children, setChildren]                   = useState([]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (user && user.role === 'parent' && token) {
+      fetch(`${API_BASE_URL}/api/parent/children`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : { children: [] })
+        .then(data => {
+          const list = data?.children || [];
+          setChildren(list);
+          if (list.length > 0) setSelectedChild(list[0].student_id);
+        })
+        .catch(() => setChildren([]));
+    }
+  }, [user]);
+  // Khôi phục lựa chọn đặt lịch sau khi người dùng đăng nhập xong quay lại (đúng gia sư này).
+  useEffect(() => {
+    if (!user) return;
+    let pending;
+    try { pending = JSON.parse(sessionStorage.getItem('edux_pending_booking') || 'null'); } catch { pending = null; }
+    if (!pending || String(pending.tutorId) !== String(tutorId)) return;
+    
+    // Kiểm tra hết hạn 30 phút
+    if (pending.createdAt && (Date.now() - pending.createdAt > 30 * 60 * 1000)) {
+      sessionStorage.removeItem('edux_pending_booking');
+      return;
+    }
+
+    sessionStorage.removeItem('edux_pending_booking');
+    if (pending.bookingMode) setBookingMode(pending.bookingMode);
+    if (pending.selectedBookings) setSelectedBookings(pending.selectedBookings);
+    if (pending.subject) setSubject(pending.subject);
+    if (pending.teachingMethod) setTeachingMethod(pending.teachingMethod);
+    if (pending.meetingAddress) setMeetingAddress(pending.meetingAddress);
+    if (pending.notes) setNotes(pending.notes);
+    if (typeof pending.currentYear === 'number') setCurrentYear(pending.currentYear);
+    if (typeof pending.currentMonth === 'number') setCurrentMonth(pending.currentMonth);
+    if (typeof pending.monthlyDuration === 'number') setMonthlyDuration(pending.monthlyDuration);
+    if (pending.monthlyStartDate) setMonthlyStartDate(pending.monthlyStartDate);
+    if (pending.monthlySelectedSlots) setMonthlySelectedSlots(pending.monthlySelectedSlots);
+    if (pending.selectedChild) setSelectedChild(pending.selectedChild);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, tutorId]);
+
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      if (!tutorId) { setError('Không tìm thấy ID gia sư.'); setLoading(false); return; }
+      console.log('Booking tutorId from URL:', tutorId);
+      setLoading(true); setError(null);
+      try {
+        const cachedTutor = getCachedBookingTutor(tutorId);
+        let tutorData = null;
+        try {
+          tutorData = await getTutorDetail(tutorId);
+          console.log('Fetched tutor:', tutorData);
+        } catch (detailError) {
+          console.log('Fetch error:', detailError);
+          if (!cachedTutor) throw detailError;
+          tutorData = cachedTutor;
+          console.log('Fetched tutor from clicked Schedule card:', tutorData);
+        }
+        tutorData = normalizeBookingTutor(tutorData, tutorId);
+        let availData = tutorData.availability || {};
+        let monthlyAvailData = tutorData.monthly_availability || {};
+        let bookedData = {};
+        try {
+          const apiAvailability = await getTutorAvailability(getAvailabilityLookupId(tutorData, tutorId), getVisibleRange(today.getFullYear(), today.getMonth()));
+          if (apiAvailability?.availability) {
+            availData = apiAvailability.availability;
+            monthlyAvailData = apiAvailability.monthly_availability || {};
+            bookedData = apiAvailability.bookedSlots || {};
+          } else {
+            availData = apiAvailability;
+          }
+        } catch (availabilityError) {
+          console.log('Fetch error:', availabilityError);
+          console.warn('[BookingCalendar] Availability API failed; using tutor detail availability.', availabilityError);
+        }
+        if (active) {
+          setTutor(tutorData);
+          setAvailability(availData);
+          setMonthlyAvailability(monthlyAvailData);
+          setBookedSlots(bookedData);
+          if (tutorData.subjects?.length > 0) setSubject(tutorData.subjects[0]);
+          // if (user?.role === 'parent') setSelectedChild(children[0]?.id || '');
+          // Gia sư chỉ dạy 1 hình thức → tự chọn luôn hình thức đó
+          const ms = methodSupport(tutorData.teaching_methods);
+          if (ms.online && !ms.offline) setTeachingMethod('online');
+          else if (!ms.online && ms.offline) setTeachingMethod('offline');
+          // Gợi ý sẵn tỉnh/thành theo khu vực gia sư đang dạy (học offline thường
+          // diễn ra cùng khu vực) — học sinh vẫn đổi được nếu muốn.
+          const guessed = matchProvince(tutorData.city || tutorData.location);
+          if (guessed) setProvince(guessed);
+          setLoading(false);
+        }
+      } catch (err) {
+        console.log('Fetch error:', err);
+        if (active) { setError(err.message || 'Failed to load.'); setLoading(false); }
+      }
+    }
+    load();
+    return () => { active = false; };
+  }, [tutorId, user]);
+
+  useEffect(() => {
+    let active = true;
+    async function refreshBookedSlots() {
+      if (!tutor) return;
+      try {
+        const data = await getTutorAvailability(getAvailabilityLookupId(tutor, tutorId), getVisibleRange(currentYear, currentMonth));
+        if (!active) return;
+        if (data?.availability) {
+          setAvailability(data.availability);
+          setMonthlyAvailability(data.monthly_availability || {});
+          setBookedSlots(data.bookedSlots || {});
+        }
+      } catch (err) {
+        console.warn('[BookingCalendar] Failed to refresh booked slots.', err);
+      }
+    }
+    refreshBookedSlots();
+    return () => { active = false; };
+  }, [tutor, tutorId, currentYear, currentMonth]);
+
+  useEffect(() => {
+    let active = true;
+    async function fetchFutureBookedSlots() {
+      if (bookingMode !== 'monthly' || !tutor) return;
+      try {
+        const start = new Date(monthlyStartDate);
+        if (isNaN(start.getTime())) return;
+        const end = new Date(start.getFullYear(), start.getMonth() + monthlyDuration, start.getDate());
+        const from = toDateKey(start);
+        const to = toDateKey(end);
+        
+        const data = await getTutorAvailability(getAvailabilityLookupId(tutor, tutorId), { from, to });
+        if (!active) return;
+        if (data?.bookedSlots) {
+          setFutureBookedSlots(data.bookedSlots);
+        }
+      } catch (err) {
+        console.warn('[BookingCalendar] Failed to fetch future booked slots.', err);
+      }
+    }
+    fetchFutureBookedSlots();
+    return () => { active = false; };
+  }, [bookingMode, monthlyDuration, monthlyStartDate, tutor, tutorId]);
+
+  useEffect(() => {
+    if (bookingMode !== 'monthly') return;
+    const start = new Date(monthlyStartDate);
+    if (isNaN(start.getTime())) {
+      setMonthlyGeneratedSessions([]);
+      return;
+    }
+    const end = new Date(start.getFullYear(), start.getMonth() + monthlyDuration, start.getDate());
+    const generated = [];
+    let skipped = 0;
+
+    let cursor = new Date(start);
+    while (cursor < end) {
+      const dayName = DAYS_MAP[cursor.getDay()];
+      const dateKey = toDateKey(cursor);
+      const selectedSlotsForDay = monthlySelectedSlots[dayName] || [];
+      
+      const bookedForDay = futureBookedSlots[dateKey] || [];
+      for (const slot of selectedSlotsForDay) {
+        if (bookedForDay.some(b => b.timeSlot === slot)) {
+          skipped++;
+        } else {
+          generated.push({ date: dateKey, timeSlot: slot });
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    
+    setMonthlyGeneratedSessions(generated);
+    setMonthlySkippedCount(skipped);
+  }, [bookingMode, monthlyDuration, monthlyStartDate, monthlySelectedSlots, futureBookedSlots]);
+
+  const isMonthlySlotBooked = (dayName, slot) => {
+    const start = new Date(monthlyStartDate);
+    if (isNaN(start.getTime())) return false;
+    const end = new Date(start.getFullYear(), start.getMonth() + monthlyDuration, start.getDate());
+    
+    let cursor = new Date(start);
+    while (cursor < end) {
+      if (DAYS_MAP[cursor.getDay()] === dayName) {
+        const dateKey = toDateKey(cursor);
+        const bookedForDay = futureBookedSlots[dateKey] || [];
+        if (bookedForDay.some(b => b.timeSlot === slot)) {
+          return true; // Found a conflict
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return false;
+  };
+
+  /* Calendar helpers */
+  const getDaysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+  const getFirstDay    = (y, m) => new Date(y, m, 1).getDay();
+  const MONTH_NAMES = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6',
+                       'Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+  const DAYS_MAP    = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const STATUS_LABELS = { Pending: 'Chờ xác nhận', Approved: 'Đã xác nhận', Confirmed: 'Đã xác nhận', Completed: 'Đã hoàn thành', Cancelled: 'Đã huỷ', Declined: 'Đã từ chối' };
+  const statusLabel = (s) => STATUS_LABELS[s] || s;
+
+  const changeMonth = useCallback((dir) => {
+    setSlideDir(dir);
+    setAnimKey(k => k + 1);
+    if (dir === 'left') {
+      setCurrentMonth(m => {
+        if (m === 0) { setCurrentYear(y => y - 1); return 11; }
+        return m - 1;
+      });
+    } else {
+      setCurrentMonth(m => {
+        if (m === 11) { setCurrentYear(y => y + 1); return 0; }
+        return m + 1;
+      });
+    }
+    setSelectedDate(null); setSelectedTimeSlot('');
+  }, []);
+
+  const getDayStatus = (day) => {
+    const d = new Date(currentYear, currentMonth, day);
+    if (d < today) return { ok: false };
+    const dayName = DAYS_MAP[d.getDay()];
+    const slots   = availability[dayName] || [];
+    const dateKey = toDateKey(d);
+    const bookedForDay = bookedSlots[dateKey] || [];
+    const openSlots = slots.filter(slot => !bookedForDay.some(booked => booked.timeSlot === slot));
+    return slots.length ? { ok: true, slots, openSlots, bookedForDay, fullyBooked: openSlots.length === 0, dayName } : { ok: false };
+  };
+
+  const isToday = (day) =>
+    day === today.getDate() &&
+    currentMonth === today.getMonth() &&
+    currentYear === today.getFullYear();
+
+  const handleSelectDay = (day) => {
+    const s = getDayStatus(day);
+    if (s.ok && !s.fullyBooked) {
+      const nextDate = new Date(currentYear, currentMonth, day);
+      const dateKey = toDateKey(nextDate);
+      if (bookingMode === 'monthly') {
+        setMonthlyStartDate(dateKey);
+        setSelectedDate(nextDate);
+        return;
+      }
+      setSelectedDate(nextDate);
+      setSelectedTimeSlot((selectedBookings[dateKey] || [])[0] || '');
+    }
+  };
+
+  const getSelectedSlots = () => {
+    if (!selectedDate) return [];
+    return availability[DAYS_MAP[selectedDate.getDay()]] || [];
+  };
+
+  const getSlotBooking = (slot) => {
+    if (!selectedDate) return null;
+    const dateKey = toDateKey(selectedDate);
+    return (bookedSlots[dateKey] || []).find(item => item.timeSlot === slot) || null;
+  };
+
+  const getSelectedBookingItems = () => {
+    if (bookingMode === 'monthly') return monthlyGeneratedSessions;
+    return Object.entries(selectedBookings)
+      .flatMap(([date, slots]) => slots.map(timeSlot => ({ date, timeSlot })))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.timeSlot.localeCompare(b.timeSlot));
+  };
+
+  const isSlotPicked = (slot) => {
+    if (!selectedDate) return false;
+    const dateKey = toDateKey(selectedDate);
+    if (bookingMode === 'monthly') {
+      return monthlyGeneratedSessions.some(s => s.date === dateKey && s.timeSlot === slot);
+    }
+    return (selectedBookings[dateKey] || []).includes(slot);
+  };
+
+  const toggleSelectedSlot = (slot) => {
+    if (bookingMode === 'monthly') return; // Cannot toggle individually in monthly mode
+    if (!selectedDate || getSlotBooking(slot)) return;
+    const dateKey = toDateKey(selectedDate);
+    setSelectedBookings(prev => {
+      const current = prev[dateKey] || [];
+      const exists = current.includes(slot);
+      const nextForDate = exists ? current.filter(item => item !== slot) : [...current, slot].sort();
+      const next = { ...prev };
+      if (nextForDate.length) next[dateKey] = nextForDate;
+      else delete next[dateKey];
+      return next;
+    });
+    setSelectedTimeSlot(prev => prev === slot ? '' : slot);
+  };
+
+  /* Booking */
+  const handleOpenConfirm = (e) => {
+    e.preventDefault();
+    if (!user) {
+      // Chưa đăng nhập: lưu lại đúng trang đặt lịch + các lựa chọn để đăng nhập xong quay lại y như cũ.
+      try {
+        sessionStorage.setItem('redirectAfterLogin', `#/booking/${tutorId}`);
+        sessionStorage.setItem('edux_pending_booking', JSON.stringify({
+          tutorId,
+          bookingMode,
+          selectedBookings,
+          subject,
+          teachingMethod,
+          meetingAddress: (teachingMethod || (tutor && (() => { const ms = methodSupport(tutor.teaching_methods); return !(ms.online && ms.offline) ? (ms.online ? 'online' : 'offline') : null; })())) === 'offline' ? meetingAddress : null,
+          notes,
+          currentYear,
+          currentMonth,
+          monthlyDuration,
+          monthlyStartDate,
+          monthlySelectedSlots,
+        }));
+      } catch { /* sessionStorage không khả dụng */ }
+      window.location.hash = '/signin';
+      return;
+    }
+    if (getSelectedBookingItems().length === 0) { alert('Vui lòng chọn ít nhất một ngày và khung giờ.'); return; }
+    setIsConfirmModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsConfirmModalOpen(false);
+    setSubmitError(null);
+    setTopupInfo(null);
+    if (bookingSuccessData) {
+      setBookingSuccessData(null);
+      setSelectedBookings({});
+      setSelectedTimeSlot('');
+    }
+  };
+
+  // Lưu lại lựa chọn đặt lịch hiện tại rồi chuyển sang VNPAY nạp tiền; sau khi
+  // thanh toán xong, người dùng quay lại đúng trang này và lựa chọn được khôi phục
+  // (dùng chung cơ chế "edux_pending_booking" với luồng đăng nhập).
+  const handleTopUp = async () => {
+    if (!topupInfo) return;
+    setIsTopupLoading(true);
+    try {
+      sessionStorage.setItem('edux_pending_booking', JSON.stringify({
+        tutorId,
+        bookingMode,
+        selectedBookings,
+        subject,
+        teachingMethod,
+        meetingAddress: (teachingMethod || (tutor && (() => { const ms = methodSupport(tutor.teaching_methods); return !(ms.online && ms.offline) ? (ms.online ? 'online' : 'offline') : null; })())) === 'offline' ? meetingAddress : null,
+        notes,
+        currentYear,
+        currentMonth,
+        monthlyDuration,
+        monthlyStartDate,
+        monthlySelectedSlots,
+        selectedChild,
+        createdAt: Date.now()
+      }));
+      const token = localStorage.getItem('token');
+      // Phải quay về /payment/result trước (trang này gọi IPN để cộng tiền vào ví),
+      // trang đó sẽ tự chuyển tiếp về đúng trang đặt lịch nhờ "edux_pending_booking".
+      const returnUrl = `${window.location.origin}/#/payment/result`;
+      sessionStorage.setItem('edux_payment_source', JSON.stringify({
+        returnHash: window.location.hash || `#/booking/${tutorId}`,
+        source: 'booking',
+        tutorId: tutorId
+      }));
+      const res = await fetch(`${API_BASE_URL}/api/payment/create-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ amount: topupInfo.missing, bankCode: '', returnUrl }),
+      });
+      const data = await res.json();
+      const payUrl = data.redirectUrl || data.url;
+      if (payUrl) {
+        window.location.href = payUrl;
+      } else {
+        setSubmitError(data.message || 'Không tạo được liên kết thanh toán. Vui lòng thử lại.');
+        setIsTopupLoading(false);
+      }
+    } catch (err) {
+      setSubmitError(err.message || 'Không tạo được liên kết thanh toán. Vui lòng thử lại.');
+      setIsTopupLoading(false);
+    }
+  };
+
+  const handleConfirmBooking = async () => {
+    // ── Frontend validation ───────────────────────────────────────────────
+    if (!tutor) {
+      setSubmitError('Không tìm thấy thông tin gia sư. Vui lòng thử lại.');
+      return;
+    }
+    const sessions = getSelectedBookingItems().filter(session => {
+      if (bookingMode === 'monthly') return true; // Already filtered
+      const bookedForDay = bookedSlots[session.date] || [];
+      return !bookedForDay.some(booked => booked.timeSlot === session.timeSlot);
+    });
+    if (sessions.length === 0) {
+      setSubmitError('Tất cả khung giờ đã chọn đều đã có người đặt. Vui lòng chọn khung giờ khác.');
+      return;
+    }
+
+    const tutorIdToSend = tutor.user_id || tutor.tutor_id || tutor.id;
+    if (!tutorIdToSend) {
+      setSubmitError('Không xác định được ID gia sư. Vui lòng tải lại trang.');
+      return;
+    }
+
+    // Gia sư dạy cả 2 hình thức → bắt buộc học sinh chọn 1
+    const ms = methodSupport(tutor.teaching_methods);
+    if (ms.online && ms.offline && !teachingMethod) {
+      setSubmitError('Vui lòng chọn hình thức học (Online hoặc Offline).');
+      return;
+    }
+
+    // Học offline bắt buộc có địa điểm — gia sư cần biết đến đâu dạy
+    const effectiveMethod = teachingMethod || (ms.offline && !ms.online ? 'offline' : ms.online && !ms.offline ? 'online' : '');
+    if (effectiveMethod === 'offline') {
+      if (!province)            { setSubmitError('Vui lòng chọn Tỉnh/Thành phố nơi học.'); return; }
+      if (!district.trim())     { setSubmitError('Vui lòng chọn Quận/Huyện nơi học.'); return; }
+      if (!streetAddress.trim()){ setSubmitError('Vui lòng nhập địa chỉ cụ thể nơi học.'); return; }
+    }
+    const fullLocation = effectiveMethod === 'offline'
+      ? [streetAddress.trim(), district.trim(), province].filter(Boolean).join(', ')
+      : null;
+
+    // ── Build payload (matches backend: tutor_id, lesson_date, time_slot) ─
+    const bookingPayload = {
+      tutorId:   String(tutorIdToSend),
+      tutorName: tutor.name || tutor.full_name || null,
+      sessions:  sessions.map(s => ({ date: s.date, timeSlot: s.timeSlot })),
+      subject:   subject || (tutor.subjects?.[0] ?? null),
+      notes:     notes || null,
+      teachingMethod: teachingMethod || null,
+      location:     fullLocation,
+      meeting_address: fullLocation,
+      locationNote: effectiveMethod === 'offline' ? (locationNote.trim() || null) : null,
+      targetStudentId: user?.role === 'parent' ? selectedChild : undefined,
+    };
+
+    console.log('[BookingCalendar] handleConfirmBooking payload:', JSON.stringify(bookingPayload, null, 2));
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+    setTopupInfo(null);
+    try {
+      const result = await createBooking(bookingPayload);
+      console.log('[BookingCalendar] Booking success result:', result);
+      const createdBookings = result.bookings || [result];
+      setBookedSlots(prev => {
+        const next = { ...prev };
+        for (const booking of createdBookings) {
+          const dateKey = String(booking.lesson_date || booking.date || '').slice(0, 10);
+          if (dateKey) {
+            next[dateKey] = [
+              ...(next[dateKey] || []),
+              { timeSlot: booking.time_slot || booking.timeSlot, status: booking.status || 'Pending' },
+            ];
+          }
+        }
+        return next;
+      });
+      setBookingSuccessData(result);
+    } catch (err) {
+      console.error('[BookingCalendar] Booking error:', err);
+      if (err.code === 'INSUFFICIENT_FUNDS') {
+        const needed = Number(err.needed || 0);
+        const balance = Number(err.balance || 0);
+        setTopupInfo({ needed, balance, missing: Math.max(needed - balance, 0) });
+      } else {
+        setSubmitError(err.message || 'Gửi yêu cầu đặt lịch thất bại.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleGoToDashboard = () => {
+    setIsConfirmModalOpen(false);
+    setSelectedBookings({});
+    setSelectedTimeSlot('');
+    setBookingSuccessData(null);
+    // Students go to booking history; tutors/parents go to their dashboards
+    if (user?.role === 'parent')      window.location.hash = '/parent';
+    else if (user?.role === 'tutor')  window.location.hash = '/tutor';
+    else                              window.location.hash = '/dashboard';
+  };
+
+  /* Loading / Error */
+  if (loading) return (
+    <div style={S.page}>
+      <CalHeader tutor={null} onBack={onGoHome} />
+      <div style={S.center}>
+        <div style={S.spinner} />
+        <p style={{ color: 'var(--on-surface-variant)', marginTop: 16 }}>Đang tải lịch trống...</p>
+      </div>
+    </div>
+  );
+
+  if (error) return (
+    <div style={S.page}>
+      <CalHeader tutor={null} onBack={onGoHome} />
+      <div style={S.center}>
+        <div style={S.errorCard}>
+          <span className="material-symbols-outlined" style={{ fontSize: 56, color: '#dc2626' }}>error_outline</span>
+          <h2 style={{ fontSize: 20, fontWeight: 800, color: 'var(--on-surface)', margin: 0 }}>Không thể tải lịch của gia sư</h2>
+          <p style={{ fontSize: 14, color: 'var(--on-surface-variant)' }}>{error}</p>
+          <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+            <button onClick={onGoHome} style={{ ...S.backBtn, flex: 1, justifyContent: 'center', height: 44 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
+              Quay lại
+            </button>
+            <button onClick={() => window.location.reload()} style={{ ...S.btnPrimary, flex: 1 }}>Thử lại</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* Build calendar cells */
+  const daysInMonth = getDaysInMonth(currentYear, currentMonth);
+  const firstDay    = getFirstDay(currentYear, currentMonth);
+  const selectedBookingItems = getSelectedBookingItems();
+  const selectedBookingCount = selectedBookingItems.length;
+
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(<div key={`e-${i}`} />);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const status  = getDayStatus(d);
+    const dateKey = toDateKey(new Date(currentYear, currentMonth, d));
+    const pickedCount = (selectedBookings[dateKey] || []).length;
+    const isSel   = selectedDate &&
+      selectedDate.getDate() === d &&
+      selectedDate.getMonth() === currentMonth &&
+      selectedDate.getFullYear() === currentYear;
+    const todayDay = isToday(d);
+
+    let cellStyle = { ...S.calCell };
+    if (isSel)          cellStyle = { ...S.calCell, ...S.calCellSelected };
+    else if (pickedCount > 0) cellStyle = { ...S.calCell, ...S.calCellPicked };
+    else if (status.ok && status.fullyBooked) cellStyle = { ...S.calCell, ...S.calCellBooked };
+    else if (status.ok) cellStyle = { ...S.calCell, ...S.calCellAvail,
+      ...(todayDay ? S.calCellToday : {}) };
+    else                cellStyle = { ...S.calCell, ...S.calCellDisabled };
+
+    cells.push(
+      <button key={`d-${d}`} type="button"
+        disabled={!status.ok || status.fullyBooked}
+        onClick={() => handleSelectDay(d)}
+        style={cellStyle}
+        aria-label={`${d} ${MONTH_NAMES[currentMonth]}`}
+        aria-pressed={!!isSel}
+      >
+        {todayDay && !isSel && <span style={S.todayRing} />}
+        {d}
+        {pickedCount > 0 && !isSel && <span style={S.pickedBadge}>{pickedCount}</span>}
+        {status.ok && !isSel && <span style={status.fullyBooked ? S.bookedDot : S.dot} />}
+      </button>
+    );
+  }
+
+  const selectedSlots = getSelectedSlots();
+  const canSubmit = selectedBookingCount > 0;
+
+  return (
+    <div style={S.page}>
+      <CalHeader
+        tutor={tutor}
+        onBack={() => tutor ? (window.location.hash = `/tutor-profile/${tutor.id}`) : onGoHome()}
+      />
+
+      <main style={S.main}>
+        {/* Page title */}
+        <div style={{ marginBottom: 28 }}>
+          <h1 style={{ fontSize: 26, fontWeight: 800, color: 'var(--on-surface)', marginBottom: 6 }}>
+            Đặt Lịch Học
+          </h1>
+          <p style={{ fontSize: 14, color: 'var(--on-surface-variant)' }}>
+            Chọn ngày và khung giờ còn trống để đặt lịch với{' '}
+            <strong>{tutor?.name}</strong>.
+          </p>
+        </div>
+
+        <form onSubmit={handleOpenConfirm} style={S.formGrid} className="cal-form-grid">
+
+          {/* LEFT: Calendar + Slots */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+            {/* Calendar card */}
+            <div style={S.card}>
+              {/* Month nav */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <h2 style={S.cardTitle}>
+                  <span className="material-symbols-outlined" style={S.cardIcon}>calendar_today</span>
+                  {MONTH_NAMES[currentMonth]} {currentYear}
+                </h2>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" onClick={() => changeMonth('left')} style={S.navBtn} aria-label="Tháng trước">
+                    <span className="material-symbols-outlined">chevron_left</span>
+                  </button>
+                  <button type="button" onClick={() => changeMonth('right')} style={S.navBtn} aria-label="Tháng sau">
+                    <span className="material-symbols-outlined">chevron_right</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Day labels */}
+              <div style={S.calHeader}>
+                {['CN','T2','T3','T4','T5','T6','T7'].map(d => (
+                  <div key={d} style={S.calHeaderCell}>{d}</div>
+                ))}
+              </div>
+
+              {/* Grid with slide animation */}
+              <div
+                key={animKey}
+                style={{
+                  ...S.calGrid,
+                  animation: `calSlide${slideDir === 'left' ? 'Left' : 'Right'} 0.22s ease`,
+                }}
+              >
+                {cells}
+              </div>
+
+              {/* Legend */}
+              <div style={S.legend}>
+                <span style={S.legendItem}>
+                  <span style={{ ...S.legendDot, background: '#fff', border: '2px solid var(--primary)', boxSizing: 'border-box' }} />
+                  Hôm nay
+                </span>
+                <span style={S.legendItem}>
+                  <span style={{ ...S.legendDot, background: '#fff', border: '1px solid rgba(196,197,213,0.4)' }} />
+                  Còn trống
+                </span>
+                <span style={S.legendItem}>
+                  <span style={{ ...S.legendDot, background: 'var(--primary)' }} />
+                  Đã chọn
+                </span>
+                <span style={S.legendItem}>
+                  <span style={{ ...S.legendDot, background: '#e5e7eb' }} />
+                  Không khả dụng
+                </span>
+                <span style={S.legendItem}>
+                  <span style={{ ...S.legendDot, background: '#fee2e2', border: '1px solid #fecaca' }} />
+                  Đã đặt
+                </span>
+              </div>
+            </div>
+
+            {/* Time Slot Picker */}
+            <div style={S.card}>
+              <h3 style={S.cardTitle}>
+                <span className="material-symbols-outlined" style={S.cardIcon}>schedule</span>
+                {selectedDate
+                  ? `Khung giờ - ${selectedDate.toLocaleDateString('vi-VN', { weekday: 'long', month: 'short', day: 'numeric' })}`
+                  : 'Hãy chọn một ngày trước'}
+              </h3>
+              {selectedSlots.length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {selectedSlots.map(slot => {
+                    const booked = getSlotBooking(slot);
+                    const picked = isSlotPicked(slot);
+                    return (
+                      <button key={slot} type="button"
+                        disabled={!!booked}
+                        onClick={() => toggleSelectedSlot(slot)}
+                        style={booked ? S.slotBtnBooked : picked ? S.slotBtnSelected : S.slotBtn}
+                        title={booked ? `Đã có người đặt (${statusLabel(booked.status)})` : 'Còn trống'}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                          {booked ? 'event_busy' : 'schedule'}
+                        </span>
+                        {slot}
+                        {booked && <span style={S.slotStatus}>{statusLabel(booked.status)}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p style={{ fontSize: 13, color: 'var(--outline)', fontStyle: 'italic' }}>
+                  {selectedDate ? 'Không có khung giờ nào trống trong ngày này.' : 'Hãy chọn một ngày còn trống ở trên.'}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* RIGHT: Booking Form */}
+          <div>
+            <div style={S.card}>
+              <h3 style={S.cardTitle}>
+                <span className="material-symbols-outlined" style={S.cardIcon}>edit_note</span>
+                Thông Tin Đặt Lịch
+              </h3>
+
+              {/* Booking Mode Toggle */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16, background: 'var(--surface-container)', padding: 4, borderRadius: 12 }}>
+                <button
+                  type="button"
+                  onClick={() => setBookingMode('custom')}
+                  style={{
+                    flex: 1, padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+                    background: bookingMode === 'custom' ? 'var(--primary)' : 'transparent',
+                    color: bookingMode === 'custom' ? 'white' : 'var(--on-surface)',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Từng buổi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBookingMode('monthly')}
+                  style={{
+                    flex: 1, padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+                    background: bookingMode === 'monthly' ? 'var(--primary)' : 'transparent',
+                    color: bookingMode === 'monthly' ? 'white' : 'var(--on-surface)',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Theo tháng
+                </button>
+              </div>
+
+              {bookingMode === 'monthly' && (
+                <div style={{ marginBottom: 16, padding: 16, background: 'var(--primary-container)', borderRadius: 12, border: '1px solid var(--primary-light)' }}>
+                  <div style={{ ...S.formGroup, marginBottom: 12 }}>
+                    <label style={S.label}>Thời gian đăng ký</label>
+                    <div style={{ position: 'relative' }}>
+                      <select value={monthlyDuration} onChange={e => setMonthlyDuration(Number(e.target.value))} style={S.select}>
+                        <option value={1}>1 tháng</option>
+                        <option value={2}>2 tháng</option>
+                        <option value={3}>3 tháng</option>
+                        <option value={6}>6 tháng</option>
+                      </select>
+                      <span className="material-symbols-outlined" style={S.selectArrow}>expand_more</span>
+                    </div>
+                  </div>
+                  
+                  <div style={{ ...S.formGroup, marginBottom: 12 }}>
+                    <label style={S.label}>Ngày bắt đầu</label>
+                    <input 
+                      type="date" 
+                      value={monthlyStartDate}
+                      min={toDateKey(today)}
+                      onChange={e => setMonthlyStartDate(e.target.value)}
+                      style={{ ...S.input, paddingRight: 12 }}
+                    />
+                  </div>
+
+                  <div style={{ ...S.formGroup, marginBottom: 0 }}>
+                    <label style={S.label}>Lịch học cố định hàng tuần</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 200, overflowY: 'auto', paddingRight: 4 }}>
+                      {Object.keys(monthlyAvailability).length === 0 ? (
+                        <div style={{ padding: 12, background: 'var(--surface-container-low)', borderRadius: 8, fontSize: 13, color: 'var(--on-surface-variant)', textAlign: 'center' }}>
+                          Gia sư này chưa mở lịch dạy cố định theo tháng. Vui lòng chọn chế độ "Từng buổi" hoặc liên hệ gia sư.
+                        </div>
+                      ) : (
+                        DAYS_MAP.map(dayName => {
+                          const slots = monthlyAvailability[dayName] || [];
+                          if (!slots.length) return null;
+                          const dayLabel = dayName === 'Sunday' ? 'Chủ nhật' : `Thứ ${DAYS_MAP.indexOf(dayName) + 1}`;
+                          return (
+                            <div key={dayName} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--on-surface-variant)' }}>{dayLabel}</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {slots.map(slot => {
+                                  const isBooked = isMonthlySlotBooked(dayName, slot);
+                                  const selected = (monthlySelectedSlots[dayName] || []).includes(slot) && !isBooked;
+                                  return (
+                                    <button
+                                      key={slot}
+                                      type="button"
+                                      disabled={isBooked}
+                                      onClick={() => {
+                                        if (isBooked) return;
+                                        setMonthlySelectedSlots(prev => {
+                                          const daySlots = prev[dayName] || [];
+                                          return {
+                                            ...prev,
+                                            [dayName]: selected ? daySlots.filter(s => s !== slot) : [...daySlots, slot].sort()
+                                          };
+                                        });
+                                      }}
+                                      style={{
+                                        padding: '4px 10px', borderRadius: 16, border: '1px solid', fontSize: 12, fontWeight: 500, 
+                                        cursor: isBooked ? 'not-allowed' : 'pointer',
+                                        background: isBooked ? '#f9fafb' : (selected ? 'var(--primary)' : 'white'),
+                                        color: isBooked ? '#9ca3af' : (selected ? 'white' : 'var(--on-surface)'),
+                                        borderColor: isBooked ? '#d1d5db' : (selected ? 'var(--primary)' : 'var(--outline-variant)'),
+                                        opacity: isBooked ? 0.5 : 1,
+                                        transition: 'all 0.2s'
+                                      }}
+                                      title={isBooked ? 'Đã có lịch trùng (không thể đăng ký trọn gói)' : ''}
+                                    >
+                                      {slot}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                  
+                  {monthlySkippedCount > 0 && (
+                    <div style={{ marginTop: 12, padding: 8, background: '#fee2e2', color: '#b91c1c', borderRadius: 8, fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>info</span>
+                      Đã bỏ qua {monthlySkippedCount} buổi bị trùng lịch gia sư.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Summary box */}
+              <div style={S.summaryBox}>
+                <div style={S.summaryRow}>
+                  <span style={S.summaryLabel}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 4 }}>calendar_today</span>
+                    Ngày
+                  </span>
+                  <span style={S.summaryValue}>
+                    {selectedBookingCount
+                      ? `Đã chọn ${selectedBookingCount} buổi`
+                      : '-'}
+                  </span>
+                </div>
+                <div style={S.summaryRow}>
+                  <span style={S.summaryLabel}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 4 }}>schedule</span>
+                    Giờ
+                  </span>
+                  <span style={S.summaryValue}>
+                    {selectedBookingItems.slice(0, 2).map(item => `${item.date} ${item.timeSlot}`).join(', ') || '-'}
+                    {selectedBookingCount > 2 ? ` +${selectedBookingCount - 2} khác` : ''}
+                  </span>
+                </div>
+              </div>
+
+              {/* Child selector - parent only */}
+              {user?.role === 'parent' && (
+                <div style={S.formGroup}>
+                  <label htmlFor="child-select" style={S.label}>Chọn Học Viên (Con)</label>
+                  <div style={{ position: 'relative' }}>
+                    {children.length === 0 ? (
+                    <div className="text-xs text-[#ba1a1a] bg-[#ffdad6] px-3 py-2 rounded-lg">
+                      Bạn chưa liên kết tài khoản con.
+                    </div>
+                  ) : (
+                    <select value={selectedChild} onChange={e => setSelectedChild(e.target.value)}
+                      className="w-full bg-[#f8f9fb] border-none rounded-lg px-4 py-2.5 text-[#191c1e] text-sm focus:ring-1 focus:ring-[#00288e]">
+                      {children.map(c => <option key={c.student_id} value={c.student_id}>{c.nickname || c.student_name || 'Học viên'} ({c.student_email || ''})</option>)}
+                    </select>
+                  )}
+                    <span className="material-symbols-outlined" style={S.selectArrow}>expand_more</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Subject */}
+              {tutor?.subjects?.length > 0 && (
+                <div style={S.formGroup}>
+                  <label htmlFor="subject-select" style={S.label}>Môn học</label>
+                  <div style={{ position: 'relative' }}>
+                    <select id="subject-select" value={subject}
+                      onChange={e => setSubject(e.target.value)} style={S.select}>
+                      {tutor.subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <span className="material-symbols-outlined" style={S.selectArrow}>expand_more</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Hình thức học (online / offline) */}
+              {(() => {
+                const ms = methodSupport(tutor?.teaching_methods);
+                const both = ms.online && ms.offline;
+                const single = !both ? (ms.online ? 'online' : 'offline') : null;
+                const hint = METHOD_OPTIONS.find(o => o.value === (teachingMethod || single))?.hint;
+                return (
+                  <div style={S.formGroup}>
+                    <label style={S.label}>Hình thức học</label>
+                    {both ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        {METHOD_OPTIONS.map(opt => {
+                          const active = teachingMethod === opt.value;
+                          return (
+                            <button key={opt.value} type="button"
+                              onClick={() => setTeachingMethod(opt.value)}
+                              style={{
+                                height: 42, borderRadius: 12, cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                fontSize: 13, fontWeight: 600,
+                                border: active ? '2px solid var(--primary, #00288e)' : '1px solid #d6d9e0',
+                                background: active ? 'rgba(0,40,142,0.06)' : '#fff',
+                                color: active ? 'var(--primary, #00288e)' : '#5d5f6f',
+                                transition: 'all .15s',
+                              }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{opt.icon}</span>
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{
+                        height: 42, borderRadius: 12, display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '0 12px', border: '1px solid #d6d9e0', background: '#f6f7fb',
+                        fontSize: 13, fontWeight: 600, color: '#3a3d4d',
+                      }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 17, color: 'var(--primary, #00288e)' }}>
+                          {single === 'online' ? 'videocam' : 'location_on'}
+                        </span>
+                        {methodLabel(single)} — gia sư chỉ dạy hình thức này
+                      </div>
+                    )}
+                    {hint && (
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: '#8a8ca0', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>info</span>
+                        {hint}
+                      </p>
+                    )}
+
+                    {/* Địa điểm học — chỉ hiện khi hình thức là Offline */}
+                    {(teachingMethod || single) === 'offline' && (
+                      <div style={{
+                        marginTop: 12, padding: 14, borderRadius: 12,
+                        background: 'linear-gradient(180deg,#f0fdf4,#f7fdf9)',
+                        border: '1px solid #bbf7d0',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#15803d' }}>pin_drop</span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#14532d' }}>Địa điểm học</span>
+                          <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 600 }}>* bắt buộc</span>
+                        </div>
+
+                        {/* Tỉnh/TP + Quận/Huyện */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                          <div>
+                            <label style={{ ...S.label, fontSize: 11, marginBottom: 4 }}>Tỉnh / Thành phố</label>
+                            <select
+                              value={province}
+                              onChange={e => { setProvince(e.target.value); setDistrict(''); }}
+                              style={{ ...S.input, height: 38, fontSize: 13, padding: '0 8px' }}>
+                              <option value="">— Chọn —</option>
+                              {VN_PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ ...S.label, fontSize: 11, marginBottom: 4 }}>Quận / Huyện</label>
+                            {(VN_LOCATIONS[province] || []).length > 0 ? (
+                              <select
+                                value={district}
+                                onChange={e => setDistrict(e.target.value)}
+                                disabled={!province}
+                                style={{ ...S.input, height: 38, fontSize: 13, padding: '0 8px',
+                                  background: province ? '#fff' : '#f1f2f6', cursor: province ? 'pointer' : 'not-allowed' }}>
+                                <option value="">— Chọn —</option>
+                                {(VN_LOCATIONS[province] || []).map(d => <option key={d} value={d}>{d}</option>)}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                value={district}
+                                onChange={e => setDistrict(e.target.value)}
+                                disabled={!province}
+                                placeholder={province ? 'Nhập quận/huyện' : 'Chọn tỉnh trước'}
+                                style={{ ...S.input, height: 38, fontSize: 13,
+                                  background: province ? '#fff' : '#f1f2f6' }} />
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Địa chỉ cụ thể */}
+                        <div style={{ marginBottom: 8 }}>
+                          <label style={{ ...S.label, fontSize: 11, marginBottom: 4 }}>Địa chỉ cụ thể</label>
+                          <input
+                            type="text"
+                            value={streetAddress}
+                            onChange={e => setStreetAddress(e.target.value)}
+                            placeholder="VD: 123 Nguyễn Văn Cừ, Phường 4"
+                            style={{ ...S.input, height: 38, fontSize: 13 }} />
+                        </div>
+
+                        {/* Ghi chú đường đi */}
+                        <div>
+                          <label style={{ ...S.label, fontSize: 11, marginBottom: 4 }}>Hướng dẫn tìm đường (tuỳ chọn)</label>
+                          <input
+                            type="text"
+                            value={locationNote}
+                            onChange={e => setLocationNote(e.target.value)}
+                            placeholder="VD: Chung cư X, tầng 5, gọi trước khi tới"
+                            style={{ ...S.input, height: 38, fontSize: 13 }} />
+                        </div>
+
+                        {/* Xem trước địa chỉ đầy đủ */}
+                        {(streetAddress.trim() || district || province) && (
+                          <div style={{
+                            marginTop: 10, padding: '8px 10px', borderRadius: 8,
+                            background: '#fff', border: '1px dashed #86efac',
+                            display: 'flex', alignItems: 'flex-start', gap: 6,
+                          }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 15, color: '#15803d', marginTop: 1 }}>location_on</span>
+                            <span style={{ fontSize: 12, color: '#166534', lineHeight: 1.45 }}>
+                              {[streetAddress.trim(), district, province].filter(Boolean).join(', ')}
+                            </span>
+                          </div>
+                        )}
+
+                        <p style={{ margin: '10px 0 0', fontSize: 11, color: '#4d7c5a', display: 'flex', alignItems: 'flex-start', gap: 4, lineHeight: 1.5 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 14, marginTop: 1 }}>shield</span>
+                          Địa chỉ chỉ hiển thị cho gia sư sau khi buổi học được duyệt.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Notes */}
+              <div style={S.formGroup}>
+                <label htmlFor="booking-notes" style={S.label}>Nội dung / Ghi chú</label>
+                <textarea id="booking-notes" rows={4} value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  placeholder="Cho gia sư biết bạn muốn tập trung vào nội dung gì..."
+                  style={S.textarea}
+                />
+              </div>
+
+              {/* Progress indicator */}
+              <div style={S.progressWrap}>
+                <div style={{ ...S.progressStep, ...(selectedDate ? S.progressStepDone : {}) }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                    {selectedDate ? 'check_circle' : 'radio_button_unchecked'}
+                  </span>
+                  Ngày
+                </div>
+                <div style={S.progressLine} />
+                <div style={{ ...S.progressStep, ...(selectedTimeSlot ? S.progressStepDone : {}) }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                    {selectedTimeSlot ? 'check_circle' : 'radio_button_unchecked'}
+                  </span>
+                  Giờ
+                </div>
+                <div style={S.progressLine} />
+                <div style={{ ...S.progressStep, ...(canSubmit ? S.progressStepDone : {}) }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                    {canSubmit ? 'check_circle' : 'radio_button_unchecked'}
+                  </span>
+                  Sẵn sàng
+                </div>
+              </div>
+
+              {/* Submit */}
+              <button type="submit" disabled={!canSubmit}
+                style={canSubmit ? S.btnPrimary : S.btnDisabled}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>assignment_turned_in</span>
+                {user
+                  ? selectedBookingCount
+                    ? `Xác Nhận ${selectedBookingCount} Yêu Cầu Đặt Lịch`
+                    : 'Xác Nhận Yêu Cầu Đặt Lịch'
+                  : 'Đăng Nhập Để Đặt Lịch'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </main>
+
+      {tutor && (
+        <BookingConfirmationModal
+          isOpen={isConfirmModalOpen}
+          onClose={handleCloseModal}
+          tutor={tutor}
+          date={selectedBookingItems[0]?.date || null}
+          timeSlot={selectedBookingItems.length === 1 ? selectedBookingItems[0].timeSlot : `Đã chọn ${selectedBookingCount} buổi`}
+          sessions={selectedBookingItems}
+          subject={subject}
+          notes={notes}
+          teachingMethod={teachingMethod}
+          childName={user?.role === 'parent' ? selectedChild : null}
+          isSubmitting={isSubmitting}
+          submitError={submitError}
+          bookingSuccessData={bookingSuccessData}
+          onConfirm={handleConfirmBooking}
+          onGoToDashboard={handleGoToDashboard}
+          topupInfo={topupInfo}
+          isTopupLoading={isTopupLoading}
+          onTopUp={handleTopUp}
+        />
+      )}
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes calSlideLeft {
+          from { opacity: 0; transform: translateX(-18px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes calSlideRight {
+          from { opacity: 0; transform: translateX(18px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+        @media (max-width: 768px) {
+          .cal-form-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/* Header sub-component */
+function CalHeader({ tutor, onBack }) {
+  return (
+    <header className="site-header">
+      <div className="container header-inner">
+        <a href="#/" className="brand">
+          <span className="material-symbols-outlined icon-fill">school</span>
+          <span className="brand-name">EduX</span>
+        </a>
+        {tutor && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src={tutor.avatar} alt={tutor.name}
+              style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: '2px solid #fff' }} />
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--on-surface)' }}>{tutor.name}</span>
+          </div>
+        )}
+        <button type="button" onClick={onBack} style={S.backBtn}>
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
+          Quay lại
+        </button>
+      </div>
+    </header>
+  );
+}
+
+/* Styles */
+const S = {
+  page:    { minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--background)' },
+  main:    { flex: 1, padding: '32px 16px 60px', maxWidth: 1100, margin: '0 auto', width: '100%', boxSizing: 'border-box' },
+  center:  { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40 },
+  spinner: { width: 48, height: 48, borderRadius: '50%', border: '4px solid #e5e7eb', borderTopColor: 'var(--primary)', animation: 'spin 0.8s linear infinite' },
+  errorCard: { background: '#fff', borderRadius: 20, padding: 40, maxWidth: 400, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 16, boxShadow: '0 4px 20px rgba(0,0,0,0.08)' },
+  formGrid: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(280px,360px)', gap: 20, alignItems: 'start' },
+  card:    { background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(8px)', borderRadius: 20, padding: '22px 24px', border: '1px solid rgba(196,197,213,0.25)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', animation: 'fadeIn 0.3s ease' },
+  cardTitle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700, color: 'var(--on-surface)', marginBottom: 14 },
+  cardIcon:  { color: 'var(--primary)', fontSize: 20 },
+  /* Calendar */
+  calHeader:     { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, marginBottom: 6 },
+  calHeaderCell: { textAlign: 'center', fontSize: 10, fontWeight: 700, color: 'var(--on-surface-variant)', letterSpacing: '0.06em', padding: '3px 0' },
+  calGrid:       { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, marginBottom: 14 },
+  calCell:       { height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, fontSize: 13, fontFamily: 'inherit', border: 'none', cursor: 'default', position: 'relative', flexDirection: 'column', transition: 'transform 0.15s, box-shadow 0.15s' },
+  calCellAvail:  { background: '#fff', color: 'var(--on-surface)', border: '1px solid rgba(196,197,213,0.3)', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontWeight: 500 },
+  calCellToday:  { border: '2px solid var(--primary)', color: 'var(--primary)', fontWeight: 700, background: 'rgba(0,40,142,0.04)' },
+  calCellSelected: { background: 'var(--primary)', color: '#fff', fontWeight: 700, boxShadow: '0 4px 12px rgba(0,40,142,0.3)', transform: 'scale(1.06)', cursor: 'pointer', border: 'none' },
+  calCellPicked: { background: 'rgba(0,40,142,0.08)', color: 'var(--primary)', border: '1px solid rgba(0,40,142,0.25)', cursor: 'pointer', fontWeight: 700 },
+  calCellBooked: { background: '#f9fafb', color: '#9ca3af', border: '1px dashed #d1d5db', cursor: 'pointer', opacity: 0.75 },
+  calCellDisabled: { background: 'rgba(229,231,235,0.35)', color: '#c4c4c4', opacity: 0.6 },
+  todayRing: { position: 'absolute', inset: -2, borderRadius: 11, border: '2px solid var(--primary)', pointerEvents: 'none' },
+  pickedBadge: { position: 'absolute', top: 3, right: 4, minWidth: 15, height: 15, padding: '0 4px', borderRadius: 999, background: 'var(--primary)', color: '#fff', fontSize: 9, fontWeight: 800, lineHeight: '15px' },
+  dot: { position: 'absolute', bottom: 4, width: 4, height: 4, borderRadius: '50%', background: 'rgba(0,40,142,0.4)' },
+  bookedDot: { position: 'absolute', bottom: 4, width: 4, height: 4, borderRadius: '50%', background: '#ef4444' },
+  legend:     { display: 'flex', gap: 12, flexWrap: 'wrap', paddingTop: 12, borderTop: '1px solid rgba(196,197,213,0.2)', fontSize: 11, color: 'var(--on-surface-variant)' },
+  legendItem: { display: 'flex', alignItems: 'center', gap: 5 },
+  legendDot:  { width: 11, height: 11, borderRadius: 3, display: 'inline-block', flexShrink: 0 },
+  /* Slots */
+  slotBtn:         { display: 'flex', alignItems: 'center', gap: 5, padding: '7px 13px', background: '#fff', color: 'var(--on-surface-variant)', border: '1px solid rgba(196,197,213,0.4)', borderRadius: 10, fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s' },
+  slotBtnSelected: { display: 'flex', alignItems: 'center', gap: 5, padding: '7px 13px', background: 'var(--primary)', color: '#fff', border: '1px solid var(--primary)', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 3px 10px rgba(0,40,142,0.25)' },
+  slotBtnBooked:   { display: 'flex', alignItems: 'center', gap: 5, padding: '7px 13px', background: '#f3f4f6', color: '#9ca3af', border: '1px dashed #d1d5db', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'not-allowed', fontFamily: 'inherit', opacity: 0.75 },
+  slotStatus:      { marginLeft: 4, fontSize: 10, fontWeight: 700, color: '#ef4444' },
+  navBtn: { width: 36, height: 36, borderRadius: 9, border: '1px solid rgba(196,197,213,0.5)', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--on-surface-variant)', fontFamily: 'inherit', transition: 'background 0.15s' },
+  /* Form */
+  summaryBox:   { background: 'rgba(0,40,142,0.04)', border: '1px solid rgba(0,40,142,0.1)', borderRadius: 12, padding: '12px 16px', marginBottom: 18, display: 'flex', flexDirection: 'column', gap: 8 },
+  summaryRow:   { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
+  summaryLabel: { fontSize: 12, color: 'var(--on-surface-variant)', display: 'flex', alignItems: 'center' },
+  summaryValue: { fontSize: 13, fontWeight: 600, color: 'var(--primary)', textAlign: 'right' },
+  formGroup:    { marginBottom: 16 },
+  label:        { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--on-surface)', marginBottom: 5 },
+  select:       { width: '100%', height: 42, padding: '0 38px 0 12px', background: '#fff', border: '1px solid rgba(196,197,213,0.5)', borderRadius: 11, fontSize: 13, color: 'var(--on-surface)', fontFamily: 'inherit', appearance: 'none', cursor: 'pointer', outline: 'none' },
+  selectArrow:  { position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--on-surface-variant)', pointerEvents: 'none', fontSize: 19 },
+  textarea:     { width: '100%', padding: '10px 12px', background: '#fff', border: '1px solid rgba(196,197,213,0.5)', borderRadius: 11, fontSize: 13, color: 'var(--on-surface)', fontFamily: 'inherit', resize: 'vertical', outline: 'none', boxSizing: 'border-box', lineHeight: 1.6 },
+  input:        { width: '100%', height: 42, padding: '0 12px', background: '#fff', border: '1px solid rgba(196,197,213,0.5)', borderRadius: 11, fontSize: 13, color: 'var(--on-surface)', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' },
+  /* Progress steps */
+  progressWrap:    { display: 'flex', alignItems: 'center', gap: 0, marginBottom: 18 },
+  progressStep:    { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, fontSize: 10, fontWeight: 600, color: '#c4c4c4', flex: '0 0 auto' },
+  progressStepDone:{ color: 'var(--primary)' },
+  progressLine:    { flex: 1, height: 2, background: 'rgba(196,197,213,0.4)', margin: '0 4px', marginBottom: 12 },
+  /* Buttons */
+  btnPrimary:  { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 13, fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', transition: 'opacity 0.15s' },
+  btnDisabled: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, background: '#e5e7eb', color: '#9ca3af', border: 'none', borderRadius: 13, fontSize: 14, fontWeight: 700, cursor: 'not-allowed', fontFamily: 'inherit' },
+  backBtn:     { display: 'flex', alignItems: 'center', gap: 5, height: 38, padding: '0 14px', background: 'transparent', color: 'var(--on-surface-variant)', border: '1px solid rgba(196,197,213,0.5)', borderRadius: 11, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' },
+};

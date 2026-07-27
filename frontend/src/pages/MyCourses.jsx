@@ -1,0 +1,336 @@
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../AuthContext';
+import StudentSidebar from '../components/StudentSidebar';
+import { apiRequest } from '../services/api';
+import WalletWidget from '../components/WalletWidget';
+import NotificationDropdown from '../components/NotificationDropdown';
+import MessageIcon from '../components/MessageIcon';
+
+export default function MyCourses() {
+  const { user, token, logout } = useAuth();
+  const [filter, setFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const [courses, setCourses] = useState([]);
+  const [stats, setStats] = useState({ totalCourses: 0, completedCourses: 0, weeklyHours: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [suggestedCourses, setSuggestedCourses] = useState([]);
+
+  useEffect(() => {
+    const fetchMyCourses = async () => {
+      try {
+        const resData = await apiRequest('/api/student/my-courses');
+
+        if (resData.success) {
+          setCourses(resData.data.courses);
+          setStats(resData.data.stats);
+        } else {
+          setError(resData.message || 'Lỗi lấy dữ liệu');
+        }
+      } catch (err) {
+        console.error(err);
+        setError('Đã xảy ra lỗi khi kết nối với máy chủ.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMyCourses();
+
+    // Re-fetch when the user comes back to this tab, so a refund/course change
+    // approved elsewhere (e.g. admin resolving a complaint) shows up without a manual reload.
+    const handleVisible = () => { if (document.visibilityState === 'visible') fetchMyCourses(); };
+    window.addEventListener('focus', fetchMyCourses);
+    document.addEventListener('visibilitychange', handleVisible);
+    // Safety-net poll in case a focus/visibility event is missed (e.g. resolved in another device).
+    const pollId = setInterval(() => { if (document.visibilityState === 'visible') fetchMyCourses(); }, 30000);
+    return () => {
+      window.removeEventListener('focus', fetchMyCourses);
+      document.removeEventListener('visibilitychange', handleVisible);
+      clearInterval(pollId);
+    };
+  }, []);
+
+  // Fetch suggested courses from DB
+  useEffect(() => {
+    const fetchSuggested = async () => {
+      try {
+        const data = await apiRequest('/api/courses');
+        const allCourses = Array.isArray(data) ? data : (data.courses || []);
+        // Exclude courses the student already enrolled in
+        const enrolledIds = courses.map(c => c.course_id || c.id);
+        const filtered = allCourses.filter(c => !enrolledIds.includes(c.id));
+        setSuggestedCourses(filtered.slice(0, 3));
+      } catch (err) {
+        console.error('Failed to fetch suggested courses:', err);
+      }
+    };
+    fetchSuggested();
+  }, [courses]);
+
+  const handleFilterChange = (e) => {
+    setFilter(e.target.value);
+  };
+
+  const filteredCourses = courses.filter(course => {
+    // Lọc theo search
+    if (searchQuery && !course.title?.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false;
+    }
+    // Lọc theo trạng thái
+    if (filter === 'all') return true;
+    if (filter === 'active') return (course.progress_percent || 0) < 100;
+    if (filter === 'completed') return (course.progress_percent || 0) >= 100;
+    return true;
+  });
+
+  const displayName = user?.name || user?.email?.split('@')[0] || 'Học viên';
+  const initials = displayName.charAt(0).toUpperCase();
+
+  return (
+    <div className="bg-background text-on-background font-body-md text-body-md antialiased flex h-screen overflow-hidden">
+      
+      <StudentSidebar
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        activeRoute="my-courses"
+        logout={logout}
+      />
+
+      {/* ── Main content wrapper ── */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden lg:ml-64">
+
+        {/* ── Top Bar ── */}
+        <header className="w-full h-16 bg-surface/90 backdrop-blur-sm shadow-sm flex items-center z-30 shrink-0 sticky top-0 border-b border-surface-dim/30">
+          <div className="flex justify-between items-center px-gutter w-full max-w-container-max mx-auto gap-md">
+
+            {/* Mobile hamburger */}
+            <button
+              className="lg:hidden w-10 h-10 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high rounded-full transition-colors"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Mở menu"
+            >
+              <span className="material-symbols-outlined">menu</span>
+            </button>
+
+            {/* Spacer for desktop */}
+            <div className="flex-1 max-w-md relative group hidden sm:block">
+              {/* Optional: Search in top nav if needed */}
+            </div>
+
+            <div className="flex items-center gap-sm lg:gap-md">
+              {/* Messages & Notifications */}
+              <MessageIcon token={token} />
+              <NotificationDropdown token={token} />
+
+              <button
+                aria-label="Trợ giúp"
+                className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors duration-200"
+              >
+                <span className="material-symbols-outlined">help</span>
+              </button>
+
+              <div className="w-px h-8 bg-outline-variant/30 mx-xs" />
+
+              <WalletWidget token={token} />
+
+              {/* Avatar */}
+              <div className="flex items-center gap-xs rounded-full px-xs py-xs hover:bg-surface-container-high transition-colors cursor-pointer">
+                {user?.picture ? (
+                  <img
+                    src={user.picture}
+                    alt={displayName}
+                    className="w-8 h-8 rounded-full object-cover border border-outline-variant/30"
+                  />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary text-sm font-bold">
+                    {initials}
+                  </div>
+                )}
+                <span className="hidden sm:block text-label-md font-medium text-on-surface ml-xs max-w-[120px] truncate">
+                  {displayName}
+                </span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Main Content */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-lg bg-surface">
+          <div className="max-w-container-max mx-auto grid grid-cols-1 lg:grid-cols-12 gap-lg">
+          {/* Left Column: Main List */}
+          <div className="lg:col-span-8">
+            {/* Breadcrumbs */}
+            <nav className="flex text-label-sm font-label-sm text-secondary mb-xs">
+              <a href="#/" className="hover:underline">Trang chủ</a>
+              <span className="mx-base">/</span>
+              <span className="text-primary font-bold">Khóa học của tôi</span>
+            </nav>
+            <h1 className="text-headline-lg font-bold text-primary mb-lg">Khóa học của tôi</h1>
+
+            {/* Search & Filters */}
+            <div className="flex flex-col md:flex-row gap-md mb-xl">
+              <div className="relative flex-grow">
+                <span className="material-symbols-outlined absolute left-md top-1/2 -translate-y-1/2 text-outline">search</span>
+                <input 
+                  className="w-full pl-xl pr-md py-md bg-surface-container-lowest border border-outline-variant rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all" 
+                  placeholder="Tìm kiếm khóa học của bạn..." 
+                  type="text" 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <select 
+                className="px-md py-md bg-surface-container-lowest border border-outline-variant rounded-lg text-label-md font-label-md text-on-surface-variant min-w-[160px] focus:border-primary outline-none cursor-pointer"
+                value={filter}
+                onChange={handleFilterChange}
+              >
+                <option value="all">Tất cả</option>
+                <option value="active">Đang học</option>
+                <option value="completed">Đã hoàn thành</option>
+              </select>
+            </div>
+
+            {/* Error or Loading State */}
+            {loading && <p className="text-center text-secondary py-xl">Đang tải danh sách khóa học...</p>}
+            {error && <p className="text-center text-red-500 py-xl">{error}</p>}
+            
+            {/* Empty State */}
+            {!loading && !error && filteredCourses.length === 0 && (
+              <div className="bg-surface-container-lowest rounded-xl border border-outline-variant p-xl text-center flex flex-col items-center">
+                <span className="material-symbols-outlined text-[64px] text-outline-variant mb-md">school</span>
+                <h3 className="text-headline-sm font-bold text-on-surface mb-xs">Không tìm thấy khóa học nào</h3>
+                <p className="text-body-md text-secondary mb-md">Bạn chưa đăng ký khóa học nào hoặc không có khóa học khớp với bộ lọc.</p>
+                <button className="px-xl py-sm bg-primary text-white font-label-md rounded-full hover:bg-primary-container transition-colors" onClick={() => window.location.hash = '/courses'}>
+                  Khám phá khóa học
+                </button>
+              </div>
+            )}
+
+            {/* Course Grid */}
+            {!loading && !error && filteredCourses.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-lg">
+                {filteredCourses.map(course => (
+                  <div key={course.enrollment_id} className="bg-surface-container-lowest rounded-xl border border-outline-variant overflow-hidden flex flex-col hover:shadow-md hover:-translate-y-1 transition-all cursor-pointer" onClick={() => window.location.hash = `/course-player/${course.course_id}`}>
+                    <div className="relative aspect-video overflow-hidden bg-surface-variant">
+                      <img alt={course.title} className="w-full h-full object-cover" src={course.thumbnail_url || "https://images.unsplash.com/photo-1561070791-2526d30994b5?q=80&w=2000&auto=format&fit=crop"} />
+                      <span className="absolute top-md left-md bg-primary text-white text-[10px] uppercase tracking-wider font-bold px-sm py-xs rounded-full">
+                        {course.subject || 'Khác'}
+                      </span>
+                    </div>
+                    <div className="p-md flex flex-col flex-grow">
+                      <h3 className="text-headline-md font-bold text-on-surface mb-xs line-clamp-2">{course.title}</h3>
+                      <div className="flex items-center gap-xs mb-md">
+                        <span className="material-symbols-outlined text-secondary text-[20px]">person</span>
+                        <span className="text-label-sm text-secondary">Giảng viên: {course.tutor_name || 'Đang cập nhật'}</span>
+                      </div>
+                      <div className="mt-auto">
+                        <div className="flex justify-between items-center mb-base">
+                          <span className={`text-label-sm font-bold ${(course.progress_percent || 0) >= 100 ? 'text-secondary' : 'text-primary'}`}>
+                            Tiến độ: {course.progress_percent || 0}%
+                          </span>
+                          <span className="text-label-sm text-secondary">{course.completed_lessons || 0}/{course.total_lessons || 0} Bài học</span>
+                        </div>
+                        <div className="w-full bg-surface-container h-1.5 rounded-full mb-md overflow-hidden">
+                          <div className={`${(course.progress_percent || 0) >= 100 ? 'bg-outline-variant' : 'bg-primary'} h-full rounded-full`} style={{ width: (course.progress_percent || 0) + '%' }}></div>
+                        </div>
+                        {course.total_lessons === 0 ? (
+                          <button className="w-full py-md bg-surface-container-high text-on-surface-variant font-label-md rounded-lg flex items-center justify-center gap-xs cursor-not-allowed">
+                            <span className="material-symbols-outlined text-[18px]">update</span>
+                            Bài học đang cập nhật
+                          </button>
+                        ) : (course.progress_percent || 0) >= 100 ? (
+                          <button className="w-full py-md bg-secondary-container text-primary font-label-md rounded-lg hover:bg-surface-container-high transition-colors flex items-center justify-center gap-xs">
+                            <span className="material-symbols-outlined text-[18px]">workspace_premium</span>
+                            Xem chứng chỉ
+                          </button>
+                        ) : (
+                          <button className="w-full py-md bg-primary text-white font-label-md rounded-lg hover:bg-primary-container transition-colors flex items-center justify-center gap-xs" onClick={(e) => { e.stopPropagation(); window.location.hash = `/course-player/${course.course_id}`; }}>
+                            <span className="material-symbols-outlined text-[18px]">play_circle</span>
+                            Tiếp tục học
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Right Column: Sidebar */}
+          <div className="lg:col-span-4 flex flex-col gap-lg">
+            {/* Learning Statistics Card */}
+            <div className="bg-surface-container-lowest rounded-xl border border-outline-variant p-lg shadow-sm">
+              <h2 className="text-headline-md font-bold text-primary mb-md">Thống kê học tập</h2>
+              <div className="space-y-md">
+                <div className="flex items-center justify-between p-md bg-surface rounded-lg border border-outline-variant/30">
+                  <div className="flex items-center gap-sm">
+                    <span className="material-symbols-outlined text-primary bg-secondary-container p-xs rounded-lg">menu_book</span>
+                    <span className="text-body-md text-secondary">Tổng số khóa học</span>
+                  </div>
+                  <span className="text-headline-md font-bold text-primary">{String(stats.totalCourses).padStart(2, '0')}</span>
+                </div>
+                <div className="flex items-center justify-between p-md bg-surface rounded-lg border border-outline-variant/30">
+                  <div className="flex items-center gap-sm">
+                    <span className="material-symbols-outlined text-green-600 bg-green-50 p-xs rounded-lg">check_circle</span>
+                    <span className="text-body-md text-secondary">Khóa học đã xong</span>
+                  </div>
+                  <span className="text-headline-md font-bold text-on-surface">{String(stats.completedCourses).padStart(2, '0')}</span>
+                </div>
+                <div className="flex items-center justify-between p-md bg-surface rounded-lg border border-outline-variant/30">
+                  <div className="flex items-center gap-sm">
+                    <span className="material-symbols-outlined text-on-tertiary-container bg-tertiary-fixed p-xs rounded-lg">schedule</span>
+                    <span className="text-body-md text-secondary">Giờ học tuần này</span>
+                  </div>
+                  <span className="text-headline-md font-bold text-on-surface">{stats.weeklyHours}h</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Suggested Courses */}
+            <div className="bg-surface-container-lowest rounded-xl border border-outline-variant p-lg shadow-sm">
+              <div className="flex justify-between items-center mb-md">
+                <h2 className="text-headline-md font-bold text-primary">Khóa học gợi ý</h2>
+                <a className="text-label-sm font-bold text-primary hover:underline" href="#/courses">Xem thêm</a>
+              </div>
+              <div className="flex flex-col gap-md">
+                {suggestedCourses.length === 0 ? (
+                  <p className="text-label-sm text-secondary text-center py-md">Chưa có khóa học gợi ý nào.</p>
+                ) : suggestedCourses.map(sc => (
+                  <div key={sc.id} className="flex gap-md p-xs hover:bg-surface rounded-lg transition-colors cursor-pointer group" onClick={() => window.location.hash = `/course/${sc.id}`}>
+                    {sc.thumbnail_url ? (
+                      <img alt={sc.title} className="w-20 h-16 rounded-md object-cover border border-outline-variant" src={sc.thumbnail_url} />
+                    ) : (
+                      <div className="w-20 h-16 rounded-md bg-primary/10 border border-outline-variant flex items-center justify-center">
+                        <span className="material-symbols-outlined text-primary">school</span>
+                      </div>
+                    )}
+                    <div className="flex flex-col justify-center min-w-0">
+                      <h4 className="text-label-md font-bold text-on-surface group-hover:text-primary transition-colors line-clamp-1">{sc.title}</h4>
+                      <span className="text-label-sm text-secondary line-clamp-1">{sc.tutor_name || sc.instructor_name || 'Giảng viên'}</span>
+                      <span className="text-label-sm font-bold text-primary mt-xs">{Number(sc.price) > 0 ? Number(sc.price).toLocaleString('vi-VN') + 'đ' : 'Miễn phí'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Ad/Promotion Banner */}
+            <div className="relative bg-primary-container rounded-xl p-lg overflow-hidden h-40 flex items-center">
+              <div className="relative z-10">
+                <h3 className="text-headline-md font-bold text-white mb-xs">Ưu đãi mùa hè!</h3>
+                <p className="text-label-sm text-primary-fixed-dim mb-md">Giảm 50% tất cả các khóa học ngoại ngữ.</p>
+                <button className="px-md py-xs bg-white text-primary font-label-md rounded-lg hover:bg-surface-container-high transition-all">Nhận ngay</button>
+              </div>
+              <span className="material-symbols-outlined absolute right-[-10px] bottom-[-10px] text-[120px] text-white/10 rotate-12">percent</span>
+            </div>
+          </div>
+        </div>
+      </main>
+      </div>
+    </div>
+  );
+}
