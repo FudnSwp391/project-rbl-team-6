@@ -5773,7 +5773,7 @@ app.post("/api/admin/tutors/:id/reputation", verifyToken, requireAdmin, async (r
       userId: id, type: 'system', channels: ['IN_APP'],
       templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
       title: deltaNum > 0 ? 'Điểm uy tín được cộng thêm' : 'Điểm uy tín bị trừ',
-      body: `Admin đã ${deltaNum > 0 ? 'cộng' : 'trừ'} ${Math.abs(deltaNum)} điểm uy tín. Lý do: ${reason.trim()}. Điểm hiện tại: ${newScore}/100.`,
+      body: `Admin đã ${deltaNum > 0 ? 'cộng' : 'trừ'} ${Math.abs(deltaNum)} điểm uy tín. Lý do: ${reason.trim()}.`,
       icon: deltaNum > 0 ? 'trending_up' : 'trending_down',
       sourceType: 'user', sourceId: id, priority: 'normal',
       idempotencyKey: `reputation_manual_adjustment:${id}:${Date.now()}`,
@@ -9145,7 +9145,8 @@ app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res)
     const dispute = dRes.rows[0];
 
     const viRes = await pool.query(`
-      SELECT id, dispute_id, investigation_status, case_type, verdict, confidence, summary, recommendation, evidence, created_at, updated_at
+      SELECT dispute_id, investigation_status, case_type, verdict, confidence, summary, recommendation, evidence,
+             investigated_at, reviewed_by, reviewed_at, reputation_applied_at, created_at, updated_at
       FROM violation_investigations WHERE dispute_id = $1
     `, [req.params.id]);
     dispute.investigation = viRes.rows[0] || null;
@@ -9169,7 +9170,7 @@ app.get("/api/admin/violations/:id", verifyToken, requireAdmin, async (req, res)
     dispute.tutor_snapshot = null;
     dispute.student_snapshot = null;
 
-    return res.json({ violation: dispute });
+    return res.json(dispute);
   } catch (err) {
     if (err.code === '22P02') return res.status(400).json({ message: "ID sai định dạng UUID." });
     console.error("GET /api/admin/violations/:id error:", err);
@@ -9358,7 +9359,7 @@ app.post("/api/admin/violations/:id/apply-reputation", verifyToken, requireAdmin
       userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
       templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
       title: 'Điểm uy tín bị trừ',
-      body: `Admin đã trừ ${Math.abs(delta)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}. Điểm hiện tại: ${newScore}/100.`,
+      body: `Admin đã trừ ${Math.abs(delta)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}.`,
       icon: 'trending_down', sourceType: 'user', sourceId: vi.tutor_id, priority: 'normal',
       idempotencyKey: `reputation_manual_adjustment:${vi.tutor_id}:violation:${disputeId}`,
     });
@@ -9471,7 +9472,7 @@ app.post("/api/admin/violations/:id/manual-review", verifyToken, requireAdmin, a
         userId: vi.tutor_id, type: 'system', channels: ['IN_APP'],
         templateKey: 'reputation_manual_adjustment', eventType: 'reputation_manual_adjustment',
         title: 'Điểm uy tín bị trừ',
-        body: `Admin đã trừ ${Math.abs(deltaNum)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}. Điểm hiện tại: ${newScore}/100.`,
+        body: `Admin đã trừ ${Math.abs(deltaNum)} điểm uy tín do báo cáo vi phạm #${disputeId.slice(0, 8)}.`,
         icon: 'trending_down', sourceType: 'user', sourceId: vi.tutor_id, priority: 'normal',
         idempotencyKey: `reputation_manual_adjustment:${vi.tutor_id}:violation_manual:${disputeId}`,
       });
